@@ -75,4 +75,4 @@ jobs:
       - name: Build sdist + wheel
         run: uv build
       - name: Check distribution metadata
-        run: uvx twine check dist/*
+        run: uvx twine check --strict dist/*
