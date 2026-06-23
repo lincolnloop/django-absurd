@@ -1,6 +1,6 @@
 [build-system]
 build-backend = "setuptools.build_meta"
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77", "setuptools-scm>=8"]
 
 [dependency-groups]
 dev = [
@@ -15,18 +15,58 @@ dev = [
   "pytest-socket>=0.8.0",
   "pytest>=9.1.0",
   "ruff>=0.9.0",
-  "setuptools>=68",
+  "setuptools-scm>=8",
+  "setuptools>=77",
   "wheel>=0.43.0",
 ]
 
 [project]
+authors = [
+  {name = "Marc Gibbons", email = "marc@lincolnloop.com"},
+  {name = "Lincoln Loop", email = "info@lincolnloop.com"},
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Web Environment",
+  "Framework :: Django",
+  "Framework :: Django :: 6.0",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Software Development :: Libraries",
+  "Topic :: System :: Distributed Computing",
+  "Typing :: Typed",
+]
 dependencies = [
   "absurd-sdk>=0.4.0,<0.5.0",
   "Django>=6.0",
 ]
+description = "Django integration for Absurd, the Postgres-native workflow engine."
+dynamic = ["version"]
+keywords = [
+  "absurd",
+  "background-jobs",
+  "django",
+  "postgres",
+  "queue",
+  "tasks",
+  "workflow",
+  "workflow-engine",
+]
+license = "MIT"
+license-files = ["LICENSE"]
 name = "django-absurd"
+readme = "README.md"
 requires-python = ">=3.12"
-version = "0.1.0"
+
+[project.urls]
+Homepage = "https://github.com/lincolnloop/django-absurd"
+Issues = "https://github.com/lincolnloop/django-absurd/issues"
+Repository = "https://github.com/lincolnloop/django-absurd"
 
 [tool.coverage.report]
 exclude_lines = [
@@ -108,11 +148,13 @@ select = ["ALL"]
 ban-relative-imports = "all"
 
 [tool.setuptools.package-data]
-django_absurd = ["migrations/*.sql"]
+django_absurd = ["AGENTS.md", "migrations/*.sql", "py.typed"]
 
 [tool.setuptools.packages.find]
-exclude = ["tests*"]
+include = ["django_absurd*"]
 where = ["."]
+
+[tool.setuptools_scm]
 
 [tool.uv]
 # Mirror Renovate's minimumReleaseAge cooloff for local/CI resolution.

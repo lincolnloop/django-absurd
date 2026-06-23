@@ -1,0 +1,77 @@
+---
+name: Publish to PyPI
+
+# Publishes on version tags only. Use a PEP 440 pre-release tag (e.g. v0.1.0a1,
+# v0.2.0rc1) to ship an alpha/beta/rc: PyPI marks it a pre-release and
+# `pip install` skips it unless `--pre` is passed. The per-PR packaging gate
+# lives in test.yml; this workflow never runs on pull requests.
+"on":
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0 # full history + tags so setuptools-scm derives the version
+      - name: Install uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - name: Build sdist + wheel
+        run: uv build
+      - name: Store the distribution packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: [build]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/django-absurd
+    permissions:
+      id-token: write # mandatory for Trusted Publishing (OIDC)
+    steps:
+      - name: Download the distribution packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: dist
+          path: dist/
+      - name: Publish to PyPI
+        # Tokenless Trusted Publishing; emits PEP 740 attestations by default.
+        # yamllint disable-line rule:line-length
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
+
+  github-release:
+    name: GitHub Release
+    needs: [publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # mandatory for creating a GitHub Release
+    steps:
+      - name: Download the distribution packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: dist
+          path: dist/
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        # Mark a/b/rc/dev tags as pre-releases so the "Latest" badge skips them.
+        run: |
+          case "${{ github.ref_name }}" in
+            *a[0-9]*|*b[0-9]*|*rc[0-9]*|*.dev*) PRERELEASE=--prerelease ;;
+            *) PRERELEASE= ;;
+          esac
+          gh release create "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --generate-notes $PRERELEASE \
+            dist/*

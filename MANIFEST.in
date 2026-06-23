@@ -1,0 +1,10 @@
+# setuptools-scm's git file-finder sweeps every tracked file into the sdist.
+# Prune dev/internal files so only django_absurd (plus the standard packaging
+# files: pyproject.toml, README, LICENSE) ships.
+prune docs
+prune examples
+prune tests
+prune .github
+exclude CLAUDE.md compose.yaml renovate.json tox.ini uv.lock
+exclude .dockerignore .editorconfig .envrc .gitignore .python-version
+exclude .pre-commit-config.yaml .prettierrc.toml .yamllint.yml
