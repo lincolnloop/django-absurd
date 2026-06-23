@@ -203,7 +203,6 @@ wheels = [
 
 [[package]]
 name = "django-absurd"
-version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "absurd-sdk" },

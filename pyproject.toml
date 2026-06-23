@@ -1,6 +1,6 @@
 [build-system]
 build-backend = "setuptools.build_meta"
-requires = ["setuptools>=68"]
+requires = ["setuptools>=68", "setuptools-scm>=8"]
 
 [dependency-groups]
 dev = [
@@ -24,9 +24,9 @@ dependencies = [
   "absurd-sdk>=0.4.0,<0.5.0",
   "Django>=6.0",
 ]
+dynamic = ["version"]
 name = "django-absurd"
 requires-python = ">=3.12"
-version = "0.1.0"
 
 [tool.coverage.report]
 exclude_lines = [
@@ -113,6 +113,12 @@ django_absurd = ["migrations/*.sql"]
 [tool.setuptools.packages.find]
 exclude = ["tests*"]
 where = ["."]
+
+[tool.setuptools_scm]
+# Version derives from git tags (e.g. tag v0.1.0a1 -> 0.1.0a1, published as a
+# PEP 440 pre-release). fallback_version keeps tag-less builds (PR gate, sdist
+# without .git) from failing.
+fallback_version = "0.0.0"
 
 [tool.uv]
 # Mirror Renovate's minimumReleaseAge cooloff for local/CI resolution.
