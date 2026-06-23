@@ -26,4 +26,7 @@ def test_wheel_ships_migration_sql_and_excludes_tests(tmp_path):
     assert any(
         n.startswith("django_absurd/migrations/") and n.endswith(".sql") for n in names
     )
+    assert "django_absurd/py.typed" in names
+    assert "django_absurd/AGENTS.md" in names
     assert not any(n.startswith("tests/") for n in names)
+    assert not any(n.startswith("examples/") for n in names)
