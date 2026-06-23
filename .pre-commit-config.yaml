@@ -17,7 +17,7 @@ repos:
         args: [--strict]
 
   - repo: https://github.com/python-jsonschema/check-jsonschema
-    rev: 0.37.2
+    rev: 0.37.3
     hooks:
       - id: check-github-workflows
 
@@ -42,7 +42,7 @@ repos:
       - id: uv-sort
 
   - repo: https://github.com/rbubley/mirrors-prettier
-    rev: v3.5.3
+    rev: v3.8.4
     hooks:
       - id: prettier
         exclude: \.html$
@@ -59,7 +59,7 @@ repos:
         types: [python]
 
   - repo: https://github.com/renovatebot/pre-commit-hooks
-    rev: 43.218.0
+    rev: 43.227.0
     hooks:
       - id: renovate-config-validator
         args: [--strict]

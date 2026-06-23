@@ -547,7 +547,6 @@ git commit -m "feat: check E001 (wrong backend) + W003 (router missing); honor A
   names.
 - **Type consistency:**
   `get_absurd_database`/`validate_backend`/`get_absurd_client(using=None)`/`sync_queues(using=None)`
-  consistent T1↔T2↔T3; `AbsurdRouter` dotted path
-  `"django_absurd.routers.AbsurdRouter"` identical in `tests/settings.py` (T2),
-  `tests/multidb/settings.py` (T2), and the W003 check (T3);
-  `W003_MSG`/`E001`/`BACKEND_ERR` consistent T3↔tests.
+  consistent T1↔T2↔T3; `AbsurdRouter` dotted path `"django_absurd.routers.AbsurdRouter"`
+  identical in `tests/settings.py` (T2), `tests/multidb/settings.py` (T2), and the W003
+  check (T3); `W003_MSG`/`E001`/`BACKEND_ERR` consistent T3↔tests.
