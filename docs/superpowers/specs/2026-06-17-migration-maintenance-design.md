@@ -18,9 +18,8 @@ offline, sourced only from the installed pinned `absurdctl` wheel (no network, e
   bundled deltas). One migration per Absurd release; `0001` (the bootstrap from spec 1)
   is frozen. Naming `{seq}_absurd_{ver}`. Each delta stamps its target version; set
   `atomic = False` when the SQL is non-transactional (`concurrently`).
-- **Drift tests** (offline): sql↔migration bijection; head version == highest
-  migration; upstream check
-  `ABSURD_SCHEMA_VERSION == absurdctl.ABSURD_SCHEMA_TARGET_VERSION`.
+- **Drift tests** (offline): sql↔migration bijection; head version == highest migration;
+  upstream check `ABSURD_SCHEMA_VERSION == absurdctl.ABSURD_SCHEMA_TARGET_VERSION`.
 - **SDK floor automation:** when head bumps, gen rewrites the `absurd-sdk` constraint
   floor in `pyproject.toml` (`>=<head>,<next-minor>`); a test asserts floor ==
   `ABSURD_SCHEMA_VERSION`.
