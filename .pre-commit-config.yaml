@@ -1,0 +1,65 @@
+---
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+      - id: trailing-whitespace
+      - id: file-contents-sorter
+        files: (.dockerignore|.gitignore)
+
+  - repo: https://github.com/adrienverge/yamllint.git
+    rev: v1.38.0
+    hooks:
+      - id: yamllint
+        args: [--strict]
+
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: 0.37.2
+    hooks:
+      - id: check-github-workflows
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.17
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
+    rev: v2.16.0
+    hooks:
+      - id: pretty-format-toml
+        args: [--autofix, --trailing-commas]
+        files: \.toml
+        types: [toml]
+
+  - repo: https://github.com/ninoseki/uv-sort
+    rev: v0.7.0
+    hooks:
+      - id: uv-sort
+
+  - repo: https://github.com/rbubley/mirrors-prettier
+    rev: v3.5.3
+    hooks:
+      - id: prettier
+        exclude: \.html$
+        types_or: [markdown, yaml, json]
+
+  - repo: local
+    hooks:
+      - id: mypy
+        entry: uv run mypy
+        language: system
+        name: mypy
+        pass_filenames: true
+        require_serial: true
+        types: [python]
+
+  - repo: https://github.com/renovatebot/pre-commit-hooks
+    rev: 43.218.0
+    hooks:
+      - id: renovate-config-validator
+        args: [--strict]

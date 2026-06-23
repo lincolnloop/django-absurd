@@ -1,0 +1,105 @@
+[build-system]
+build-backend = "setuptools.build_meta"
+requires = ["setuptools>=68"]
+
+[dependency-groups]
+dev = [
+  "absurdctl==0.4.0",
+  "build>=1.2.0",
+  "django-coverage-plugin>=3.2.0",
+  "django-stubs>=6.0.5",
+  "mypy>=1.15.0",
+  "psycopg[binary]>=3.2.0",
+  "pytest-cov>=6.0.0",
+  "pytest-django>=4.12.0",
+  "pytest-socket>=0.7.0",
+  "pytest>=9.0.0",
+  "ruff>=0.9.0",
+  "setuptools>=68",
+  "wheel>=0.43.0",
+]
+
+[project]
+dependencies = [
+  "absurd-sdk>=0.4.0,<0.5.0",
+  "Django>=6.0",
+]
+name = "django-absurd"
+requires-python = ">=3.12"
+version = "0.1.0"
+
+[tool.coverage.report]
+exclude_lines = [
+  "if TYPE_CHECKING:",
+  "pragma: no cover",
+  "raise NotImplementedError",
+]
+skip_covered = true
+
+[tool.coverage.run]
+branch = true
+plugins = [
+  "django_coverage_plugin",
+]
+source = ["django_absurd", "tests"]
+
+[tool.django-stubs]
+django_settings_module = "tests.settings"
+
+[tool.mypy]
+exclude = [
+  "^build/",
+  "^dist/",
+  "^\\.tox/",
+]
+plugins = ["mypy_django_plugin.main"]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "tests.settings"
+addopts = [
+  "--allow-hosts=db,localhost,127.0.0.1",
+  "--disable-socket",
+  "--reuse-db",
+  "--strict-markers",
+  "--ignore=tests/multidb",
+]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+ignore = [
+  "ANN401",  # Dynamically typed expressions (typing.Any) are disallowed in `**kwargs`
+  "ARG001",  # Unused function argument
+  "ARG002",  # Unused method argument
+  "COM812",  # Check absence of trailing commas. Made redundant by formatter.
+  "D",  # Missing or badly formatted docstrings
+  "FBT",  # Flake Boolean Trap
+  "PLR2004",  # Allow "magic values"
+  "RUF012",  # Mutable class attributes
+]
+select = ["ALL"]
+
+[tool.ruff.lint.extend-per-file-ignores]
+"**/migrations/*" = [
+  "E501",  # Allow exceeded line length in migrations.
+]
+"tests/**/*" = [
+  "ANN",  # No type annotations required in tests
+  "E501",  # Allow long lines in tests
+  "S101",  # Allow use of asserts
+  "S603",  # Allow subprocess calls in tests
+  "SLF001",  # Allow private member access in tests (e.g. _meta)
+]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.setuptools.package-data]
+django_absurd = ["migrations/*.sql"]
+
+[tool.setuptools.packages.find]
+exclude = ["tests*"]
+where = ["."]

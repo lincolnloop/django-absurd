@@ -1,0 +1,51 @@
+---
+name: CI
+
+"on":
+  pull_request:
+  push:
+
+jobs:
+  tox:
+    name: ${{ matrix.env }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        env:
+          - py312-django60
+          - py313-django60
+          - py314-django60
+          - dev
+          - py312-django60-mypy
+          - py314-django60-mypy
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uvx --with tox-uv tox -e "${{ matrix.env }}"
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uvx pre-commit run --all-files
+        env:
+          SKIP: mypy

@@ -1,0 +1,10 @@
+[pytest]
+DJANGO_SETTINGS_MODULE = "tests.multidb.settings"
+addopts = [
+  "--allow-hosts=db,localhost,127.0.0.1",
+  "--disable-socket",
+  "--reuse-db",
+  "--strict-markers",
+]
+pythonpath = ["../.."]
+testpaths = ["."]
