@@ -39,6 +39,11 @@ skip_covered = true
 
 [tool.coverage.run]
 branch = true
+omit = [
+  # Router suite runs separately (own config, no --cov); counting it here
+  # would report its files as 0% in the main run.
+  "tests/multidb/*",
+]
 plugins = [
   "django_coverage_plugin",
 ]
@@ -59,10 +64,14 @@ plugins = ["mypy_django_plugin.main"]
 DJANGO_SETTINGS_MODULE = "tests.settings"
 addopts = [
   "--allow-hosts=db,localhost,127.0.0.1",
+  "--cov",
+  "--cov-report=term",
+  "--cov-report=xml",
   "--disable-socket",
+  "--ignore=tests/multidb",
+  "--junitxml=junit.xml",
   "--reuse-db",
   "--strict-markers",
-  "--ignore=tests/multidb",
 ]
 pythonpath = ["."]
 testpaths = ["tests"]
