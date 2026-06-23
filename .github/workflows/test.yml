@@ -1,9 +1,16 @@
 ---
-name: CI
+name: test
 
 "on":
-  pull_request:
   push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # Abort pending builds if there's an update.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   tox:
