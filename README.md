@@ -20,7 +20,8 @@ through Django settings, management commands, and system checks.
 pip install django-absurd
 ```
 
-Pre-releases are published to PyPI but skipped by default; opt in with:
+Pre-release tags (e.g. `v0.1.0a1`) upload as PyPI pre-releases, which `pip install`
+skips unless you pass `--pre`:
 
 ```console
 pip install --pre django-absurd
