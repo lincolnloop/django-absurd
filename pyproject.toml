@@ -113,3 +113,7 @@ django_absurd = ["migrations/*.sql"]
 [tool.setuptools.packages.find]
 exclude = ["tests*"]
 where = ["."]
+
+[tool.uv]
+# Mirror Renovate's minimumReleaseAge cooloff for local/CI resolution.
+exclude-newer = "7 days"
