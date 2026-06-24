@@ -24,9 +24,9 @@ def backend():
     return get_absurd_backends()["default"]
 
 
-def run_absurd_worker(queue="default"):
+def run_absurd_worker(queue="default", concurrency=1):
     """Run the absurd_worker management command in burst mode (drain then exit)."""
-    call_command("absurd_worker", queue=queue, burst=True)
+    call_command("absurd_worker", queue=queue, burst=True, concurrency=concurrency)
 
 
 def get_task_result(task_id, queue="default"):

@@ -2,6 +2,7 @@ from django.contrib.auth.models import Group
 from django.tasks import task
 
 from django_absurd.params import absurd_default_params
+from tests.models import Payload
 
 
 @task
@@ -46,3 +47,8 @@ def with_default_attempts(a, b):
 @task
 def echo(value):
     return value
+
+
+@task
+def create_payload(data):
+    return Payload.objects.create(data=data).pk
