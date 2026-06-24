@@ -62,3 +62,19 @@ workflow engine). Package at repo root (`django_absurd/`, no `src/`). Specs live
 - Targets `DATABASES['default']` only (no multi-DB routing yet).
 - No network at migrate time; Absurd SQL comes only from the pinned `absurdctl` wheel
   (dev dep).
+
+## Tooling available here
+
+- **superpowers** skills drive the workflow: `brainstorming` (design dialogue) →
+  `writing-plans` → `executing-plans`/`subagent-driven-development`, plus
+  `test-driven-development`, `systematic-debugging`, and
+  `requesting-`/`receiving-code-review`. Reach for them on any non-trivial feature or
+  bugfix — design before code, plan before building.
+- **revdiff** — TUI inline diff/file review (`/revdiff`, `/revdiff <ref>`,
+  `/revdiff <file>`). Use to get human annotations on a diff or doc.
+- **caveman** — compressed response mode; toggle with `/caveman` (levels `lite`/`full`/
+  `ultra`), `stop caveman` to exit. Keeps full technical accuracy while cutting tokens;
+  code, commits, and security text are always written normally.
+- **`/dream`** — distills the project's `docs/specs` + `docs/plans` into `docs/WHY.md`
+  (the durable "why") and retires consumed docs into `docs/HISTORY.md`. Run it when the
+  specs/plans accumulate.
