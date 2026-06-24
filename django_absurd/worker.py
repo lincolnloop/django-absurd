@@ -86,7 +86,7 @@ async def arun_worker(
         loop.set_default_executor(executor)
         async with aworker_client(backend, queue) as client:
             logger.info(
-                "django-absurd worker starting: alias=%s queue=%s database=%s "
+                "django-absurd worker started: alias=%s queue=%s database=%s "
                 "burst=%s concurrency=%d",
                 backend.alias,
                 queue,

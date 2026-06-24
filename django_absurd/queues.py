@@ -93,17 +93,6 @@ def sync_queues(backend: AbsurdBackend) -> SyncResult:
     return result
 
 
-def write_sync_report(command: t.Any, result: SyncResult, prefix: str = "") -> None:
-    if result.created:
-        command.stdout.write(f"{prefix}Created: {', '.join(result.created)}")
-    if result.reconciled:
-        command.stdout.write(f"{prefix}Reconciled: {', '.join(result.reconciled)}")
-    if not result.created and not result.reconciled:
-        command.stdout.write(f"{prefix}No queues to sync.")
-    for warning in result.storage_warnings:
-        command.stderr.write(command.style.WARNING(f"{prefix}{warning}"))
-
-
 def get_absurd_backends() -> dict[str, AbsurdBackend]:
     return {
         alias: be

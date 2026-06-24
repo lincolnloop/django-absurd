@@ -38,4 +38,8 @@ def test_storage_mode_drift_detected_on_non_default_alias(settings, capsys):
     }
     out = run_absurd_check(capsys, databases=["absurd"])
     assert "absurd.W002" in out
-    assert "storage_mode" in out
+    assert (
+        "django-absurd: a queue's declared storage_mode differs from the database"
+        " (storage_mode is immutable)." in out
+    )
+    assert "Affected: d" in out

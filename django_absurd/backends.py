@@ -65,6 +65,9 @@ class AbsurdBackend(BaseTaskBackend):
             psycopg.errors.InvalidSchemaName,
         ):
             declared = get_declared_queues(self)
+            # validate_task() rejects an undeclared queue (InvalidTask) when the
+            # backend declares queues. This guards the empty-QUEUES config (where
+            # that check is skipped) and the declared[...] access below from KeyError.
             if task.queue_name not in declared:
                 msg = (
                     f"Queue '{task.queue_name}' is not declared in TASKS QUEUES. "
