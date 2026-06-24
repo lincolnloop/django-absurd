@@ -18,3 +18,12 @@ def create_user(username: str) -> str:
     """
     User.objects.get_or_create(username=username)
     return username
+
+
+@task
+async def create_user_async(username: str) -> str:
+    """An ``async def`` task — runs natively on the worker's event loop, using
+    Django's async ORM. Same idempotent get_or_create, async variant.
+    """
+    await User.objects.aget_or_create(username=username)
+    return username
