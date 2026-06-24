@@ -39,7 +39,6 @@ wheels = [
 
 [[package]]
 name = "django-absurd"
-version = "0.1.0"
 source = { editable = "../" }
 dependencies = [
     { name = "absurd-sdk" },
@@ -58,14 +57,15 @@ dev = [
     { name = "build", specifier = ">=1.2.0" },
     { name = "django-coverage-plugin", specifier = ">=3.2.0" },
     { name = "django-stubs", specifier = ">=6.0.5" },
-    { name = "mypy", specifier = ">=1.20.2" },
+    { name = "mypy", specifier = ">=2.1.0" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2.0" },
     { name = "pytest", specifier = ">=9.1.0" },
-    { name = "pytest-cov", specifier = ">=6.3.0" },
+    { name = "pytest-cov", specifier = ">=7.1.0" },
     { name = "pytest-django", specifier = ">=4.12.0" },
     { name = "pytest-socket", specifier = ">=0.8.0" },
     { name = "ruff", specifier = ">=0.9.0" },
-    { name = "setuptools", specifier = ">=68" },
+    { name = "setuptools", specifier = ">=77" },
+    { name = "setuptools-scm", specifier = ">=8" },
     { name = "wheel", specifier = ">=0.43.0" },
 ]
 
