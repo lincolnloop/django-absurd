@@ -55,9 +55,14 @@ In `queues.py`. Does for ONE queue what `sync_queues` loop body does today:
 - opts = `declared[queue_name]`.
 - if queue absent in DB (`Queue.objects.using(db)`): `client.create_queue(name, **opts)`
   → record created.
-- else: apply mutable opts via `set_queue_policy`; storage_mode drift → warning. (same
-  as today.)
+- else: **drift-gate** — only call `set_queue_policy` (and record `reconciled`) if a
+  declared MUTABLE opt actually differs from the DB row. If nothing changed, NO write
+  and NO `reconciled` entry (idempotent no-op — don't churn on every worker boot).
+  storage_mode drift → warning regardless (immutable; can't apply). Drift detection
+  reuses the interval-aware comparison (`has_option_drifted` / `parse_interval`) —
+  RELOCATED here from `checks.py` (see System checks cleanup).
 - returns `SyncResult` (created / reconciled / storage_warnings) scoped to one queue.
+  Unchanged existing queue → all three empty.
 
 `sync_queues(backend)` refactors to loop `reconcile_queue` over declared queues, merging
 results. External behavior identical — command output unchanged.
@@ -164,10 +169,12 @@ Why now: auto-create makes two of the queue-state warnings obsolete.
     `"django-absurd: a queue's declared storage_mode differs from the database (storage_mode is immutable)."`;
     hint `"Recreate the queue, or revert the declared storage_mode. Affected: <names>"`.
     id stays `absurd.W002`.
-  - **Dead code to DELETE** (now unused): `has_option_drifted()`, `parse_interval()`
-    (removes a per-interval DB round-trip), `DURATION_OPTION_KEYS`,
-    `SCALAR_OPTION_KEYS`. NOTE: `MUTABLE_OPTION_KEYS` in `queues.py` STAYS — that's
-    `set_queue_policy`'s reconcile list, unrelated to the check.
+  - **Removed from `checks.py`** (storage_mode is a plain string compare): drop
+    `DURATION_OPTION_KEYS`, `SCALAR_OPTION_KEYS`, and the use of
+    `has_option_drifted`/`parse_interval`. Those two helpers are NOT globally deleted —
+    they RELOCATE to `queues.py` to power `reconcile_queue`'s drift-gating (restricted
+    to `MUTABLE_OPTION_KEYS`, which excludes immutable storage_mode).
+    `MUTABLE_OPTION_KEYS` already lives in `queues.py`.
   - `query_queue_state` collapses:
     `except (OperationalError, ProgrammingError): return []` (schema-absent now silent,
     folded with unreachable); compute storage_mode drift; W002 if any.
@@ -178,35 +185,47 @@ exists + storage_mode drift → W002; all match → `[]`.
 
 ## Testing (real DB, no mocks)
 
-- Enqueue to declared-but-unprovisioned queue → task runs end-to-end (auto-created).
-- Enqueue to UNDECLARED queue → `ImproperlyConfigured`, message names queue.
-- Enqueue with schema absent (drop schema) → schema-absent error (`migrate`), not
-  silent.
-- Enqueue inside outer `atomic()` that auto-creates then retries → outer txn survives,
-  task persists.
-- Worker start on declared-but-unprovisioned queue → drains end-to-end (no command run).
-- Worker command on unprovisioned queue → stdout reports `Created: <queue>` (capsys); on
-  already-provisioned queue → stdout reports `Reconciled: <queue>`.
-- Worker command, storage_mode drift on existing queue → stderr emits the storage
-  warning (capsys), worker still starts.
-- Worker command schema-absent (drop schema) → `CommandError` mentioning migrate.
-- Worker start, undeclared `--queue` → `CommandError`.
-- `reconcile_queue` idempotency: call twice → second is no-op (created once).
-- `reconcile_queue` policy reconcile: change mutable opt → applied; change storage_mode
-  on existing queue → storage_warning surfaced (worker logs it).
-- `sync_queues` regression: existing command tests still pass (refactor
-  behavior-neutral).
-- Enqueue happy path (queue exists) makes NO extra queue-existence query — assert via
-  existing fast-path tests still green (no new round-trip added).
+Test at the ENTRYPOINTS (enqueue API + management commands), never `reconcile_queue`
+directly. Prove reconciliation by asserting the DB `Queue` row VALUES, not just emitted
+text. Parametrize when cases share structure.
+
+Enqueue (entrypoint = `Task.enqueue`):
+
+- Declared-but-unprovisioned queue → task runs end-to-end (auto-created); assert the
+  side-effect (e.g. `Group` row) AND the queue now exists.
+- UNDECLARED queue → `ImproperlyConfigured`, message names the queue.
+- Schema absent (drop schema) → schema-absent error (`migrate`), not silent.
+- Inside outer `atomic()` that auto-creates then retries → outer txn survives, task
+  persists after commit.
+- Happy path (queue exists) makes NO extra queue-existence query — covered by existing
+  fast-path tests staying green (auto-create lives only in `except`).
+
+Worker (entrypoint = `absurd_worker` command, capsys):
+
+- Unprovisioned declared queue → stdout `Created: <queue>`, DB row created, task drains.
+- Provisioned queue, a MUTABLE opt changed in settings → stdout `Reconciled: <queue>`
+  AND the DB `Queue` row reflects the new value (assert e.g. `cleanup_limit == 250`).
+- Provisioned queue, NOTHING changed → drift-gated no-op: NO `Reconciled` line, DB row
+  unchanged.
+- storage_mode drift on existing queue → stderr storage warning (capsys), worker still
+  starts.
+- Schema absent (drop schema) → `CommandError` mentioning migrate.
+- Undeclared `--queue` → `CommandError` (existing command guard).
+
+Refactor regression:
+
+- `sync_queues` / `absurd_sync_queues` existing command tests still pass (Task 1
+  refactor + drift-gating must keep their DB-value assertions green — e.g.
+  `test_sync_reconciles_changed_option_idempotent`).
 
 ### Existing tests that INVERT or change (audit + repoint)
 
 Auto-create flips current "unprovisioned → error" assertions. Plan must address:
 
 - `test_worker.py::test_command_maps_improperly_configured_to_commanderror` — premise
-  (declared-but-unsynced queue → CommandError) now AUTO-CREATES → drains. Repoint the
-  ImproperlyConfigured→CommandError mapping test to a SCHEMA-ABSENT trigger (drop
-  schema, declared queue → CommandError mentioning migrate).
+  (declared-but-unsynced queue → CommandError) now AUTO-CREATES → drains. DELETE it —
+  the `ImproperlyConfigured → CommandError` mapping is covered by the new schema-absent
+  worker command test.
 - `test_worker.py::test_worker_client_unprovisioned_queue_errors` — asserts
   `aworker_client` raises on an unprovisioned queue; that block is deleted. Remove or
   repoint (e.g. fold into the run_worker auto-create-drains test).
