@@ -51,16 +51,22 @@ ctx is an `AsyncTaskContext` with `ctx.task_id` + `ctx._task["attempt"]`, so
 ## Architecture
 
 `absurd_worker` command (CLI unchanged) →
-`run_worker(backend, queue, *, burst, options)` stays a SYNC entry that just does
-`asyncio.run(arun_worker(...))` — the command and `run_worker`'s signature don't change.
-Everything below runs on the loop.
+`run_worker(backend, queue, *, burst, options)` stays a SYNC entry. It calls
+`validate_backend(backend.database)` HERE (sync context) — its `ensure_connection()` is
+Django `@async_unsafe` and would raise `SynchronousOnlyOperation` if called on the loop
+(live-verified) — THEN `asyncio.run(arun_worker(...))`. Everything below runs on the
+loop and must NOT touch Django's registered connection (use the dedicated
+`AsyncConnection`; any unavoidable Django-conn op from the loop goes via
+`sync_to_async`).
 
 - **`aworker_client(backend, queue)`** — async ctx-mgr mirroring the sync
   `worker_client`:
   `params = connections[backend.database].get_connection_params(); params.pop("cursor_factory", None); conn = await psycopg.AsyncConnection.connect(**params, autocommit=True)`
   (DEDICATED — NOT Django's registered conn, so `close_old_connections()` never closes
-  it under the SDK; `cursor_factory` dropped per C1 above),
-  `register_jsonb_loader(conn)`, `client = AsyncAbsurd(conn, queue_name=queue)`, install
+  it under the SDK; `cursor_factory` dropped per C1 above). Does NOT call
+  `validate_backend` (done in the sync `run_worker` entry — it's `@async_unsafe`);
+  `get_connection_params()` is config-only and loop-safe. `register_jsonb_loader(conn)`,
+  `client = AsyncAbsurd(conn, queue_name=queue)`, install
   `client._registry = LazyTaskRegistry(queue)` (one SLF001), provisioning check via
   `await client.list_queues()` → `ImproperlyConfigured` on absent schema / unprovisioned
   queue (same messages as today), `finally: await conn.close()`.
@@ -175,6 +181,31 @@ observable outcome or the CLI.
   blocking/burst worker with `concurrency>1` completes them in roughly-concurrent (not
   serial) wall-clock — proves loop concurrency. Keep the sleep tiny + the assertion
   generous to avoid flakiness.
+
+**jsonb matrix — ALL 7 live-verified end-to-end (prototype `aworker_client`, real
+Postgres); lock each as a committed test:**
+
+1. **params decode on claim:** handler's `params` is a `dict` with the loader on the
+   dedicated `AsyncConnection` (and a raw `str` without it — proves the loader is
+   load-bearing). Assert a task's handler sees `params["args"]`/`["kwargs"]` as Python.
+2. **no shared-conn poison (the SP6 guard, async edition):** after the worker runs, a
+   Django `JSONField` read on the DEFAULT (shared) connection still works (no
+   `TypeError`) — the dedicated-conn loader doesn't touch Django's adapters. Use the
+   `Payload` model.
+3. **sync task in executor reads `JSONField`:** a sync `def` task (executor path) does
+   `Payload.objects.create(...)` + read-back — round-trips, no
+   `SynchronousOnlyOperation`.
+4. **async-ORM `JSONField`:** an `async def` task `await Payload.objects.acreate(...)` +
+   `await ...aget(...)` — `.data` round-trips on the loop (Django async conn,
+   unaffected).
+5. **result decode via dedicated read conn (C2):** completed task's `.result` decodes to
+   the Python value through the dedicated-conn+loader read helper, and is a raw JSON
+   STRING via `build_absurd_client` (no loader) — assert both, locking C2.
+6. **falsy/nested/unicode return round-trip:**
+   `None, 0, False, "", [], {}, {"nested":[1,2,{"a":None,"b":"ünïçødé"}]}` each
+   `completed` and `.result` equals the original through the async path.
+7. **mixed sync+async drained by one worker client** — both `completed`, both results
+   decode.
 
 No mocks; real DB: `PGPORT=5433 docker compose up -d db`, run with `PGPORT=5433`.
 
