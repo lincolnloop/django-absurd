@@ -24,15 +24,26 @@
   "prHourlyLimit": 0,
   "packageRules": [
     {
-      "matchDepNames": [
-        "pytest",
-        "pytest-cov",
-        "pytest-django",
-        "pytest-socket",
-        "mypy"
-      ],
-      "rangeStrategy": "bump",
-      "groupName": "testing tools"
+      "description": "Hard-pin build backend + dev deps to exact versions.",
+      "matchDepTypes": ["build-system.requires", "dependency-groups"],
+      "rangeStrategy": "pin",
+      "groupName": "dev dependencies"
+    },
+    {
+      "matchPackageNames": ["hatch*"],
+      "groupName": "hatch"
+    },
+    {
+      "matchPackageNames": ["pytest", "pytest-*", "django-coverage-plugin"],
+      "groupName": "pytest"
+    },
+    {
+      "matchPackageNames": ["mypy", "django-stubs"],
+      "groupName": "type checking"
+    },
+    {
+      "matchPackageNames": ["python"],
+      "groupName": "python"
     },
     {
       "matchManagers": ["pre-commit"],
