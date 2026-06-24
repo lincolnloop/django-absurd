@@ -1,8 +1,8 @@
 # django-absurd — project instructions
 
 Django app wrapping [Absurd](https://earendil-works.github.io/absurd/) (Postgres-native
-workflow engine). Package at repo root (`django_absurd/`, no `src/`). Specs + plans live
-in `docs/superpowers/`.
+workflow engine). Package at repo root (`django_absurd/`, no `src/`). Specs live in
+`docs/specs/`, plans in `docs/plans/`.
 
 ## Naming
 
