@@ -69,6 +69,12 @@ Spec: `docs/specs/2026-06-24-async-worker-design.md`.
   dedicated-conn read; rewrite the `worker_client` provisioning tests,
   `test_unregistered_name_defers_not_crashes` (I1), and
   `test_start_worker_drains_concurrently` (I2))
+- Modify: `tests/test_enqueue.py` + `tests/tasks.py` (C1: flipping `supports_async_task`
+  INVERTS `test_async_task_rejected` — it asserts `task(add_async)` raises
+  `InvalidTask`, which no longer happens. DELETE `test_async_task_rejected`, and remove
+  the now-dead `add_async` module-level coroutine + its `# must be rejected …` comment
+  in `tests/tasks.py` (async rejection is gone; Task 2 covers async-enqueue
+  positively).)
 
 **Interfaces:**
 
@@ -137,15 +143,15 @@ Rewrite `django_absurd/worker.py` to the spec's Architecture
   unchanged signature): `options = options or WorkerOptions()`;
   `validate_backend(backend.database)` (here, off the loop);
   `asyncio.run(arun_worker(backend, queue, burst=burst, options=options))`.
-- `arun_worker(...)`: create `ThreadPoolExecutor(max_workers=options.concurrency)` (use
-  as the loop's executor for sync tasks; shut down on exit, e.g.
-  `with ThreadPoolExecutor(...) as executor:`);
+- `arun_worker(...)`:
+  `with ThreadPoolExecutor(max_workers=options.concurrency) as executor:` →
+  `loop = asyncio.get_running_loop(); loop.set_default_executor(executor)` (MANDATED
+  mechanism — the sync handler branch then uses `run_in_executor(None, call_sync)`, so
+  the executor is reachable WITHOUT a contextvar/global and `build_handler(task)` stays
+  a pure single-arg function with the registry-entry contract untouched; live-proven).
   `async with aworker_client(backend, queue) as client:` then the startup `logger.info`
   (alias/queue/database/burst/concurrency) and
-  `if burst: await drain_queue(client, …) else: await run_blocking_worker(client, options)`.
-  Make `executor` reachable by the handler (e.g. a contextvar, or pass into
-  `aworker_client`/the registry so handlers use it; choose the simplest that keeps
-  `build_handler` testable).
+  `if burst: await drain_queue(client, concurrency=options.concurrency, …) else: await run_blocking_worker(client, options)`.
 - `aworker_client(backend, queue)` (`@asynccontextmanager`):
   `params = connections[backend.database].get_connection_params(); params.pop("cursor_factory", None)`;
   `conn = await psycopg.AsyncConnection.connect(**params, autocommit=True)`; `try:`
@@ -171,17 +177,19 @@ Rewrite `django_absurd/worker.py` to the spec's Architecture
   `await task.func(*args, **kwargs)`. **Else (sync):** wrap a `call_sync()` that does
   `close_old_connections()` → `task.func([ctx_,] *args, **kwargs)` → (finally)
   `close_old_connections()`, and
-  `result = await asyncio.get_running_loop().run_in_executor(executor, call_sync)`. Keep
-  the
+  `result = await asyncio.get_running_loop().run_in_executor(None, call_sync)` (None →
+  the loop's default executor set in `arun_worker`). Keep the
   `try/except Exception: logger.exception(...); raise / else: logger.info(...); return result`
   shape so the SDK records failures + retries.
 - async
-  `drain_queue(client, *, claim_timeout=120, batch_size=None, worker_id=None) -> int`:
-  loop
-  `claimed = await client.claim_tasks(batch_size or 1, claim_timeout, worker_id or "worker")`;
+  `drain_queue(client, *, concurrency=1, claim_timeout=120, batch_size=None, worker_id=None) -> int`:
+  CONCURRENT drain (so `--concurrency` is honored in burst — the old serial `for await`
+  loop ignored it; live-proven 4×0.5s went 2.09s serial → 0.53s concurrent). Loop:
+  `claimed = await client.claim_tasks(batch_size or concurrency, claim_timeout, worker_id or "worker")`;
   break if empty;
-  `for t_ in claimed: await client._execute_task(t_, claim_timeout)  # noqa: SLF001 …`;
-  return count.
+  `await asyncio.gather(*[client._execute_task(t_, claim_timeout) for t_ in claimed])  # noqa: SLF001 …`;
+  `count += len(claimed)`; return count. (Sync tasks within the gather overlap via the
+  default executor sized to `concurrency`; async tasks overlap natively on the loop.)
 - async `run_blocking_worker(client, options)`: `loop = asyncio.get_running_loop()`;
   `loop.add_signal_handler(signal.SIGINT, client.stop_worker)` + `SIGTERM`;
   `try: await client.start_worker(worker_id=…, claim_timeout=…, concurrency=…, batch_size=…, poll_interval=…)`
@@ -226,9 +234,17 @@ only for locality). Then:
   `assert get_task_result(spawn["task_id"]).state != "failed"`.
 - I2 `test_start_worker_drains_concurrently`: delete the
   `threading.Thread`/sync-`start_worker` scaffold; replace with the async-concurrency
-  smoke (Task 2) OR a minimal blocking-mode drive here. (Simplest: move the concurrency
-  assertion to Task 2's smoke and here just assert burst drains multiple enqueued sync
-  tasks.)
+  smoke (Task 2) OR a minimal burst drive here. (Simplest: move the concurrency
+  assertion to Task 2's smoke — now valid because burst's `drain_queue` is concurrent —
+  and here just assert burst drains multiple enqueued sync tasks.)
+- **C1** in `tests/test_enqueue.py`: DELETE `test_async_task_rejected` (it asserts
+  `task(add_async)` raises `InvalidTask`, which `supports_async_task=True` no longer
+  does). In `tests/tasks.py`: remove the module-level `add_async` coroutine + its
+  `# Module-level (undecorated) coroutine: applying @task … must be rejected …` comment
+  (dead once async is supported). No replacement needed here — Task 2 covers async
+  enqueue
+  - execution positively. (Verify `add_async` has no other importers:
+    `grep -rn add_async tests`.)
 
 - [ ] **Step 4: Run to verify it passes**
 
@@ -245,7 +261,7 @@ green. Run: `uv run ruff check django_absurd tests` → clean
 - [ ] **Step 6: Commit**
 
 ```bash
-git add django_absurd/worker.py django_absurd/backends.py tests/atasks.py tests/test_worker.py
+git add django_absurd/worker.py django_absurd/backends.py tests/atasks.py tests/test_worker.py tests/test_enqueue.py tests/tasks.py
 git commit -m "feat: native-async worker (runs sync via executor + async on the loop); supports_async_task=True"
 ```
 
@@ -257,8 +273,8 @@ git commit -m "feat: native-async worker (runs sync via executor + async on the 
 
 - Modify: `tests/atasks.py` (add async tasks: raising, takes_context, async-ORM
   `Payload`, sleeper)
-- Modify: `tests/tasks.py` (a sync `echo` if not already present, for the mixed-run
-  test)
+- Modify: `tests/tasks.py` (add the sync ORM task `create_payload` for the matched
+  sync/async ORM pair; `echo` already exists — do NOT re-add)
 - Create: `tests/test_async_worker.py` (the matrix; reuses
   `run_absurd_worker`/`get_task_result` patterns — import them or duplicate the small
   helpers)
@@ -315,7 +331,7 @@ from django.core.management import call_command
 
 from tests.atasks import aboom, acreate_payload, aecho, areport_attempt, asleeper
 from tests.models import Payload
-from tests.tasks import echo  # sync echo
+from tests.tasks import create_payload, echo  # sync ORM task + sync echo
 from tests.test_worker import get_task_result, run_absurd_worker
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -350,7 +366,17 @@ def test_async_takes_context_attempt_is_one():
     assert get_task_result(r.id).result == 1
 
 
+def test_sync_orm_jsonfield_round_trips():
+    # ORM in a SYNC task (executor path) — matched pair with the async-ORM test below
+    call_command("absurd_sync_queues")
+    r = create_payload.enqueue({"sync": True, "x": [9, 8]})
+    run_absurd_worker()
+    pk = get_task_result(r.id).result
+    assert Payload.objects.get(pk=pk).data == {"sync": True, "x": [9, 8]}
+
+
 def test_async_orm_jsonfield_round_trips():
+    # ORM in an ASYNC task (loop path) — matched pair with the sync-ORM test above
     call_command("absurd_sync_queues")
     r = acreate_payload.enqueue({"async": True, "y": {"z": None}})
     run_absurd_worker()
@@ -382,16 +408,19 @@ def test_async_concurrency_is_not_serial():
     for _ in range(4):
         asleeper.enqueue(0.5)
     start = time.monotonic()
-    run_absurd_worker(concurrency=4)  # burst with concurrency
+    run_absurd_worker(concurrency=4)  # burst now drains CONCURRENTLY (gather)
     elapsed = time.monotonic() - start
-    assert elapsed < 1.5  # 4 * 0.5s serial == 2.0s; concurrent is well under
+    assert elapsed < 1.5  # 4 * 0.5s serial == 2.0s; concurrent ~0.5s (well under)
 ```
 
-(If `run_absurd_worker` doesn't yet accept `concurrency`, extend it to pass
-`concurrency=` through
-`call_command("absurd_worker", queue=…, burst=True, concurrency=…)` — the command
-already has the flag.) Add a sync `echo` to `tests/tasks.py` if absent:
-`@task def echo(value): return value`.
+This smoke is VALID because Task 1 made `drain_queue` concurrent (gather sized to
+`concurrency`) — burst now honors `--concurrency`, so it terminates naturally (no
+blocking-mode stopper needed). Extend `run_absurd_worker` to pass `concurrency=` through
+`call_command("absurd_worker", queue=…, burst=True, concurrency=…)` (the command already
+has the flag). `echo` already exists in `tests/tasks.py` — do NOT re-add it. ADD a sync
+ORM task to `tests/tasks.py` for the matched pair: `@task` /
+`def create_payload(data): from tests.models import Payload; return Payload.objects.create(data=data).pk`
+(import inside the function or at module top per ruff).
 
 - [ ] **Step 2: Run to verify they fail / drive gaps**
 

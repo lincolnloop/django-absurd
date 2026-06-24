@@ -88,10 +88,13 @@ loop and must NOT touch Django's registered connection (use the dedicated
     (data-only); the `ctx_` is passed first positional to either path.
   - error/`logger.exception`/duration logging + re-raise: unchanged (so the SDK records
     the failure and retries).
-- **burst** — async `drain_queue(client, …)`: loop
-  `claimed = await client.claim_tasks( batch_size or 1, claim_timeout, worker_id or "worker")`
-  until empty, `await client._execute_task(t_, claim_timeout)` each (one SLF001, mirrors
-  today).
+- **burst** — async `drain_queue(client, *, concurrency=1, …)`: loop
+  `claimed = await client.claim_tasks(batch_size or concurrency, claim_timeout, worker_id or "worker")`
+  until empty, then
+  `await asyncio.gather(*[client._execute_task(t_, claim_timeout) for t_ in claimed])`
+  (one SLF001) — CONCURRENT so `--concurrency` is honored in burst too (the naive serial
+  `for await` would ignore it; live-verified 2.09s serial → 0.53s concurrent). Sync
+  tasks in the gather overlap via the default executor sized to `concurrency`.
 - **blocking** — async `run_blocking_worker(client, options)`: install
   `loop.add_signal_handler(SIGINT, client.stop_worker)` + SIGTERM (stop_worker is sync),
   `await client.start_worker(worker_id, claim_timeout, concurrency, batch_size, poll_interval)`,
