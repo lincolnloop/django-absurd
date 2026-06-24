@@ -1,13 +1,14 @@
 ---
 name: Publish to PyPI
 
-# Publishes on version tags only. Use a PEP 440 pre-release tag (e.g. v0.1.0a1,
-# v0.2.0rc1) to ship an alpha/beta/rc: PyPI marks it a pre-release and
-# `pip install` skips it unless `--pre` is passed. The per-PR packaging gate
-# lives in test.yml; this workflow never runs on pull requests.
+# Releases are driven from the GitHub Releases UI. Draft a release on a v* tag
+# (tick "Set as a pre-release" for alphas/betas), then Publish it: this builds
+# the distribution, publishes to PyPI via Trusted Publishing, and attaches the
+# wheel + sdist to the release. The version is derived from the tag by
+# setuptools-scm, so the tag must be a PEP 440 version (e.g. v0.1.0, v0.2.0rc1).
 "on":
-  push:
-    tags: ["v*"]
+  release:
+    types: [published]
 
 permissions:
   contents: read
@@ -19,6 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ github.event.release.tag_name }}
           fetch-depth: 0 # full history + tags so setuptools-scm derives the version
       - name: Install uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
@@ -50,28 +52,21 @@ jobs:
         # yamllint disable-line rule:line-length
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
 
-  github-release:
-    name: GitHub Release
+  attach-assets:
+    name: Attach dist to release
     needs: [publish]
     runs-on: ubuntu-latest
     permissions:
-      contents: write # mandatory for creating a GitHub Release
+      contents: write # mandatory for uploading release assets
     steps:
       - name: Download the distribution packages
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: dist
           path: dist/
-      - name: Create GitHub Release
+      - name: Upload dist to the release
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        # Mark a/b/rc/dev tags as pre-releases so the "Latest" badge skips them.
-        run: |
-          case "${{ github.ref_name }}" in
-            *a[0-9]*|*b[0-9]*|*rc[0-9]*|*.dev*) PRERELEASE=--prerelease ;;
-            *) PRERELEASE= ;;
-          esac
-          gh release create "${{ github.ref_name }}" \
-            --repo "${{ github.repository }}" \
-            --generate-notes $PRERELEASE \
-            dist/*
+        run: >-
+          gh release upload "${{ github.event.release.tag_name }}" dist/*
+          --repo "${{ github.repository }}" --clobber
