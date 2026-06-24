@@ -3,7 +3,7 @@ import typing as t
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management.base import BaseCommand, CommandError
 
-from django_absurd.queues import get_absurd_backends
+from django_absurd.queues import get_absurd_backends, reconcile_queue, write_sync_report
 from django_absurd.worker import WorkerOptions, run_worker
 
 
@@ -84,6 +84,12 @@ class Command(BaseCommand):
                 f" Valid queues: {valid}"
             )
             raise CommandError(msg)
+
+        try:
+            result = reconcile_queue(backend, queue)
+        except ImproperlyConfigured as exc:
+            raise CommandError(str(exc)) from exc
+        write_sync_report(self, result)
 
         worker_options = WorkerOptions(
             concurrency=options["concurrency"],

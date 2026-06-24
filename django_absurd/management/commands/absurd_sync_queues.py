@@ -1,6 +1,11 @@
 from django.core.management.base import BaseCommand
 
-from django_absurd.queues import SyncResult, get_absurd_backends, sync_queues
+from django_absurd.queues import (
+    SyncResult,
+    get_absurd_backends,
+    sync_queues,
+    write_sync_report,
+)
 
 
 class Command(BaseCommand):
@@ -16,11 +21,4 @@ class Command(BaseCommand):
             self.report_result(prefix, sync_queues(backend))
 
     def report_result(self, prefix: str, result: SyncResult) -> None:
-        if result.created:
-            self.stdout.write(f"{prefix}Created: {', '.join(result.created)}")
-        if result.reconciled:
-            self.stdout.write(f"{prefix}Reconciled: {', '.join(result.reconciled)}")
-        if not result.created and not result.reconciled:
-            self.stdout.write(f"{prefix}No queues to sync.")
-        for warning in result.storage_warnings:
-            self.stderr.write(self.style.WARNING(f"{prefix}{warning}"))
+        write_sync_report(self, result, prefix)

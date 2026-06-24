@@ -11,6 +11,7 @@ from django.core.management.base import CommandError
 from django.db import connection, connections
 
 from django_absurd.connection import register_jsonb_loader
+from django_absurd.models import Queue
 from django_absurd.queues import get_absurd_backends, get_absurd_client
 from django_absurd.worker import WorkerOptions, aworker_client, run_blocking_worker
 from tests.atasks import aecho
@@ -211,7 +212,70 @@ def test_command_burst_runs_task_end_to_end():
     assert get_task_result(result.id).state == "completed"
 
 
-def test_command_maps_improperly_configured_to_commanderror():
+def test_worker_command_reports_created_on_unprovisioned_queue(capsys):
+    call_command("absurd_worker", queue="default", burst=True)
+    out = capsys.readouterr().out
+    assert "Created: default" in out
+    assert Queue.objects.filter(queue_name="default").exists()
+
+
+def test_worker_command_reconciles_changed_mutable_option(settings, capsys):
+    settings.TASKS = {
+        "default": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {"QUEUES": {"default": {"cleanup_limit": 100}}},
+        }
+    }
+    call_command("absurd_sync_queues")
+    settings.TASKS = {
+        "default": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {"QUEUES": {"default": {"cleanup_limit": 250}}},
+        }
+    }
+    capsys.readouterr()  # drop sync output
+    call_command("absurd_worker", queue="default", burst=True)
+    out = capsys.readouterr().out
+    assert "Reconciled: default" in out
+    assert Queue.objects.get(queue_name="default").cleanup_limit == 250  # DB proof
+
+
+def test_worker_command_no_reconcile_when_unchanged(settings, capsys):
+    settings.TASKS = {
+        "default": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {"QUEUES": {"default": {"cleanup_limit": 100}}},
+        }
+    }
+    call_command("absurd_sync_queues")
+    before = Queue.objects.get(queue_name="default").cleanup_limit
+    capsys.readouterr()
+    call_command("absurd_worker", queue="default", burst=True)
+    out = capsys.readouterr().out
+    assert "Reconciled: default" not in out  # drift-gated: nothing changed
+    assert Queue.objects.get(queue_name="default").cleanup_limit == before
+
+
+def test_worker_command_warns_on_storage_mode_drift(settings, capsys):
+    settings.TASKS = {
+        "default": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {"QUEUES": {"default": {}}},
+        }
+    }
+    call_command("absurd_sync_queues")  # create 'default' unpartitioned
+    settings.TASKS = {
+        "default": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {"QUEUES": {"default": {"storage_mode": "partitioned"}}},
+        }
+    }
+    capsys.readouterr()
+    call_command("absurd_worker", queue="default", burst=True)
+    assert "storage_mode" in capsys.readouterr().err
+
+
+def test_worker_command_schema_absent_errors_migrate():
     with connection.cursor() as cur:
         cur.execute("DROP SCHEMA IF EXISTS absurd CASCADE")
     try:
