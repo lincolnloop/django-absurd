@@ -36,8 +36,17 @@ Coroutines: `claim_tasks`, `_execute_task`,
 `loop.add_signal_handler`. `_execute_task` AWAITS the registry entry's `handler` (an
 `AsyncTaskHandler`), so our handler must be `async`.
 `psycopg.AsyncConnection.connect(**params, autocommit=True)` mirrors the sync dedicated
-connection. `register_jsonb_loader(context)` already accepts any `AdaptContext` incl. an
-`AsyncConnection`.
+connection — BUT Django's `get_connection_params()` includes
+`cursor_factory=<sync Django Cursor>`, which is FATAL for `AsyncConnection.connect` (the
+connection's `.cursor()` returns a sync cursor → the SDK's `await cursor.execute(...)`
+raises on the FIRST call, `list_queues()`). Must `params.pop("cursor_factory", None)`
+before connecting (live-verified: dropping that one key yields an `AsyncCursor` and
+async execute works; other params — `context`/`client_encoding`/`prepare_threshold` —
+are accepted). `register_jsonb_loader(context)` already accepts any `AdaptContext` incl.
+an `AsyncConnection`. Verified live: `AsyncAbsurd` reads a swapped `_registry` via
+`.get(name)` and `await`s `registration["handler"]` — same entry-dict shape as sync; the
+ctx is an `AsyncTaskContext` with `ctx.task_id` + `ctx._task["attempt"]`, so
+`read_sdk_attempt`/`build_task_context` reuse unchanged.
 
 ## Architecture
 
@@ -48,10 +57,10 @@ Everything below runs on the loop.
 
 - **`aworker_client(backend, queue)`** — async ctx-mgr mirroring the sync
   `worker_client`:
-  `conn = await psycopg.AsyncConnection.connect(**connections[backend.database]. get_connection_params(), autocommit=True)`
+  `params = connections[backend.database].get_connection_params(); params.pop("cursor_factory", None); conn = await psycopg.AsyncConnection.connect(**params, autocommit=True)`
   (DEDICATED — NOT Django's registered conn, so `close_old_connections()` never closes
-  it under the SDK), `register_jsonb_loader(conn)`,
-  `client = AsyncAbsurd(conn, queue_name=queue)`, install
+  it under the SDK; `cursor_factory` dropped per C1 above),
+  `register_jsonb_loader(conn)`, `client = AsyncAbsurd(conn, queue_name=queue)`, install
   `client._registry = LazyTaskRegistry(queue)` (one SLF001), provisioning check via
   `await client.list_queues()` → `ImproperlyConfigured` on absent schema / unprovisioned
   queue (same messages as today), `finally: await conn.close()`.
@@ -95,9 +104,12 @@ Everything below runs on the loop.
 
 Sync `worker_client`, sync `drain_queue`, sync `run_blocking_worker`, sync
 `build_handler`, the sync-handler-building branch of `LazyTaskRegistry`, the
-`import signal`/`signal.signal` thread approach (→ `loop.add_signal_handler`),
-`from absurd_sdk import Absurd` (→ `AsyncAbsurd`). Git history preserves them. NO
-capability lost (async worker is a superset).
+`signal.signal()` thread approach (→ `loop.add_signal_handler`; KEEP `import signal` —
+the `SIGINT`/`SIGTERM` constants are still needed), `from absurd_sdk import Absurd` (→
+`AsyncAbsurd`). Git history preserves them. NO capability lost (async worker is a
+superset). Note: `loop.add_signal_handler` raises on Windows / off the main thread —
+guard or document (out-of-scope to fully solve; worker runs on the main thread under
+`asyncio.run`).
 
 ## Connection model
 
@@ -117,15 +129,33 @@ observable outcome or the CLI.
 
 **Internal-API-touching tests adapt** (behavior unchanged, internals went async):
 
-- `get_task_result(...)` helper currently fetches via the sync `worker_client`. Repoint
-  it at a SYNC read (`get_absurd_client(...).fetch_task_result(task_id, queue)`) — sync
-  SDK reads are independent of the worker's internals. (`claim_one` already uses
-  `get_absurd_client`.)
+- `get_task_result(...)` helper currently fetches via the sync `worker_client` (which
+  registers the jsonb loader on its DEDICATED conn — that's why `snap.result` decodes).
+  Repoint it at a read that ALSO registers the loader on a DEDICATED conn — do NOT use
+  `get_absurd_client(...).fetch_task_result(...)`: `build_absurd_client` does NOT
+  register the loader (so `result` comes back as a raw JSON STRING, breaking 4
+  `snap.result ==` assertions — C2), and registering the loader on `get_absurd_client`'s
+  SHARED Django conn would re-introduce the SP6 JSONField-poison. So the helper opens a
+  dedicated sync `psycopg.connect(**params)` + `register_jsonb_loader(conn)` +
+  `client.fetch_task_result`, OR drives the async `aworker_client` via `asyncio.run` (it
+  already registers on its dedicated conn). (`claim_one` is unaffected — it registers
+  the loader itself.)
 - `worker_client` provisioning/connection tests (dedicated-conn, unprovisioned,
   absent-schema) → rewrite against async `aworker_client` (await it in an
   `asyncio.run`), or fold the unprovisioned/absent-schema cases into the existing
   command-level `ImproperlyConfigured→CommandError` tests.
-- the concurrency drain test → async variant.
+- **`test_unregistered_name_defers_not_crashes` (I1)** uses
+  `with worker_client(...) as client: client.spawn(...)`. Rewrite the spawn via
+  `get_absurd_client("default").spawn( "not.a.real.task", ...)` (sync, no worker
+  internals; spawn reads no jsonb), keep the burst run + "not failed (deferred)"
+  assertion.
+- **the threaded concurrency test (I2)** `test_start_worker_drains_concurrently` uses a
+  `threading.Thread` running sync `start_worker` + `stop_worker`. The async
+  `start_worker` is a coroutine and CANNOT be thread-`target`'d — fully drop the
+  threading scaffold and rewrite as the async-concurrency smoke below (drive
+  `start_worker`/`arun_worker` on the loop). (Verified live:
+  `start_worker(concurrency=4)` ran 4 `asyncio.sleep(0.5)` tasks in ~0.52s vs ~2s
+  serial.)
 
 **New tests (the new capability):**
 
