@@ -12,7 +12,7 @@ from django.db import connection, connections
 
 from django_absurd.connection import register_jsonb_loader
 from django_absurd.queues import get_absurd_backends, get_absurd_client
-from django_absurd.worker import aworker_client
+from django_absurd.worker import WorkerOptions, aworker_client, run_blocking_worker
 from tests.atasks import aecho
 from tests.jobs import record_from_jobs
 from tests.tasks import boom, make_group, report_args, report_attempt, routed
@@ -252,3 +252,39 @@ def test_async_task_runs_end_to_end():
     snap = get_task_result(r.id)
     assert snap.state == "completed"
     assert snap.result == "hi-async"
+
+
+def test_blocking_worker_drains_then_stops():
+    # Exercises the blocking (live-worker) path deterministically — no sleeps: the stopper
+    # awaits each task to a terminal state (SDK await_task_result), THEN calls stop_worker()
+    # (the flag start_worker's loop polls). run_blocking_worker returns once stopped.
+    call_command("absurd_sync_queues")
+    results = [make_group.enqueue(f"blk-{i}") for i in range(3)]
+    task_ids = [r.id.rsplit(":", 1)[-1] for r in results]
+
+    async def drive():
+        async with aworker_client(backend(), "default") as client:
+
+            async def stopper():
+                for tid in task_ids:
+                    await client.await_task_result(tid)
+                client.stop_worker()
+
+            await asyncio.gather(
+                run_blocking_worker(client, WorkerOptions(concurrency=2)),
+                stopper(),
+            )
+
+    asyncio.run(drive())
+    assert Group.objects.filter(name__startswith="blk-").count() == 3
+
+
+def test_non_task_name_defers_not_crashes():
+    # A name that IMPORTS but is not a Task (asleep is the asyncio.sleep alias in atasks)
+    # -> LazyTaskRegistry resolves it, sees it's not a Task, defers (state not failed).
+    call_command("absurd_sync_queues")
+    spawn = get_absurd_client("default").spawn(
+        "tests.atasks.asleep", {"args": [], "kwargs": {}}, queue="default"
+    )
+    run_absurd_worker()
+    assert get_task_result(spawn["task_id"]).state != "failed"
