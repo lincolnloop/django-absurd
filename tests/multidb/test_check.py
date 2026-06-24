@@ -17,25 +17,25 @@ def run_absurd_check(capsys, *args, **kwargs):
     return cap.out + cap.err
 
 
-def test_duration_drift_detected_on_non_default_alias(settings, capsys):
+def test_storage_mode_drift_detected_on_non_default_alias(settings, capsys):
+    # W002 now fires only on storage_mode drift (immutable; never self-heals). This
+    # locks the alias threading through query_queue_state on a non-default database.
     settings.TASKS = {
         "default": {
             "BACKEND": ABSURD,
-            "OPTIONS": {
-                "DATABASE": "absurd",
-                "QUEUES": {"d": {"cleanup_ttl": "90 days"}},
-            },
+            "OPTIONS": {"DATABASE": "absurd", "QUEUES": {"d": {}}},
         }
     }
-    call_command("absurd_sync_queues")
+    call_command("absurd_sync_queues")  # 'd' created unpartitioned on alias 'absurd'
     settings.TASKS = {
         "default": {
             "BACKEND": ABSURD,
             "OPTIONS": {
                 "DATABASE": "absurd",
-                "QUEUES": {"d": {"cleanup_ttl": "30 days"}},
+                "QUEUES": {"d": {"storage_mode": "partitioned"}},
             },
         }
     }
     out = run_absurd_check(capsys, databases=["absurd"])
     assert "absurd.W002" in out
+    assert "storage_mode" in out
