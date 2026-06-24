@@ -9,7 +9,7 @@ from django.db import connections
 from django.db.utils import ProgrammingError
 from django.tasks import task_backends
 
-from django_absurd.backends import AbsurdBackend
+from django_absurd.backends import AbsurdBackend, get_declared_queues
 from django_absurd.connection import build_absurd_client, validate_backend
 from django_absurd.models import Queue
 
@@ -34,12 +34,6 @@ class SyncResult:
     created: list[str] = field(default_factory=list)
     reconciled: list[str] = field(default_factory=list)
     storage_warnings: list[str] = field(default_factory=list)
-
-
-def get_declared_queues(backend: AbsurdBackend) -> dict[str, dict]:
-    if "QUEUES" in backend.options:
-        return dict(backend.options["QUEUES"])
-    return {name: {} for name in backend.queues}
 
 
 def get_absurd_database(backend: AbsurdBackend) -> str:
