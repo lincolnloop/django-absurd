@@ -1,9 +1,13 @@
+import pydoc
 import shutil
 import subprocess
 import sys
 import tarfile
 import zipfile
+from importlib.resources import files
 from pathlib import Path
+
+import django_absurd
 
 # Top-level entries allowed in the sdist. setuptools-scm's git file-finder would
 # otherwise sweep the whole repo in; MANIFEST.in prunes it back to these. Anything
@@ -59,3 +63,12 @@ def test_dist_ships_only_django_absurd(tmp_path):
         f"unexpected files in sdist: {sdist_top - EXPECTED_SDIST_TOP}"
     )
     assert {"django_absurd", "pyproject.toml", "README.md", "LICENSE"} <= sdist_top
+
+
+def test_agents_guide_discoverable_via_help():
+    # help(django_absurd) renders the module docstring via pydoc; it must point an
+    # agent at AGENTS.md...
+    assert "AGENTS.md" in pydoc.render_doc(django_absurd)
+    # ...and the guide the docstring promises must actually be readable from the package.
+    guide = files("django_absurd").joinpath("AGENTS.md").read_text()
+    assert guide.strip()
