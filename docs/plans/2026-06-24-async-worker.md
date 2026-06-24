@@ -242,9 +242,19 @@ only for locality). Then:
   does). In `tests/tasks.py`: remove the module-level `add_async` coroutine + its
   `# Module-level (undecorated) coroutine: applying @task … must be rejected …` comment
   (dead once async is supported). No replacement needed here — Task 2 covers async
-  enqueue
-  - execution positively. (Verify `add_async` has no other importers:
-    `grep -rn add_async tests`.)
+  enqueue + execution positively. (Verify `add_async` has no other importers:
+  `grep -rn add_async tests`.) **Also fix the now-stale imports in
+  `tests/test_enqueue.py` (I-A — else collection ImportError + ruff F401):** the
+  `from tests.tasks import add, add_async, with_default_attempts` line → drop
+  `add_async`; the `from django.tasks import TaskResultStatus, task` line → drop `task`
+  (used ONLY by the deleted test). KEEP `InvalidTask` (still used by
+  `test_undeclared_queue_rejected`).
+- **M-A** `tests/test_worker.py` does
+  `from django_absurd.worker import (worker_client,)`. `worker_client` is dropped (→
+  async `aworker_client`). Update that import — import `aworker_client` if the
+  provisioning tests drive it via `asyncio.run`, OR remove it if those cases fold into
+  the command-level `ImproperlyConfigured→CommandError` tests; don't leave a dead/broken
+  import.
 
 - [ ] **Step 4: Run to verify it passes**
 
