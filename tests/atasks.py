@@ -28,6 +28,13 @@ async def acreate_payload(data):
 
 
 @task
+async def aread_payload(pk):
+    # async QUERY: read a row back via Django async ORM, return its jsonb
+    obj = await Payload.objects.aget(pk=pk)
+    return obj.data
+
+
+@task
 async def asleeper(seconds):
     await asleep(seconds)
     return "slept"

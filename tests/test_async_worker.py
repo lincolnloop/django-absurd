@@ -1,10 +1,20 @@
+import asyncio
 import time
 
 import pytest
 from django.core.management import call_command
+from django.tasks import TaskResultStatus
 
 from django_absurd.params import AbsurdSpawnParams
-from tests.atasks import aboom, acreate_payload, aecho, areport_attempt, asleeper
+from django_absurd.queues import get_absurd_backends
+from tests.atasks import (
+    aboom,
+    acreate_payload,
+    aecho,
+    aread_payload,
+    areport_attempt,
+    asleeper,
+)
 from tests.models import Payload
 from tests.tasks import create_payload, echo  # sync ORM task + sync echo
 from tests.test_worker import get_task_result, run_absurd_worker
@@ -55,6 +65,44 @@ def test_async_orm_jsonfield_round_trips():
     run_absurd_worker()
     pk = get_task_result(r.id).result
     assert Payload.objects.get(pk=pk).data == {"async": True, "y": {"z": None}}
+
+
+def test_async_task_queries_payload():
+    # async QUERY path: a row created in the test, read back by an async task (aget)
+    call_command("absurd_sync_queues")
+    obj = Payload.objects.create(data={"q": [1, {"x": None}], "u": "ünï"})
+    r = aread_payload.enqueue(obj.pk)
+    run_absurd_worker()
+    snap = get_task_result(r.id)
+    assert snap.state == "completed"
+    assert snap.result == {"q": [1, {"x": None}], "u": "ünï"}
+
+
+def test_aenqueue_async_task_runs_end_to_end():
+    # exercise the aenqueue (produce) path for an async task, end-to-end through the worker
+    call_command("absurd_sync_queues")
+    r = asyncio.run(aecho.aenqueue("via-aenqueue"))
+    run_absurd_worker()
+    assert get_task_result(r.id).result == "via-aenqueue"
+
+
+def test_aenqueue_sync_task_runs_end_to_end():
+    # aenqueue a SYNC task too — runs via the worker's executor path
+    call_command("absurd_sync_queues")
+    r = asyncio.run(echo.aenqueue({"via": "aenqueue-sync"}))
+    run_absurd_worker()
+    assert get_task_result(r.id).result == {"via": "aenqueue-sync"}
+
+
+def test_full_async_workflow_aenqueue_to_aget_result():
+    # The whole async pipeline in one flow: aenqueue (async produce) -> async task
+    # on the loop doing async ORM (acreate) -> aget_result (async read of the result).
+    call_command("absurd_sync_queues")
+    r = asyncio.run(acreate_payload.aenqueue({"full": "async", "n": [1, 2]}))
+    run_absurd_worker()
+    got = asyncio.run(get_absurd_backends()["default"].aget_result(r.id))
+    assert got.status == TaskResultStatus.SUCCESSFUL
+    assert Payload.objects.filter(pk=got.return_value).exists()
 
 
 def test_sync_and_async_in_one_worker_run():
