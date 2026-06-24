@@ -32,68 +32,8 @@ def test_in_sync_no_warning(settings, capsys):
     call_command("absurd_sync_queues")
     out = run_absurd_check(capsys, databases=["default"])
     assert (
-        "django-absurd: the absurd schema is not migrated; declared queues cannot be provisioned."
-        not in out
-    )
-    assert (
         "django-absurd: declared queues are out of sync with the database." not in out
     )
-
-
-def test_drift_warns_run_sync(settings, capsys):
-    settings.TASKS = build_tasks_setting({"synced": {}})
-    call_command("absurd_sync_queues")
-    settings.TASKS = build_tasks_setting({"synced": {}, "missing": {}})
-    out = run_absurd_check(capsys, databases=["default"])
-    assert "absurd.W002" in out
-    assert "django-absurd: declared queues are out of sync with the database." in out
-
-
-def test_schema_absent_warns_migrate_first(settings, capsys):
-    settings.TASKS = build_tasks_setting({"a": {}})
-    with connection.cursor() as cur:
-        cur.execute("DROP SCHEMA IF EXISTS absurd CASCADE")
-    try:
-        out = run_absurd_check(capsys, databases=["default"])
-        assert "absurd.W001" in out
-        assert (
-            "django-absurd: the absurd schema is not migrated; declared queues cannot be provisioned."
-            in out
-        )
-    finally:
-        call_command("migrate", "django_absurd", "zero", verbosity=0)
-        call_command("migrate", "django_absurd", verbosity=0)
-
-
-def test_option_drift_warns(settings, capsys):
-    settings.TASKS = build_tasks_setting({"q": {"cleanup_limit": 100}})
-    call_command("absurd_sync_queues")
-    settings.TASKS = build_tasks_setting({"q": {"cleanup_limit": 250}})
-    out = run_absurd_check(capsys, databases=["default"])
-    assert "django-absurd: declared queues are out of sync with the database." in out
-
-
-def test_duration_drift_warns(settings, capsys):
-    settings.TASKS = build_tasks_setting({"q": {"cleanup_ttl": "30 days"}})
-    call_command("absurd_sync_queues")
-    settings.TASKS = build_tasks_setting({"q": {"cleanup_ttl": "60 days"}})
-    out = run_absurd_check(capsys, databases=["default"])
-    assert "django-absurd: declared queues are out of sync with the database." in out
-
-
-def test_mixed_missing_and_drifted_hint_names_both(settings, capsys):
-    settings.TASKS = build_tasks_setting({"present": {"cleanup_limit": 100}})
-    call_command("absurd_sync_queues")
-    settings.TASKS = build_tasks_setting(
-        {
-            "present": {"cleanup_limit": 250},
-            "absent": {},
-        }
-    )
-    out = run_absurd_check(capsys, databases=["default"])
-    assert "django-absurd: declared queues are out of sync with the database." in out
-    assert "present" in out
-    assert "absent" in out
 
 
 def test_db_unreachable_is_silent(settings, capsys):
@@ -104,16 +44,52 @@ def test_db_unreachable_is_silent(settings, capsys):
     try:
         out = run_absurd_check(capsys, databases=["default"])
         assert (
-            "django-absurd: the absurd schema is not migrated; declared queues cannot be provisioned."
-            not in out
-        )
-        assert (
             "django-absurd: declared queues are out of sync with the database."
             not in out
         )
     finally:
         settings.DATABASES["default"]["NAME"] = real_name
         connections["default"].close()
+
+
+@pytest.mark.parametrize(
+    "after",
+    [
+        {"synced": {}, "missing": {}},
+        {"synced": {"cleanup_limit": 250}},
+        {"synced": {"cleanup_ttl": "60 days"}},
+    ],
+    ids=["missing-queue", "mutable-scalar", "mutable-duration"],
+)
+def test_self_healing_drift_no_longer_warns(settings, capsys, after):
+    settings.TASKS = build_tasks_setting({"synced": {}})
+    call_command("absurd_sync_queues")
+    settings.TASKS = build_tasks_setting(after)
+    out = run_absurd_check(capsys, databases=["default"])
+    assert "absurd.W002" not in out
+
+
+def test_storage_mode_drift_warns(settings, capsys):
+    settings.TASKS = build_tasks_setting({"q": {}})
+    call_command("absurd_sync_queues")  # 'q' created unpartitioned
+    settings.TASKS = build_tasks_setting({"q": {"storage_mode": "partitioned"}})
+    out = run_absurd_check(capsys, databases=["default"])
+    assert "absurd.W002" in out
+    assert "storage_mode" in out
+    assert "q" in out
+
+
+def test_schema_absent_check_is_silent(settings, capsys):
+    settings.TASKS = build_tasks_setting({"a": {}})
+    with connection.cursor() as cur:
+        cur.execute("DROP SCHEMA IF EXISTS absurd CASCADE")
+    try:
+        out = run_absurd_check(capsys, databases=["default"])
+        assert "absurd.W001" not in out
+        assert "absurd.W002" not in out
+    finally:
+        call_command("migrate", "django_absurd", "zero", verbosity=0)
+        call_command("migrate", "django_absurd", verbosity=0)
 
 
 @pytest.mark.django_db(databases=["default", "sqlite"])
@@ -201,7 +177,6 @@ def test_multiple_backends_distinct_db_errors(settings, capsys):
 
 
 def test_plain_check_skips_db_state(settings, capsys):
-    # Declared-but-unsynced queue would be W002 drift IF the DB check ran.
     settings.TASKS = build_tasks_setting({"synced": {}})
     call_command("absurd_sync_queues")
     settings.TASKS = build_tasks_setting({"synced": {}, "missing": {}})
@@ -214,4 +189,4 @@ def test_check_with_database_runs_db_state(settings, capsys):
     call_command("absurd_sync_queues")
     settings.TASKS = build_tasks_setting({"synced": {}, "missing": {}})
     out = run_absurd_check(capsys, databases=["default"])
-    assert "absurd.W002" in out
+    assert "absurd.W002" not in out

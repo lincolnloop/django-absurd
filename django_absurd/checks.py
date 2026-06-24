@@ -1,6 +1,5 @@
 import typing as t
 from collections.abc import Sequence
-from datetime import timedelta
 
 from absurd_sdk import CreateQueueOptions, QueueDetachMode, QueueStorageMode
 from django.apps import AppConfig
@@ -8,7 +7,6 @@ from django.conf import settings
 from django.core.checks import CheckMessage, Error, Tags, register
 from django.core.checks import Warning as DjangoWarning
 from django.core.exceptions import ImproperlyConfigured
-from django.db import connections
 from django.db.utils import OperationalError, ProgrammingError
 from django.utils.connection import ConnectionDoesNotExist
 
@@ -21,13 +19,11 @@ from django_absurd.queues import (
 )
 from django_absurd.routers import AbsurdRouter
 
-W001_MSG = (
-    "django-absurd: the absurd schema is not migrated;"
-    " declared queues cannot be provisioned."
+W002_MSG = (
+    "django-absurd: a queue's declared storage_mode differs from the database"
+    " (storage_mode is immutable)."
 )
-W001_HINT = "Run 'manage.py migrate', then 'manage.py absurd_sync_queues'."
-W002_MSG = "django-absurd: declared queues are out of sync with the database."
-W002_HINT = "Run 'manage.py absurd_sync_queues'."
+W002_HINT = "Recreate the queue, or revert the declared storage_mode."
 E005_MSG = (
     "django-absurd: a non-default DATABASE is configured but AbsurdRouter is not in"
     " DATABASE_ROUTERS."
@@ -49,11 +45,6 @@ E004_MSG = (
     " DATABASE values."
 )
 E004_HINT = "Use a single DATABASE across all Absurd backends."
-
-DURATION_OPTION_KEYS = frozenset(
-    ("partition_lookahead", "partition_lookback", "cleanup_ttl", "detach_min_age")
-)
-SCALAR_OPTION_KEYS = frozenset(("cleanup_limit", "detach_mode", "storage_mode"))
 
 VALID_QUEUE_OPTION_KEYS = set(CreateQueueOptions.__annotations__)
 VALID_STORAGE_MODES = set(t.get_args(QueueStorageMode))
@@ -177,41 +168,22 @@ def query_queue_state(alias: str, declared: dict[str, dict]) -> list[CheckMessag
             q.queue_name: q
             for q in Queue.objects.using(alias).filter(queue_name__in=declared)
         }
-    except OperationalError:
+    except (OperationalError, ProgrammingError):
         return []
-    except ProgrammingError:
-        return [DjangoWarning(W001_MSG, hint=W001_HINT, id="absurd.W001")]
 
     drift = [
         name
-        for name, opts in declared.items()
-        if name not in actual or has_option_drifted(alias, opts, actual[name])
+        for name in declared
+        if name in actual
+        and declared[name].get("storage_mode")
+        and declared[name]["storage_mode"] != actual[name].storage_mode
     ]
     if drift:
         return [
             DjangoWarning(
                 W002_MSG,
-                hint=f"{W002_HINT} Out of sync: {', '.join(drift)}",
+                hint=f"{W002_HINT} Affected: {', '.join(drift)}",
                 id="absurd.W002",
             )
         ]
     return []
-
-
-def has_option_drifted(alias: str, opts: dict, queue: Queue) -> bool:
-    for key, declared_val in opts.items():
-        if key in DURATION_OPTION_KEYS:
-            actual_val = getattr(queue, key)
-            if parse_interval(alias, declared_val) != actual_val:
-                return True
-        elif key in SCALAR_OPTION_KEYS:
-            actual_val = getattr(queue, key)
-            if declared_val != actual_val:
-                return True
-    return False
-
-
-def parse_interval(alias: str, interval_str: str) -> timedelta:
-    with connections[alias].cursor() as cur:
-        cur.execute("SELECT %s::interval", [interval_str])
-        return cur.fetchone()[0]
