@@ -60,12 +60,13 @@ Backend `OPTIONS` (all optional):
 
 ```console
 python manage.py migrate              # create Absurd's schema (offline, shipped SQL)
-python manage.py absurd_sync_queues   # create/update the configured queues
-python manage.py absurd_worker        # run a worker
+python manage.py absurd_worker        # run a worker (auto-creates its queue)
 ```
 
-`migrate` does not create any queues — run `absurd_sync_queues` after configuring
-`QUEUES`. Validate configuration at any time with
+Declared queues are **created automatically** on first use — the first `enqueue` to a
+queue, or worker start — so no provisioning step is required. `absurd_sync_queues`
+remains available for eager/explicit provisioning and for reconciling per-queue policy
+changes, but it is no longer a prerequisite. Validate configuration at any time with
 `python manage.py check django_absurd`.
 
 ## Defining and enqueuing tasks
@@ -133,9 +134,12 @@ await send_report.aget_result(result.id)       # async variant
 - **At-least-once delivery.** A task may run more than once (e.g. a crash between the
   handler committing and Absurd's bookkeeping). Keep handlers idempotent; use
   `idempotency_key` where it helps.
-- **Queue sync is additive.** `absurd_sync_queues` creates/updates configured queues but
-  never drops queues removed from config. A queue's `storage_mode` is immutable after
-  creation (a change is reported as a warning, not applied).
+- **Queue creation is automatic and additive.** Declared queues are created on first use
+  (enqueue / worker start); worker start also reconciles a served queue's mutable
+  policy. Neither auto-create nor `absurd_sync_queues` ever drops queues removed from
+  config. A queue's `storage_mode` is immutable after creation (a declared change is
+  reported as a warning, not applied). Only queues **declared in `QUEUES`** are
+  auto-created — an undeclared queue name is rejected, not silently created.
 - **Teardown is destructive.** `migrate django_absurd zero` drops the `absurd` schema
   and all data in it.
 
