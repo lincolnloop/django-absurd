@@ -9,13 +9,6 @@ def add(a, b):
     return a + b
 
 
-# Module-level (undecorated) coroutine: applying @task to it must be rejected
-# because the backend sets supports_async_task=False. Kept undecorated so the
-# module imports cleanly; the test applies task() to it to trigger validation.
-async def add_async(a, b):
-    return a + b
-
-
 @task
 def make_group(name):
     Group.objects.create(name=name)

@@ -27,7 +27,7 @@ class AbsurdBackendOptions(t.TypedDict, total=False):
 
 class AbsurdBackend(BaseTaskBackend):
     supports_get_result = True
-    supports_async_task = False
+    supports_async_task = True
     supports_defer = False
     supports_priority = False
 

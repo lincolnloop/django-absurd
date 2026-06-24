@@ -5,13 +5,13 @@ from django.contrib.auth.models import Group
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command
 from django.db import connection, connections, transaction
-from django.tasks import TaskResultStatus, task
+from django.tasks import TaskResultStatus
 from django.tasks.exceptions import InvalidTask
 
 from django_absurd.connection import register_jsonb_loader
 from django_absurd.params import AbsurdSpawnParams
 from django_absurd.queues import get_absurd_client
-from tests.tasks import add, add_async, with_default_attempts
+from tests.tasks import add, with_default_attempts
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -57,13 +57,6 @@ def test_enqueue_rides_django_transaction():
     with pytest.raises(BoomError):
         enqueue_then_roll_back()
     assert claim_one() == []
-
-
-def test_async_task_rejected():
-    # add_async is module-level, so it passes the module-level-func check and
-    # reaches the async-support check — match="async" pins it to the right reason.
-    with pytest.raises(InvalidTask, match="async"):
-        task(add_async)
 
 
 def test_undeclared_queue_rejected():
