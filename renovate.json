@@ -30,6 +30,22 @@
       "groupName": "dev dependencies"
     },
     {
+      "matchPackageNames": ["hatch*"],
+      "groupName": "hatch"
+    },
+    {
+      "matchPackageNames": ["pytest", "pytest-*", "django-coverage-plugin"],
+      "groupName": "pytest"
+    },
+    {
+      "matchPackageNames": ["mypy", "django-stubs"],
+      "groupName": "type checking"
+    },
+    {
+      "matchPackageNames": ["python"],
+      "groupName": "python"
+    },
+    {
       "matchManagers": ["pre-commit"],
       "groupName": "pre-commit hooks"
     },
