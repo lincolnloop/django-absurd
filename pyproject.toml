@@ -1,23 +1,22 @@
 [build-system]
-build-backend = "setuptools.build_meta"
-requires = ["setuptools>=77", "setuptools-scm>=8"]
+build-backend = "hatchling.build"
+requires = ["hatch-vcs==0.5.0", "hatchling==1.30.1"]
 
 [dependency-groups]
 dev = [
   "absurdctl==0.4.0",
-  "build>=1.2.0",
-  "django-coverage-plugin>=3.2.0",
-  "django-stubs>=6.0.5",
-  "mypy>=2.1.0",
-  "psycopg[binary]>=3.2.0",
-  "pytest-cov>=7.1.0",
-  "pytest-django>=4.12.0",
-  "pytest-socket>=0.8.0",
-  "pytest>=9.1.0",
-  "ruff>=0.9.0",
-  "setuptools-scm>=8",
-  "setuptools>=77",
-  "wheel>=0.43.0",
+  "build==1.5.0",
+  "django-coverage-plugin==3.2.2",
+  "django-stubs==6.0.5",
+  "hatch-vcs==0.5.0",
+  "hatchling==1.30.1",
+  "mypy==2.1.0",
+  "psycopg[binary]==3.3.4",
+  "pytest-cov==7.1.0",
+  "pytest-django==4.12.0",
+  "pytest-socket==0.8.0",
+  "pytest==9.1.0",
+  "ruff==0.15.17",
 ]
 
 [project]
@@ -92,6 +91,17 @@ source = ["django_absurd", "tests"]
 [tool.django-stubs]
 django_settings_module = "tests.settings"
 
+[tool.hatch.build.targets.sdist]
+# Allowlist — only the package ships in the sdist (plus the always-included
+# pyproject.toml, README, and LICENSE). No git-tracked-file sweep.
+include = ["django_absurd"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["django_absurd"]
+
+[tool.hatch.version]
+source = "vcs"
+
 [tool.mypy]
 exclude = [
   "^build/",
@@ -146,15 +156,6 @@ select = ["ALL"]
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"
-
-[tool.setuptools.package-data]
-django_absurd = ["AGENTS.md", "migrations/*.sql", "py.typed"]
-
-[tool.setuptools.packages.find]
-include = ["django_absurd*"]
-where = ["."]
-
-[tool.setuptools_scm]
 
 [tool.uv]
 # Mirror Renovate's minimumReleaseAge cooloff for local/CI resolution.
