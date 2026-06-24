@@ -26,7 +26,10 @@ class Command(BaseCommand):
             "--concurrency",
             type=int,
             default=1,
-            help="Number of concurrent worker threads (default: 1).",
+            help=(
+                "Max tasks run concurrently: async tasks on the event loop, "
+                "sync tasks in a thread pool of this size (default: 1)."
+            ),
         )
         parser.add_argument(
             "--claim-timeout",
