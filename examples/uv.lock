@@ -54,19 +54,18 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "absurdctl", specifier = "==0.4.0" },
-    { name = "build", specifier = ">=1.2.0" },
-    { name = "django-coverage-plugin", specifier = ">=3.2.0" },
-    { name = "django-stubs", specifier = ">=6.0.5" },
-    { name = "mypy", specifier = ">=2.1.0" },
-    { name = "psycopg", extras = ["binary"], specifier = ">=3.2.0" },
-    { name = "pytest", specifier = ">=9.1.0" },
-    { name = "pytest-cov", specifier = ">=7.1.0" },
-    { name = "pytest-django", specifier = ">=4.12.0" },
-    { name = "pytest-socket", specifier = ">=0.8.0" },
-    { name = "ruff", specifier = ">=0.9.0" },
-    { name = "setuptools", specifier = ">=77" },
-    { name = "setuptools-scm", specifier = ">=8" },
-    { name = "wheel", specifier = ">=0.43.0" },
+    { name = "build", specifier = "==1.5.0" },
+    { name = "django-coverage-plugin", specifier = "==3.2.2" },
+    { name = "django-stubs", specifier = "==6.0.5" },
+    { name = "hatch-vcs", specifier = "==0.5.0" },
+    { name = "hatchling", specifier = "==1.30.1" },
+    { name = "mypy", specifier = "==2.1.0" },
+    { name = "psycopg", extras = ["binary"], specifier = "==3.3.4" },
+    { name = "pytest", specifier = "==9.1.0" },
+    { name = "pytest-cov", specifier = "==7.1.0" },
+    { name = "pytest-django", specifier = "==4.12.0" },
+    { name = "pytest-socket", specifier = "==0.8.0" },
+    { name = "ruff", specifier = "==0.15.17" },
 ]
 
 [[package]]
