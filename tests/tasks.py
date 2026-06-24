@@ -2,17 +2,11 @@ from django.contrib.auth.models import Group
 from django.tasks import task
 
 from django_absurd.params import absurd_default_params
+from tests.models import Payload
 
 
 @task
 def add(a, b):
-    return a + b
-
-
-# Module-level (undecorated) coroutine: applying @task to it must be rejected
-# because the backend sets supports_async_task=False. Kept undecorated so the
-# module imports cleanly; the test applies task() to it to trigger validation.
-async def add_async(a, b):
     return a + b
 
 
@@ -53,3 +47,8 @@ def with_default_attempts(a, b):
 @task
 def echo(value):
     return value
+
+
+@task
+def create_payload(data):
+    return Payload.objects.create(data=data).pk

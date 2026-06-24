@@ -90,6 +90,40 @@ plus `headers` and `idempotency_key` (per call). Enqueuing rides the surrounding
 transaction — a task spawned inside `atomic()` is rolled back if the block fails
 (enqueue-on-commit, automatic).
 
+Tasks may be **sync (`def`) or async (`async def`)** — one worker runs both (see
+[Workers](#workers)); `async def` tasks may use Django's async ORM. Tasks are resolved
+by import path, so they can live in any importable module (no `tasks.py` requirement).
+
+## Workers
+
+```console
+python manage.py absurd_worker --queue default
+```
+
+A single worker runs **both** sync and async tasks: `async def` tasks run on an event
+loop (true concurrency for I/O-bound work), sync `def` tasks run in a thread pool.
+
+- **Blocking** (default): long-running; polls until `SIGINT`/`SIGTERM`.
+- **Burst** (`--burst`): drain the current backlog, then exit `0` (cron / one-shot).
+- `--concurrency N` (default `1`): max tasks in flight — sizes both the event-loop
+  concurrency and the sync thread pool. Other flags: `--claim-timeout`,
+  `--poll-interval`, `--batch-size`, `--worker-id`, and `--alias` (required only when
+  several Absurd backends are configured).
+
+## Retrieving results
+
+`enqueue` returns a `TaskResult`; refresh it or fetch one later by id:
+
+```python
+result = send_report.enqueue(42)
+result.refresh()              # reload status / return_value / errors from the store
+result.status                 # READY | RUNNING | SUCCESSFUL | FAILED
+result.return_value           # available once SUCCESSFUL
+
+send_report.get_result(result.id)              # fetch by id (sync)
+await send_report.aget_result(result.id)       # async variant
+```
+
 ## Deployment notes
 
 - **Database privileges.** `migrate` runs `CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`

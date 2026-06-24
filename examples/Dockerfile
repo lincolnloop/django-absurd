@@ -11,11 +11,14 @@ ENV UV_LINK_MODE=copy
 # the venv directly — no `uv run` prefix needed (django-layout's pattern).
 ENV PATH=/repo/examples/.venv/bin:${PATH}
 ENV DJANGO_SETTINGS_MODULE=demo_project.settings
+# The build context has no .git (see .dockerignore), so hatch-vcs/setuptools-scm can't
+# derive django-absurd's version — feed it a pretend version for the in-image build.
+ENV SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0
 
 WORKDIR /repo
 # Only what's needed to build+install django-absurd and the example (keeps the image
 # free of .venv/.tox/.git from the host).
-COPY pyproject.toml ./
+COPY pyproject.toml README.md ./
 COPY django_absurd ./django_absurd
 COPY examples ./examples
 

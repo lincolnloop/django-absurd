@@ -1,13 +1,16 @@
+import asyncio
+import inspect
 import logging
 import signal
 import time
 import typing as t
-from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 import psycopg
 import psycopg.errors
-from absurd_sdk import Absurd
+from absurd_sdk import AsyncAbsurd
 from django.core.exceptions import ImproperlyConfigured
 from django.db import close_old_connections, connections
 from django.tasks import Task, TaskContext, TaskResult, TaskResultStatus
@@ -59,25 +62,68 @@ class LazyTaskRegistry(dict):
         return super().get(name, default)
 
 
-@contextmanager
-def worker_client(
-    backend: AbsurdBackend, queue: str
-) -> t.Generator[Absurd, None, None]:
+def run_worker(
+    backend: AbsurdBackend,
+    queue: str,
+    *,
+    burst: bool = False,
+    options: WorkerOptions | None = None,
+) -> None:
+    options = options or WorkerOptions()
     validate_backend(backend.database)
-    # DEDICATED connection (built from Django's DB config, NOT Django's registered
-    # connection). It must not be Django-managed: the adapter calls
-    # close_old_connections() around each task to keep handler ORM connections fresh
-    # in this long-running process, which would close Django's connection out from
-    # under the SDK's claim/complete/fail bookkeeping. A raw psycopg connection isn't
-    # in Django's registry, so close_old_connections() never touches it.
+    asyncio.run(arun_worker(backend, queue, burst=burst, options=options))
+
+
+async def arun_worker(
+    backend: AbsurdBackend,
+    queue: str,
+    *,
+    burst: bool = False,
+    options: WorkerOptions,
+) -> None:
+    with ThreadPoolExecutor(max_workers=options.concurrency) as executor:
+        loop = asyncio.get_running_loop()
+        loop.set_default_executor(executor)
+        async with aworker_client(backend, queue) as client:
+            logger.info(
+                "django-absurd worker starting: alias=%s queue=%s database=%s "
+                "burst=%s concurrency=%d",
+                backend.alias,
+                queue,
+                backend.database,
+                burst,
+                options.concurrency,
+            )
+            if burst:
+                await drain_queue(
+                    client,
+                    concurrency=options.concurrency,
+                    claim_timeout=options.claim_timeout,
+                    batch_size=options.batch_size,
+                    worker_id=options.worker_id,
+                )
+            else:
+                await run_blocking_worker(client, options)
+
+
+@asynccontextmanager
+async def aworker_client(
+    backend: AbsurdBackend, queue: str
+) -> t.AsyncGenerator[AsyncAbsurd, None]:
+    # DEDICATED async connection (built from Django's DB config, NOT Django's registered
+    # connection). cursor_factory from Django's params is fatal for AsyncConnection
+    # (sync cursor factory incompatible with async execute) — pop it before connecting.
     params: dict[str, t.Any] = connections[backend.database].get_connection_params()
-    conn: psycopg.Connection = psycopg.connect(**params, autocommit=True)
+    params.pop("cursor_factory", None)
+    conn: psycopg.AsyncConnection = await psycopg.AsyncConnection.connect(
+        **params, autocommit=True
+    )
     try:
         register_jsonb_loader(conn)
-        client = Absurd(conn, queue_name=queue)
+        client = AsyncAbsurd(conn, queue_name=queue)
         client._registry = LazyTaskRegistry(queue)  # noqa: SLF001 -- SDK has no public fallback-resolver hook; install lazy import_string resolution
         try:
-            provisioned = client.list_queues()
+            provisioned = await client.list_queues()
         except (
             psycopg.errors.InvalidSchemaName,
             psycopg.errors.UndefinedTable,
@@ -95,56 +141,29 @@ def worker_client(
             raise ImproperlyConfigured(msg)
         yield client
     finally:
-        conn.close()
+        await conn.close()
 
 
-def drain_queue(
-    client: Absurd,
+async def drain_queue(
+    client: AsyncAbsurd,
     *,
+    concurrency: int = 1,
     claim_timeout: int = 120,
     batch_size: int | None = None,
     worker_id: str | None = None,
 ) -> int:
     count = 0
     while True:
-        claimed = client.claim_tasks(
-            batch_size or 1, claim_timeout, worker_id or "worker"
+        claimed = await client.claim_tasks(
+            batch_size or concurrency, claim_timeout, worker_id or "worker"
         )
         if not claimed:
             break
-        for t_ in claimed:
-            client._execute_task(t_, claim_timeout)  # noqa: SLF001 -- SDK exposes no public counted dispatch; mirrors work_batch
-            count += 1
-    return count
-
-
-def run_worker(
-    backend: AbsurdBackend,
-    queue: str,
-    *,
-    burst: bool = False,
-    options: WorkerOptions | None = None,
-) -> None:
-    options = options or WorkerOptions()
-    with worker_client(backend, queue) as client:
-        logger.info(
-            "django-absurd worker starting: alias=%s queue=%s database=%s "
-            "burst=%s concurrency=%d",
-            backend.alias,
-            queue,
-            backend.database,
-            burst,
-            options.concurrency,
+        await asyncio.gather(
+            *[client._execute_task(t_, claim_timeout) for t_ in claimed]  # noqa: SLF001 -- SDK exposes no public counted dispatch; mirrors work_batch
         )
-        if burst:
-            drain_queue(
-                client,
-                claim_timeout=options.claim_timeout,
-                batch_size=options.batch_size,
-                worker_id=options.worker_id,
-            )
-        else:
-            run_blocking_worker(client, options)
+        count += len(claimed)
+    return count
 
 
 def build_task_context(
@@ -168,9 +187,8 @@ def build_task_context(
     return TaskContext(task_result=task_result)
 
 
-def build_handler(task: Task) -> t.Callable[[t.Any, t.Any], t.Any]:
-    def handler(params: t.Any, ctx: t.Any) -> t.Any:
-        close_old_connections()
+def build_handler(task: Task) -> t.Callable[[t.Any, t.Any], t.Awaitable[t.Any]]:
+    async def handler(params: t.Any, ctx: t.Any) -> t.Any:
         args = params.get("args", [])
         kwargs = params.get("kwargs", {})
         attempt = read_sdk_attempt(ctx)
@@ -184,9 +202,25 @@ def build_handler(task: Task) -> t.Callable[[t.Any, t.Any], t.Any]:
         try:
             if task.takes_context:
                 ctx_ = build_task_context(task, ctx, args, kwargs)
-                result = task.func(ctx_, *args, **kwargs)
+            if inspect.iscoroutinefunction(task.func):
+                if task.takes_context:
+                    result = await task.func(ctx_, *args, **kwargs)
+                else:
+                    result = await task.func(*args, **kwargs)
             else:
-                result = task.func(*args, **kwargs)
+
+                def call_sync() -> t.Any:
+                    close_old_connections()
+                    try:
+                        if task.takes_context:
+                            return task.func(ctx_, *args, **kwargs)
+                        return task.func(*args, **kwargs)
+                    finally:
+                        close_old_connections()
+
+                result = await asyncio.get_running_loop().run_in_executor(
+                    None, call_sync
+                )
         except Exception:
             duration = time.monotonic() - start
             logger.exception(
@@ -209,8 +243,6 @@ def build_handler(task: Task) -> t.Callable[[t.Any, t.Any], t.Any]:
                 duration,
             )
             return result
-        finally:
-            close_old_connections()
 
     return handler
 
@@ -219,11 +251,12 @@ def read_sdk_attempt(ctx: t.Any) -> int:
     return ctx._task["attempt"]  # noqa: SLF001 -- SDK TaskContext has no public attempt property
 
 
-def run_blocking_worker(client: Absurd, options: WorkerOptions) -> None:
-    prior_sigint = signal.signal(signal.SIGINT, lambda _s, _f: client.stop_worker())
-    prior_sigterm = signal.signal(signal.SIGTERM, lambda _s, _f: client.stop_worker())
+async def run_blocking_worker(client: AsyncAbsurd, options: WorkerOptions) -> None:
+    loop = asyncio.get_running_loop()
+    loop.add_signal_handler(signal.SIGINT, client.stop_worker)
+    loop.add_signal_handler(signal.SIGTERM, client.stop_worker)
     try:
-        client.start_worker(
+        await client.start_worker(
             worker_id=options.worker_id,
             claim_timeout=options.claim_timeout,
             concurrency=options.concurrency,
@@ -231,5 +264,5 @@ def run_blocking_worker(client: Absurd, options: WorkerOptions) -> None:
             poll_interval=options.poll_interval,
         )
     finally:
-        signal.signal(signal.SIGINT, prior_sigint)
-        signal.signal(signal.SIGTERM, prior_sigterm)
+        loop.remove_signal_handler(signal.SIGINT)
+        loop.remove_signal_handler(signal.SIGTERM)

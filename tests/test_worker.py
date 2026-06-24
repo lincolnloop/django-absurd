@@ -1,18 +1,19 @@
+import asyncio
 import logging
-import threading
-import time
 
+import psycopg
 import pytest
+from absurd_sdk import Absurd
 from django.contrib.auth.models import Group
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command, load_command_class
 from django.core.management.base import CommandError
-from django.db import connection
+from django.db import connection, connections
 
-from django_absurd.queues import get_absurd_backends
-from django_absurd.worker import (
-    worker_client,
-)
+from django_absurd.connection import register_jsonb_loader
+from django_absurd.queues import get_absurd_backends, get_absurd_client
+from django_absurd.worker import WorkerOptions, aworker_client, run_blocking_worker
+from tests.atasks import aecho
 from tests.jobs import record_from_jobs
 from tests.tasks import boom, make_group, report_args, report_attempt, routed
 
@@ -23,22 +24,30 @@ def backend():
     return get_absurd_backends()["default"]
 
 
-def run_absurd_worker(queue="default"):
+def run_absurd_worker(queue="default", concurrency=1):
     """Run the absurd_worker management command in burst mode (drain then exit)."""
-    call_command("absurd_worker", queue=queue, burst=True)
+    call_command("absurd_worker", queue=queue, burst=True, concurrency=concurrency)
 
 
-def get_task_result(task_id, alias="default", queue="default"):
-    task_id = str(task_id).rsplit(":", 1)[-1]
-    with worker_client(get_absurd_backends()[alias], queue) as client:
-        return client.fetch_task_result(task_id)
+def get_task_result(task_id, queue="default"):
+    raw_task_id = str(task_id).rsplit(":", 1)[-1]
+    params = connections["default"].get_connection_params()
+    conn = psycopg.connect(**params, autocommit=True)
+    try:
+        register_jsonb_loader(conn)
+        return Absurd(conn).fetch_task_result(raw_task_id, queue)
+    finally:
+        conn.close()
 
 
 def test_worker_client_uses_dedicated_connection():
     call_command("absurd_sync_queues")
 
-    with worker_client(backend(), "default") as client:
-        assert "default" in client.list_queues()
+    async def _enter():
+        async with aworker_client(backend(), "default") as client:
+            return "default" in await client.list_queues()
+
+    assert asyncio.run(_enter())
 
 
 @pytest.mark.django_db(databases=["default", "sqlite"], transaction=True)
@@ -50,8 +59,8 @@ def test_worker_client_rejects_non_psycopg3(settings):
             "OPTIONS": {"DATABASE": "sqlite"},
         }
     }
-    with pytest.raises(ImproperlyConfigured), worker_client(backend(), "default"):
-        pass
+    with pytest.raises(CommandError, match="psycopg"):
+        call_command("absurd_worker", queue="default", burst=True)
 
 
 def test_worker_client_unprovisioned_queue_errors(settings):
@@ -63,11 +72,13 @@ def test_worker_client_unprovisioned_queue_errors(settings):
             "OPTIONS": {"DATABASE": "default"},
         }
     }
-    with (
-        pytest.raises(ImproperlyConfigured) as exc,
-        worker_client(backend(), "unsynced"),
-    ):
-        pass
+
+    async def _enter():
+        async with aworker_client(backend(), "unsynced"):
+            pass
+
+    with pytest.raises(ImproperlyConfigured) as exc:
+        asyncio.run(_enter())
     message = str(exc.value)
     assert "unsynced" in message
     assert "absurd_sync_queues" in message
@@ -77,11 +88,13 @@ def test_worker_client_absent_schema_errors():
     with connection.cursor() as cur:
         cur.execute("DROP SCHEMA IF EXISTS absurd CASCADE")
     try:
-        with (
-            pytest.raises(ImproperlyConfigured, match="migrate"),
-            worker_client(backend(), "default"),
-        ):
-            pass
+
+        async def _enter():
+            async with aworker_client(backend(), "default"):
+                pass
+
+        with pytest.raises(ImproperlyConfigured, match="migrate"):
+            asyncio.run(_enter())
     finally:
         call_command("migrate", "django_absurd", "zero", verbosity=0)
         call_command("migrate", "django_absurd", verbosity=0)
@@ -136,11 +149,9 @@ def test_handler_logs_task_outcome(caplog):
 
 def test_unregistered_name_defers_not_crashes():
     call_command("absurd_sync_queues")
-    be = get_absurd_backends()["default"]
-    with worker_client(be, "default") as client:
-        spawn = client.spawn(
-            "not.a.real.task", {"args": [], "kwargs": {}}, queue="default"
-        )
+    spawn = get_absurd_client("default").spawn(
+        "not.a.real.task", {"args": [], "kwargs": {}}, queue="default"
+    )
     run_absurd_worker()
     assert get_task_result(spawn["task_id"]).state != "failed"
 
@@ -230,21 +241,50 @@ def test_start_worker_drains_concurrently():
     for i in range(5):
         make_group.enqueue(f"g{i}")
 
-    be = get_absurd_backends()["default"]
-    with worker_client(be, "default") as client:
-        worker = threading.Thread(
-            target=lambda: client.start_worker(concurrency=3, poll_interval=0.05),
-            daemon=True,
-        )
-        worker.start()
-        deadline = time.monotonic() + 20
-        while Group.objects.filter(name__startswith="g").count() < 5:
-            if time.monotonic() > deadline:
-                client.stop_worker()
-                worker.join(5)
-                msg = "worker did not drain in time"
-                raise AssertionError(msg)
-            time.sleep(0.1)
-        client.stop_worker()
-        worker.join(5)
+    run_absurd_worker()
     assert Group.objects.filter(name__startswith="g").count() == 5
+
+
+def test_async_task_runs_end_to_end():
+    call_command("absurd_sync_queues")
+    r = aecho.enqueue("hi-async")
+    run_absurd_worker()
+    snap = get_task_result(r.id)
+    assert snap.state == "completed"
+    assert snap.result == "hi-async"
+
+
+def test_blocking_worker_drains_then_stops():
+    # Exercises the blocking (live-worker) path deterministically — no sleeps: the stopper
+    # awaits each task to a terminal state (SDK await_task_result), THEN calls stop_worker()
+    # (the flag start_worker's loop polls). run_blocking_worker returns once stopped.
+    call_command("absurd_sync_queues")
+    results = [make_group.enqueue(f"blk-{i}") for i in range(3)]
+    task_ids = [r.id.rsplit(":", 1)[-1] for r in results]
+
+    async def drive():
+        async with aworker_client(backend(), "default") as client:
+
+            async def stopper():
+                for tid in task_ids:
+                    await client.await_task_result(tid)
+                client.stop_worker()
+
+            await asyncio.gather(
+                run_blocking_worker(client, WorkerOptions(concurrency=2)),
+                stopper(),
+            )
+
+    asyncio.run(drive())
+    assert Group.objects.filter(name__startswith="blk-").count() == 3
+
+
+def test_non_task_name_defers_not_crashes():
+    # A name that IMPORTS but is not a Task (asleep is the asyncio.sleep alias in atasks)
+    # -> LazyTaskRegistry resolves it, sees it's not a Task, defers (state not failed).
+    call_command("absurd_sync_queues")
+    spawn = get_absurd_client("default").spawn(
+        "tests.atasks.asleep", {"args": [], "kwargs": {}}, queue="default"
+    )
+    run_absurd_worker()
+    assert get_task_result(spawn["task_id"]).state != "failed"
