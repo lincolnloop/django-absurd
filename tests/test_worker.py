@@ -63,25 +63,14 @@ def test_worker_client_rejects_non_psycopg3(settings):
         call_command("absurd_worker", queue="default", burst=True)
 
 
-def test_worker_client_unprovisioned_queue_errors(settings):
-    call_command("absurd_sync_queues")
-    settings.TASKS = {
-        "default": {
-            "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "QUEUES": ["default", "unsynced"],
-            "OPTIONS": {"DATABASE": "default"},
-        }
-    }
-
+def test_worker_client_opens_without_provisioning_check():
+    # No absurd_sync_queues; 'default' unprovisioned (schema present). aworker_client must
+    # NOT raise — the provisioned-or-die check is gone.
     async def _enter():
-        async with aworker_client(backend(), "unsynced"):
-            pass
+        async with aworker_client(backend(), "default") as client:
+            return await client.list_queues()
 
-    with pytest.raises(ImproperlyConfigured) as exc:
-        asyncio.run(_enter())
-    message = str(exc.value)
-    assert "unsynced" in message
-    assert "absurd_sync_queues" in message
+    assert "default" not in asyncio.run(_enter())  # unprovisioned, yet no error
 
 
 def test_worker_client_absent_schema_errors():
@@ -222,18 +211,15 @@ def test_command_burst_runs_task_end_to_end():
     assert get_task_result(result.id).state == "completed"
 
 
-def test_command_maps_improperly_configured_to_commanderror(settings):
-    call_command("absurd_sync_queues")
-    settings.TASKS = {
-        "default": {
-            "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "QUEUES": ["default", "unsynced"],
-            "OPTIONS": {"DATABASE": "default"},
-        }
-    }
-    with pytest.raises(CommandError) as exc:
-        call_command("absurd_worker", queue="unsynced", burst=True)
-    assert "unsynced" in str(exc.value)
+def test_command_maps_improperly_configured_to_commanderror():
+    with connection.cursor() as cur:
+        cur.execute("DROP SCHEMA IF EXISTS absurd CASCADE")
+    try:
+        with pytest.raises(CommandError, match="migrate"):
+            call_command("absurd_worker", queue="default", burst=True)
+    finally:
+        call_command("migrate", "django_absurd", "zero", verbosity=0)
+        call_command("migrate", "django_absurd", verbosity=0)
 
 
 def test_start_worker_drains_concurrently():

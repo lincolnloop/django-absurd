@@ -123,7 +123,8 @@ async def aworker_client(
         client = AsyncAbsurd(conn, queue_name=queue)
         client._registry = LazyTaskRegistry(queue)  # noqa: SLF001 -- SDK has no public fallback-resolver hook; install lazy import_string resolution
         try:
-            provisioned = await client.list_queues()
+            # Probes for the schema-absent guard; raises if Absurd is not migrated.
+            await client.list_queues()
         except (
             psycopg.errors.InvalidSchemaName,
             psycopg.errors.UndefinedTable,
@@ -134,11 +135,6 @@ async def aworker_client(
                 " Run: manage.py migrate then manage.py absurd_sync_queues"
             )
             raise ImproperlyConfigured(msg) from err
-        if queue not in provisioned:
-            msg = (
-                f"Queue '{queue}' is not provisioned. Run: manage.py absurd_sync_queues"
-            )
-            raise ImproperlyConfigured(msg)
         yield client
     finally:
         await conn.close()
