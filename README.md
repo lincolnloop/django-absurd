@@ -47,9 +47,14 @@ TASKS = {
 }
 ```
 
-Backend `OPTIONS` (all optional): `DATABASE` (the `DATABASES` alias to use, default
-`"default"`), `DEFAULT_MAX_ATTEMPTS` (default `5`), and `QUEUES` (a map of queue name →
-`absurd_sdk.CreateQueueOptions` for per-queue config).
+Backend `OPTIONS` (all optional):
+
+- `DATABASE` — the `DATABASES` alias to use (default `"default"`).
+- `DEFAULT_MAX_ATTEMPTS` — retry ceiling per task (default `5`).
+- `QUEUES` — a map of queue name → `absurd_sdk.CreateQueueOptions`, for per-queue
+  customization. Use this _instead of_ the top-level `QUEUES` list (which only names
+  queues) — declare queues in one place or the other, never both (setting both is a
+  configuration error).
 
 ## Setup
 
@@ -102,12 +107,19 @@ transaction — a task spawned inside `atomic()` is rolled back if the block fai
 
 ## Adopting an existing Absurd database
 
-If the target database already runs Absurd (its schema managed outside Django), fake the
-initial migration so Django records it without re-running the DDL:
+If the target database already runs Absurd (its schema managed outside Django), you can
+fake django-absurd's migration so Django records it as applied without re-running the
+DDL:
 
 ```console
-python manage.py migrate --fake django_absurd 0001
+python manage.py migrate --fake django_absurd
 ```
+
+> **Use extreme caution.** Faking tells Django the schema is already present without
+> checking it. Only do this when the existing `absurd` schema exactly matches the
+> version django-absurd targets (`django_absurd.ABSURD_SCHEMA_VERSION`) — a mismatch
+> causes runtime failures Django cannot detect. Verify the versions line up before
+> faking.
 
 ## License
 
