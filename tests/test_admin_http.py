@@ -66,11 +66,11 @@ def test_six_entries_registered_on_default_site():
     register_absurd_admin([djadmin.site])
     registered = {m._meta.model_name for m in djadmin.site._registry}
     assert {
-        "absurdtask",
-        "absurdrun",
-        "absurdcheckpoint",
-        "absurdevent",
-        "absurdwait",
+        "task",
+        "run",
+        "checkpoint",
+        "event",
+        "wait",
         "queue",
     } <= registered
 
@@ -80,7 +80,7 @@ def test_staff_user_sees_entries_in_index(client, staff_user):
     refresh_url_resolver()
     client.force_login(staff_user)
     soup = parse_html(client.get("/admin/"))
-    assert soup.select_one('a[href$="/django_absurd/absurdtask/"]') is not None
+    assert soup.select_one('a[href$="/django_absurd/task/"]') is not None
 
 
 @override_settings(
@@ -96,7 +96,7 @@ def test_custom_site_registration():
     from tests.admin import custom_site  # noqa: PLC0415
 
     register_absurd_admin(resolve_admin_sites())
-    assert any(m._meta.model_name == "absurdtask" for m in custom_site._registry)
+    assert any(m._meta.model_name == "task" for m in custom_site._registry)
 
 
 @override_settings(
@@ -117,7 +117,7 @@ def test_tasks_changelist_unions_and_filters(client, admin_user):
     refresh_url_resolver()
     seed()
     client.force_login(admin_user)
-    url = reverse("admin:django_absurd_absurdtask_changelist")
+    url = reverse("admin:django_absurd_task_changelist")
 
     soup = parse_html(client.get(url))
     rows = result_rows(soup)
@@ -146,7 +146,7 @@ def test_changelist_shows_mixed_task_states(client, admin_user):
     refresh_url_resolver()
     seed_mixed()
     client.force_login(admin_user)
-    cl = reverse("admin:django_absurd_absurdtask_changelist")
+    cl = reverse("admin:django_absurd_task_changelist")
     soup = parse_html(client.get(cl))
     states = {
         r.select_one(".field-state").get_text(strip=True) for r in result_rows(soup)
@@ -159,7 +159,7 @@ def test_changelist_filters_by_state(client, admin_user):
     refresh_url_resolver()
     seed_mixed()
     client.force_login(admin_user)
-    cl = reverse("admin:django_absurd_absurdtask_changelist")
+    cl = reverse("admin:django_absurd_task_changelist")
 
     failed = parse_html(client.get(cl, {"state": "failed"}))
     assert {
@@ -177,7 +177,7 @@ def test_changelist_search_narrows_by_task_name(client, admin_user):
     refresh_url_resolver()
     seed_mixed()  # two add tasks + one boom
     client.force_login(admin_user)
-    cl = reverse("admin:django_absurd_absurdtask_changelist")
+    cl = reverse("admin:django_absurd_task_changelist")
     soup = parse_html(client.get(cl, {"q": "tests.tasks.boom"}))
     names = {
         r.select_one(".field-task_name").get_text(strip=True) for r in result_rows(soup)
@@ -191,7 +191,7 @@ def test_failed_task_detail_shows_state(client, admin_user):
     _, failed, _ = seed_mixed()
     client.force_login(admin_user)
     # the backend's result id is already "<queue>:<task_id>" — i.e. the admin_pk
-    url = reverse("admin:django_absurd_absurdtask_change", args=[quote(failed.id)])
+    url = reverse("admin:django_absurd_task_change", args=[quote(failed.id)])
     soup = parse_html(client.get(url))
     assert soup.select_one(".field-state .readonly").get_text(strip=True) == "failed"
 
@@ -203,7 +203,7 @@ def test_runs_changelist_filtered_to_task(client, admin_user):
     client.force_login(admin_user)
     # the task→runs link searches by the bare task_id (admin_pk is "<queue>:<task_id>")
     task_id = failed.id.split(":", 1)[1]
-    runs_cl = reverse("admin:django_absurd_absurdrun_changelist")
+    runs_cl = reverse("admin:django_absurd_run_changelist")
     soup = parse_html(client.get(runs_cl, {"q": task_id}))
     rows = result_rows(soup)
     assert rows  # the failed task has at least one run
@@ -218,9 +218,7 @@ def task_change_url(queue, task_name):
     obj = (
         build_admin_model(spec).objects.filter(queue=queue, task_name=task_name).first()
     )
-    return obj, reverse(
-        "admin:django_absurd_absurdtask_change", args=[quote(obj.admin_pk)]
-    )
+    return obj, reverse("admin:django_absurd_task_change", args=[quote(obj.admin_pk)])
 
 
 def test_task_detail_renders_read_only(client, admin_user):
@@ -228,7 +226,7 @@ def test_task_detail_renders_read_only(client, admin_user):
     refresh_url_resolver()
     seed()
     client.force_login(admin_user)
-    client.get(reverse("admin:django_absurd_absurdtask_changelist"))  # prime the view
+    client.get(reverse("admin:django_absurd_task_changelist"))  # prime the view
     _, url = task_change_url("default", "tests.tasks.add")
 
     soup = parse_html(client.get(url))
@@ -243,12 +241,12 @@ def test_task_detail_has_runs_link(client, admin_user):
     refresh_url_resolver()
     seed()
     client.force_login(admin_user)
-    client.get(reverse("admin:django_absurd_absurdtask_changelist"))  # prime the view
+    client.get(reverse("admin:django_absurd_task_changelist"))  # prime the view
     obj, url = task_change_url("default", "tests.tasks.add")
 
     soup = parse_html(client.get(url))
     anchor = soup.select_one(".field-runs_link a")
-    runs_cl = reverse("admin:django_absurd_absurdrun_changelist")
+    runs_cl = reverse("admin:django_absurd_run_changelist")
     assert anchor is not None
     assert anchor["href"] == f"{runs_cl}?q={obj.task_id}"
 
@@ -266,7 +264,7 @@ def test_checkpoint_detail_with_nasty_name(client, admin_user):
         )
     client.force_login(admin_user)
     pk = f"default:{tid}:step/a:b c"
-    url = reverse("admin:django_absurd_absurdcheckpoint_change", args=[quote(pk)])
+    url = reverse("admin:django_absurd_checkpoint_change", args=[quote(pk)])
 
     soup = parse_html(client.get(url))
     name_field = soup.select_one(".field-checkpoint_name .readonly")
@@ -278,7 +276,7 @@ def test_add_view_forbidden(client, admin_user):
     register_absurd_admin([djadmin.site])
     refresh_url_resolver()
     client.force_login(admin_user)
-    url = reverse("admin:django_absurd_absurdtask_add")
+    url = reverse("admin:django_absurd_task_add")
     assert client.get(url).status_code in (403, 302)
 
 
@@ -290,7 +288,7 @@ def test_changelist_reflects_queue_added_after_first_load(client, admin_user):
     call_command("absurd_sync_queues")
     get_absurd_client().drop_queue("other")
     client.force_login(admin_user)
-    cl = reverse("admin:django_absurd_absurdtask_changelist")
+    cl = reverse("admin:django_absurd_task_changelist")
 
     first = parse_html(client.get(cl, {"queue": "other"}))
     assert not result_rows(first)
@@ -312,7 +310,7 @@ def test_changelist_degrades_when_schema_absent(client, admin_user):
     refresh_url_resolver()
     call_command("migrate", "django_absurd", "zero", verbosity=0)
     client.force_login(admin_user)
-    cl = reverse("admin:django_absurd_absurdtask_changelist")
+    cl = reverse("admin:django_absurd_task_changelist")
     assert client.get(cl).status_code == 200
     call_command("migrate", "django_absurd", verbosity=0)
 
@@ -322,10 +320,10 @@ def test_changelist_survives_concurrent_view_drop(client, admin_user):
     refresh_url_resolver()
     seed()
     client.force_login(admin_user)
-    cl = reverse("admin:django_absurd_absurdtask_changelist")
+    cl = reverse("admin:django_absurd_task_changelist")
     assert client.get(cl).status_code == 200
     with connections["default"].cursor() as cur:
-        cur.execute("DROP VIEW IF EXISTS absurd.admin_tasks")
+        cur.execute("DROP VIEW IF EXISTS absurd.tasks_view")
     assert client.get(cl).status_code == 200
 
 
@@ -359,7 +357,7 @@ def test_admin_disabled_skips_registration():
     }
     with override_settings(TASKS=enabled):
         autoregister_admin()
-    assert any(m._meta.model_name == "absurdtask" for m in gated_site._registry)
+    assert any(m._meta.model_name == "task" for m in gated_site._registry)
 
 
 @override_settings(
@@ -377,8 +375,8 @@ def test_admin_site_tuple_registers_on_all_sites():
     from tests.admin import custom_site, other_site  # noqa: PLC0415
 
     register_absurd_admin(resolve_admin_sites())
-    assert any(m._meta.model_name == "absurdtask" for m in custom_site._registry)
-    assert any(m._meta.model_name == "absurdtask" for m in other_site._registry)
+    assert any(m._meta.model_name == "task" for m in custom_site._registry)
+    assert any(m._meta.model_name == "task" for m in other_site._registry)
 
 
 def test_run_detail_shows_failure_reason(client, admin_user):
@@ -386,13 +384,13 @@ def test_run_detail_shows_failure_reason(client, admin_user):
     refresh_url_resolver()
     seed_mixed()
     client.force_login(admin_user)
-    runs_cl = reverse("admin:django_absurd_absurdrun_changelist")
+    runs_cl = reverse("admin:django_absurd_run_changelist")
     client.get(runs_cl)  # prime the runs view
     runs_model = build_admin_model(
         next(s for s in ADMIN_ENTITY_SPECS if s.name == "runs")
     )
     run = runs_model.objects.filter(queue="default", state="failed").first()
-    url = reverse("admin:django_absurd_absurdrun_change", args=[quote(run.admin_pk)])
+    url = reverse("admin:django_absurd_run_change", args=[quote(run.admin_pk)])
     soup = parse_html(client.get(url))
     failure = soup.select_one(".field-failure_reason .readonly")
     assert failure is not None
@@ -410,7 +408,7 @@ def test_events_changelist_and_detail(client, admin_user):
             ["order.shipped", '{"id": 1}'],
         )
     client.force_login(admin_user)
-    cl = reverse("admin:django_absurd_absurdevent_changelist")
+    cl = reverse("admin:django_absurd_event_changelist")
     soup = parse_html(client.get(cl))
     names = {
         r.select_one(".field-event_name").get_text(strip=True)
@@ -419,7 +417,7 @@ def test_events_changelist_and_detail(client, admin_user):
     assert "order.shipped" in names
 
     url = reverse(
-        "admin:django_absurd_absurdevent_change", args=[quote("default:order.shipped")]
+        "admin:django_absurd_event_change", args=[quote("default:order.shipped")]
     )
     detail = parse_html(client.get(url))
     assert (
@@ -440,7 +438,7 @@ def test_waits_changelist_and_composite_detail(client, admin_user):
             [tid, rid, "wait/step:1", "evt"],
         )
     client.force_login(admin_user)
-    cl = reverse("admin:django_absurd_absurdwait_changelist")
+    cl = reverse("admin:django_absurd_wait_changelist")
     soup = parse_html(client.get(cl))
     steps = {
         r.select_one(".field-step_name").get_text(strip=True) for r in result_rows(soup)
@@ -449,7 +447,7 @@ def test_waits_changelist_and_composite_detail(client, admin_user):
 
     # composite-PK detail (queue:run_id:step_name) with a nasty step_name
     url = reverse(
-        "admin:django_absurd_absurdwait_change",
+        "admin:django_absurd_wait_change",
         args=[quote(f"default:{rid}:wait/step:1")],
     )
     detail = parse_html(client.get(url))
@@ -471,7 +469,7 @@ def test_checkpoints_changelist(client, admin_user):
             [tid, "cp1", '{"n": 1}'],
         )
     client.force_login(admin_user)
-    cl = reverse("admin:django_absurd_absurdcheckpoint_changelist")
+    cl = reverse("admin:django_absurd_checkpoint_changelist")
     soup = parse_html(client.get(cl))
     names = {
         r.select_one(".field-checkpoint_name").get_text(strip=True)
@@ -497,7 +495,7 @@ def test_partitioned_queue_appears_in_admin(client, admin_user):
     add.using(queue_name="part").enqueue(1, 1)
     call_command("absurd_worker", queue="part", burst=True)
     client.force_login(admin_user)
-    cl = reverse("admin:django_absurd_absurdtask_changelist")
+    cl = reverse("admin:django_absurd_task_changelist")
     soup = parse_html(client.get(cl))
     queues = {
         r.select_one(".field-queue").get_text(strip=True) for r in result_rows(soup)

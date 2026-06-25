@@ -30,8 +30,8 @@ ADMIN_ENTITY_SPECS: tuple[EntitySpec, ...] = (
     EntitySpec(
         name="tasks",
         prefix="t",
-        view_name="admin_tasks",
-        model_name="AbsurdTask",
+        view_name="tasks_view",
+        model_name="Task",
         verbose="task",
         natural_key_sql=psycopg.sql.SQL("task_id::text"),
         columns=(
@@ -59,8 +59,8 @@ ADMIN_ENTITY_SPECS: tuple[EntitySpec, ...] = (
     EntitySpec(
         name="runs",
         prefix="r",
-        view_name="admin_runs",
-        model_name="AbsurdRun",
+        view_name="runs_view",
+        model_name="Run",
         verbose="run",
         natural_key_sql=psycopg.sql.SQL("run_id::text"),
         columns=(
@@ -88,8 +88,8 @@ ADMIN_ENTITY_SPECS: tuple[EntitySpec, ...] = (
     EntitySpec(
         name="checkpoints",
         prefix="c",
-        view_name="admin_checkpoints",
-        model_name="AbsurdCheckpoint",
+        view_name="checkpoints_view",
+        model_name="Checkpoint",
         verbose="checkpoint",
         natural_key_sql=psycopg.sql.SQL("task_id::text || ':' || checkpoint_name"),
         columns=(
@@ -108,8 +108,8 @@ ADMIN_ENTITY_SPECS: tuple[EntitySpec, ...] = (
     EntitySpec(
         name="events",
         prefix="e",
-        view_name="admin_events",
-        model_name="AbsurdEvent",
+        view_name="events_view",
+        model_name="Event",
         verbose="event",
         natural_key_sql=psycopg.sql.SQL("event_name::text"),
         columns=(
@@ -125,8 +125,8 @@ ADMIN_ENTITY_SPECS: tuple[EntitySpec, ...] = (
     EntitySpec(
         name="waits",
         prefix="w",
-        view_name="admin_waits",
-        model_name="AbsurdWait",
+        view_name="waits_view",
+        model_name="Wait",
         verbose="wait",
         natural_key_sql=psycopg.sql.SQL("run_id::text || ':' || step_name"),
         columns=(

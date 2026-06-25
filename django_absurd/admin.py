@@ -170,7 +170,7 @@ def register_absurd_admin(sites: t.Iterable[AdminSite]) -> None:
 
 @admin.display(description="runs")
 def runs_link(self: t.Any, obj: t.Any) -> str:
-    url = reverse("admin:django_absurd_absurdrun_changelist")
+    url = reverse("admin:django_absurd_run_changelist")
     return format_html('<a href="{}?q={}">runs</a>', url, obj.task_id)
 
 

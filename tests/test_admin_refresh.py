@@ -18,7 +18,7 @@ TASKS_SPEC = next(s for s in ADMIN_ENTITY_SPECS if s.name == "tasks")
 
 def view_exists():
     with connections["default"].cursor() as cur:
-        cur.execute("SELECT to_regclass('absurd.admin_tasks') IS NOT NULL")
+        cur.execute("SELECT to_regclass('absurd.tasks_view') IS NOT NULL")
         return cur.fetchone()[0]
 
 

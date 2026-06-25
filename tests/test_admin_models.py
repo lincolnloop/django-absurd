@@ -24,7 +24,7 @@ def test_model_maps_schema_quoted_view_unmanaged():
     tasks_model = build_admin_model(
         next(s for s in ADMIN_ENTITY_SPECS if s.name == "tasks")
     )
-    assert tasks_model._meta.db_table == 'absurd"."admin_tasks'
+    assert tasks_model._meta.db_table == 'absurd"."tasks_view'
     assert tasks_model._meta.managed is False
     assert tasks_model._meta.pk.name == "admin_pk"
     assert isinstance(tasks_model._meta.get_field("params"), models.JSONField)
@@ -37,7 +37,7 @@ def test_models_absent_from_global_registry():
         for m in global_apps.get_models()
         if m._meta.app_label == "django_absurd"
     }
-    assert "AbsurdTask" not in names
+    assert "Task" not in names
 
 
 def test_build_admin_model_is_idempotent():
