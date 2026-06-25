@@ -79,3 +79,30 @@ def test_worker_start_rebuilds_when_it_created_queue():
     add.using(queue_name="other").enqueue(7, 8)
     call_command("absurd_worker", queue="other", burst=True)
     assert task_model.objects.filter(queue="other").count() >= 1
+
+
+def test_dropped_queue_read_raises_typed_error():
+    from django_absurd.exceptions import ViewNotProvisionedError  # noqa: PLC0415
+
+    call_command("absurd_sync_queues")
+    rebuild_views("default")
+    with connections["default"].cursor() as cur:
+        cur.execute("DROP VIEW IF EXISTS absurd.tasks_view")
+    task_model = build_admin_model(
+        next(s for s in ADMIN_ENTITY_SPECS if s.name == "tasks")
+    )
+    with pytest.raises(ViewNotProvisionedError):
+        list(task_model.objects.all())
+    call_command("absurd_sync_queues")
+    list(task_model.objects.all())
+
+
+def test_normal_read_is_pure_select():
+    call_command("absurd_sync_queues")
+    rebuild_views("default")
+    spec = next(s for s in ADMIN_ENTITY_SPECS if s.name == "tasks")
+    task_model = build_admin_model(spec)
+    before = view_oid(spec.view_name)
+    result = list(task_model.objects.all())
+    assert isinstance(result, list)
+    assert view_oid(spec.view_name) == before

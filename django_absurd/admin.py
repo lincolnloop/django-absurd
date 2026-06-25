@@ -4,6 +4,7 @@ import typing as t
 from django.contrib import admin
 from django.contrib.admin.sites import AdminSite
 from django.core.paginator import Paginator
+from django.db import connections
 from django.db.utils import OperationalError, ProgrammingError
 from django.urls import reverse
 from django.utils.html import format_html
@@ -91,6 +92,8 @@ class ReadOnlyAbsurdAdmin(admin.ModelAdmin):
         return tuple(self.readonly_fields) + model_fields
 
     def get_queryset(self, request: t.Any) -> t.Any:
+        if not view_exists(self.spec.view_name):
+            return self.model.objects.none()
         return self.model.objects.all()
 
     def get_object(
@@ -111,6 +114,13 @@ class ReadOnlyAbsurdAdmin(admin.ModelAdmin):
             return queryset.get(**{field.name: object_id})
         except model.DoesNotExist:
             return None
+
+
+def view_exists(view_name: str) -> bool:
+    using = resolve_absurd_database()
+    with connections[using].cursor() as cur:
+        cur.execute("SELECT to_regclass(%s)", [f"absurd.{view_name}"])
+        return cur.fetchone()[0] is not None
 
 
 def resolve_admin_sites() -> list[AdminSite]:

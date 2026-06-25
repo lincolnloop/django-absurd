@@ -454,3 +454,16 @@ def test_partitioned_queue_appears_in_admin(client, admin_user):
         r.select_one(".field-queue").get_text(strip=True) for r in result_rows(soup)
     }
     assert "part" in queues
+
+
+def test_admin_tasks_changelist_degrades_when_view_dropped(client, admin_user):
+    register_absurd_admin([djadmin.site])
+    refresh_url_resolver()
+    call_command("absurd_sync_queues")
+    with connections["default"].cursor() as cur:
+        cur.execute("DROP VIEW IF EXISTS absurd.tasks_view")
+    client.force_login(admin_user)
+    cl = reverse("admin:django_absurd_task_changelist")
+    resp = client.get(cl)
+    assert resp.status_code == 200
+    assert result_rows(parse_html(resp)) == []

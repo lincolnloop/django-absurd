@@ -4,8 +4,13 @@ import typing as t
 import psycopg.sql
 from django.apps.registry import Apps
 from django.db import connections, models, transaction
+from django.db.utils import OperationalError, ProgrammingError
 
-from django_absurd.exceptions import ADMIN_VIEW_READONLY_MSG, QueueReadOnlyError
+from django_absurd.exceptions import (
+    ADMIN_VIEW_READONLY_MSG,
+    QueueReadOnlyError,
+    ViewNotProvisionedError,
+)
 
 PRIVATE_ADMIN_APPS = Apps()
 
@@ -144,6 +149,22 @@ ADMIN_ENTITY_SPECS: tuple[EntitySpec, ...] = (
 )
 
 
+VIEW_NOT_PROVISIONED_MSG = (
+    "Absurd union view not provisioned. Run 'manage.py absurd_sync_queues'."
+)
+
+
+class AbsurdViewQuerySet(models.QuerySet):
+    def _fetch_all(self) -> None:
+        try:
+            super()._fetch_all()
+        except (ProgrammingError, OperationalError) as exc:
+            raise ViewNotProvisionedError(VIEW_NOT_PROVISIONED_MSG) from exc
+
+
+AbsurdViewManager = models.Manager.from_queryset(AbsurdViewQuerySet)
+
+
 def build_admin_model(spec: EntitySpec) -> type[models.Model]:
     existing = PRIVATE_ADMIN_APPS.all_models["django_absurd"].get(
         spec.model_name.lower()
@@ -166,6 +187,7 @@ def build_admin_model(spec: EntitySpec) -> type[models.Model]:
 
     fields["save"] = save
     fields["delete"] = delete
+    fields["objects"] = AbsurdViewManager()
 
     fields["Meta"] = type(
         "Meta",
