@@ -231,6 +231,46 @@ def build_admin_models() -> dict[str, type[models.Model]]:
     return {spec.name: build_admin_model(spec) for spec in ADMIN_ENTITY_SPECS}
 
 
+def build_queue_table_model(spec: EntitySpec, queue: str) -> type[models.Model]:
+    sanitized_queue = queue.replace("-", "_")
+    model_name = f"QueueTable_{spec.prefix}_{sanitized_queue}"
+    existing = PRIVATE_ADMIN_APPS.all_models["django_absurd"].get(model_name.lower())
+    if existing is not None:
+        return existing
+
+    pk_col_name = spec.columns[0][0]
+    fields: dict[str, t.Any] = {}
+    for col_name, col_type in spec.columns:
+        if col_name == pk_col_name:
+            field_cls = FIELD_TYPE_MAP[col_type]
+            fields[col_name] = field_cls(primary_key=True)
+        else:
+            fields[col_name] = make_field(col_type)
+
+    def save(self: models.Model, *args: object, **kwargs: object) -> t.NoReturn:
+        raise QueueReadOnlyError(ADMIN_VIEW_READONLY_MSG)
+
+    def delete(self: models.Model, *args: object, **kwargs: object) -> t.NoReturn:
+        raise QueueReadOnlyError(ADMIN_VIEW_READONLY_MSG)
+
+    fields["save"] = save
+    fields["delete"] = delete
+
+    fields["Meta"] = type(
+        "Meta",
+        (),
+        {
+            "managed": False,
+            "app_label": "django_absurd",
+            "db_table": f'absurd"."{spec.prefix}_{queue}',
+            "apps": PRIVATE_ADMIN_APPS,
+        },
+    )
+    fields["__module__"] = __name__
+
+    return type(model_name, (models.Model,), fields)
+
+
 FIELD_TYPE_MAP: dict[str, type[models.Field]] = {
     "uuid": models.UUIDField,
     "text": models.TextField,
