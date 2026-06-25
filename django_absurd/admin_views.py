@@ -233,6 +233,12 @@ def rebuild_admin_view(spec: EntitySpec, queues: list[str], using: str) -> None:
         cur.execute(sql)
 
 
+def rebuild_views(using: str) -> None:
+    queues = fetch_catalog_queues(using)
+    for spec in ADMIN_ENTITY_SPECS:
+        rebuild_admin_view(spec, queues, using)
+
+
 VIEW_BUILD_CACHE: dict[str, frozenset[str]] = {}
 
 VIEW_BUILD_LOCK = threading.Lock()
