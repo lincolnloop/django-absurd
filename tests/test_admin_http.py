@@ -280,53 +280,6 @@ def test_add_view_forbidden(client, admin_user):
     assert client.get(url).status_code in (403, 302)
 
 
-def test_changelist_reflects_queue_added_after_first_load(client, admin_user):
-    from django_absurd.queues import get_absurd_client  # noqa: PLC0415
-
-    register_absurd_admin([djadmin.site])
-    refresh_url_resolver()
-    call_command("absurd_sync_queues")
-    get_absurd_client().drop_queue("other")
-    client.force_login(admin_user)
-    cl = reverse("admin:django_absurd_task_changelist")
-
-    first = parse_html(client.get(cl, {"queue": "other"}))
-    assert not result_rows(first)
-
-    call_command("absurd_sync_queues")
-    add.using(queue_name="other").enqueue(7, 8)
-    call_command("absurd_worker", queue="other", burst=True)
-
-    second = parse_html(client.get(cl, {"queue": "other"}))
-    names = {
-        r.select_one(".field-task_name").get_text(strip=True)
-        for r in result_rows(second)
-    }
-    assert "tests.tasks.add" in names
-
-
-def test_changelist_degrades_when_schema_absent(client, admin_user):
-    register_absurd_admin([djadmin.site])
-    refresh_url_resolver()
-    call_command("migrate", "django_absurd", "zero", verbosity=0)
-    client.force_login(admin_user)
-    cl = reverse("admin:django_absurd_task_changelist")
-    assert client.get(cl).status_code == 200
-    call_command("migrate", "django_absurd", verbosity=0)
-
-
-def test_changelist_survives_concurrent_view_drop(client, admin_user):
-    register_absurd_admin([djadmin.site])
-    refresh_url_resolver()
-    seed()
-    client.force_login(admin_user)
-    cl = reverse("admin:django_absurd_task_changelist")
-    assert client.get(cl).status_code == 200
-    with connections["default"].cursor() as cur:
-        cur.execute("DROP VIEW IF EXISTS absurd.tasks_view")
-    assert client.get(cl).status_code == 200
-
-
 @override_settings(
     TASKS={
         "default": {

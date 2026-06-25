@@ -3,7 +3,6 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import ImproperlyConfigured
 from django.db.utils import OperationalError, ProgrammingError
 
-from django_absurd.admin_views import reset_view_cache
 from django_absurd.queues import get_absurd_client
 
 
@@ -20,7 +19,6 @@ def _reset_absurd_queues(_enable_db):
     ``managed=False`` registry rows are not rolled back / flushed, so they leak
     across ``--reuse-db`` runs. Reset to zero queues so every test is hermetic.
     """
-    reset_view_cache()
     try:
         client = get_absurd_client()
         for name in client.list_queues():

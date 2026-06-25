@@ -2,6 +2,7 @@ import pytest
 from django.core.management import call_command
 from django.db import connections
 
+from django_absurd import admin_views
 from django_absurd.admin_views import (
     ADMIN_ENTITY_SPECS,
     build_admin_model,
@@ -60,6 +61,11 @@ def test_sync_command_rebuilds_views_with_new_queue():
     call_command("absurd_worker", queue="other", burst=True)
     qs = task_model.objects.values_list("queue", flat=True).distinct()
     assert "other" in set(qs)
+
+
+def test_self_heal_removed():
+    assert not hasattr(admin_views, "ensure_view_current")
+    assert not hasattr(admin_views, "VIEW_BUILD_CACHE")
 
 
 def test_worker_start_rebuilds_when_it_created_queue():

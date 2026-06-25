@@ -1,5 +1,4 @@
 import dataclasses
-import threading
 import typing as t
 
 import psycopg.sql
@@ -237,27 +236,6 @@ def rebuild_views(using: str) -> None:
     queues = fetch_catalog_queues(using)
     for spec in ADMIN_ENTITY_SPECS:
         rebuild_admin_view(spec, queues, using)
-
-
-VIEW_BUILD_CACHE: dict[str, frozenset[str]] = {}
-
-VIEW_BUILD_LOCK = threading.Lock()
-
-
-def ensure_view_current(spec: EntitySpec, using: str) -> None:
-    with VIEW_BUILD_LOCK:
-        live = frozenset(fetch_catalog_queues(using))
-        if live != VIEW_BUILD_CACHE.get(spec.view_name):
-            rebuild_admin_view(spec, sorted(live), using)
-            VIEW_BUILD_CACHE[spec.view_name] = live
-
-
-def invalidate_view_cache(view_name: str) -> None:
-    VIEW_BUILD_CACHE.pop(view_name, None)
-
-
-def reset_view_cache() -> None:
-    VIEW_BUILD_CACHE.clear()
 
 
 SQL_TYPE_NULLS: dict[str, psycopg.sql.SQL] = {

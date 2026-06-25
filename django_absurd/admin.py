@@ -16,9 +16,7 @@ from django_absurd.admin_views import (
     ADMIN_ENTITY_SPECS,
     EntitySpec,
     build_admin_model,
-    ensure_view_current,
     fetch_catalog_queues,
-    invalidate_view_cache,
 )
 from django_absurd.queues import get_absurd_backend, resolve_absurd_database
 
@@ -93,23 +91,7 @@ class ReadOnlyAbsurdAdmin(admin.ModelAdmin):
         return tuple(self.readonly_fields) + model_fields
 
     def get_queryset(self, request: t.Any) -> t.Any:
-        try:
-            ensure_view_current(self.spec, self.using)
-            qs = self.model.objects.using(self.using).all()
-            qs.exists()
-        except (ProgrammingError, OperationalError):
-            pass
-        else:
-            return qs
-        try:
-            invalidate_view_cache(self.spec.view_name)
-            ensure_view_current(self.spec, self.using)
-            qs = self.model.objects.using(self.using).all()
-            qs.exists()
-        except (ProgrammingError, OperationalError):
-            return self.model.objects.none()
-        else:
-            return qs
+        return self.model.objects.all()
 
     def get_object(
         self,
