@@ -17,15 +17,15 @@ from tests.tasks import add, boom
 
 
 def test_models_importable_and_view_backed():
-    assert Task._meta.db_table == 'absurd"."tasks_view'
+    assert Task._meta.db_table == '"absurd"."tasks_view"'
     assert Task._meta.managed is False
-    assert Run._meta.db_table == 'absurd"."runs_view'
+    assert Run._meta.db_table == '"absurd"."runs_view"'
     assert Run._meta.managed is False
-    assert Checkpoint._meta.db_table == 'absurd"."checkpoints_view'
+    assert Checkpoint._meta.db_table == '"absurd"."checkpoints_view"'
     assert Checkpoint._meta.managed is False
-    assert Event._meta.db_table == 'absurd"."events_view'
+    assert Event._meta.db_table == '"absurd"."events_view"'
     assert Event._meta.managed is False
-    assert Wait._meta.db_table == 'absurd"."waits_view'
+    assert Wait._meta.db_table == '"absurd"."waits_view"'
     assert Wait._meta.managed is False
 
 

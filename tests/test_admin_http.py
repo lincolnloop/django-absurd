@@ -196,6 +196,20 @@ def test_failed_task_detail_shows_state(client, admin_user):
     assert soup.select_one(".field-state .readonly").get_text(strip=True) == "failed"
 
 
+def test_detail_for_missing_object_does_not_500(client, admin_user):
+    register_absurd_admin([djadmin.site])
+    refresh_url_resolver()
+    seed_mixed()
+    client.force_login(admin_user)
+    bogus = quote(f"default:{uuid.uuid4()}")
+    resp = client.get(reverse("admin:django_absurd_task_change", args=[bogus]))
+    assert resp.status_code in (302, 404)
+    qresp = client.get(
+        reverse("admin:django_absurd_queue_change", args=[quote("nonexistent")])
+    )
+    assert qresp.status_code in (302, 404)
+
+
 def test_runs_changelist_filtered_to_task(client, admin_user):
     register_absurd_admin([djadmin.site])
     refresh_url_resolver()

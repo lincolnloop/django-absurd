@@ -4,6 +4,7 @@ import pytest
 from django.core.management import call_command
 from django.db import connections
 
+from django_absurd.admin import ADMIN_COUNT_CAP, BoundedCountPaginator
 from django_absurd.admin_views import (
     ADMIN_ENTITY_SPECS,
     build_admin_model,
@@ -14,6 +15,25 @@ from django_absurd.queues import get_absurd_client
 from tests.tasks import add
 
 pytestmark = pytest.mark.django_db(transaction=True)
+
+
+def make_count_stub(n):
+    class CountStub:
+        def __getitem__(self, item):
+            return self
+
+        def count(self):
+            return n
+
+    return CountStub()
+
+
+def test_bounded_paginator_clamps_count_to_cap():
+    over = BoundedCountPaginator(make_count_stub(ADMIN_COUNT_CAP + 500), per_page=20)
+    assert over.count == ADMIN_COUNT_CAP
+    under = BoundedCountPaginator(make_count_stub(7), per_page=20)
+    assert under.count == 7
+
 
 TASKS_SPEC = next(s for s in ADMIN_ENTITY_SPECS if s.name == "tasks")
 CHECKS_SPEC = next(s for s in ADMIN_ENTITY_SPECS if s.name == "checkpoints")

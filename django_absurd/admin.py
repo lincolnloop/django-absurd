@@ -81,9 +81,6 @@ class ReadOnlyAbsurdAdmin(admin.ModelAdmin):
     def has_view_permission(self, request: t.Any, obj: t.Any = None) -> bool:
         return True
 
-    def has_module_perms(self, request: t.Any) -> bool:
-        return True
-
     def has_module_permission(self, request: t.Any) -> bool:
         return True
 
@@ -92,7 +89,7 @@ class ReadOnlyAbsurdAdmin(admin.ModelAdmin):
         return tuple(self.readonly_fields) + model_fields
 
     def get_queryset(self, request: t.Any) -> t.Any:
-        if not view_exists(self.spec.view_name, self.using):
+        if self.spec is not None and not view_exists(self.spec.view_name, self.using):
             return self.model.objects.using(self.using).none()
         return self.model.objects.using(self.using).all()
 
@@ -104,15 +101,9 @@ class ReadOnlyAbsurdAdmin(admin.ModelAdmin):
     ) -> t.Any:
         queue = object_id.split(":", 1)[0]
         queryset = self.get_queryset(request).filter(queue=queue)
-        model = self.model
-        field = (
-            model._meta.pk  # noqa: SLF001
-            if from_field is None
-            else model._meta.get_field(from_field)  # noqa: SLF001
-        )
         try:
-            return queryset.get(**{field.name: object_id})
-        except model.DoesNotExist:
+            return queryset.get(pk=object_id)
+        except self.model.DoesNotExist:
             return None
 
 
@@ -159,16 +150,7 @@ def register_absurd_admin(sites: t.Iterable[AdminSite]) -> None:
             site.register(Queue, build_queue_admin(using))
 
 
-@admin.display(description="runs")
-def runs_link(self: t.Any, obj: t.Any) -> str:
-    url = reverse("admin:django_absurd_run_changelist")
-    return format_html('<a href="{}?q={}">runs</a>', url, obj.task_id)
-
-
 def build_queue_admin(using: str) -> type[ReadOnlyAbsurdAdmin]:
-    def get_queryset(self: t.Any, request: t.Any) -> t.Any:
-        return self.model.objects.using(self.using).all()
-
     def get_object(
         self: t.Any,
         request: t.Any,
@@ -191,7 +173,6 @@ def build_queue_admin(using: str) -> type[ReadOnlyAbsurdAdmin]:
             "list_filter": [],
             "search_fields": ("queue_name",),
             "readonly_fields": (),
-            "get_queryset": get_queryset,
             "get_object": get_object,
         },
     )
@@ -231,6 +212,12 @@ def build_entity_admin(
             **extra,
         },
     )
+
+
+@admin.display(description="runs")
+def runs_link(self: t.Any, obj: t.Any) -> str:
+    url = reverse("admin:django_absurd_run_changelist")
+    return format_html('<a href="{}?q={}">runs</a>', url, obj.task_id)
 
 
 def autoregister_admin() -> None:

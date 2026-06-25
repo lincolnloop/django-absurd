@@ -4,7 +4,7 @@ QUEUE_READONLY_MSG = (
 )
 
 ADMIN_VIEW_READONLY_MSG = (
-    "Admin view models are read-only; they map Absurd union views."
+    "Absurd queue-table models are read-only; they map Absurd's queue tables."
 )
 
 

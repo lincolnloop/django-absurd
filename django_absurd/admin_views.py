@@ -216,7 +216,9 @@ def build_admin_model(spec: EntitySpec) -> type[models.Model]:
         {
             "managed": False,
             "app_label": "django_absurd",
-            "db_table": f'absurd"."{spec.view_name}',
+            "db_table": psycopg.sql.Identifier("absurd", spec.view_name).as_string(
+                None
+            ),
             "apps": PRIVATE_ADMIN_APPS,
             "verbose_name": spec.verbose,
             "verbose_name_plural": f"{spec.verbose}s",
@@ -225,10 +227,6 @@ def build_admin_model(spec: EntitySpec) -> type[models.Model]:
     fields["__module__"] = __name__
 
     return type(spec.model_name, (models.Model,), fields)
-
-
-def build_admin_models() -> dict[str, type[models.Model]]:
-    return {spec.name: build_admin_model(spec) for spec in ADMIN_ENTITY_SPECS}
 
 
 def build_queue_table_model(spec: EntitySpec, queue: str) -> type[models.Model]:
