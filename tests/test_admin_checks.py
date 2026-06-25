@@ -4,11 +4,13 @@ from django.test import override_settings
 
 from django_absurd.checks import (
     E006_ADMIN_SITE_HINT,
+    E006_ADMIN_SITE_TYPE_MSG,
     E006_ENABLE_ADMIN_HINT,
     E006_ENABLE_ADMIN_MSG,
 )
 
 BACKEND = "django_absurd.backends.AbsurdBackend"
+IMMEDIATE = "django.tasks.backends.immediate.ImmediateBackend"
 
 BAD_PATH = "nonexistent.module.site"
 E006_BAD_PATH_MSG = (
@@ -72,3 +74,39 @@ def test_valid_admin_config_no_e006(capsys):
     assert "absurd.E006" not in out
     assert "admin.E0" not in out
     assert "System check identified no issues" in out
+
+
+@override_settings(TASKS={"default": {"BACKEND": IMMEDIATE}})
+def test_no_absurd_backend_emits_no_e006(capsys):
+    out = run_check(capsys)
+    assert "absurd.E006" not in out
+
+
+@override_settings(
+    TASKS={
+        "default": {
+            "BACKEND": BACKEND,
+            "QUEUES": ["default"],
+            "OPTIONS": {"ADMIN_SITE": "django.contrib.admin.site"},
+        }
+    }
+)
+def test_admin_site_not_a_sequence_emits_e006(capsys):
+    out = run_check(capsys)
+    assert "absurd.E006" in out
+    assert E006_ADMIN_SITE_TYPE_MSG in out
+
+
+@override_settings(
+    TASKS={
+        "default": {
+            "BACKEND": BACKEND,
+            "QUEUES": ["default"],
+            "OPTIONS": {"ADMIN_SITE": ("decimal.Decimal",)},
+        }
+    }
+)
+def test_admin_site_not_an_adminsite_emits_e006(capsys):
+    out = run_check(capsys)
+    assert "absurd.E006" in out
+    assert "is not an AdminSite instance" in out

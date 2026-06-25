@@ -1,6 +1,6 @@
 import pytest
 from django.core.management import call_command
-from django.db import connections
+from django.db import connections, models
 
 from django_absurd import admin_views
 from django_absurd.admin_views import (
@@ -96,5 +96,7 @@ def test_dropped_queue_read_raises_typed_error():
         task_model.objects.count()
     with pytest.raises(ViewNotProvisionedError):
         task_model.objects.exists()
+    with pytest.raises(ViewNotProvisionedError):
+        task_model.objects.aggregate(models.Count("admin_pk"))
     call_command("absurd_sync_queues")
     list(task_model.objects.all())

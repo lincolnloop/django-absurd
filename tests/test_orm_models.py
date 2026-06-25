@@ -86,3 +86,14 @@ def test_cross_queue_aggregate_and_order():
 def test_read_only_save_blocked():
     with pytest.raises(QueueReadOnlyError):
         Task().save()
+    with pytest.raises(QueueReadOnlyError):
+        Task().delete()
+
+
+def test_queue_table_model_is_read_only():
+    spec = next(s for s in ADMIN_ENTITY_SPECS if s.name == "tasks")
+    model = build_queue_table_model(spec, "default")
+    with pytest.raises(QueueReadOnlyError):
+        model().save()
+    with pytest.raises(QueueReadOnlyError):
+        model().delete()
