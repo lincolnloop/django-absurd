@@ -23,6 +23,8 @@ class AbsurdBackendOptions(t.TypedDict, total=False):
     DATABASE: str
     DEFAULT_MAX_ATTEMPTS: int
     QUEUES: dict[str, CreateQueueOptions]
+    ENABLE_ADMIN: bool
+    ADMIN_SITE: tuple[str, ...]
 
 
 class AbsurdBackend(BaseTaskBackend):

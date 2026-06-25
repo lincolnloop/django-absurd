@@ -46,6 +46,14 @@ def resolve_absurd_database() -> str:
     return "default"
 
 
+def get_absurd_backend() -> backends.AbsurdBackend | None:
+    target = resolve_absurd_database()
+    for be in backends.get_absurd_backends().values():
+        if be.database == target:
+            return be
+    return None
+
+
 def get_absurd_client(using: str | None = None) -> Absurd:
     return build_absurd_client(using or resolve_absurd_database())
 

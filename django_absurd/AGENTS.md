@@ -43,6 +43,10 @@ Backend `OPTIONS` (all optional):
 - `QUEUES` — a map of queue name → `absurd_sdk.CreateQueueOptions` for per-queue config.
   Use this _instead of_ the top-level `QUEUES` list (which only names queues) — declare
   queues in one place or the other, never both (setting both is a configuration error).
+- `ENABLE_ADMIN` — register Absurd models in Django admin (default: `True`). Set to
+  `False` to disable.
+- `ADMIN_SITE` — tuple of dotted paths to `AdminSite` instances to register on (default:
+  `("django.contrib.admin.site",)`).
 
 Only when you point `DATABASE` at a **non-default** alias, also register the router so
 django-absurd's schema and queries route to that database:
@@ -63,11 +67,37 @@ worker start), so no provisioning step is required. `absurd_sync_queues` still e
 for eager provisioning and for reconciling per-queue policy changes, but it is optional.
 Only queues declared in `QUEUES` are auto-created; an undeclared queue name is rejected.
 
+## Admin introspection
+
+When `django.contrib.admin` is in `INSTALLED_APPS`, django-absurd automatically
+registers six read-only admin entries: **Tasks**, **Runs**, **Checkpoints**, **Events**,
+and **Waits** (each spanning all queues via a UNION-ALL view, filterable by queue) plus
+the **Queues** catalog. No configuration required; the list views stay in sync with the
+live queue catalog.
+
+To disable: set `OPTIONS["ENABLE_ADMIN"] = False`. To register on a custom admin site:
+set `OPTIONS["ADMIN_SITE"]` to a tuple of dotted paths, e.g.
+`("myapp.admin.custom_site",)`.
+
+**Non-default `DATABASE`:** when Absurd lives on a database other than `"default"`, the
+synthesized models read from the Absurd DB while Django's `LogEntry`, sessions, and
+`ContentType` tables must still be present in `"default"` (run `migrate` on it).
+
 ## Validate
 
 Run `python manage.py check django_absurd` and resolve everything it reports before
 relying on the setup. Fix the configuration it points at rather than silencing the
 check.
+
+System check IDs:
+
+- `absurd.E001` — backend/DB misconfiguration.
+- `absurd.E002` — `QUEUES` declared in both top-level and `OPTIONS`.
+- `absurd.E003` — invalid per-queue policy options.
+- `absurd.E004` — multiple Absurd backends targeting different databases.
+- `absurd.E005` — `AbsurdRouter` missing from `DATABASE_ROUTERS`.
+- `absurd.E006` — `ENABLE_ADMIN` is not a bool, or `ADMIN_SITE` paths don't resolve to
+  `AdminSite` instances.
 
 ## Defining and enqueuing tasks
 

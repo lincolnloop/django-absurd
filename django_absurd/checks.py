@@ -4,16 +4,18 @@ from collections.abc import Sequence
 from absurd_sdk import CreateQueueOptions, QueueDetachMode, QueueStorageMode
 from django.apps import AppConfig
 from django.conf import settings
+from django.contrib.admin.sites import AdminSite
 from django.core.checks import CheckMessage, Error, Tags, register
 from django.core.checks import Warning as DjangoWarning
 from django.core.exceptions import ImproperlyConfigured
 from django.db.utils import OperationalError, ProgrammingError
 from django.utils.connection import ConnectionDoesNotExist
+from django.utils.module_loading import import_string
 
 from django_absurd.backends import get_absurd_backends, get_declared_queues
 from django_absurd.connection import BACKEND_ERROR_MESSAGE, validate_backend
 from django_absurd.models import Queue
-from django_absurd.queues import get_absurd_database
+from django_absurd.queues import get_absurd_backend, get_absurd_database
 from django_absurd.routers import AbsurdRouter
 
 W002_MSG = (
@@ -46,6 +48,82 @@ E004_HINT = "Use a single DATABASE across all Absurd backends."
 VALID_QUEUE_OPTION_KEYS = set(CreateQueueOptions.__annotations__)
 VALID_STORAGE_MODES = set(t.get_args(QueueStorageMode))
 VALID_DETACH_MODES = set(t.get_args(QueueDetachMode))
+
+E006_ENABLE_ADMIN_MSG = "django-absurd: OPTIONS['ENABLE_ADMIN'] must be a bool."
+E006_ENABLE_ADMIN_HINT = "Set ENABLE_ADMIN to True or False."
+E006_ADMIN_SITE_TYPE_MSG = (
+    "django-absurd: OPTIONS['ADMIN_SITE'] must be a tuple or list"
+    " of dotted-path strings."
+)
+E006_ADMIN_SITE_HINT = (
+    "Set ADMIN_SITE to a tuple of dotted paths to AdminSite instances."
+)
+
+
+@register("absurd")
+def check_absurd_admin_config(
+    *,
+    app_configs: Sequence[AppConfig] | None,
+    **kwargs: t.Any,
+) -> list[CheckMessage]:
+    backend = get_absurd_backend()
+    if backend is None:
+        return []
+
+    errors: list[CheckMessage] = []
+    options = backend.options
+
+    if "ENABLE_ADMIN" in options and not isinstance(options["ENABLE_ADMIN"], bool):
+        errors.append(
+            Error(
+                E006_ENABLE_ADMIN_MSG,
+                hint=E006_ENABLE_ADMIN_HINT,
+                id="absurd.E006",
+            )
+        )
+
+    if "ADMIN_SITE" in options:
+        errors.extend(validate_admin_site_option(options["ADMIN_SITE"]))
+
+    return errors
+
+
+def validate_admin_site_option(value: t.Any) -> list[CheckMessage]:
+    if not isinstance(value, (tuple, list)) or not all(
+        isinstance(entry, str) for entry in value
+    ):
+        return [
+            Error(
+                E006_ADMIN_SITE_TYPE_MSG,
+                hint=E006_ADMIN_SITE_HINT,
+                id="absurd.E006",
+            )
+        ]
+
+    errors: list[CheckMessage] = []
+    for path in value:
+        try:
+            obj = import_string(path)
+        except ImportError:
+            errors.append(
+                Error(
+                    f"django-absurd: OPTIONS['ADMIN_SITE'] entry {path!r}"
+                    " could not be imported.",
+                    hint=E006_ADMIN_SITE_HINT,
+                    id="absurd.E006",
+                )
+            )
+            continue
+        if not isinstance(obj, AdminSite):
+            errors.append(
+                Error(
+                    f"django-absurd: OPTIONS['ADMIN_SITE'] entry {path!r}"
+                    " is not an AdminSite instance.",
+                    hint=E006_ADMIN_SITE_HINT,
+                    id="absurd.E006",
+                )
+            )
+    return errors
 
 
 @register("absurd")
