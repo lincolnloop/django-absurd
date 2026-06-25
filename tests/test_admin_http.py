@@ -210,6 +210,44 @@ def test_detail_for_missing_object_does_not_500(client, admin_user):
     assert qresp.status_code in (302, 404)
 
 
+def test_changelist_warns_about_unindexed_queue(client, admin_user):
+    register_absurd_admin([djadmin.site])
+    refresh_url_resolver()
+    # enqueue auto-creates 'other' (catalog + physical tables) but does NOT
+    # rebuild the views, so 'other' is absent from the union view's arms.
+    add.using(queue_name="other").enqueue(7, 8)
+    client.force_login(admin_user)
+    soup = parse_html(client.get(reverse("admin:django_absurd_task_changelist")))
+    warning = soup.get_text()
+    assert "other" in warning
+    assert "absurd_sync_queues" in warning
+
+
+def test_changelist_no_warning_when_all_queues_indexed(client, admin_user):
+    register_absurd_admin([djadmin.site])
+    refresh_url_resolver()
+    seed_mixed()  # syncs + workers → every catalog queue is an arm
+    client.force_login(admin_user)
+    soup = parse_html(client.get(reverse("admin:django_absurd_task_changelist")))
+    assert "absurd_sync_queues" not in soup.get_text()
+
+
+def test_changelist_survives_staleness_detection_failure(
+    client, admin_user, django_db_blocker
+):
+    register_absurd_admin([djadmin.site])
+    refresh_url_resolver()
+    client.force_login(admin_user)
+    with django_db_blocker.unblock():
+        call_command("migrate", "django_absurd", "zero", verbosity=0)
+    try:
+        resp = client.get(reverse("admin:django_absurd_task_changelist"))
+        assert resp.status_code == 200
+    finally:
+        with django_db_blocker.unblock():
+            call_command("migrate", "django_absurd", verbosity=0)
+
+
 def test_runs_changelist_filtered_to_task(client, admin_user):
     register_absurd_admin([djadmin.site])
     refresh_url_resolver()

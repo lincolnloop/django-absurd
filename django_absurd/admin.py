@@ -1,7 +1,7 @@
 import contextlib
 import typing as t
 
-from django.contrib import admin
+from django.contrib import admin, messages
 from django.contrib.admin.sites import AdminSite
 from django.core.paginator import Paginator
 from django.db import connections
@@ -106,11 +106,45 @@ class ReadOnlyAbsurdAdmin(admin.ModelAdmin):
         except self.model.DoesNotExist:
             return None
 
+    def changelist_view(self, request: t.Any, extra_context: t.Any = None) -> t.Any:
+        if self.spec is not None:
+            try:
+                stale = find_unindexed_queues(self.using)
+            except (OperationalError, ProgrammingError):
+                stale = []
+            if stale:
+                names = ", ".join(f"'{q}'" for q in stale)
+                messages.warning(
+                    request,
+                    f"Queue(s) {names} exist but aren't indexed in the admin views "
+                    "yet — run 'manage.py absurd_sync_queues' (or start a worker on "
+                    "them) to include their tasks.",
+                )
+        return super().changelist_view(request, extra_context)
+
 
 def view_exists(view_name: str, using: str) -> bool:
     with connections[using].cursor() as cur:
         cur.execute("SELECT to_regclass(%s)", [f"absurd.{view_name}"])
         return cur.fetchone()[0] is not None
+
+
+def find_unindexed_queues(using: str) -> list[str]:
+    catalog = set(fetch_catalog_queues(using))
+    if not catalog:
+        return []
+    with connections[using].cursor() as cur:
+        cur.execute(
+            "SELECT cl.relname "
+            "FROM pg_rewrite r "
+            "JOIN pg_depend d ON d.objid = r.oid "
+            "JOIN pg_class cl ON cl.oid = d.refobjid "
+            "JOIN pg_namespace n ON n.oid = cl.relnamespace "
+            "WHERE r.ev_class = to_regclass('absurd.tasks_view') "
+            "AND n.nspname = 'absurd'"
+        )
+        arms = {row[0][2:] for row in cur.fetchall() if row[0].startswith("t_")}
+    return sorted(catalog - arms)
 
 
 def resolve_admin_sites() -> list[AdminSite]:

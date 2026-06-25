@@ -79,6 +79,11 @@ To disable: set `OPTIONS["ENABLE_ADMIN"] = False`. To register on a custom admin
 set `OPTIONS["ADMIN_SITE"]` to a tuple of dotted paths, e.g.
 `("myapp.admin.custom_site",)`.
 
+A queue created only by an enqueue (no worker started, no sync run) is not yet part of
+the admin views, so its tasks won't appear. The changelist detects this and shows a
+warning naming the unindexed queue(s) and pointing you to `absurd_sync_queues`; running
+that command (or starting a worker on the queue) indexes them.
+
 **Non-default `DATABASE`:** when Absurd lives on a database other than `"default"`, the
 synthesized models read from the Absurd DB while Django's `LogEntry`, sessions, and
 `ContentType` tables must still be present in `"default"` (run `migrate` on it).
