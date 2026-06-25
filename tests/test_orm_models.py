@@ -5,7 +5,11 @@ from django.db.models import Count
 
 import django_absurd.models
 from django_absurd import models as dm
-from django_absurd.admin_views import ADMIN_ENTITY_SPECS, build_admin_model
+from django_absurd.admin_views import (
+    ADMIN_ENTITY_SPECS,
+    build_admin_model,
+    build_queue_table_model,
+)
 from django_absurd.exceptions import QueueReadOnlyError
 from django_absurd.models import Checkpoint, Event, Run, Task, Wait
 from django_absurd.params import AbsurdSpawnParams
@@ -33,6 +37,16 @@ def test_view_models_absent_from_global_registry():
         if m._meta.app_label == "django_absurd"
     }
     assert names == {"Queue"}  # only the real managed=False Queue is global
+
+
+def test_queue_table_model_db_table_is_quote_safe():
+    spec = next(s for s in ADMIN_ENTITY_SPECS if s.name == "tasks")
+    assert build_queue_table_model(spec, "default")._meta.db_table == (
+        '"absurd"."t_default"'
+    )
+    # a double-quote in the queue name must be escaped inside the identifier,
+    # not break out of it into malformed SQL.
+    assert build_queue_table_model(spec, 'a"b')._meta.db_table == ('"absurd"."t_a""b"')
 
 
 def test_admin_uses_the_models_py_classes():

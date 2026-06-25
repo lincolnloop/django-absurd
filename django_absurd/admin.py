@@ -92,9 +92,9 @@ class ReadOnlyAbsurdAdmin(admin.ModelAdmin):
         return tuple(self.readonly_fields) + model_fields
 
     def get_queryset(self, request: t.Any) -> t.Any:
-        if not view_exists(self.spec.view_name):
-            return self.model.objects.none()
-        return self.model.objects.all()
+        if not view_exists(self.spec.view_name, self.using):
+            return self.model.objects.using(self.using).none()
+        return self.model.objects.using(self.using).all()
 
     def get_object(
         self,
@@ -116,8 +116,7 @@ class ReadOnlyAbsurdAdmin(admin.ModelAdmin):
             return None
 
 
-def view_exists(view_name: str) -> bool:
-    using = resolve_absurd_database()
+def view_exists(view_name: str, using: str) -> bool:
     with connections[using].cursor() as cur:
         cur.execute("SELECT to_regclass(%s)", [f"absurd.{view_name}"])
         return cur.fetchone()[0] is not None

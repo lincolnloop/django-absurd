@@ -262,7 +262,9 @@ def build_queue_table_model(spec: EntitySpec, queue: str) -> type[models.Model]:
         {
             "managed": False,
             "app_label": "django_absurd",
-            "db_table": f'absurd"."{spec.prefix}_{queue}',
+            "db_table": psycopg.sql.Identifier(
+                "absurd", f"{spec.prefix}_{queue}"
+            ).as_string(None),
             "apps": PRIVATE_ADMIN_APPS,
         },
     )
