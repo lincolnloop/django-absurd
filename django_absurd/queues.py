@@ -8,11 +8,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.db import connections
 from django.db.utils import ProgrammingError
 
-from django_absurd.backends import (
-    AbsurdBackend,
-    get_absurd_backends,
-    get_declared_queues,
-)
+from django_absurd import backends
 from django_absurd.connection import build_absurd_client, validate_backend
 from django_absurd.models import Queue
 
@@ -39,12 +35,12 @@ class SyncResult:
     storage_warnings: list[str] = field(default_factory=list)
 
 
-def get_absurd_database(backend: AbsurdBackend) -> str:
+def get_absurd_database(backend: backends.AbsurdBackend) -> str:
     return backend.database
 
 
 def resolve_absurd_database() -> str:
-    databases = {be.database for be in get_absurd_backends().values()}
+    databases = {be.database for be in backends.get_absurd_backends().values()}
     if len(databases) == 1:
         return next(iter(databases))
     return "default"
@@ -54,10 +50,10 @@ def get_absurd_client(using: str | None = None) -> Absurd:
     return build_absurd_client(using or resolve_absurd_database())
 
 
-def reconcile_queue(backend: AbsurdBackend, queue_name: str) -> SyncResult:
+def reconcile_queue(backend: backends.AbsurdBackend, queue_name: str) -> SyncResult:
     db = backend.database
     validate_backend(db)
-    declared = get_declared_queues(backend)
+    declared = backends.get_declared_queues(backend)
     if queue_name not in declared:
         msg = f"Queue {queue_name!r} is not declared in TASKS QUEUES."
         raise ImproperlyConfigured(msg)
@@ -86,9 +82,9 @@ def reconcile_queue(backend: AbsurdBackend, queue_name: str) -> SyncResult:
     return result
 
 
-def sync_queues(backend: AbsurdBackend) -> SyncResult:
+def sync_queues(backend: backends.AbsurdBackend) -> SyncResult:
     result = SyncResult()
-    for name in get_declared_queues(backend):
+    for name in backends.get_declared_queues(backend):
         r = reconcile_queue(backend, name)
         result.created.extend(r.created)
         result.reconciled.extend(r.reconciled)
