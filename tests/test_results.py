@@ -93,7 +93,7 @@ def test_malformed_id_raises_does_not_exist():
 def test_get_result_inside_atomic_does_not_poison_txn():
     call_command("absurd_sync_queues")
     with connections["default"].cursor() as cur:
-        cur.execute("DROP TABLE absurd.t_other")
+        cur.execute("DROP TABLE absurd.t_other CASCADE")
     with transaction.atomic():
         with pytest.raises(TaskResultDoesNotExist):
             backend().get_result(f"other:{uuid.uuid4()}")

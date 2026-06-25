@@ -3,6 +3,7 @@ import typing as t
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management.base import CommandError
 
+from django_absurd.admin_views import rebuild_views
 from django_absurd.backends import get_absurd_backends
 from django_absurd.management.base import AbsurdReportCommand
 from django_absurd.queues import reconcile_queue
@@ -96,6 +97,8 @@ class Command(AbsurdReportCommand):
         except ImproperlyConfigured as exc:
             raise CommandError(str(exc)) from exc
         self.report_sync_result(result)
+        if result.created:
+            rebuild_views(backend.database)
 
         worker_options = WorkerOptions(
             concurrency=options["concurrency"],

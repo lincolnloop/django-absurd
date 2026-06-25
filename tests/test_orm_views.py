@@ -7,6 +7,8 @@ from django_absurd.admin_views import (
     build_admin_model,
     rebuild_views,
 )
+from django_absurd.queues import get_absurd_client
+from tests.tasks import add
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -47,3 +49,27 @@ def test_empty_views_exist_after_migrate_only(django_db_blocker):
             next(s for s in ADMIN_ENTITY_SPECS if s.name == "tasks")
         )
         assert list(task_cls.objects.all()) == []
+
+
+def test_sync_command_rebuilds_views_with_new_queue():
+    call_command("absurd_sync_queues")
+    task_model = build_admin_model(
+        next(s for s in ADMIN_ENTITY_SPECS if s.name == "tasks")
+    )
+    add.using(queue_name="other").enqueue(1, 1)
+    call_command("absurd_worker", queue="other", burst=True)
+    qs = task_model.objects.values_list("queue", flat=True).distinct()
+    assert "other" in set(qs)
+
+
+def test_worker_start_rebuilds_when_it_created_queue():
+    task_model = build_admin_model(
+        next(s for s in ADMIN_ENTITY_SPECS if s.name == "tasks")
+    )
+    call_command("absurd_sync_queues")
+    get_absurd_client().drop_queue("other")
+    call_command("absurd_sync_queues")
+    call_command("absurd_worker", queue="other", burst=True)
+    add.using(queue_name="other").enqueue(7, 8)
+    call_command("absurd_worker", queue="other", burst=True)
+    assert task_model.objects.filter(queue="other").count() >= 1

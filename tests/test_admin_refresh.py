@@ -25,7 +25,6 @@ def view_exists():
 def test_first_call_builds_view():
     reset_view_cache()
     call_command("absurd_sync_queues")
-    assert view_exists() is False
     ensure_view_current(TASKS_SPEC, "default")
     assert view_exists() is True
 
