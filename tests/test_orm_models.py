@@ -40,7 +40,7 @@ def test_admin_uses_the_models_py_classes():
     assert build_admin_model(spec) is dm.Task  # idempotent factory → same class
 
 
-def _seed_two_queues():
+def seed_two_queues():
     call_command("absurd_sync_queues")
     add.enqueue(2, 3)
     add.using(queue_name="other").enqueue(7, 8)
@@ -51,20 +51,21 @@ def _seed_two_queues():
 
 @pytest.mark.django_db(transaction=True)
 def test_filter_across_and_per_queue():
-    _seed_two_queues()
+    seed_two_queues()
     assert {r.queue for r in Task.objects.all()} == {"default", "other"}
     assert Task.objects.filter(queue="other").count() == 1
-    assert Task.objects.filter(state="completed").exists()
+    assert Task.objects.filter(state="completed").count() == 2
 
 
 @pytest.mark.django_db(transaction=True)
 def test_cross_queue_aggregate_and_order():
-    _seed_two_queues()
+    seed_two_queues()
     by_queue = dict(Task.objects.values_list("queue").annotate(n=Count("*")))
     assert by_queue["other"] == 1
     assert by_queue["default"] >= 2
     recent = list(Task.objects.order_by("-enqueue_at")[:2])
     assert len(recent) == 2
+    assert recent[0].enqueue_at >= recent[1].enqueue_at
 
 
 @pytest.mark.django_db(transaction=True)
