@@ -17,7 +17,7 @@ database connection and ships Absurd's schema as Django migrations — no separa
 
 ## Configure
 
-Add the app, register the router, and point Django's `TASKS` setting at the backend:
+Add the app and point Django's `TASKS` setting at the backend:
 
 ```python
 INSTALLED_APPS = [
@@ -25,15 +25,16 @@ INSTALLED_APPS = [
     "django_absurd",
 ]
 
-DATABASE_ROUTERS = ["django_absurd.routers.AbsurdRouter"]
-
 TASKS = {
     "default": {
         "BACKEND": "django_absurd.backends.AbsurdBackend",
-        "QUEUES": ["default"],  # queue names this app enqueues to
+        "QUEUES": ["default"],  # optional — defaults to ["default"]
     },
 }
 ```
+
+`QUEUES` is optional: omit it to use just the `"default"` queue. List names here for
+additional queues, or use `OPTIONS["QUEUES"]` (below) to set per-queue policy.
 
 Backend `OPTIONS` (all optional):
 
@@ -42,6 +43,13 @@ Backend `OPTIONS` (all optional):
 - `QUEUES` — a map of queue name → `absurd_sdk.CreateQueueOptions` for per-queue config.
   Use this _instead of_ the top-level `QUEUES` list (which only names queues) — declare
   queues in one place or the other, never both (setting both is a configuration error).
+
+Only when you point `DATABASE` at a **non-default** alias, also register the router so
+django-absurd's schema and queries route to that database:
+
+```python
+DATABASE_ROUTERS = ["django_absurd.routers.AbsurdRouter"]
+```
 
 ## Run
 
@@ -102,7 +110,8 @@ defer, and priority are not.
 ## Workers
 
 ```bash
-python manage.py absurd_worker --queue default
+python manage.py absurd_worker            # consumes the "default" queue
+python manage.py absurd_worker --queue reports
 ```
 
 A single worker runs **both** sync and async tasks: `async def` tasks run on an event
@@ -112,6 +121,7 @@ changes) and reports to stdout.
 
 - **Blocking** (default): long-running; polls until `SIGINT`/`SIGTERM`.
 - **Burst** (`--burst`): drain the current backlog, then exit `0` (cron / one-shot).
+- `--queue` (default `"default"`): which queue to consume.
 - `--concurrency N` (default `1`): max tasks in flight — sizes both the event-loop
   concurrency and the sync thread pool. Other flags: `--claim-timeout`,
   `--poll-interval`, `--batch-size`, `--worker-id`, and `--alias` (required only when

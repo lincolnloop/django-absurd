@@ -3,8 +3,8 @@ name: sync-docs
 description:
   Use when a change touches user-facing behavior — management commands or their flags,
   TASKS / OPTIONS settings, the enqueue or params API, defaults, the setup flow, or
-  system checks. Keeps the project's docs in sync with the code so updates don't get
-  lost in context.
+  system checks. Keeps README.md, the AGENTS.md integration guide, AND the runnable
+  example (examples/) in sync with the code so updates don't get lost in context.
 ---
 
 # sync-docs
@@ -48,9 +48,12 @@ A change triggers a doc pass if it touches any of:
    it in AGENTS.md and link instead.
 2. **AGENTS.md** — update the relevant section (Configure / Run / Validate / Enqueue /
    Workers / Results / Deployment / Adopting). This is where completeness lives.
-3. **examples/** — if the change alters the run flow or a demonstrated capability,
-   update `examples/README.md` and the runnable bits (`Dockerfile` CMD, `demo/tasks.py`,
-   `enqueue_demo`). Prefer demonstrating the simplest happy path.
+3. **examples/** — always check the example when the run flow or a demonstrated
+   capability changes. Update `examples/README.md` AND the runnable bits it documents
+   (`Dockerfile` CMD, `compose.yaml`, `demo/tasks.py`, `enqueue_demo`), kept to the
+   simplest happy path. If the flow changed, re-run it
+   (`docker compose up --build --abort-on-container-exit`) to confirm it still exits
+   `0`.
 4. **Cross-check copy** — exact command names, flag names, message text, and defaults
    must match the code verbatim across all three files.
 

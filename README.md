@@ -16,41 +16,45 @@ separate broker — reusing Django's own database connection.
 ## Install
 
 ```console
-pip install django-absurd          # add --pre for alpha (pre-release) versions
+pip install django-absurd
 ```
 
 ## Quickstart
 
-Add the app, register the router, and point Django's `TASKS` setting at the backend:
+Add the app and point Django's `TASKS` setting at the backend:
 
 ```python
 # settings.py
-INSTALLED_APPS = [..., "django_absurd"]
-DATABASE_ROUTERS = ["django_absurd.routers.AbsurdRouter"]
+INSTALLED_APPS = [
+    # ...
+    "django_absurd",
+]
 
 TASKS = {
     "default": {
         "BACKEND": "django_absurd.backends.AbsurdBackend",
-        "QUEUES": ["default"],  # queue names this app enqueues to
     },
 }
 ```
 
 ```console
-python manage.py migrate          # install Absurd's schema (shipped, offline)
-python manage.py absurd_worker    # run a worker
+python manage.py migrate          # create the Absurd schema
+python manage.py absurd_worker    # run a worker (consumes the "default" queue)
 ```
 
-Define tasks with Django's Tasks API and enqueue them — the declared queue is **created
-automatically** on first use, so there's no provisioning step:
+Define a task with Django's Tasks API and enqueue it — the `"default"` queue is
+**created automatically** on first use:
 
 ```python
 from django.tasks import task
 
-@task
-def send_report(user_id): ...
 
-send_report.enqueue(42)
+@task
+def add(a: int, b: int) -> int:
+    return a + b
+
+
+result = add.enqueue(2, 3)  # returns a TaskResult; the worker runs it
 ```
 
 ## Documentation
