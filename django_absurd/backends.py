@@ -1,7 +1,6 @@
 import typing as t
 
 import psycopg.errors
-import psycopg.sql
 from absurd_sdk import CreateQueueOptions
 from django.core.exceptions import ImproperlyConfigured
 from django.db import transaction

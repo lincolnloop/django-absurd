@@ -130,11 +130,9 @@ def test_aget_result_matches_get_result():
 
 
 def test_get_result_does_not_poison_jsonfield_reads():
-    # Regression: the old code called register_jsonb_loader(connection.connection),
-    # which registered the jsonb->Python decoder at connection scope.
-    # Subsequent ORM JSONField reads on the same connection would receive an
-    # already-decoded dict, causing json.loads to raise TypeError.
-    # The fix registers the loader at cursor scope only; this test fails pre-fix.
+    # get_result must not register a connection-scoped jsonb decoder: a later
+    # ORM JSONField read on the same connection would then receive an
+    # already-decoded dict and raise TypeError in json.loads.
     #
     # Start from a fresh psycopg connection with no prior loader registrations.
     conn = connections["default"]
