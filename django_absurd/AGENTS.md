@@ -17,15 +17,13 @@ database connection and ships Absurd's schema as Django migrations — no separa
 
 ## Configure
 
-Add the app, register the router, and point Django's `TASKS` setting at the backend:
+Add the app and point Django's `TASKS` setting at the backend:
 
 ```python
 INSTALLED_APPS = [
     # ...
     "django_absurd",
 ]
-
-DATABASE_ROUTERS = ["django_absurd.routers.AbsurdRouter"]
 
 TASKS = {
     "default": {
@@ -42,6 +40,13 @@ Backend `OPTIONS` (all optional):
 - `QUEUES` — a map of queue name → `absurd_sdk.CreateQueueOptions` for per-queue config.
   Use this _instead of_ the top-level `QUEUES` list (which only names queues) — declare
   queues in one place or the other, never both (setting both is a configuration error).
+
+Only when you point `DATABASE` at a **non-default** alias, also register the router so
+django-absurd's schema and queries route to that database:
+
+```python
+DATABASE_ROUTERS = ["django_absurd.routers.AbsurdRouter"]
+```
 
 ## Run
 
