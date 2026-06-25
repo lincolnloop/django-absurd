@@ -1,9 +1,15 @@
+import pytest
 from django.apps import apps as global_apps
+from django.core.management import call_command
+from django.db.models import Count
 
 import django_absurd.models
 from django_absurd import models as dm
 from django_absurd.admin_views import ADMIN_ENTITY_SPECS, build_admin_model
+from django_absurd.exceptions import QueueReadOnlyError
 from django_absurd.models import Checkpoint, Event, Run, Task, Wait
+from django_absurd.params import AbsurdSpawnParams
+from tests.tasks import add, boom
 
 
 def test_models_importable_and_view_backed():
@@ -32,3 +38,36 @@ def test_view_models_absent_from_global_registry():
 def test_admin_uses_the_models_py_classes():
     spec = next(s for s in ADMIN_ENTITY_SPECS if s.name == "tasks")
     assert build_admin_model(spec) is dm.Task  # idempotent factory → same class
+
+
+def _seed_two_queues():
+    call_command("absurd_sync_queues")
+    add.enqueue(2, 3)
+    add.using(queue_name="other").enqueue(7, 8)
+    boom.enqueue(absurd_spawn_params=AbsurdSpawnParams(max_attempts=1))
+    call_command("absurd_worker", queue="default", burst=True)
+    call_command("absurd_worker", queue="other", burst=True)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_filter_across_and_per_queue():
+    _seed_two_queues()
+    assert {r.queue for r in Task.objects.all()} == {"default", "other"}
+    assert Task.objects.filter(queue="other").count() == 1
+    assert Task.objects.filter(state="completed").exists()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_cross_queue_aggregate_and_order():
+    _seed_two_queues()
+    by_queue = dict(Task.objects.values_list("queue").annotate(n=Count("*")))
+    assert by_queue["other"] == 1
+    assert by_queue["default"] >= 2
+    recent = list(Task.objects.order_by("-enqueue_at")[:2])
+    assert len(recent) == 2
+
+
+@pytest.mark.django_db(transaction=True)
+def test_read_only_save_blocked():
+    with pytest.raises(QueueReadOnlyError):
+        Task().save()
