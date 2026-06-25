@@ -83,6 +83,34 @@ set `OPTIONS["ADMIN_SITE"]` to a tuple of dotted paths, e.g.
 synthesized models read from the Absurd DB while Django's `LogEntry`, sessions, and
 `ContentType` tables must still be present in `"default"` (run `migrate` on it).
 
+## Querying queue state (ORM)
+
+The same read-only models the admin uses are public:
+
+```python
+from django_absurd.models import Task, Run, Checkpoint, Event, Wait, Queue
+
+Task.objects.filter(queue="reports", state="failed")
+Task.objects.get(queue="reports", task_id=task_id)
+```
+
+`Task`, `Run`, `Checkpoint`, `Event`, and `Wait` are ordinary chainable Django models —
+`.filter()`, `.exclude()`, `.order_by()`, `.count()`, slicing all work. Each spans every
+queue (a `UNION ALL` over the per-queue tables) and carries a synthesized **`queue`**
+column identifying the source queue. They are **read-only**: `save()`/`delete()` raise
+`QueueReadOnlyError`. `Queue` is the queue catalog (`queue_name` is its key).
+
+These models are backed by Postgres views, provisioned by `absurd_sync_queues` or by
+worker start — **not** by enqueue. A queue created only by an enqueue (never synced, no
+worker started) is absent from results until the next sync or worker start; run
+`absurd_sync_queues` to make it visible. Dropping a queue (`drop_queue`) removes its
+view; re-run `absurd_sync_queues` to rebuild.
+
+**Performance.** The views have no cross-queue index. Filtering by **`queue=`** prunes
+to a single per-queue table — fast. An unfiltered query (e.g. ordering by `enqueue_at`
+or filtering only on `state` across all queues) scans every queue's table. On large
+multi-queue deployments, scope queries with `queue=` whenever you can.
+
 ## Validate
 
 Run `python manage.py check django_absurd` and resolve everything it reports before

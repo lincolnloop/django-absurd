@@ -60,8 +60,8 @@ result = add.enqueue(2, 3)  # returns a TaskResult; the worker runs it
 ## Documentation
 
 - **[Integration guide](django_absurd/AGENTS.md)** — full configuration and `OPTIONS`,
-  workers, task parameters, retrieving results, deployment notes, and adopting an
-  existing Absurd database.
+  workers, task parameters, retrieving results, admin introspection, querying queue
+  state with the ORM, deployment notes, and adopting an existing Absurd database.
 - **[Runnable example](examples/)** — a dockerized Django project demonstrating the
   whole flow end to end.
 
