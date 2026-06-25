@@ -9,7 +9,14 @@ from django_absurd.models import Checkpoint, Event, Run, Task, Wait
 def test_models_importable_and_view_backed():
     assert Task._meta.db_table == 'absurd"."tasks_view'
     assert Task._meta.managed is False
-    assert {Run, Checkpoint, Event, Wait}  # all importable
+    assert Run._meta.db_table == 'absurd"."runs_view'
+    assert Run._meta.managed is False
+    assert Checkpoint._meta.db_table == 'absurd"."checkpoints_view'
+    assert Checkpoint._meta.managed is False
+    assert Event._meta.db_table == 'absurd"."events_view'
+    assert Event._meta.managed is False
+    assert Wait._meta.db_table == 'absurd"."waits_view'
+    assert Wait._meta.managed is False
 
 
 def test_view_models_absent_from_global_registry():

@@ -2,7 +2,7 @@ import typing as t
 
 from django.db import models
 
-from django_absurd.admin_views import ADMIN_ENTITY_SPECS, EntitySpec, build_admin_model
+from django_absurd.admin_views import ADMIN_ENTITY_SPECS, build_admin_model
 from django_absurd.exceptions import QUEUE_READONLY_MSG, QueueReadOnlyError
 
 __all__ = [
@@ -55,12 +55,18 @@ class Queue(models.Model):
         raise QueueReadOnlyError(QUEUE_READONLY_MSG)
 
 
-def find_spec(name: str) -> EntitySpec:
-    return next(s for s in ADMIN_ENTITY_SPECS if s.name == name)
-
-
-Task: type[models.Model] = build_admin_model(find_spec("tasks"))
-Run: type[models.Model] = build_admin_model(find_spec("runs"))
-Checkpoint: type[models.Model] = build_admin_model(find_spec("checkpoints"))
-Event: type[models.Model] = build_admin_model(find_spec("events"))
-Wait: type[models.Model] = build_admin_model(find_spec("waits"))
+Task: type[models.Model] = build_admin_model(
+    next(s for s in ADMIN_ENTITY_SPECS if s.name == "tasks")
+)
+Run: type[models.Model] = build_admin_model(
+    next(s for s in ADMIN_ENTITY_SPECS if s.name == "runs")
+)
+Checkpoint: type[models.Model] = build_admin_model(
+    next(s for s in ADMIN_ENTITY_SPECS if s.name == "checkpoints")
+)
+Event: type[models.Model] = build_admin_model(
+    next(s for s in ADMIN_ENTITY_SPECS if s.name == "events")
+)
+Wait: type[models.Model] = build_admin_model(
+    next(s for s in ADMIN_ENTITY_SPECS if s.name == "waits")
+)
