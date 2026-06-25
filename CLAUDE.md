@@ -4,6 +4,11 @@ Django app wrapping [Absurd](https://earendil-works.github.io/absurd/) (Postgres
 workflow engine). Package at repo root (`django_absurd/`, no `src/`). Specs live in
 `docs/specs/`, plans in `docs/plans/`.
 
+This file is about **maintaining** the project — conventions, testing, tooling. For
+how-to / integration / usage (configuring the backend, enqueuing, workers, releasing),
+see [`django_absurd/AGENTS.md`](django_absurd/AGENTS.md), the user-facing guide; don't
+duplicate that material here.
+
 ## Naming
 
 - **Functions must contain a verb** (`get_declared_queues`, `sync_queues`,
