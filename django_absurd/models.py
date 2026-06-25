@@ -2,14 +2,9 @@ from typing import NoReturn
 
 from django.db import models
 
-QUEUE_READONLY_MSG = (
-    "Queue is read-only; manage queues via the AbsurdBackend QUEUES option + "
-    "'manage.py absurd_sync_queues', or the absurd-sdk."
-)
+from django_absurd.exceptions import QUEUE_READONLY_MSG, QueueReadOnlyError
 
-
-class QueueReadOnlyError(Exception):
-    pass
+__all__ = ["QUEUE_READONLY_MSG", "Queue", "QueueReadOnlyError"]
 
 
 class Queue(models.Model):

@@ -6,13 +6,9 @@ import psycopg.sql
 from django.apps.registry import Apps
 from django.db import connections, models, transaction
 
-from django_absurd.models import QueueReadOnlyError
+from django_absurd.exceptions import ADMIN_VIEW_READONLY_MSG, QueueReadOnlyError
 
 PRIVATE_ADMIN_APPS = Apps()
-
-ADMIN_VIEW_READONLY_MSG = (
-    "Admin view models are read-only; they map Absurd union views."
-)
 
 
 @dataclasses.dataclass(frozen=True)
