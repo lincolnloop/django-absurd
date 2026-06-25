@@ -5,8 +5,8 @@ import pytest
 from django.core.management import call_command
 from django.tasks import TaskResultStatus
 
+from django_absurd.backends import get_absurd_backends
 from django_absurd.params import AbsurdSpawnParams
-from django_absurd.queues import get_absurd_backends
 from tests.atasks import (
     aboom,
     acreate_payload,

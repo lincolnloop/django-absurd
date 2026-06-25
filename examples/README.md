@@ -33,12 +33,14 @@ That brings up Postgres, waits for it, then the `app` service runs the full flow
 exits `0`:
 
 1. `manage.py migrate` — creates the auth tables **and** the Absurd schema.
-2. `manage.py absurd_sync_queues` — provisions the queues declared in `TASKS`.
-3. `manage.py enqueue_demo` — enqueues `add(2, 3)`, `create_user("alice")`, and the
-   async `create_user_async("alice-async")`.
-4. `manage.py absurd_worker --queue default --burst` — drains the queue, runs all three
-   tasks (you'll see per-task start/completed logs) — sync tasks in a thread pool, the
-   `async def` task on the event loop — then exits.
+2. `manage.py enqueue_demo` — enqueues `add(2, 3)`, `create_user("alice")`, and the
+   async `create_user_async("alice-async")`. The first enqueue **auto-creates** the
+   `default` queue — no `absurd_sync_queues` step is needed (it stays available for
+   eager provisioning / policy reconciliation).
+3. `manage.py absurd_worker --queue default --burst` — reconciles the queue on start
+   (reporting to stdout), drains it, runs all three tasks (per-task start/completed
+   logs) — sync tasks in a thread pool, the `async def` task on the event loop — then
+   exits.
 
 You'll see the worker execute all three tasks in the logs. Clean up with:
 

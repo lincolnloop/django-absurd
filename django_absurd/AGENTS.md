@@ -1,12 +1,12 @@
-# django-absurd — agent guide
+# django-absurd — integration guide
 
-Guidance for coding agents integrating **django-absurd** into a Django project. This
-file ships inside the installed package (`site-packages/django_absurd/AGENTS.md`) so it
-is discoverable from a project's virtualenv.
+A guide for developers integrating **django-absurd** into a Django project. This file
+ships inside the installed package (`site-packages/django_absurd/AGENTS.md`), so it
+stays discoverable from a project's virtualenv (and by coding agents working there).
 
 django-absurd plugs [Absurd](https://earendil-works.github.io/absurd/), a
 Postgres-native workflow engine, into Django's Tasks framework. It reuses Django's
-database connection and ships Absurd's schema as Django migrations.
+database connection and ships Absurd's schema as Django migrations — no separate broker.
 
 ## Hard requirements
 
@@ -39,15 +39,21 @@ Backend `OPTIONS` (all optional):
 
 - `DATABASE` — which `DATABASES` alias to use (default: `"default"`).
 - `DEFAULT_MAX_ATTEMPTS` — retry ceiling per task (default: `5`).
-- `QUEUES` — map of queue name → `absurd_sdk.CreateQueueOptions` for per-queue config.
+- `QUEUES` — a map of queue name → `absurd_sdk.CreateQueueOptions` for per-queue config.
+  Use this _instead of_ the top-level `QUEUES` list (which only names queues) — declare
+  queues in one place or the other, never both (setting both is a configuration error).
 
 ## Run
 
 ```bash
 python manage.py migrate              # apply Absurd's schema (offline, shipped SQL)
-python manage.py absurd_sync_queues   # create/update declared queues
-python manage.py absurd_worker        # run a worker
+python manage.py absurd_worker        # run a worker (auto-creates its queue)
 ```
+
+Declared queues are created automatically on first use (first enqueue to a queue, or
+worker start), so no provisioning step is required. `absurd_sync_queues` still exists
+for eager provisioning and for reconciling per-queue policy changes, but it is optional.
+Only queues declared in `QUEUES` are auto-created; an undeclared queue name is rejected.
 
 ## Validate
 
@@ -55,10 +61,16 @@ Run `python manage.py check django_absurd` and resolve everything it reports bef
 relying on the setup. Fix the configuration it points at rather than silencing the
 check.
 
-## Enqueue
+## Defining and enqueuing tasks
 
-Use Django's Tasks API. Absurd parameters attach two ways — both live in
-`django_absurd.params`:
+Use Django's Tasks API. Tasks may be **sync (`def`) or async (`async def`)** — one
+worker runs both, and `async def` tasks may use Django's async ORM. Tasks are resolved
+by import path, so they can live in any importable module (no `tasks.py` requirement).
+
+Enqueuing rides the surrounding Django transaction — a task spawned inside `atomic()` is
+rolled back if the block fails (enqueue-on-commit, automatic).
+
+Absurd parameters attach two ways — both live in `django_absurd.params`:
 
 - **Per-task defaults** — the `@absurd_default_params(...)` decorator, applied _below_
   `@task` (applying it above a `Task` raises `TypeError`):
@@ -86,6 +98,71 @@ Parameter fields (see `django_absurd.params`): `max_attempts`, `retry_strategy`,
 only). Field types come from `absurd_sdk` (`RetryStrategy`, `CancellationPolicy`,
 `JsonObject`). Backend capabilities: result retrieval is supported; async enqueue,
 defer, and priority are not.
+
+## Workers
+
+```bash
+python manage.py absurd_worker --queue default
+```
+
+A single worker runs **both** sync and async tasks: `async def` tasks run on an event
+loop (true concurrency for I/O-bound work), sync `def` tasks run in a thread pool. On
+start it reconciles the served queue (creating it if missing, applying declared policy
+changes) and reports to stdout.
+
+- **Blocking** (default): long-running; polls until `SIGINT`/`SIGTERM`.
+- **Burst** (`--burst`): drain the current backlog, then exit `0` (cron / one-shot).
+- `--concurrency N` (default `1`): max tasks in flight — sizes both the event-loop
+  concurrency and the sync thread pool. Other flags: `--claim-timeout`,
+  `--poll-interval`, `--batch-size`, `--worker-id`, and `--alias` (required only when
+  several Absurd backends are configured).
+
+## Retrieving results
+
+`enqueue` returns a `TaskResult`; refresh it or fetch one later by id:
+
+```python
+result = send_report.enqueue(42)
+result.refresh()              # reload status / return_value / errors from the store
+result.status                 # READY | RUNNING | SUCCESSFUL | FAILED
+result.return_value           # available once SUCCESSFUL
+
+send_report.get_result(result.id)              # fetch by id (sync)
+await send_report.aget_result(result.id)       # async variant
+```
+
+## Deployment notes
+
+- **Database privileges.** `migrate` runs `CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`
+  and `CREATE SCHEMA IF NOT EXISTS absurd`, so the migrating role needs rights to create
+  extensions and schemas (a superuser, or a role granted those — with `uuid-ossp`
+  allow-listed on managed Postgres). The schema name `absurd` is fixed.
+- **At-least-once delivery.** A task may run more than once (e.g. a crash between the
+  handler committing and Absurd's bookkeeping). Keep handlers idempotent; use
+  `idempotency_key` where it helps.
+- **Queue creation is automatic and additive.** Declared queues are created on first use
+  (enqueue / worker start); worker start also reconciles a served queue's mutable
+  policy. Neither auto-create nor `absurd_sync_queues` ever drops queues removed from
+  config. A queue's `storage_mode` is immutable after creation (a declared change is
+  reported as a warning, not applied). Only queues declared in `QUEUES` are auto-created
+  — an undeclared queue name is rejected, not silently created.
+- **Teardown is destructive.** `migrate django_absurd zero` drops the `absurd` schema
+  and all data in it.
+
+## Adopting an existing Absurd database
+
+If the target database already runs Absurd (its schema managed outside Django), you can
+fake django-absurd's migration so Django records it as applied without re-running the
+DDL:
+
+```bash
+python manage.py migrate --fake django_absurd
+```
+
+**Use extreme caution.** Faking tells Django the schema is already present without
+checking it. Only do this when the existing `absurd` schema exactly matches the version
+django-absurd targets (`django_absurd.ABSURD_SCHEMA_VERSION`) — a mismatch causes
+runtime failures Django cannot detect. Verify the versions line up before faking.
 
 ## Notes
 

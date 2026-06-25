@@ -11,7 +11,7 @@ from django.tasks.exceptions import InvalidTask
 from django_absurd.connection import register_jsonb_loader
 from django_absurd.params import AbsurdSpawnParams
 from django_absurd.queues import get_absurd_client
-from tests.tasks import add, with_default_attempts
+from tests.tasks import add, make_group, with_default_attempts
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -71,22 +71,38 @@ def test_aenqueue_lands():
     assert len(claim_one()) == 1
 
 
-def test_enqueue_to_unprovisioned_queue_raises_clear_error():
-    with pytest.raises(ImproperlyConfigured) as exc:
+def test_enqueue_auto_creates_declared_queue_and_runs():
+    # 'default' declared but unprovisioned (no absurd_sync_queues). Enqueue auto-creates
+    # it; the worker then runs the task end-to-end.
+    make_group.enqueue("auto")
+    call_command("absurd_worker", queue="default", burst=True)
+    assert Group.objects.filter(name="auto").exists()
+
+
+def test_enqueue_to_undeclared_queue_raises():
+    # 'ghost' is not in TASKS QUEUES; validate_task raises InvalidTask naming the queue.
+    with pytest.raises(InvalidTask, match="ghost"):
+        add.using(queue_name="ghost").enqueue(1, 2)
+
+
+def test_enqueue_with_empty_queues_reports_undeclared(settings):
+    # Empty QUEUES makes validate_task skip its queue check, reaching the backend guard.
+    settings.TASKS = {
+        "default": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {"QUEUES": {}},
+        }
+    }
+    with pytest.raises(ImproperlyConfigured, match="not declared"):
         add.enqueue(1, 2)
-    message = str(exc.value)
-    assert "default" in message
-    assert "absurd_sync_queues" in message
 
 
-def test_enqueue_error_does_not_poison_atomic_block():
-    # Unprovisioned queue -> spawn raises UndefinedTable, aborting the DB transaction.
-    # A savepoint must contain that abort so the surrounding atomic() stays usable.
+def test_enqueue_auto_create_survives_outer_atomic():
     with transaction.atomic():
-        with pytest.raises(ImproperlyConfigured):
-            add.enqueue(1, 2)  # no absurd_sync_queues -> t_default missing
-        # outer transaction must still be usable after the caught error
-        assert Group.objects.count() == 0
+        make_group.enqueue("inatomic")
+        assert Group.objects.count() == 0  # nothing committed yet
+    call_command("absurd_worker", queue="default", burst=True)
+    assert Group.objects.filter(name="inatomic").exists()
 
 
 def test_enqueue_with_absent_schema_raises_clear_error():

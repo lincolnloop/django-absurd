@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import timedelta
 
 import psycopg
 import pytest
@@ -10,8 +11,10 @@ from django.core.management import call_command, load_command_class
 from django.core.management.base import CommandError
 from django.db import connection, connections
 
+from django_absurd.backends import get_absurd_backends
 from django_absurd.connection import register_jsonb_loader
-from django_absurd.queues import get_absurd_backends, get_absurd_client
+from django_absurd.models import Queue
+from django_absurd.queues import get_absurd_client
 from django_absurd.worker import WorkerOptions, aworker_client, run_blocking_worker
 from tests.atasks import aecho
 from tests.jobs import record_from_jobs
@@ -63,25 +66,14 @@ def test_worker_client_rejects_non_psycopg3(settings):
         call_command("absurd_worker", queue="default", burst=True)
 
 
-def test_worker_client_unprovisioned_queue_errors(settings):
-    call_command("absurd_sync_queues")
-    settings.TASKS = {
-        "default": {
-            "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "QUEUES": ["default", "unsynced"],
-            "OPTIONS": {"DATABASE": "default"},
-        }
-    }
-
+def test_worker_client_opens_without_provisioning_check():
+    # No absurd_sync_queues; 'default' unprovisioned (schema present). aworker_client must
+    # NOT raise — the provisioned-or-die check is gone.
     async def _enter():
-        async with aworker_client(backend(), "unsynced"):
-            pass
+        async with aworker_client(backend(), "default") as client:
+            return await client.list_queues()
 
-    with pytest.raises(ImproperlyConfigured) as exc:
-        asyncio.run(_enter())
-    message = str(exc.value)
-    assert "unsynced" in message
-    assert "absurd_sync_queues" in message
+    assert "default" not in asyncio.run(_enter())  # unprovisioned, yet no error
 
 
 def test_worker_client_absent_schema_errors():
@@ -222,18 +214,111 @@ def test_command_burst_runs_task_end_to_end():
     assert get_task_result(result.id).state == "completed"
 
 
-def test_command_maps_improperly_configured_to_commanderror(settings):
+def test_worker_command_reports_created_on_unprovisioned_queue(capsys):
+    call_command("absurd_worker", queue="default", burst=True)
+    out = capsys.readouterr().out
+    assert out == "Created: default\nStarted worker on queue 'default'.\n"
+    assert Queue.objects.filter(queue_name="default").exists()
+
+
+def test_worker_command_reconciles_changed_mutable_option(settings, capsys):
+    settings.TASKS = {
+        "default": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {"QUEUES": {"default": {"cleanup_limit": 100}}},
+        }
+    }
     call_command("absurd_sync_queues")
     settings.TASKS = {
         "default": {
             "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "QUEUES": ["default", "unsynced"],
-            "OPTIONS": {"DATABASE": "default"},
+            "OPTIONS": {"QUEUES": {"default": {"cleanup_limit": 250}}},
         }
     }
-    with pytest.raises(CommandError) as exc:
-        call_command("absurd_worker", queue="unsynced", burst=True)
-    assert "unsynced" in str(exc.value)
+    capsys.readouterr()  # drop sync output
+    call_command("absurd_worker", queue="default", burst=True)
+    out = capsys.readouterr().out
+    assert out == "Reconciled: default\nStarted worker on queue 'default'.\n"
+    assert Queue.objects.get(queue_name="default").cleanup_limit == 250  # DB proof
+
+
+def test_worker_command_reconciles_changed_interval_option(settings, capsys):
+    # Two mutable opts: cleanup_limit unchanged (loop continues), cleanup_ttl changed
+    # (interval drift via parse_interval).
+    settings.TASKS = {
+        "default": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {
+                "QUEUES": {"default": {"cleanup_limit": 100, "cleanup_ttl": "30 days"}}
+            },
+        }
+    }
+    call_command("absurd_sync_queues")
+    settings.TASKS = {
+        "default": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {
+                "QUEUES": {"default": {"cleanup_limit": 100, "cleanup_ttl": "60 days"}}
+            },
+        }
+    }
+    capsys.readouterr()
+    call_command("absurd_worker", queue="default", burst=True)
+    out = capsys.readouterr().out
+    assert out == "Reconciled: default\nStarted worker on queue 'default'.\n"
+    assert Queue.objects.get(queue_name="default").cleanup_ttl == timedelta(days=60)
+
+
+def test_worker_command_no_reconcile_when_unchanged(settings, capsys):
+    settings.TASKS = {
+        "default": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {"QUEUES": {"default": {"cleanup_ttl": "30 days"}}},
+        }
+    }
+    call_command("absurd_sync_queues")
+    before = Queue.objects.get(queue_name="default").cleanup_ttl
+    capsys.readouterr()
+    call_command("absurd_worker", queue="default", burst=True)
+    out = capsys.readouterr().out
+    # Drift-gated no-op: no Created/Reconciled, no "No queues to sync.", just the start line.
+    assert out == "Started worker on queue 'default'.\n"
+    assert Queue.objects.get(queue_name="default").cleanup_ttl == before
+
+
+def test_worker_command_warns_on_storage_mode_drift(settings, capsys):
+    settings.TASKS = {
+        "default": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {"QUEUES": {"default": {}}},
+        }
+    }
+    call_command("absurd_sync_queues")  # create 'default' unpartitioned
+    settings.TASKS = {
+        "default": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {"QUEUES": {"default": {"storage_mode": "partitioned"}}},
+        }
+    }
+    capsys.readouterr()
+    call_command("absurd_worker", queue="default", burst=True)
+    cap = capsys.readouterr()
+    assert cap.out == "Started worker on queue 'default'.\n"
+    assert cap.err == (
+        "Queue 'default': storage_mode cannot be changed "
+        "(existing: 'unpartitioned', declared: 'partitioned'); skipping.\n"
+    )
+
+
+def test_worker_command_schema_absent_errors_migrate():
+    with connection.cursor() as cur:
+        cur.execute("DROP SCHEMA IF EXISTS absurd CASCADE")
+    try:
+        with pytest.raises(CommandError, match="migrate"):
+            call_command("absurd_worker", queue="default", burst=True)
+    finally:
+        call_command("migrate", "django_absurd", "zero", verbosity=0)
+        call_command("migrate", "django_absurd", verbosity=0)
 
 
 def test_start_worker_drains_concurrently():

@@ -6,7 +6,7 @@ from absurd_sdk import CreateQueueOptions
 from django.core.exceptions import ImproperlyConfigured
 from django.db import connections, transaction
 from django.db.utils import ProgrammingError
-from django.tasks import TaskResult, TaskResultStatus
+from django.tasks import TaskResult, TaskResultStatus, task_backends
 from django.tasks.backends.base import BaseTaskBackend
 from django.tasks.base import TaskError
 from django.tasks.exceptions import TaskResultDoesNotExist
@@ -64,12 +64,32 @@ class AbsurdBackend(BaseTaskBackend):
             psycopg.errors.UndefinedFunction,
             psycopg.errors.InvalidSchemaName,
         ):
-            msg = (
-                f"Queue '{task.queue_name}' is not provisioned in Absurd. "
-                "Run manage.py absurd_sync_queues (and manage.py migrate if the "
-                "absurd schema is absent)."
-            )
-            raise ImproperlyConfigured(msg) from None
+            declared = get_declared_queues(self)
+            # validate_task() rejects an undeclared queue (InvalidTask) when the
+            # backend declares queues. This guards the empty-QUEUES config (where
+            # that check is skipped) and the declared[...] access below from KeyError.
+            if task.queue_name not in declared:
+                msg = (
+                    f"Queue '{task.queue_name}' is not declared in TASKS QUEUES. "
+                    "Add it to the QUEUES list in your TASKS backend settings."
+                )
+                raise ImproperlyConfigured(msg) from None
+            try:
+                client.create_queue(task.queue_name, **declared[task.queue_name])
+            except (
+                psycopg.errors.UndefinedFunction,
+                psycopg.errors.InvalidSchemaName,
+            ):
+                msg = "Absurd schema is not installed. Run: manage.py migrate"
+                raise ImproperlyConfigured(msg) from None
+            with transaction.atomic(using=self.database, savepoint=True):
+                spawn_result = client.spawn(
+                    task.module_path,
+                    {"args": list(args), "kwargs": dict(kwargs)},
+                    queue=task.queue_name,
+                    max_attempts=max_attempts,
+                    **merged,
+                )
         return TaskResult(
             task=task,
             id=f"{task.queue_name}:{spawn_result['task_id']}",
@@ -199,6 +219,20 @@ def build_task_result(
     if state == "completed":
         object.__setattr__(result, "_return_value", completed_payload)
     return result
+
+
+def get_declared_queues(backend: "AbsurdBackend") -> dict[str, dict]:
+    if "QUEUES" in backend.options:
+        return dict(backend.options["QUEUES"])
+    return {name: {} for name in backend.queues}
+
+
+def get_absurd_backends() -> dict[str, "AbsurdBackend"]:
+    return {
+        alias: be
+        for alias in task_backends
+        if isinstance((be := task_backends[alias]), AbsurdBackend)
+    }
 
 
 def build_merged_spawn_options(defaults: t.Any, per_call: t.Any) -> dict[str, t.Any]:

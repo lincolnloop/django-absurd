@@ -1,13 +1,15 @@
 import typing as t
 
 from django.core.exceptions import ImproperlyConfigured
-from django.core.management.base import BaseCommand, CommandError
+from django.core.management.base import CommandError
 
-from django_absurd.queues import get_absurd_backends
+from django_absurd.backends import get_absurd_backends
+from django_absurd.management.base import AbsurdReportCommand
+from django_absurd.queues import reconcile_queue
 from django_absurd.worker import WorkerOptions, run_worker
 
 
-class Command(BaseCommand):
+class Command(AbsurdReportCommand):
     help = "Start the Absurd task worker."
 
     def add_arguments(self, parser: t.Any) -> None:
@@ -85,6 +87,12 @@ class Command(BaseCommand):
             )
             raise CommandError(msg)
 
+        try:
+            result = reconcile_queue(backend, queue)
+        except ImproperlyConfigured as exc:
+            raise CommandError(str(exc)) from exc
+        self.report_sync_result(result)
+
         worker_options = WorkerOptions(
             concurrency=options["concurrency"],
             claim_timeout=options["claim_timeout"],
@@ -92,7 +100,5 @@ class Command(BaseCommand):
             batch_size=options["batch_size"],
             worker_id=options["worker_id"],
         )
-        try:
-            run_worker(backend, queue, burst=options["burst"], options=worker_options)
-        except ImproperlyConfigured as exc:
-            raise CommandError(str(exc)) from exc
+        self.stdout.write(f"Started worker on queue '{queue}'.")
+        run_worker(backend, queue, burst=options["burst"], options=worker_options)

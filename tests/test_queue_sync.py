@@ -89,6 +89,14 @@ def test_non_destructive(settings):
     assert Queue.objects.filter(queue_name="keep").exists()
 
 
+def test_sync_reports_no_queues_when_all_in_sync(settings, capsys):
+    settings.TASKS = build_tasks_setting({"q": {}})
+    call_command("absurd_sync_queues")  # creates q
+    capsys.readouterr()
+    call_command("absurd_sync_queues")  # q exists, no drift -> empty result
+    assert "No queues to sync." in capsys.readouterr().out
+
+
 def test_get_absurd_database_resolves_from_backend(settings):
     settings.TASKS = build_tasks_setting({}, database="default")
     assert resolve_absurd_database() == "default"
