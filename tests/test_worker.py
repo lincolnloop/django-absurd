@@ -217,7 +217,7 @@ def test_command_burst_runs_task_end_to_end():
 def test_worker_command_reports_created_on_unprovisioned_queue(capsys):
     call_command("absurd_worker", queue="default", burst=True)
     out = capsys.readouterr().out
-    assert "Created: default" in out
+    assert out == "Created: default\nStarted worker on queue 'default'.\n"
     assert Queue.objects.filter(queue_name="default").exists()
 
 
@@ -238,7 +238,7 @@ def test_worker_command_reconciles_changed_mutable_option(settings, capsys):
     capsys.readouterr()  # drop sync output
     call_command("absurd_worker", queue="default", burst=True)
     out = capsys.readouterr().out
-    assert "Reconciled: default" in out
+    assert out == "Reconciled: default\nStarted worker on queue 'default'.\n"
     assert Queue.objects.get(queue_name="default").cleanup_limit == 250  # DB proof
 
 
@@ -265,7 +265,7 @@ def test_worker_command_reconciles_changed_interval_option(settings, capsys):
     capsys.readouterr()
     call_command("absurd_worker", queue="default", burst=True)
     out = capsys.readouterr().out
-    assert "Reconciled: default" in out
+    assert out == "Reconciled: default\nStarted worker on queue 'default'.\n"
     assert Queue.objects.get(queue_name="default").cleanup_ttl == timedelta(days=60)
 
 
@@ -281,7 +281,8 @@ def test_worker_command_no_reconcile_when_unchanged(settings, capsys):
     capsys.readouterr()
     call_command("absurd_worker", queue="default", burst=True)
     out = capsys.readouterr().out
-    assert "Reconciled: default" not in out  # drift-gated: nothing changed
+    # Drift-gated no-op: no Created/Reconciled, no "No queues to sync.", just the start line.
+    assert out == "Started worker on queue 'default'.\n"
     assert Queue.objects.get(queue_name="default").cleanup_ttl == before
 
 
@@ -301,7 +302,12 @@ def test_worker_command_warns_on_storage_mode_drift(settings, capsys):
     }
     capsys.readouterr()
     call_command("absurd_worker", queue="default", burst=True)
-    assert "storage_mode" in capsys.readouterr().err
+    cap = capsys.readouterr()
+    assert cap.out == "Started worker on queue 'default'.\n"
+    assert cap.err == (
+        "Queue 'default': storage_mode cannot be changed "
+        "(existing: 'unpartitioned', declared: 'partitioned'); skipping.\n"
+    )
 
 
 def test_worker_command_schema_absent_errors_migrate():

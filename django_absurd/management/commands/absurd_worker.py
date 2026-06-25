@@ -100,4 +100,5 @@ class Command(AbsurdReportCommand):
             batch_size=options["batch_size"],
             worker_id=options["worker_id"],
         )
+        self.stdout.write(f"Started worker on queue '{queue}'.")
         run_worker(backend, queue, burst=options["burst"], options=worker_options)

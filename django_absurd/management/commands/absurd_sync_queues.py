@@ -13,4 +13,6 @@ class Command(AbsurdReportCommand):
             return
         for alias, backend in backends.items():
             prefix = f"[{alias}] " if len(backends) > 1 else ""
-            self.report_sync_result(sync_queues(backend), prefix)
+            self.report_sync_result(
+                sync_queues(backend), prefix, empty_message="No queues to sync."
+            )
