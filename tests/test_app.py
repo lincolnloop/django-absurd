@@ -4,7 +4,6 @@ from pathlib import Path
 
 from django.apps import apps
 
-import django_absurd.admin_views  # noqa: F401
 from django_absurd import ABSURD_SCHEMA_VERSION
 from django_absurd.exceptions import QueueReadOnlyError
 from django_absurd.models import QueueReadOnlyError as ReExportedQueueReadOnlyError
