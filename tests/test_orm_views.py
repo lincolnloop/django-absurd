@@ -33,3 +33,17 @@ def test_read_path_does_no_ddl():
     list(task_model.objects.all())
     list(task_model.objects.filter(state="completed"))
     assert view_oid(spec.view_name) == before
+
+
+@pytest.mark.django_db(transaction=True)
+def test_empty_views_exist_after_migrate_only(django_db_blocker):
+    # fresh schema, NO sync, zero queues → views still exist + read empty
+    with django_db_blocker.unblock():
+        call_command("migrate", "django_absurd", "zero", verbosity=0)
+        call_command("migrate", "django_absurd", verbosity=0)
+        for spec in ADMIN_ENTITY_SPECS:
+            assert view_oid(spec.view_name) is not None
+        task_cls = build_admin_model(
+            next(s for s in ADMIN_ENTITY_SPECS if s.name == "tasks")
+        )
+        assert list(task_cls.objects.all()) == []
