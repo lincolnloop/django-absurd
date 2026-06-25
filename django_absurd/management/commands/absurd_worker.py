@@ -3,8 +3,9 @@ import typing as t
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management.base import CommandError
 
+from django_absurd.backends import get_absurd_backends
 from django_absurd.management.base import AbsurdReportCommand
-from django_absurd.queues import get_absurd_backends, reconcile_queue
+from django_absurd.queues import reconcile_queue
 from django_absurd.worker import WorkerOptions, run_worker
 
 

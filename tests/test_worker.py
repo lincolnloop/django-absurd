@@ -10,9 +10,10 @@ from django.core.management import call_command, load_command_class
 from django.core.management.base import CommandError
 from django.db import connection, connections
 
+from django_absurd.backends import get_absurd_backends
 from django_absurd.connection import register_jsonb_loader
 from django_absurd.models import Queue
-from django_absurd.queues import get_absurd_backends, get_absurd_client
+from django_absurd.queues import get_absurd_client
 from django_absurd.worker import WorkerOptions, aworker_client, run_blocking_worker
 from tests.atasks import aecho
 from tests.jobs import record_from_jobs

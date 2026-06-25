@@ -7,9 +7,12 @@ from absurd_sdk import Absurd, CreateQueueOptions
 from django.core.exceptions import ImproperlyConfigured
 from django.db import connections
 from django.db.utils import ProgrammingError
-from django.tasks import task_backends
 
-from django_absurd.backends import AbsurdBackend, get_declared_queues
+from django_absurd.backends import (
+    AbsurdBackend,
+    get_absurd_backends,
+    get_declared_queues,
+)
 from django_absurd.connection import build_absurd_client, validate_backend
 from django_absurd.models import Queue
 
@@ -91,14 +94,6 @@ def sync_queues(backend: AbsurdBackend) -> SyncResult:
         result.reconciled.extend(r.reconciled)
         result.storage_warnings.extend(r.storage_warnings)
     return result
-
-
-def get_absurd_backends() -> dict[str, AbsurdBackend]:
-    return {
-        alias: be
-        for alias in task_backends
-        if isinstance((be := task_backends[alias]), AbsurdBackend)
-    }
 
 
 def parse_interval(using: str, interval_str: str) -> timedelta:

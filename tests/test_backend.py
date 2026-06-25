@@ -1,11 +1,11 @@
 from django.tasks import task_backends
 
-from django_absurd.backends import AbsurdBackend
-from django_absurd.queues import (
+from django_absurd.backends import (
+    AbsurdBackend,
     get_absurd_backends,
     get_declared_queues,
-    resolve_absurd_database,
 )
+from django_absurd.queues import resolve_absurd_database
 
 ABSURD = "django_absurd.backends.AbsurdBackend"
 EXTENDED = "tests.backends.ExtendedAbsurdBackend"

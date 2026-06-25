@@ -1,5 +1,6 @@
+from django_absurd.backends import get_absurd_backends
 from django_absurd.management.base import AbsurdReportCommand
-from django_absurd.queues import get_absurd_backends, sync_queues
+from django_absurd.queues import sync_queues
 
 
 class Command(AbsurdReportCommand):

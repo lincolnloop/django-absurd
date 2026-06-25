@@ -6,7 +6,7 @@ from absurd_sdk import CreateQueueOptions
 from django.core.exceptions import ImproperlyConfigured
 from django.db import connections, transaction
 from django.db.utils import ProgrammingError
-from django.tasks import TaskResult, TaskResultStatus
+from django.tasks import TaskResult, TaskResultStatus, task_backends
 from django.tasks.backends.base import BaseTaskBackend
 from django.tasks.base import TaskError
 from django.tasks.exceptions import TaskResultDoesNotExist
@@ -225,6 +225,14 @@ def get_declared_queues(backend: "AbsurdBackend") -> dict[str, dict]:
     if "QUEUES" in backend.options:
         return dict(backend.options["QUEUES"])
     return {name: {} for name in backend.queues}
+
+
+def get_absurd_backends() -> dict[str, "AbsurdBackend"]:
+    return {
+        alias: be
+        for alias in task_backends
+        if isinstance((be := task_backends[alias]), AbsurdBackend)
+    }
 
 
 def build_merged_spawn_options(defaults: t.Any, per_call: t.Any) -> dict[str, t.Any]:

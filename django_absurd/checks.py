@@ -10,13 +10,10 @@ from django.core.exceptions import ImproperlyConfigured
 from django.db.utils import OperationalError, ProgrammingError
 from django.utils.connection import ConnectionDoesNotExist
 
-from django_absurd.backends import get_declared_queues
+from django_absurd.backends import get_absurd_backends, get_declared_queues
 from django_absurd.connection import BACKEND_ERROR_MESSAGE, validate_backend
 from django_absurd.models import Queue
-from django_absurd.queues import (
-    get_absurd_backends,
-    get_absurd_database,
-)
+from django_absurd.queues import get_absurd_database
 from django_absurd.routers import AbsurdRouter
 
 W002_MSG = (
