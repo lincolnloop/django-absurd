@@ -8,7 +8,7 @@ services:
       retries: 20
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       timeout: 3s
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     # No host port published — the app connects over the compose network (db:5432).
     volumes:
       - pgdata:/var/lib/postgresql/data/
