@@ -30,4 +30,4 @@ RUN uv sync --locked
 CMD ["sh", "-c", "\
   python manage.py migrate && \
   python manage.py enqueue_demo && \
-  python manage.py absurd_worker --queue default --burst"]
+  python manage.py absurd_worker --burst"]

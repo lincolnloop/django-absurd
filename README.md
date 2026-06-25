@@ -33,18 +33,17 @@ INSTALLED_APPS = [
 TASKS = {
     "default": {
         "BACKEND": "django_absurd.backends.AbsurdBackend",
-        "QUEUES": ["default"],  # queue names this app enqueues to
     },
 }
 ```
 
 ```console
-python manage.py migrate                       # create the Absurd schema
-python manage.py absurd_worker --queue default # run a worker
+python manage.py migrate          # create the Absurd schema
+python manage.py absurd_worker    # run a worker (consumes the "default" queue)
 ```
 
-Define a task with Django's Tasks API and enqueue it — the declared queue is **created
-automatically** on first use:
+Define a task with Django's Tasks API and enqueue it — the `"default"` queue is
+**created automatically** on first use:
 
 ```python
 from django.tasks import task

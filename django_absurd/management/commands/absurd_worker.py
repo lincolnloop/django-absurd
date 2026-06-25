@@ -13,7 +13,11 @@ class Command(AbsurdReportCommand):
     help = "Start the Absurd task worker."
 
     def add_arguments(self, parser: t.Any) -> None:
-        parser.add_argument("--queue", required=True, help="Queue name to consume.")
+        parser.add_argument(
+            "--queue",
+            default="default",
+            help="Queue name to consume (default: 'default').",
+        )
         parser.add_argument(
             "--alias",
             default=None,

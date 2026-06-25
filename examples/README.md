@@ -37,10 +37,10 @@ exits `0`:
    async `create_user_async("alice-async")`. The first enqueue **auto-creates** the
    `default` queue — no `absurd_sync_queues` step is needed (it stays available for
    eager provisioning / policy reconciliation).
-3. `manage.py absurd_worker --queue default --burst` — reconciles the queue on start
-   (reporting to stdout), drains it, runs all three tasks (per-task start/completed
-   logs) — sync tasks in a thread pool, the `async def` task on the event loop — then
-   exits.
+3. `manage.py absurd_worker --burst` — consumes the `"default"` queue (the default);
+   reconciles it on start (reporting to stdout), drains it, runs all three tasks
+   (per-task start/completed logs) — sync tasks in a thread pool, the `async def` task
+   on the event loop — then exits.
 
 You'll see the worker execute all three tasks in the logs. Clean up with:
 
@@ -61,7 +61,7 @@ docker compose run --rm app python manage.py enqueue_demo
 
 # Run a long-lived blocking worker (Ctrl-C to stop). --concurrency N sizes both the
 # event-loop concurrency (async tasks) and the sync thread pool.
-docker compose run --rm app python manage.py absurd_worker --queue default --concurrency 4
+docker compose run --rm app python manage.py absurd_worker --concurrency 4
 
 # Validate the TASKS / queue configuration
 docker compose run --rm app python manage.py check

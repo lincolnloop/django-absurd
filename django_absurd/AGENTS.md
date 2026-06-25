@@ -28,10 +28,13 @@ INSTALLED_APPS = [
 TASKS = {
     "default": {
         "BACKEND": "django_absurd.backends.AbsurdBackend",
-        "QUEUES": ["default"],  # queue names this app enqueues to
+        "QUEUES": ["default"],  # optional — defaults to ["default"]
     },
 }
 ```
+
+`QUEUES` is optional: omit it to use just the `"default"` queue. List names here for
+additional queues, or use `OPTIONS["QUEUES"]` (below) to set per-queue policy.
 
 Backend `OPTIONS` (all optional):
 
@@ -107,7 +110,8 @@ defer, and priority are not.
 ## Workers
 
 ```bash
-python manage.py absurd_worker --queue default
+python manage.py absurd_worker            # consumes the "default" queue
+python manage.py absurd_worker --queue reports
 ```
 
 A single worker runs **both** sync and async tasks: `async def` tasks run on an event
@@ -117,6 +121,7 @@ changes) and reports to stdout.
 
 - **Blocking** (default): long-running; polls until `SIGINT`/`SIGTERM`.
 - **Burst** (`--burst`): drain the current backlog, then exit `0` (cron / one-shot).
+- `--queue` (default `"default"`): which queue to consume.
 - `--concurrency N` (default `1`): max tasks in flight — sizes both the event-loop
   concurrency and the sync thread pool. Other flags: `--claim-timeout`,
   `--poll-interval`, `--batch-size`, `--worker-id`, and `--alias` (required only when

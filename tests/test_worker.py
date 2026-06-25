@@ -158,9 +158,12 @@ def test_task_outside_tasks_py_runs():
     assert get_task_result(result.id).result == "from-jobs"
 
 
-def test_queue_is_required():
-    with pytest.raises(CommandError):
-        call_command("absurd_worker")
+def test_queue_defaults_to_default(capsys):
+    make_group.enqueue("dflt")  # auto-creates the default queue
+    call_command("absurd_worker", burst=True)  # no --queue -> "default"
+    out = capsys.readouterr().out
+    assert out == "Started worker on queue 'default'.\n"
+    assert Group.objects.filter(name="dflt").exists()
 
 
 def test_unknown_queue_errors_listing_valid(settings):
@@ -195,8 +198,8 @@ def test_ambiguous_alias_requires_flag(settings):
 def test_command_parses_all_flags_with_defaults():
     cmd = load_command_class("django_absurd", "absurd_worker")
     parser = cmd.create_parser("manage.py", "absurd_worker")
-    opts = vars(parser.parse_args(["--queue", "default"]))
-    assert opts["queue"] == "default"
+    opts = vars(parser.parse_args([]))
+    assert opts["queue"] == "default"  # --queue defaults to "default"
     assert opts["alias"] is None
     assert opts["burst"] is False
     assert opts["concurrency"] == 1
