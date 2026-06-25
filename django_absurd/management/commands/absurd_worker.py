@@ -100,7 +100,4 @@ class Command(AbsurdReportCommand):
             batch_size=options["batch_size"],
             worker_id=options["worker_id"],
         )
-        try:
-            run_worker(backend, queue, burst=options["burst"], options=worker_options)
-        except ImproperlyConfigured as exc:
-            raise CommandError(str(exc)) from exc
+        run_worker(backend, queue, burst=options["burst"], options=worker_options)

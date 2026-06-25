@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import timedelta
 
 import psycopg
 import pytest
@@ -241,20 +242,47 @@ def test_worker_command_reconciles_changed_mutable_option(settings, capsys):
     assert Queue.objects.get(queue_name="default").cleanup_limit == 250  # DB proof
 
 
+def test_worker_command_reconciles_changed_interval_option(settings, capsys):
+    # Two mutable opts: cleanup_limit unchanged (loop continues), cleanup_ttl changed
+    # (interval drift via parse_interval).
+    settings.TASKS = {
+        "default": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {
+                "QUEUES": {"default": {"cleanup_limit": 100, "cleanup_ttl": "30 days"}}
+            },
+        }
+    }
+    call_command("absurd_sync_queues")
+    settings.TASKS = {
+        "default": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {
+                "QUEUES": {"default": {"cleanup_limit": 100, "cleanup_ttl": "60 days"}}
+            },
+        }
+    }
+    capsys.readouterr()
+    call_command("absurd_worker", queue="default", burst=True)
+    out = capsys.readouterr().out
+    assert "Reconciled: default" in out
+    assert Queue.objects.get(queue_name="default").cleanup_ttl == timedelta(days=60)
+
+
 def test_worker_command_no_reconcile_when_unchanged(settings, capsys):
     settings.TASKS = {
         "default": {
             "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "OPTIONS": {"QUEUES": {"default": {"cleanup_limit": 100}}},
+            "OPTIONS": {"QUEUES": {"default": {"cleanup_ttl": "30 days"}}},
         }
     }
     call_command("absurd_sync_queues")
-    before = Queue.objects.get(queue_name="default").cleanup_limit
+    before = Queue.objects.get(queue_name="default").cleanup_ttl
     capsys.readouterr()
     call_command("absurd_worker", queue="default", burst=True)
     out = capsys.readouterr().out
     assert "Reconciled: default" not in out  # drift-gated: nothing changed
-    assert Queue.objects.get(queue_name="default").cleanup_limit == before
+    assert Queue.objects.get(queue_name="default").cleanup_ttl == before
 
 
 def test_worker_command_warns_on_storage_mode_drift(settings, capsys):

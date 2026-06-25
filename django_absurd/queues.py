@@ -53,11 +53,7 @@ def get_absurd_client(using: str | None = None) -> Absurd:
 def reconcile_queue(backend: backends.AbsurdBackend, queue_name: str) -> SyncResult:
     db = backend.database
     validate_backend(db)
-    declared = backends.get_declared_queues(backend)
-    if queue_name not in declared:
-        msg = f"Queue {queue_name!r} is not declared in TASKS QUEUES."
-        raise ImproperlyConfigured(msg)
-    opts = declared[queue_name]
+    opts = backends.get_declared_queues(backend)[queue_name]
     result = SyncResult()
     client = build_absurd_client(db)
     try:

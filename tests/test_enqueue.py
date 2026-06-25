@@ -85,6 +85,18 @@ def test_enqueue_to_undeclared_queue_raises():
         add.using(queue_name="ghost").enqueue(1, 2)
 
 
+def test_enqueue_with_empty_queues_reports_undeclared(settings):
+    # Empty QUEUES makes validate_task skip its queue check, reaching the backend guard.
+    settings.TASKS = {
+        "default": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {"QUEUES": {}},
+        }
+    }
+    with pytest.raises(ImproperlyConfigured, match="not declared"):
+        add.enqueue(1, 2)
+
+
 def test_enqueue_auto_create_survives_outer_atomic():
     with transaction.atomic():
         make_group.enqueue("inatomic")
