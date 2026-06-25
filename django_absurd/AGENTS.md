@@ -45,9 +45,13 @@ Backend `OPTIONS` (all optional):
 
 ```bash
 python manage.py migrate              # apply Absurd's schema (offline, shipped SQL)
-python manage.py absurd_sync_queues   # create/update declared queues
-python manage.py absurd_worker        # run a worker
+python manage.py absurd_worker        # run a worker (auto-creates its queue)
 ```
+
+Declared queues are created automatically on first use (first enqueue to a queue, or
+worker start), so no provisioning step is required. `absurd_sync_queues` still exists
+for eager provisioning and for reconciling per-queue policy changes, but it is optional.
+Only queues declared in `QUEUES` are auto-created; an undeclared queue name is rejected.
 
 ## Validate
 
