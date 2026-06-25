@@ -467,3 +467,4 @@ def test_admin_tasks_changelist_degrades_when_view_dropped(client, admin_user):
     resp = client.get(cl)
     assert resp.status_code == 200
     assert result_rows(parse_html(resp)) == []
+    call_command("absurd_sync_queues")

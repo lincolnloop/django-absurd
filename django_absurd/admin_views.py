@@ -161,6 +161,27 @@ class AbsurdViewQuerySet(models.QuerySet):
         except (ProgrammingError, OperationalError) as exc:
             raise ViewNotProvisionedError(VIEW_NOT_PROVISIONED_MSG) from exc
 
+    def count(self) -> int:
+        return translate_view_errors(super().count)()
+
+    def exists(self) -> bool:
+        return translate_view_errors(super().exists)()
+
+    def aggregate(self, *args: t.Any, **kwargs: t.Any) -> dict[str, t.Any]:
+        return translate_view_errors(super().aggregate)(*args, **kwargs)
+
+
+def translate_view_errors(
+    fn: t.Callable[..., t.Any],
+) -> t.Callable[..., t.Any]:
+    def wrapper(*args: t.Any, **kwargs: t.Any) -> t.Any:
+        try:
+            return fn(*args, **kwargs)
+        except (ProgrammingError, OperationalError) as exc:
+            raise ViewNotProvisionedError(VIEW_NOT_PROVISIONED_MSG) from exc
+
+    return wrapper
+
 
 AbsurdViewManager = models.Manager.from_queryset(AbsurdViewQuerySet)
 

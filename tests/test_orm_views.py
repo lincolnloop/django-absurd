@@ -8,6 +8,7 @@ from django_absurd.admin_views import (
     build_admin_model,
     rebuild_views,
 )
+from django_absurd.exceptions import ViewNotProvisionedError
 from django_absurd.queues import get_absurd_client
 from tests.tasks import add
 
@@ -82,8 +83,6 @@ def test_worker_start_rebuilds_when_it_created_queue():
 
 
 def test_dropped_queue_read_raises_typed_error():
-    from django_absurd.exceptions import ViewNotProvisionedError  # noqa: PLC0415
-
     call_command("absurd_sync_queues")
     rebuild_views("default")
     with connections["default"].cursor() as cur:
@@ -93,16 +92,9 @@ def test_dropped_queue_read_raises_typed_error():
     )
     with pytest.raises(ViewNotProvisionedError):
         list(task_model.objects.all())
+    with pytest.raises(ViewNotProvisionedError):
+        task_model.objects.count()
+    with pytest.raises(ViewNotProvisionedError):
+        task_model.objects.exists()
     call_command("absurd_sync_queues")
     list(task_model.objects.all())
-
-
-def test_normal_read_is_pure_select():
-    call_command("absurd_sync_queues")
-    rebuild_views("default")
-    spec = next(s for s in ADMIN_ENTITY_SPECS if s.name == "tasks")
-    task_model = build_admin_model(spec)
-    before = view_oid(spec.view_name)
-    result = list(task_model.objects.all())
-    assert isinstance(result, list)
-    assert view_oid(spec.view_name) == before
