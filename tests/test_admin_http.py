@@ -248,6 +248,22 @@ def test_changelist_survives_staleness_detection_failure(
             call_command("migrate", "django_absurd", verbosity=0)
 
 
+def test_admin_labels_app_as_absurd(client, admin_user):
+    register_absurd_admin([djadmin.site])
+    refresh_url_resolver()
+    _, failed, _ = seed_mixed()
+    client.force_login(admin_user)
+    # App index groups the models under the verbose_name, not the raw label.
+    index = parse_html(client.get("/admin/"))
+    assert "Absurd" in index.get_text()
+    assert "django_absurd" not in index.get_text()
+    # Change-view breadcrumb shows the app label (was blank: app_config was None
+    # because the synthesized models live in the private apps registry).
+    url = reverse("admin:django_absurd_task_change", args=[quote(failed.id)])
+    crumb = parse_html(client.get(url)).select_one(".breadcrumbs").get_text()
+    assert "Absurd" in crumb
+
+
 def test_runs_changelist_filtered_to_task(client, admin_user):
     register_absurd_admin([djadmin.site])
     refresh_url_resolver()
