@@ -1,24 +1,21 @@
 # django-absurd example
 
-A minimal Django project using **django-absurd** as the
+A single-file [nanodjango](https://nanodjango.dev) app using **django-absurd** as the
 [Django Tasks](https://docs.djangoproject.com/en/6.0/topics/tasks/) backend, backed by
 Postgres. Fully containerized — `docker compose up` runs the whole thing; no host
 Python, uv, or Postgres needed.
 
-It defines `@task` functions in `demo/tasks.py` — sync and `async def` — enqueues them,
-and runs the `absurd_worker` to execute them (one worker runs both kinds).
+It enqueues a task from a web form, runs it in a separate worker process, and exposes
+Absurd's queue tables through the Django admin (which django-absurd auto-registers).
 
 ## Layout
 
 ```
 examples/
-  compose.yaml              # db (Postgres) + app (the Django demo); no host ports
-  Dockerfile                # app image (built from the repo root so it uses local django-absurd)
-  pyproject.toml            # deps: django>=6, django-absurd (local path), psycopg[binary]
-  manage.py
-  demo_project/settings.py  # INSTALLED_APPS + DATABASES + TASKS(AbsurdBackend) + router
-  demo/tasks.py             # @task add / create_user / create_user_async (async ORM)
-  demo/management/commands/enqueue_demo.py
+  compose.yaml   # db (Postgres, internal-only) + app (web/admin) + worker (absurd_worker)
+  Dockerfile     # image built from the repo root so it installs local django-absurd
+  pyproject.toml # deps: nanodjango, django-absurd (local path), psycopg[binary]
+  app.py         # the whole app: Django(...) config, the add task, two views, admin
 ```
 
 ## Run it
@@ -29,20 +26,23 @@ From this `examples/` directory:
 docker compose up --build
 ```
 
-That brings up Postgres, waits for it, then the `app` service runs the full flow and
-exits `0`:
+That brings up three services:
 
-1. `manage.py migrate` — creates the auth tables **and** the Absurd schema.
-2. `manage.py enqueue_demo` — enqueues `add(2, 3)`, `create_user("alice")`, and the
-   async `create_user_async("alice-async")`. The first enqueue **auto-creates** the
-   `default` queue — no `absurd_sync_queues` step is needed (it stays available for
-   eager provisioning / policy reconciliation).
-3. `manage.py absurd_worker --burst` — consumes the `"default"` queue (the default);
-   reconciles it on start (reporting to stdout), drains it, runs all three tasks
-   (per-task start/completed logs) — sync tasks in a thread pool, the `async def` task
-   on the event loop — then exits.
+1. **db** — Postgres, reachable only over the compose network (no published host port).
+2. **app** — migrates, creates an `admin` / `admin` superuser (idempotent), and serves
+   the web app + admin on **http://localhost:8000/**.
+3. **worker** — a long-lived `absurd_worker` consuming the `default` queue; it starts
+   once the app is healthy (i.e. migrations have run).
 
-You'll see the worker execute all three tasks in the logs. Clean up with:
+Then, in a browser:
+
+- **http://localhost:8000/** — submit `add(a, b)`; you're redirected to a task page that
+  auto-refreshes until the worker finishes and shows the result.
+- **http://localhost:8000/admin/** — log in as **admin / admin** and browse **Tasks**,
+  **Runs**, **Checkpoints**, **Events**, **Waits**, and the **Queues** catalog (all
+  read-only, filterable by queue).
+
+Tear down with:
 
 ```bash
 docker compose down -v
@@ -50,39 +50,21 @@ docker compose down -v
 
 ## Try more
 
-Run one-off commands against the running stack with `docker compose run`:
-
-The image autoloads the virtualenv (it's on `PATH`), so commands are plain
-`python manage.py …` — no `uv run` prefix:
-
 ```bash
-# Enqueue again
-docker compose run --rm app python manage.py enqueue_demo
+# Tail just the worker's per-task logs
+docker compose logs -f worker
 
-# Run a long-lived blocking worker (Ctrl-C to stop). --concurrency N sizes both the
-# event-loop concurrency (async tasks) and the sync thread pool.
-docker compose run --rm app python manage.py absurd_worker --concurrency 4
-
-# Validate the TASKS / queue configuration
-docker compose run --rm app python manage.py check
+# Run a one-off management command against the stack
+docker compose run --rm worker nanodjango manage app.py absurd_sync_queues
+docker compose run --rm worker nanodjango manage app.py check
 ```
-
-## Worker modes
-
-- **Burst** (`--burst`): process the available backlog, then exit `0` — what the default
-  `compose up` uses (good for cron / one-shot drains).
-- **Blocking** (no `--burst`): long-running; polls until `SIGINT`/`SIGTERM`. Supports
-  `--concurrency N` (sizes the event loop + the sync thread pool), `--claim-timeout`,
-  `--poll-interval`, `--batch-size`, `--worker-id`.
-
-Both modes run sync and `async def` tasks (sync in a thread pool, async on the loop).
 
 ## Notes
 
-- Tasks are resolved by import path, so they can live in any importable module —
-  `tasks.py` is just a convention. (`demo/tasks.py` here.)
-- django-absurd requires the **psycopg (v3)** PostgreSQL backend — Django selects it
-  automatically for `django.db.backends.postgresql` when `psycopg` is installed.
-- The app connects to Postgres over the compose network (`db:5432`); the demo task
-  `create_user` uses `get_or_create` because Absurd delivers at-least-once (handlers
-  should be idempotent).
+- The superuser is created by `nanodjango run … --user=admin --pass=admin` (in the
+  Dockerfile) — insecure, for the local demo only.
+- `nanodjango run` makes + applies migrations and creates the superuser before serving,
+  so a single `docker compose up` is fully self-provisioning.
+- django-absurd requires the **psycopg (v3)** PostgreSQL backend — `app.py` overrides
+  nanodjango's sqlite default with `django.db.backends.postgresql`.
+- Tasks are delivered at-least-once, so handlers should be idempotent.

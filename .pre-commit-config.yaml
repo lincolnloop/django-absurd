@@ -52,6 +52,7 @@ repos:
     hooks:
       - id: mypy
         entry: uv run mypy
+        exclude: ^examples/
         language: system
         name: mypy
         pass_filenames: true
