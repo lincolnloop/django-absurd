@@ -93,7 +93,7 @@ def test_malformed_id_raises_does_not_exist():
 def test_get_result_inside_atomic_does_not_poison_txn():
     call_command("absurd_sync_queues")
     with connections["default"].cursor() as cur:
-        cur.execute("DROP TABLE absurd.t_other")
+        cur.execute("DROP TABLE absurd.t_other CASCADE")
     with transaction.atomic():
         with pytest.raises(TaskResultDoesNotExist):
             backend().get_result(f"other:{uuid.uuid4()}")
@@ -130,11 +130,9 @@ def test_aget_result_matches_get_result():
 
 
 def test_get_result_does_not_poison_jsonfield_reads():
-    # Regression: the old code called register_jsonb_loader(connection.connection),
-    # which registered the jsonb->Python decoder at connection scope.
-    # Subsequent ORM JSONField reads on the same connection would receive an
-    # already-decoded dict, causing json.loads to raise TypeError.
-    # The fix registers the loader at cursor scope only; this test fails pre-fix.
+    # get_result must not register a connection-scoped jsonb decoder: a later
+    # ORM JSONField read on the same connection would then receive an
+    # already-decoded dict and raise TypeError in json.loads.
     #
     # Start from a fresh psycopg connection with no prior loader registrations.
     conn = connections["default"]

@@ -1,4 +1,5 @@
 import pytest
+from django.contrib.auth import get_user_model
 from django.core.exceptions import ImproperlyConfigured
 from django.db.utils import OperationalError, ProgrammingError
 
@@ -24,3 +25,13 @@ def _reset_absurd_queues(_enable_db):
             client.drop_queue(name)
     except (OperationalError, ProgrammingError, ImproperlyConfigured):
         pass  # absurd schema not present (unmigrated / schema-absent test)
+
+
+@pytest.fixture
+def admin_user(_enable_db):
+    return get_user_model().objects.create_superuser("admin", "a@x.com", "pw")
+
+
+@pytest.fixture
+def staff_user(_enable_db):
+    return get_user_model().objects.create_user("staff", "s@x.com", "pw", is_staff=True)

@@ -26,7 +26,7 @@ reference**.
 | ---------------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `README.md`                        | repo landing                                 | **Trim.** The tl;dr happy path only: one-liner + alpha note, `pip install`, a ~10-line quickstart (TASKS snippet → `migrate` → `absurd_worker`, "queues auto-create"), then a short **Documentation** section linking out. **Never grow it** — new detail goes to AGENTS.md, not here.                                                                  |
 | `django_absurd/AGENTS.md`          | **end users** (devs integrating the package) | The **full reference**: requirements, configuration + every `OPTIONS` key, run, validate (`check`), workers, enqueue + params, retrieving results, deployment notes, adopting an existing DB. Ships inside the installed package, so it is discoverable from a project's venv. Canonical until the doc site exists.                                     |
-| `examples/README.md` + `examples/` | runnable demo                                | A working dockerized project. Keep the **flow accurate**: `Dockerfile` CMD, `compose.yaml`, `demo/tasks.py`, `enqueue_demo`, and the "Run it" steps must match real behavior.                                                                                                                                                                           |
+| `examples/README.md` + `examples/` | runnable demo                                | A working dockerized nanodjango project (`app.py`). Keep the **flow accurate**: `Dockerfile` CMD, `compose.yaml`, `app.py` (config / task / views / admin), and the "Run it" steps must match real behavior.                                                                                                                                            |
 | `CLAUDE.md`                        | **contributors / coding agents**             | Project **maintenance** only: naming, imports, testing conventions, runtime floor (Django / Python), tooling. NOT how-to — it _references_ `AGENTS.md` for usage/integration and must not duplicate it. Changes on convention / tooling / test-setup / runtime shifts (a different trigger from the user docs above; only the runtime floor is shared). |
 | `docs/specs/`, `docs/plans/`       | design history                               | NOT user docs. Design intent / decisions. Leave to `capture-why` / `archive-specs`; don't treat as the place to document features.                                                                                                                                                                                                                      |
 
@@ -54,10 +54,9 @@ A change triggers a doc pass if it touches any of:
    Workers / Results / Deployment / Adopting). This is where completeness lives.
 3. **examples/** — always check the example when the run flow or a demonstrated
    capability changes. Update `examples/README.md` AND the runnable bits it documents
-   (`Dockerfile` CMD, `compose.yaml`, `demo/tasks.py`, `enqueue_demo`), kept to the
-   simplest happy path. If the flow changed, re-run it
-   (`docker compose up --build --abort-on-container-exit`) to confirm it still exits
-   `0`.
+   (`Dockerfile` CMD, `compose.yaml`, `app.py`), kept to the simplest happy path. If the
+   flow changed, re-run it (`docker compose up --build --abort-on-container-exit`) to
+   confirm it still exits `0`.
 4. **CLAUDE.md** — only if a convention, the runtime floor, testing setup, or tooling
    changed. Keep it maintenance-only; route any how-to/usage into AGENTS.md and
    reference it, don't duplicate.

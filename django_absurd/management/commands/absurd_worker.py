@@ -5,7 +5,7 @@ from django.core.management.base import CommandError
 
 from django_absurd.backends import get_absurd_backends
 from django_absurd.management.base import AbsurdReportCommand
-from django_absurd.queues import reconcile_queue
+from django_absurd.queues import provision_backend
 from django_absurd.worker import WorkerOptions, run_worker
 
 
@@ -92,7 +92,9 @@ class Command(AbsurdReportCommand):
             raise CommandError(msg)
 
         try:
-            result = reconcile_queue(backend, queue)
+            # Full provision on start so the admin views reflect every declared
+            # queue, not just the one this worker serves.
+            result = provision_backend(backend)
         except ImproperlyConfigured as exc:
             raise CommandError(str(exc)) from exc
         self.report_sync_result(result)

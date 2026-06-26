@@ -1,17 +1,10 @@
 ---
 services:
   db:
+    image: postgres:18.4-alpine
     environment:
       - POSTGRES_PASSWORD=postgres
-    healthcheck:
-      interval: 2s
-      retries: 20
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      timeout: 3s
-    image: postgres:18-alpine
-    # No host port published — the app connects over the compose network (db:5432).
     volumes:
-      # PG18+ stores data under /var/lib/postgresql (a major-version subdir), not /data.
       - pgdata:/var/lib/postgresql
 
   app:
@@ -19,14 +12,42 @@ services:
       context: ..
       dockerfile: examples/Dockerfile
     depends_on:
-      db:
-        condition: service_healthy
+      - db
+    restart: on-failure
     environment:
       - PGHOST=db
       - PGPORT=5432
       - PGUSER=postgres
       - PGPASSWORD=postgres
       - PGDATABASE=postgres
+    ports:
+      - "8000:8000"
+    volumes:
+      # Live source: edits reload automatically (the dev server watches both).
+      - ./app.py:/app/app.py
+      - ../django_absurd:/src/django_absurd
+
+  worker:
+    build:
+      context: ..
+      dockerfile: examples/Dockerfile
+    # Long-lived blocking worker consuming "default". On start it reconciles the
+    # queue (creating it + indexing the admin views on first run).
+    command: nanodjango manage app.py absurd_worker
+    depends_on:
+      - app
+    restart: on-failure
+    environment:
+      - PGHOST=db
+      - PGPORT=5432
+      - PGUSER=postgres
+      - PGPASSWORD=postgres
+      - PGDATABASE=postgres
+    volumes:
+      # Live source. Note: the worker does not auto-reload — restart it
+      # (docker compose restart worker) to pick up code changes.
+      - ./app.py:/app/app.py
+      - ../django_absurd:/src/django_absurd
 
 volumes:
   pgdata:

@@ -48,10 +48,11 @@ def test_migrate_screams_on_non_postgres_backend(settings):
         call_command("migrate", "django_absurd", database="sqlite", verbosity=0)
 
 
-def test_migrate_creates_no_queue(settings):
+def test_migrate_provisions_declared_queue(settings):
+    # post_migrate runs sync_queues, so `migrate` creates the declared queues
     settings.TASKS = build_tasks_setting({"alpha": {}})
     call_command("migrate", "django_absurd", verbosity=0)
-    assert not Queue.objects.filter(queue_name="alpha").exists()
+    assert Queue.objects.filter(queue_name="alpha").exists()
 
 
 def test_sync_creates_with_options_and_model_maps(settings):

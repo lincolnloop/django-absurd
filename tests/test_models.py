@@ -13,6 +13,10 @@ def test_queue_is_read_only():
         q.delete()
 
 
+def test_queue_str_is_the_queue_name():
+    assert str(Queue(queue_name="reports")) == "reports"
+
+
 def test_queue_table_and_choices():
     assert Queue._meta.db_table == 'absurd"."queues'
     assert Queue._meta.managed is False

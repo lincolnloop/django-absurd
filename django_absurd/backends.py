@@ -1,10 +1,9 @@
 import typing as t
 
 import psycopg.errors
-import psycopg.sql
 from absurd_sdk import CreateQueueOptions
 from django.core.exceptions import ImproperlyConfigured
-from django.db import connections, transaction
+from django.db import transaction
 from django.db.utils import ProgrammingError
 from django.tasks import TaskResult, TaskResultStatus, task_backends
 from django.tasks.backends.base import BaseTaskBackend
@@ -13,7 +12,8 @@ from django.tasks.exceptions import TaskResultDoesNotExist
 from django.utils import timezone
 from django.utils.module_loading import import_string
 
-from django_absurd.connection import build_absurd_client, register_jsonb_loader
+from django_absurd.admin_views import ADMIN_ENTITY_SPECS, build_queue_table_model
+from django_absurd.connection import build_absurd_client
 
 if t.TYPE_CHECKING:
     from django.tasks.base import Task
@@ -23,6 +23,8 @@ class AbsurdBackendOptions(t.TypedDict, total=False):
     DATABASE: str
     DEFAULT_MAX_ATTEMPTS: int
     QUEUES: dict[str, CreateQueueOptions]
+    ENABLE_ADMIN: bool
+    ADMIN_SITE: tuple[str, ...]
 
 
 class AbsurdBackend(BaseTaskBackend):
@@ -109,37 +111,10 @@ class AbsurdBackend(BaseTaskBackend):
         queue, task_id = decode_result_id(result_id)
         if queue not in self.queues:
             raise TaskResultDoesNotExist(result_id)
-        connection = connections[self.database]
-        connection.ensure_connection()
-        sql = psycopg.sql.SQL(
-            "SELECT t.task_name, t.params, t.enqueue_at, t.first_started_at,"
-            " t.state, t.completed_payload, t.cancelled_at,"
-            " lr.started_at AS run_started, lr.completed_at, lr.failed_at,"
-            " lr.failure_reason,"
-            " (SELECT array_agg(r.claimed_by ORDER BY r.attempt)"
-            "  FROM {r} r"
-            "  WHERE r.task_id = t.task_id AND r.claimed_by IS NOT NULL) AS worker_ids"
-            " FROM {t} t"
-            " LEFT JOIN {r} lr ON lr.run_id = t.last_attempt_run"
-            " WHERE t.task_id = %s"
-        ).format(
-            t=psycopg.sql.Identifier("absurd", f"t_{queue}"),
-            r=psycopg.sql.Identifier("absurd", f"r_{queue}"),
+        task_row, run_row, worker_ids = fetch_task_rows(
+            self.database, queue, task_id, result_id
         )
-        rendered = sql.as_string(connection.connection)
-        try:
-            with (
-                transaction.atomic(using=self.database, savepoint=True),
-                connection.cursor() as cursor,
-            ):
-                register_jsonb_loader(cursor)
-                cursor.execute(rendered, [task_id])
-                row = cursor.fetchone()
-        except ProgrammingError:
-            raise TaskResultDoesNotExist(result_id) from None
-        if row is None:
-            raise TaskResultDoesNotExist(result_id)
-        return build_task_result(self, result_id, queue, row)
+        return build_task_result(self, result_id, task_row, run_row, worker_ids)
 
 
 def decode_result_id(result_id: str) -> tuple[str, str]:
@@ -163,26 +138,66 @@ def map_state_to_status(state: str) -> TaskResultStatus:
     return STATE_TO_STATUS.get(state, TaskResultStatus.READY)
 
 
+def fetch_task_rows(
+    database: str,
+    queue: str,
+    task_id: str,
+    result_id: str,
+) -> tuple[t.Any, t.Any, list[str]]:
+    tasks_spec = next(s for s in ADMIN_ENTITY_SPECS if s.name == "tasks")
+    runs_spec = next(s for s in ADMIN_ENTITY_SPECS if s.name == "runs")
+    task_table = t.cast("t.Any", build_queue_table_model(tasks_spec, queue))
+    run_table = t.cast("t.Any", build_queue_table_model(runs_spec, queue))
+    try:
+        with transaction.atomic(using=database, savepoint=True):
+            task_row = task_table.objects.using(database).filter(pk=task_id).first()
+    except ProgrammingError:
+        raise TaskResultDoesNotExist(result_id) from None
+    if task_row is None:
+        raise TaskResultDoesNotExist(result_id)
+    run_row = None
+    if task_row.last_attempt_run is not None:
+        try:
+            with transaction.atomic(using=database, savepoint=True):
+                run_row = (
+                    run_table.objects.using(database)
+                    .filter(pk=task_row.last_attempt_run)
+                    .first()
+                )
+        except ProgrammingError:
+            raise TaskResultDoesNotExist(result_id) from None
+    try:
+        with transaction.atomic(using=database, savepoint=True):
+            worker_ids = list(
+                run_table.objects.using(database)
+                .filter(task_id=task_id, claimed_by__isnull=False)
+                .order_by("attempt")
+                .values_list("claimed_by", flat=True)
+            )
+    except ProgrammingError:
+        raise TaskResultDoesNotExist(result_id) from None
+    return task_row, run_row, worker_ids
+
+
 def build_task_result(
     backend: "AbsurdBackend",
     result_id: str,
-    queue: str,
-    row: t.Any,
+    task_row: t.Any,
+    run_row: t.Any,
+    worker_ids_list: list[str],
 ) -> TaskResult:
-    (
-        task_name,
-        params,
-        enqueue_at,
-        first_started_at,
-        state,
-        completed_payload,
-        cancelled_at,
-        run_started,
-        completed_at,
-        failed_at,
-        failure_reason,
-        worker_ids_array,
-    ) = row
+    queue, _ = decode_result_id(result_id)
+    task_name: str = task_row.task_name
+    params: dict[str, t.Any] = task_row.params
+    enqueue_at = task_row.enqueue_at
+    first_started_at = task_row.first_started_at
+    state: str = task_row.state
+    completed_payload = task_row.completed_payload
+    cancelled_at = task_row.cancelled_at
+    run_started = run_row.started_at if run_row is not None else None
+    completed_at = run_row.completed_at if run_row is not None else None
+    failed_at = run_row.failed_at if run_row is not None else None
+    failure_reason = run_row.failure_reason if run_row is not None else None
     try:
         task_obj = import_string(task_name)
     except ImportError:
@@ -201,7 +216,7 @@ def build_task_result(
             )
         ]
     finished_at = completed_at or failed_at or cancelled_at
-    worker_ids: list[str] = worker_ids_array or []
+    worker_ids: list[str] = worker_ids_list or []
     result: TaskResult = TaskResult(
         task=task_obj,
         id=result_id,

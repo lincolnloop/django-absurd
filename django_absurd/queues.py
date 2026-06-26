@@ -9,6 +9,7 @@ from django.db import connections
 from django.db.utils import ProgrammingError
 
 from django_absurd import backends
+from django_absurd.admin_views import rebuild_views
 from django_absurd.connection import build_absurd_client, validate_backend
 from django_absurd.models import Queue
 
@@ -44,6 +45,14 @@ def resolve_absurd_database() -> str:
     if len(databases) == 1:
         return next(iter(databases))
     return "default"
+
+
+def get_absurd_backend() -> backends.AbsurdBackend | None:
+    target = resolve_absurd_database()
+    for be in backends.get_absurd_backends().values():
+        if be.database == target:
+            return be
+    return None
 
 
 def get_absurd_client(using: str | None = None) -> Absurd:
@@ -85,6 +94,15 @@ def sync_queues(backend: backends.AbsurdBackend) -> SyncResult:
         result.created.extend(r.created)
         result.reconciled.extend(r.reconciled)
         result.storage_warnings.extend(r.storage_warnings)
+    return result
+
+
+def provision_backend(backend: backends.AbsurdBackend) -> SyncResult:
+    # The single integral provisioning step (used by post_migrate, the sync command,
+    # and worker start): reconcile every declared queue, then rebuild all admin views
+    # so they reflect the full catalog — not just the queue a worker happens to serve.
+    result = sync_queues(backend)
+    rebuild_views(backend.database)
     return result
 
 
