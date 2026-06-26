@@ -218,9 +218,11 @@ def test_changelist_warns_about_unindexed_queue(client, admin_user):
     add.using(queue_name="other").enqueue(7, 8)
     client.force_login(admin_user)
     soup = parse_html(client.get(reverse("admin:django_absurd_task_changelist")))
-    warning = soup.get_text()
-    assert "other" in warning
-    assert "absurd_sync_queues" in warning
+    warning = soup.select_one("ul.messagelist li.warning")
+    assert warning is not None
+    text = warning.get_text()
+    assert "other" in text
+    assert "absurd_sync_queues" in text
 
 
 def test_changelist_no_warning_when_all_queues_indexed(client, admin_user):
@@ -229,7 +231,7 @@ def test_changelist_no_warning_when_all_queues_indexed(client, admin_user):
     seed_mixed()  # syncs + workers → every catalog queue is an arm
     client.force_login(admin_user)
     soup = parse_html(client.get(reverse("admin:django_absurd_task_changelist")))
-    assert "absurd_sync_queues" not in soup.get_text()
+    assert soup.select_one("ul.messagelist li.warning") is None
 
 
 def test_changelist_survives_staleness_detection_failure(
@@ -253,15 +255,16 @@ def test_admin_labels_app_as_absurd(client, admin_user):
     refresh_url_resolver()
     _, failed, _ = seed_mixed()
     client.force_login(admin_user)
-    # App index groups the models under the verbose_name, not the raw label.
+    # App index: the django_absurd module's caption shows the verbose_name.
     index = parse_html(client.get("/admin/"))
-    assert "Absurd" in index.get_text()
-    assert "django_absurd" not in index.get_text()
-    # Change-view breadcrumb shows the app label (was blank: app_config was None
-    # because the synthesized models live in the private apps registry).
+    caption = index.select_one("div.app-django_absurd caption a.section")
+    assert caption.get_text(strip=True) == "Absurd"
+    # Change-view breadcrumb: the app-index link (blank before the fix — the
+    # synthesized models' _meta.app_config resolved to None in the private registry).
     url = reverse("admin:django_absurd_task_change", args=[quote(failed.id)])
-    crumb = parse_html(client.get(url)).select_one(".breadcrumbs").get_text()
-    assert "Absurd" in crumb
+    change = parse_html(client.get(url))
+    app_crumb = change.select_one('.breadcrumbs a[href="/admin/django_absurd/"]')
+    assert app_crumb.get_text(strip=True) == "Absurd"
 
 
 def test_runs_changelist_filtered_to_task(client, admin_user):
