@@ -51,6 +51,13 @@ app = Django(
             "QUEUES": ["default"],
         }
     },
+    # Surface django-absurd's per-task worker logging on the console.
+    LOGGING={
+        "version": 1,
+        "disable_existing_loggers": False,
+        "handlers": {"console": {"class": "logging.StreamHandler"}},
+        "loggers": {"django_absurd": {"handlers": ["console"], "level": "INFO"}},
+    },
 )
 
 
