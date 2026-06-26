@@ -40,6 +40,17 @@ def test_models_absent_from_global_registry():
     assert "Task" not in names
 
 
+def test_run_has_task_fk_for_inlining_and_task_id_is_unique():
+    tasks = build_admin_model(next(s for s in ADMIN_ENTITY_SPECS if s.name == "tasks"))
+    runs = build_admin_model(next(s for s in ADMIN_ENTITY_SPECS if s.name == "runs"))
+    fk = runs._meta.get_field("task")
+    assert fk.related_model is tasks
+    assert fk.target_field.name == "task_id"  # FK joins on task_id
+    assert fk.get_attname() == "task_id"  # attname stays task_id, not task_id_id
+    assert fk.db_constraint is False  # view-backed: no real FK constraint
+    assert tasks._meta.get_field("task_id").unique  # required as the FK target
+
+
 def test_build_admin_model_is_idempotent():
     tasks_spec = next(s for s in ADMIN_ENTITY_SPECS if s.name == "tasks")
     assert build_admin_model(tasks_spec) is build_admin_model(tasks_spec)

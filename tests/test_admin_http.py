@@ -267,6 +267,30 @@ def test_admin_labels_app_as_absurd(client, admin_user):
     assert app_crumb.get_text(strip=True) == "Absurd"
 
 
+def test_task_detail_groups_fields_and_inlines_runs(client, admin_user):
+    register_absurd_admin([djadmin.site])
+    refresh_url_resolver()
+    completed, _, _ = seed_mixed()  # a completed task → has at least one run
+    client.force_login(admin_user)
+    soup = parse_html(
+        client.get(
+            reverse("admin:django_absurd_task_change", args=[quote(completed.id)])
+        )
+    )
+    # fields are grouped into fieldsets
+    legends = {h.get_text(strip=True) for h in soup.select("h2.fieldset-heading")}
+    assert {"State", "Schedule", "Configuration", "Result"} <= legends
+    # runs are inlined with their execution fields
+    inline = soup.select_one(".inline-group")
+    assert inline is not None
+    assert inline.select_one(".field-attempt") is not None
+    assert inline.select_one(".field-state") is not None
+    # each run row drills into the full run detail
+    link = inline.select_one('a[href*="/django_absurd/run/"]')
+    assert link is not None
+    assert link["href"].endswith("/change/")
+
+
 def test_runs_changelist_filtered_to_task(client, admin_user):
     register_absurd_admin([djadmin.site])
     refresh_url_resolver()
@@ -307,21 +331,6 @@ def test_task_detail_renders_read_only(client, admin_user):
     assert soup.select_one(".field-task_name .readonly") is not None
     assert soup.select_one('input[name="task_name"]') is None
     assert soup.select_one('textarea[name="params"]') is None
-
-
-def test_task_detail_has_runs_link(client, admin_user):
-    register_absurd_admin([djadmin.site])
-    refresh_url_resolver()
-    seed()
-    client.force_login(admin_user)
-    client.get(reverse("admin:django_absurd_task_changelist"))  # prime the view
-    obj, url = task_change_url("default", "tests.tasks.add")
-
-    soup = parse_html(client.get(url))
-    anchor = soup.select_one(".field-runs_link a")
-    runs_cl = reverse("admin:django_absurd_run_changelist")
-    assert anchor is not None
-    assert anchor["href"] == f"{runs_cl}?q={obj.task_id}"
 
 
 def test_checkpoint_detail_with_nasty_name(client, admin_user):

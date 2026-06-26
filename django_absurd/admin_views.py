@@ -87,7 +87,7 @@ ADMIN_ENTITY_SPECS: tuple[EntitySpec, ...] = (
         has_state=True,
         has_status=False,
         list_display=("natural_key", "queue", "task_id", "attempt", "state"),
-        search_fields=("run_id", "task_id", "claimed_by"),
+        search_fields=("run_id", "task__task_id", "claimed_by"),
     ),
     EntitySpec(
         name="checkpoints",
@@ -198,7 +198,8 @@ def build_admin_model(spec: EntitySpec) -> type[models.Model]:
         "queue": models.TextField(),
     }
     for col_name, col_type in spec.columns:
-        fields[col_name] = make_field(col_type)
+        field_name, field = build_model_field(spec, col_name, col_type)
+        fields[field_name] = field
 
     def save(self: models.Model, *args: object, **kwargs: object) -> t.NoReturn:
         raise QueueReadOnlyError(ADMIN_VIEW_READONLY_MSG)
@@ -227,6 +228,28 @@ def build_admin_model(spec: EntitySpec) -> type[models.Model]:
     fields["__module__"] = __name__
 
     return type(spec.model_name, (models.Model,), fields)
+
+
+def build_model_field(
+    spec: EntitySpec, col_name: str, col_type: str
+) -> tuple[str, models.Field]:
+    # Tasks' task_id is the FK target for the Run inline, so it must be unique.
+    if spec.name == "tasks" and col_name == "task_id":
+        return "task_id", models.UUIDField(null=True, unique=True)
+    # Runs join to their task on task_id — model it as a (constraint-free) FK named
+    # `task` so the admin can inline runs under a task. The attname stays `task_id`.
+    if spec.name == "runs" and col_name == "task_id":
+        tasks_spec = next(s for s in ADMIN_ENTITY_SPECS if s.name == "tasks")
+        return "task", models.ForeignKey(
+            build_admin_model(tasks_spec),
+            to_field="task_id",
+            db_column="task_id",
+            db_constraint=False,
+            on_delete=models.DO_NOTHING,
+            null=True,
+            related_name="runs",
+        )
+    return col_name, make_field(col_type)
 
 
 def build_queue_table_model(spec: EntitySpec, queue: str) -> type[models.Model]:

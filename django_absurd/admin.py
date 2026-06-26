@@ -6,8 +6,6 @@ from django.contrib.admin.sites import AdminSite
 from django.core.paginator import Paginator
 from django.db import connections
 from django.db.utils import OperationalError, ProgrammingError
-from django.urls import reverse
-from django.utils.html import format_html
 from django.utils.module_loading import import_string
 
 if t.TYPE_CHECKING:
@@ -227,11 +225,11 @@ def build_entity_admin(
 
     extra: dict[str, t.Any] = {}
     if spec.name == "tasks":
-        readonly_fields = ("runs_link",)
-        extra["runs_link"] = runs_link
-
-    if spec.name == "runs":
-        search_fields = (*spec.search_fields, "task_id")
+        run_model = build_admin_model(
+            next(s for s in ADMIN_ENTITY_SPECS if s.name == "runs")
+        )
+        extra["inlines"] = [build_run_inline(run_model)]
+        extra["fieldsets"] = TASK_FIELDSETS
 
     return type(
         f"{spec.model_name}Admin",
@@ -248,10 +246,51 @@ def build_entity_admin(
     )
 
 
-@admin.display(description="runs")
-def runs_link(self: t.Any, obj: t.Any) -> str:
-    url = reverse("admin:django_absurd_run_changelist")
-    return format_html('<a href="{}?q={}">runs</a>', url, obj.task_id)
+TASK_FIELDSETS = (
+    (None, {"fields": ("queue", "task_id", "task_name", "idempotency_key")}),
+    ("State", {"fields": ("state", "attempts", "max_attempts", "last_attempt_run")}),
+    ("Schedule", {"fields": ("enqueue_at", "first_started_at", "cancelled_at")}),
+    (
+        "Configuration",
+        {"fields": ("params", "headers", "retry_strategy", "cancellation")},
+    ),
+    ("Result", {"fields": ("completed_payload",)}),
+)
+
+RUN_INLINE_FIELDS = (
+    "attempt",
+    "state",
+    "claimed_by",
+    "started_at",
+    "completed_at",
+    "failed_at",
+)
+
+
+class ReadOnlyRunInline(admin.TabularInline):
+    fk_name = "task"
+    extra = 0
+    can_delete = False
+    show_change_link = True  # drill into the full run detail
+    ordering = ("attempt",)
+    fields = RUN_INLINE_FIELDS
+    readonly_fields = RUN_INLINE_FIELDS
+
+    def has_add_permission(self, request: t.Any, obj: t.Any = None) -> bool:
+        return False
+
+    def has_change_permission(self, request: t.Any, obj: t.Any = None) -> bool:
+        return False
+
+    def has_delete_permission(self, request: t.Any, obj: t.Any = None) -> bool:
+        return False
+
+    def has_view_permission(self, request: t.Any, obj: t.Any = None) -> bool:
+        return True
+
+
+def build_run_inline(run_model: type) -> type[admin.TabularInline]:
+    return type("RunInline", (ReadOnlyRunInline,), {"model": run_model})
 
 
 def autoregister_admin() -> None:
