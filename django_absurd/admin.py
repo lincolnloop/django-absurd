@@ -235,6 +235,12 @@ def build_entity_admin(
         # click). enqueue_at is effectively unique, keeping pagination stable.
         extra["ordering"] = ("-first_started_at", "-enqueue_at")
 
+    if spec.name == "runs":
+        extra["fieldsets"] = RUN_FIELDSETS
+        # Most recently active run first: by start, then creation (created_at is
+        # effectively unique, keeping pagination stable).
+        extra["ordering"] = ("-started_at", "-created_at")
+
     return type(
         f"{spec.model_name}Admin",
         (ReadOnlyAbsurdAdmin,),
@@ -259,6 +265,17 @@ TASK_FIELDSETS = (
         {"fields": ("params", "headers", "retry_strategy", "cancellation")},
     ),
     ("Result", {"fields": ("completed_payload",)}),
+)
+
+RUN_FIELDSETS = (
+    (None, {"fields": ("queue", "run_id", "task", "attempt", "state")}),
+    ("Claim", {"fields": ("claimed_by", "claim_expires_at", "available_at")}),
+    (
+        "Timing",
+        {"fields": ("created_at", "started_at", "completed_at", "failed_at")},
+    ),
+    ("Event", {"fields": ("wake_event", "event_payload")}),
+    ("Result", {"fields": ("result", "failure_reason")}),
 )
 
 RUN_INLINE_FIELDS = (

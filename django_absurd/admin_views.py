@@ -94,7 +94,15 @@ ADMIN_ENTITY_SPECS: tuple[EntitySpec, ...] = (
         ),
         has_state=True,
         has_status=False,
-        list_display=("natural_key", "queue", "task_id", "attempt", "state"),
+        list_display=(
+            "natural_key",
+            "queue",
+            "task_id",
+            "attempt",
+            "state",
+            "started_at",
+            "completed_at",
+        ),
         search_fields=("run_id", "task__task_id", "claimed_by"),
     ),
     EntitySpec(

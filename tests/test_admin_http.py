@@ -17,6 +17,7 @@ from django_absurd.admin import (
     resolve_admin_sites,
 )
 from django_absurd.admin_views import ADMIN_ENTITY_SPECS, build_admin_model
+from django_absurd.models import Run
 from django_absurd.params import AbsurdSpawnParams
 from tests.tasks import add, boom
 
@@ -308,6 +309,31 @@ def test_task_detail_groups_fields_and_inlines_runs(client, admin_user):
     link = inline.select_one('a[href*="/django_absurd/run/"]')
     assert link is not None
     assert link["href"].endswith("/change/")
+
+
+def test_run_changelist_shows_dates_ordered_by_recent_activity(client, admin_user):
+    register_absurd_admin([djadmin.site])
+    refresh_url_resolver()
+    seed_mixed()  # produces runs
+    client.force_login(admin_user)
+    soup = parse_html(client.get(reverse("admin:django_absurd_run_changelist")))
+    assert soup.select_one(".column-completed_at") is not None
+    assert soup.select_one("th.column-started_at.sorted.descending") is not None
+
+
+def test_run_detail_groups_fields_into_fieldsets(client, admin_user):
+    register_absurd_admin([djadmin.site])
+    refresh_url_resolver()
+    seed_mixed()  # produces runs
+    client.force_login(admin_user)
+    run = Run.objects.first()
+    soup = parse_html(
+        client.get(
+            reverse("admin:django_absurd_run_change", args=[quote(run.natural_key)])
+        )
+    )
+    legends = {h.get_text(strip=True) for h in soup.select("h2.fieldset-heading")}
+    assert {"Claim", "Timing", "Event", "Result"} <= legends
 
 
 def test_runs_changelist_filtered_to_task(client, admin_user):
