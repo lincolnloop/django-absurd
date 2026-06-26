@@ -40,6 +40,12 @@ def test_models_absent_from_global_registry():
     assert "Task" not in names
 
 
+def test_model_str_is_the_natural_key():
+    for spec in ADMIN_ENTITY_SPECS:
+        model = build_admin_model(spec)
+        assert str(model(natural_key="default:abc")) == "default:abc"
+
+
 def test_run_has_task_fk_for_inlining_and_task_id_is_unique():
     tasks = build_admin_model(next(s for s in ADMIN_ENTITY_SPECS if s.name == "tasks"))
     runs = build_admin_model(next(s for s in ADMIN_ENTITY_SPECS if s.name == "runs"))

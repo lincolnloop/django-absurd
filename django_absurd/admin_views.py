@@ -57,7 +57,15 @@ ADMIN_ENTITY_SPECS: tuple[EntitySpec, ...] = (
         ),
         has_state=True,
         has_status=False,
-        list_display=("natural_key", "queue", "task_name", "state", "attempts"),
+        list_display=(
+            "natural_key",
+            "queue",
+            "task_name",
+            "state",
+            "attempts",
+            "enqueue_at",
+            "first_started_at",
+        ),
         search_fields=("task_id", "task_name"),
     ),
     EntitySpec(
@@ -207,8 +215,12 @@ def build_admin_model(spec: EntitySpec) -> type[models.Model]:
     def delete(self: models.Model, *args: object, **kwargs: object) -> t.NoReturn:
         raise QueueReadOnlyError(ADMIN_VIEW_READONLY_MSG)
 
+    def model_str(self: t.Any) -> str:
+        return self.natural_key
+
     fields["save"] = save
     fields["delete"] = delete
+    fields["__str__"] = model_str
     fields["objects"] = AbsurdViewManager()
 
     fields["Meta"] = type(

@@ -230,6 +230,10 @@ def build_entity_admin(
         )
         extra["inlines"] = [build_run_inline(run_model)]
         extra["fieldsets"] = TASK_FIELDSETS
+        # Most recently active first: by run start, then enqueue time (both real
+        # datetime columns, so the changelist shows the sort indicator and sorts on
+        # click). enqueue_at is effectively unique, keeping pagination stable.
+        extra["ordering"] = ("-first_started_at", "-enqueue_at")
 
     return type(
         f"{spec.model_name}Admin",

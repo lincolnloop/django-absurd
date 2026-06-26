@@ -267,6 +267,25 @@ def test_admin_labels_app_as_absurd(client, admin_user):
     assert app_crumb.get_text(strip=True) == "Absurd"
 
 
+def test_task_changelist_shows_dates_ordered_by_recent_activity(client, admin_user):
+    register_absurd_admin([djadmin.site])
+    refresh_url_resolver()
+    call_command("absurd_sync_queues")  # index the default queue
+    older = add.enqueue(1, 1)
+    newer = add.enqueue(2, 2)  # enqueued later → more recent activity
+    client.force_login(admin_user)
+    soup = parse_html(client.get(reverse("admin:django_absurd_task_changelist")))
+    assert soup.select_one(".column-enqueue_at") is not None
+    # primary sort is the first_started_at datetime column, descending (enqueue_at
+    # is the secondary key)
+    assert soup.select_one("th.column-first_started_at.sorted.descending") is not None
+    keys = [
+        r.select_one(".field-natural_key").get_text(strip=True)
+        for r in result_rows(soup)
+    ]
+    assert keys.index(newer.id) < keys.index(older.id)
+
+
 def test_task_detail_groups_fields_and_inlines_runs(client, admin_user):
     register_absurd_admin([djadmin.site])
     refresh_url_resolver()
