@@ -132,9 +132,6 @@ pythonpath = ["."]
 testpaths = ["tests"]
 
 [tool.ruff]
-# The example is a self-contained demo (single-file nanodjango app) with its own deps
-# and framework idioms — not held to the library's lint rules.
-extend-exclude = ["examples"]
 target-version = "py312"
 
 [tool.ruff.lint]

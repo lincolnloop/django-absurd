@@ -22,7 +22,7 @@ import os
 import pprint
 
 from django import forms
-from django.http import HttpResponse
+from django.http import HttpRequest, HttpResponse
 from django.middleware.csrf import get_token
 from django.shortcuts import redirect
 from django.tasks import TaskResultStatus, default_task_backend, task
@@ -67,7 +67,7 @@ class AddForm(forms.Form):
 
 
 @app.route("/")
-def index(request):
+def index(request: HttpRequest) -> HttpResponse | str:
     if request.method == "POST":
         form = AddForm(request.POST)
         if form.is_valid():
@@ -88,7 +88,7 @@ def index(request):
 
 
 @app.route("/tasks/<str:result_id>/")
-def task_detail(request, result_id):
+def task_detail(request: HttpRequest, result_id: str) -> HttpResponse | str:
     try:
         result = default_task_backend.get_result(result_id)
     except TaskResultDoesNotExist:
@@ -114,3 +114,7 @@ def task_detail(request, result_id):
         <pre><code>{dump}</code></pre>
         <p><a href="/">Add another</a> · <a href="/admin/">Admin</a></p>
     """
+
+
+if __name__ == "__main__":
+    app.run()
