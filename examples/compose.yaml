@@ -27,6 +27,10 @@ services:
     ports:
       # The only published port — open http://localhost:8000/ and /admin/.
       - "8000:8000"
+    volumes:
+      # Live source: edits reload automatically (the dev server watches both).
+      - ./app.py:/app/app.py
+      - ../django_absurd:/src/django_absurd
 
   worker:
     build:
@@ -44,6 +48,11 @@ services:
       - PGUSER=postgres
       - PGPASSWORD=postgres
       - PGDATABASE=postgres
+    volumes:
+      # Live source. Note: the worker does not auto-reload — restart it
+      # (docker compose restart worker) to pick up code changes.
+      - ./app.py:/app/app.py
+      - ../django_absurd:/src/django_absurd
 
 volumes:
   pgdata:

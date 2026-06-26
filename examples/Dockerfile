@@ -21,7 +21,9 @@ COPY django_absurd ./django_absurd
 # The single-file nanodjango app lives at /app.
 WORKDIR /app
 COPY examples/app.py ./
-RUN uv venv && uv pip install /src \
+# Editable install of the local package so a bind-mounted django_absurd source (see
+# compose.yaml volumes) is picked up live by the dev server's auto-reload.
+RUN uv venv && uv pip install -e /src \
   "django==6.0.6" \
   "nanodjango==0.16.3" \
   "psycopg[binary]==3.3.4"
