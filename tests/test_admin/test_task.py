@@ -8,6 +8,7 @@ from django.test import override_settings
 from django.urls import reverse, reverse_lazy
 
 from django_absurd.admin_views import ADMIN_ENTITY_SPECS, build_admin_model
+from django_absurd.queues import get_absurd_client
 from tests.tasks import add
 from tests.test_admin.support import BACKEND, parse_html, result_rows, seed, seed_mixed
 
@@ -107,15 +108,16 @@ def test_changelist_shows_dates_ordered_by_recent_activity(client, admin_user):
 
 
 def test_changelist_warns_about_unindexed_queue(client, admin_user):
-    # enqueue auto-creates 'other' (catalog + physical tables) but does NOT rebuild
-    # the views, so 'other' is absent from the union view's arms.
-    add.using(queue_name="other").enqueue(7, 8)
+    # build the views over the declared queues, then create a queue directly (config
+    # drift): it lands in the catalog but no view arm references it → unindexed.
+    call_command("absurd_sync_queues")
+    get_absurd_client().create_queue("drift")
     client.force_login(admin_user)
     soup = parse_html(client.get(CHANGELIST))
     warning = soup.select_one("ul.messagelist li.warning")
     assert warning is not None
     text = warning.get_text()
-    assert "other" in text
+    assert "drift" in text
     assert "absurd_sync_queues" in text
 
 

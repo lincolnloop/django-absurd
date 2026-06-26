@@ -30,3 +30,19 @@ def test_first_in_order_wins_when_sharing_db():
 @override_settings(TASKS={"x": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}})
 def test_returns_none_without_absurd_backend():
     assert get_absurd_backend() is None
+
+
+@override_settings(
+    TASKS={
+        "a": {
+            "BACKEND": BACKEND,
+            "QUEUES": ["default"],
+            "OPTIONS": {"DATABASE": "sqlite"},
+        },
+        "b": {"BACKEND": BACKEND, "QUEUES": ["default"]},
+    }
+)
+def test_skips_backend_not_on_resolved_database():
+    # two backends on different DBs → resolve picks "default"; the sqlite-backed "a"
+    # is skipped before the default-backed "b" is returned
+    assert get_absurd_backend().database == "default"

@@ -158,7 +158,13 @@ def test_task_outside_tasks_py_runs():
     assert get_task_result(result.id).result == "from-jobs"
 
 
-def test_queue_defaults_to_default(capsys):
+def test_queue_defaults_to_default(settings, capsys):
+    settings.TASKS = {
+        "default": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "QUEUES": ["default"],
+        }
+    }
     make_group.enqueue("dflt")  # auto-creates the default queue
     call_command("absurd_worker", burst=True)  # no --queue -> "default"
     out = capsys.readouterr().out
@@ -217,11 +223,17 @@ def test_command_burst_runs_task_end_to_end():
     assert get_task_result(result.id).state == "completed"
 
 
-def test_worker_command_reports_created_on_unprovisioned_queue(capsys):
+def test_worker_start_provisions_all_declared_queues(capsys):
+    # full provision on start: every declared queue, not just the served one
     call_command("absurd_worker", queue="default", burst=True)
-    out = capsys.readouterr().out
-    assert out == "Created: default\nStarted worker on queue 'default'.\n"
+    created_line, started_line = capsys.readouterr().out.splitlines()
+    assert set(created_line.removeprefix("Created: ").split(", ")) == {
+        "default",
+        "other",
+    }
+    assert started_line == "Started worker on queue 'default'."
     assert Queue.objects.filter(queue_name="default").exists()
+    assert Queue.objects.filter(queue_name="other").exists()
 
 
 def test_worker_command_reconciles_changed_mutable_option(settings, capsys):

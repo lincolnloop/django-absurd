@@ -58,14 +58,16 @@ DATABASE_ROUTERS = ["django_absurd.routers.AbsurdRouter"]
 ## Run
 
 ```bash
-python manage.py migrate              # apply Absurd's schema (offline, shipped SQL)
-python manage.py absurd_worker        # run a worker (auto-creates its queue)
+python manage.py migrate              # apply Absurd's schema + provision declared queues
+python manage.py absurd_worker        # run a worker
 ```
 
-Declared queues are created automatically on first use (first enqueue to a queue, or
-worker start), so no provisioning step is required. `absurd_sync_queues` still exists
-for eager provisioning and for reconciling per-queue policy changes, but it is optional.
-Only queues declared in `QUEUES` are auto-created; an undeclared queue name is rejected.
+`migrate` provisions everything: a `post_migrate` handler runs `sync_queues`, creating
+the declared queues and (re)building the admin views to match. A worker does the same
+full sync on start, and `absurd_sync_queues` runs it on demand (also reconciling
+per-queue policy changes). Declared queues are additionally auto-created on first
+enqueue. Only queues declared in `QUEUES` are created; an undeclared queue name is
+rejected.
 
 ## Admin introspection
 
@@ -105,11 +107,12 @@ queue (a `UNION ALL` over the per-queue tables) and carries a synthesized **`que
 column identifying the source queue. They are **read-only**: `save()`/`delete()` raise
 `QueueReadOnlyError`. `Queue` is the queue catalog (`queue_name` is its key).
 
-These models are backed by Postgres views, provisioned by `absurd_sync_queues` or by
-worker start — **not** by enqueue. A queue created only by an enqueue (never synced, no
-worker started) is absent from results until the next sync or worker start; run
-`absurd_sync_queues` to make it visible. Dropping a queue (`drop_queue`) removes its
-view; re-run `absurd_sync_queues` to rebuild.
+These models are backed by Postgres views, (re)built by `migrate` (post_migrate), worker
+start, and `absurd_sync_queues`. A queue that appears only afterwards — e.g. declared
+after the last migrate and reached by an enqueue before the next migrate/worker/sync —
+is absent from results until the next provisioning step; the admin changelist flags this
+with a warning. Dropping a queue (`drop_queue`) removes its view; re-provision to
+rebuild.
 
 **Performance.** The views have no cross-queue index. Filtering by **`queue=`** prunes
 to a single per-queue table — fast. An unfiltered query (e.g. ordering by `enqueue_at`
@@ -179,8 +182,9 @@ python manage.py absurd_worker --queue reports
 
 A single worker runs **both** sync and async tasks: `async def` tasks run on an event
 loop (true concurrency for I/O-bound work), sync `def` tasks run in a thread pool. On
-start it reconciles the served queue (creating it if missing, applying declared policy
-changes) and reports to stdout.
+start it runs a full sync — reconciling **every** declared queue (creating missing ones,
+applying declared policy changes) and rebuilding the admin views so they reflect the
+whole catalog, not just the served queue — and reports to stdout.
 
 - **Blocking** (default): long-running; polls until `SIGINT`/`SIGTERM`.
 - **Burst** (`--burst`): drain the current backlog, then exit `0` (cron / one-shot).
@@ -213,12 +217,12 @@ await send_report.aget_result(result.id)       # async variant
 - **At-least-once delivery.** A task may run more than once (e.g. a crash between the
   handler committing and Absurd's bookkeeping). Keep handlers idempotent; use
   `idempotency_key` where it helps.
-- **Queue creation is automatic and additive.** Declared queues are created on first use
-  (enqueue / worker start); worker start also reconciles a served queue's mutable
-  policy. Neither auto-create nor `absurd_sync_queues` ever drops queues removed from
+- **Queue creation is automatic and additive.** Declared queues are created at `migrate`
+  (post_migrate), on worker start, by `absurd_sync_queues`, and on first enqueue;
+  provisioning also reconciles mutable policy. Nothing ever drops queues removed from
   config. A queue's `storage_mode` is immutable after creation (a declared change is
-  reported as a warning, not applied). Only queues declared in `QUEUES` are auto-created
-  — an undeclared queue name is rejected, not silently created.
+  reported as a warning, not applied). Only queues declared in `QUEUES` are created — an
+  undeclared queue name is rejected, not silently created.
 - **Teardown is destructive.** `migrate django_absurd zero` drops the `absurd` schema
   and all data in it.
 

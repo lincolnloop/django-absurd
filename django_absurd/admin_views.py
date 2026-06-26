@@ -353,8 +353,10 @@ def rebuild_admin_view(spec: EntitySpec, queues: list[str], using: str) -> None:
 
 def rebuild_views(using: str) -> None:
     queues = fetch_catalog_queues(using)
-    for spec in ADMIN_ENTITY_SPECS:
-        rebuild_admin_view(spec, queues, using)
+    # Swap all five views in one transaction so readers never see a partial set.
+    with transaction.atomic(using=using):
+        for spec in ADMIN_ENTITY_SPECS:
+            rebuild_admin_view(spec, queues, using)
 
 
 SQL_TYPE_NULLS: dict[str, psycopg.sql.SQL] = {

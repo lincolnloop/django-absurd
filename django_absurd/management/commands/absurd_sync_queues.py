@@ -1,7 +1,6 @@
-from django_absurd.admin_views import rebuild_views
 from django_absurd.backends import get_absurd_backends
 from django_absurd.management.base import AbsurdReportCommand
-from django_absurd.queues import sync_queues
+from django_absurd.queues import provision_backend
 
 
 class Command(AbsurdReportCommand):
@@ -15,6 +14,5 @@ class Command(AbsurdReportCommand):
         for alias, backend in backends.items():
             prefix = f"[{alias}] " if len(backends) > 1 else ""
             self.report_sync_result(
-                sync_queues(backend), prefix, empty_message="No queues to sync."
+                provision_backend(backend), prefix, empty_message="No queues to sync."
             )
-            rebuild_views(backend.database)
