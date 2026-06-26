@@ -70,7 +70,7 @@ def test_jsonb_decodes_and_pk_prefixed():
         queue="default", task_name="tests.tasks.add"
     ).first()
     assert isinstance(row.params, dict)
-    assert row.admin_pk.startswith("default:")
+    assert row.natural_key.startswith("default:")
 
 
 def test_composite_pk_detail_lookup():

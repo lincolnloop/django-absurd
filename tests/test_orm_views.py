@@ -97,6 +97,6 @@ def test_dropped_queue_read_raises_typed_error():
     with pytest.raises(ViewNotProvisionedError):
         task_model.objects.exists()
     with pytest.raises(ViewNotProvisionedError):
-        task_model.objects.aggregate(models.Count("admin_pk"))
+        task_model.objects.aggregate(models.Count("natural_key"))
     call_command("absurd_sync_queues")
     list(task_model.objects.all())

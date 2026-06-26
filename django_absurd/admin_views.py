@@ -57,7 +57,7 @@ ADMIN_ENTITY_SPECS: tuple[EntitySpec, ...] = (
         ),
         has_state=True,
         has_status=False,
-        list_display=("admin_pk", "queue", "task_name", "state", "attempts"),
+        list_display=("natural_key", "queue", "task_name", "state", "attempts"),
         search_fields=("task_id", "task_name"),
     ),
     EntitySpec(
@@ -86,7 +86,7 @@ ADMIN_ENTITY_SPECS: tuple[EntitySpec, ...] = (
         ),
         has_state=True,
         has_status=False,
-        list_display=("admin_pk", "queue", "task_id", "attempt", "state"),
+        list_display=("natural_key", "queue", "task_id", "attempt", "state"),
         search_fields=("run_id", "task_id", "claimed_by"),
     ),
     EntitySpec(
@@ -106,7 +106,7 @@ ADMIN_ENTITY_SPECS: tuple[EntitySpec, ...] = (
         ),
         has_state=False,
         has_status=True,
-        list_display=("admin_pk", "queue", "task_id", "checkpoint_name", "status"),
+        list_display=("natural_key", "queue", "task_id", "checkpoint_name", "status"),
         search_fields=("task_id", "checkpoint_name"),
     ),
     EntitySpec(
@@ -123,7 +123,7 @@ ADMIN_ENTITY_SPECS: tuple[EntitySpec, ...] = (
         ),
         has_state=False,
         has_status=False,
-        list_display=("admin_pk", "queue", "event_name", "emitted_at"),
+        list_display=("natural_key", "queue", "event_name", "emitted_at"),
         search_fields=("event_name",),
     ),
     EntitySpec(
@@ -143,7 +143,7 @@ ADMIN_ENTITY_SPECS: tuple[EntitySpec, ...] = (
         ),
         has_state=False,
         has_status=False,
-        list_display=("admin_pk", "queue", "task_id", "run_id", "step_name"),
+        list_display=("natural_key", "queue", "task_id", "run_id", "step_name"),
         search_fields=("task_id", "run_id", "step_name"),
     ),
 )
@@ -194,7 +194,7 @@ def build_admin_model(spec: EntitySpec) -> type[models.Model]:
         return existing
 
     fields: dict[str, t.Any] = {
-        "admin_pk": models.TextField(primary_key=True),
+        "natural_key": models.TextField(primary_key=True),
         "queue": models.TextField(),
     }
     for col_name, col_type in spec.columns:
@@ -341,7 +341,7 @@ def compose_queue_arm(spec: EntitySpec, queue: str) -> psycopg.sql.Composable:
         psycopg.sql.Identifier(col) for col, _ in spec.columns
     )
     return psycopg.sql.SQL(
-        "SELECT {q}::text AS queue, {pk} AS admin_pk, {cols} FROM {tbl}"
+        "SELECT {q}::text AS queue, {pk} AS natural_key, {cols} FROM {tbl}"
     ).format(q=queue_lit, pk=pk_expr, cols=col_list, tbl=table)
 
 
@@ -353,5 +353,5 @@ def compose_empty_arm(spec: EntitySpec) -> psycopg.sql.Composable:
         for col_name, col_type in spec.columns
     )
     return psycopg.sql.SQL(
-        "SELECT NULL::text AS queue, NULL::text AS admin_pk, {nulls} WHERE false"
+        "SELECT NULL::text AS queue, NULL::text AS natural_key, {nulls} WHERE false"
     ).format(nulls=null_parts)

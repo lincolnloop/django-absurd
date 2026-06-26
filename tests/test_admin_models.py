@@ -26,7 +26,7 @@ def test_model_maps_schema_quoted_view_unmanaged():
     )
     assert tasks_model._meta.db_table == '"absurd"."tasks_view"'
     assert tasks_model._meta.managed is False
-    assert tasks_model._meta.pk.name == "admin_pk"
+    assert tasks_model._meta.pk.name == "natural_key"
     assert isinstance(tasks_model._meta.get_field("params"), models.JSONField)
 
 

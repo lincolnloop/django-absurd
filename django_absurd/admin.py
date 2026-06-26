@@ -65,7 +65,7 @@ class ReadOnlyAbsurdAdmin(admin.ModelAdmin):
     spec: EntitySpec
     using: str
 
-    ordering = ("admin_pk",)
+    ordering = ("natural_key",)
     show_full_result_count = False
     paginator = BoundedCountPaginator
 

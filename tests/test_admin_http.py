@@ -190,7 +190,7 @@ def test_failed_task_detail_shows_state(client, admin_user):
     refresh_url_resolver()
     _, failed, _ = seed_mixed()
     client.force_login(admin_user)
-    # the backend's result id is already "<queue>:<task_id>" — i.e. the admin_pk
+    # the backend's result id is already "<queue>:<task_id>" — i.e. the natural_key
     url = reverse("admin:django_absurd_task_change", args=[quote(failed.id)])
     soup = parse_html(client.get(url))
     assert soup.select_one(".field-state .readonly").get_text(strip=True) == "failed"
@@ -272,7 +272,7 @@ def test_runs_changelist_filtered_to_task(client, admin_user):
     refresh_url_resolver()
     _, failed, _ = seed_mixed()
     client.force_login(admin_user)
-    # the task→runs link searches by the bare task_id (admin_pk is "<queue>:<task_id>")
+    # the task→runs link searches by the bare task_id (natural_key is "<queue>:<task_id>")
     task_id = failed.id.split(":", 1)[1]
     runs_cl = reverse("admin:django_absurd_run_changelist")
     soup = parse_html(client.get(runs_cl, {"q": task_id}))
@@ -289,7 +289,9 @@ def task_change_url(queue, task_name):
     obj = (
         build_admin_model(spec).objects.filter(queue=queue, task_name=task_name).first()
     )
-    return obj, reverse("admin:django_absurd_task_change", args=[quote(obj.admin_pk)])
+    return obj, reverse(
+        "admin:django_absurd_task_change", args=[quote(obj.natural_key)]
+    )
 
 
 def test_task_detail_renders_read_only(client, admin_user):
@@ -414,7 +416,7 @@ def test_run_detail_shows_failure_reason(client, admin_user):
         next(s for s in ADMIN_ENTITY_SPECS if s.name == "runs")
     )
     run = runs_model.objects.filter(queue="default", state="failed").first()
-    url = reverse("admin:django_absurd_run_change", args=[quote(run.admin_pk)])
+    url = reverse("admin:django_absurd_run_change", args=[quote(run.natural_key)])
     soup = parse_html(client.get(url))
     failure = soup.select_one(".field-failure_reason .readonly")
     assert failure is not None
