@@ -4,9 +4,7 @@ services:
     image: postgres:18.4-alpine
     environment:
       - POSTGRES_PASSWORD=postgres
-    # No host port — app and worker reach Postgres over the compose network (db:5432).
     volumes:
-      # PG18+ stores data under /var/lib/postgresql (a major-version subdir), not /data.
       - pgdata:/var/lib/postgresql
 
   app:
@@ -15,8 +13,6 @@ services:
       dockerfile: examples/Dockerfile
     depends_on:
       - db
-    # No healthcheck: on first boot Postgres may not be ready yet (or, for the worker,
-    # the schema not migrated) — the container exits and is restarted until it succeeds.
     restart: on-failure
     environment:
       - PGHOST=db
@@ -25,7 +21,6 @@ services:
       - PGPASSWORD=postgres
       - PGDATABASE=postgres
     ports:
-      # The only published port — open http://localhost:8000/ and /admin/.
       - "8000:8000"
     volumes:
       # Live source: edits reload automatically (the dev server watches both).
