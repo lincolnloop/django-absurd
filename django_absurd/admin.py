@@ -60,7 +60,7 @@ class AbsurdQueueListFilter(admin.SimpleListFilter):
 
 
 class ReadOnlyAbsurdAdmin(admin.ModelAdmin):
-    spec: EntitySpec
+    spec: EntitySpec | None  # None on the Queue admin (the catalog, not an entity view)
     using: str
 
     ordering = ("natural_key",)

@@ -217,18 +217,9 @@ def build_admin_model(spec: EntitySpec) -> type[models.Model]:
         field_name, field = build_model_field(spec, col_name, col_type)
         fields[field_name] = field
 
-    def save(self: models.Model, *args: object, **kwargs: object) -> t.NoReturn:
-        raise QueueReadOnlyError(ADMIN_VIEW_READONLY_MSG)
-
-    def delete(self: models.Model, *args: object, **kwargs: object) -> t.NoReturn:
-        raise QueueReadOnlyError(ADMIN_VIEW_READONLY_MSG)
-
-    def model_str(self: t.Any) -> str:
-        return self.natural_key
-
-    fields["save"] = save
-    fields["delete"] = delete
-    fields["__str__"] = model_str
+    fields["save"] = raise_view_read_only
+    fields["delete"] = raise_view_read_only
+    fields["__str__"] = render_natural_key
     fields["objects"] = AbsurdViewManager()
 
     fields["Meta"] = type(
@@ -248,6 +239,14 @@ def build_admin_model(spec: EntitySpec) -> type[models.Model]:
     fields["__module__"] = __name__
 
     return type(spec.model_name, (models.Model,), fields)
+
+
+def raise_view_read_only(self: t.Any, *args: object, **kwargs: object) -> t.NoReturn:
+    raise QueueReadOnlyError(ADMIN_VIEW_READONLY_MSG)
+
+
+def render_natural_key(self: t.Any) -> str:
+    return self.natural_key
 
 
 def build_model_field(
@@ -288,14 +287,8 @@ def build_queue_table_model(spec: EntitySpec, queue: str) -> type[models.Model]:
         else:
             fields[col_name] = make_field(col_type)
 
-    def save(self: models.Model, *args: object, **kwargs: object) -> t.NoReturn:
-        raise QueueReadOnlyError(ADMIN_VIEW_READONLY_MSG)
-
-    def delete(self: models.Model, *args: object, **kwargs: object) -> t.NoReturn:
-        raise QueueReadOnlyError(ADMIN_VIEW_READONLY_MSG)
-
-    fields["save"] = save
-    fields["delete"] = delete
+    fields["save"] = raise_view_read_only
+    fields["delete"] = raise_view_read_only
 
     fields["Meta"] = type(
         "Meta",

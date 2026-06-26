@@ -41,7 +41,7 @@ def test_changelist_unions_and_filters(client, admin_user):
     queues = {r.select_one(".field-queue").get_text(strip=True) for r in rows}
     names = {r.select_one(".field-task_name").get_text(strip=True) for r in rows}
     assert queues == {"default", "other"}
-    assert "tests.tasks.add" in names
+    assert names == {"tests.tasks.add", "tests.tasks.boom"}
 
     sidebar = soup.select_one("#changelist-filter")
     assert sidebar is not None
@@ -54,7 +54,7 @@ def test_changelist_unions_and_filters(client, admin_user):
         "other"
     }
     fnames = {r.select_one(".field-task_name").get_text(strip=True) for r in frows}
-    assert "tests.tasks.boom" not in fnames  # boom is on the default queue only
+    assert fnames == {"tests.tasks.add"}  # boom is on the default queue only
 
 
 def test_changelist_shows_mixed_states(client, admin_user):
@@ -64,7 +64,7 @@ def test_changelist_shows_mixed_states(client, admin_user):
     states = {
         r.select_one(".field-state").get_text(strip=True) for r in result_rows(soup)
     }
-    assert {"pending", "completed", "failed"} <= states
+    assert states == {"pending", "completed", "failed"}
 
 
 def test_changelist_filters_by_state(client, admin_user):
@@ -96,14 +96,14 @@ def test_changelist_shows_dates_ordered_by_recent_activity(client, admin_user):
     newer = add.enqueue(2, 2)  # enqueued later → more recent activity
     client.force_login(admin_user)
     soup = parse_html(client.get(CHANGELIST))
-    assert soup.select_one(".column-enqueue_at") is not None
+    rows = result_rows(soup)
     # primary sort is the first_started_at datetime column, descending
     assert soup.select_one("th.column-first_started_at.sorted.descending") is not None
-    keys = [
-        r.select_one(".field-natural_key").get_text(strip=True)
-        for r in result_rows(soup)
-    ]
+    # rows actually come back most-recent first
+    keys = [r.select_one(".field-natural_key").get_text(strip=True) for r in rows]
     assert keys.index(newer.id) < keys.index(older.id)
+    # the enqueue_at column renders an actual datetime, not an empty cell
+    assert rows[0].select_one(".field-enqueue_at").get_text(strip=True) != ""
 
 
 def test_changelist_warns_about_unindexed_queue(client, admin_user):
@@ -133,7 +133,10 @@ def test_changelist_survives_staleness_detection_failure(
     with django_db_blocker.unblock():
         call_command("migrate", "django_absurd", "zero", verbosity=0)
     try:
-        assert client.get(CHANGELIST).status_code == 200
+        resp = client.get(CHANGELIST)
+        assert resp.status_code == 200
+        # detection failure degrades silently — no spurious staleness warning
+        assert parse_html(resp).select_one("ul.messagelist li.warning") is None
     finally:
         with django_db_blocker.unblock():
             call_command("migrate", "django_absurd", verbosity=0)
@@ -175,7 +178,8 @@ def test_detail_renders_read_only(client, admin_user):
     client.get(CHANGELIST)  # prime the view
     task = find_task("default", "tests.tasks.add")
     soup = parse_html(client.get(change_url(task.natural_key)))
-    assert soup.select_one(".field-task_name .readonly") is not None
+    readonly = soup.select_one(".field-task_name .readonly")
+    assert readonly.get_text(strip=True) == "tests.tasks.add"
     assert soup.select_one('input[name="task_name"]') is None
     assert soup.select_one('textarea[name="params"]') is None
 
