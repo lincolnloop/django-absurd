@@ -7,7 +7,14 @@ import zipfile
 from importlib.resources import files
 from pathlib import Path
 
+import pytest
+
 import django_absurd
+
+# Distribution-build tests — version-agnostic and need the build backend
+# (hatchling/hatch-vcs). Marked so the tox matrix can skip them and run them
+# only in the `dev` env (see tox.ini).
+pytestmark = pytest.mark.packaging
 
 # Top-level entries allowed in the sdist. The hatchling backend uses an explicit
 # allowlist ([tool.hatch.build.targets.sdist] include), so only the package plus the

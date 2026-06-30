@@ -32,8 +32,10 @@ services:
       context: ..
       dockerfile: examples/Dockerfile
     # Long-lived blocking worker consuming "default". On start it reconciles the
-    # queue (creating it + indexing the admin views on first run).
-    command: nanodjango manage app.py absurd_worker
+    # queue (creating it + indexing the admin views on first run). `--beat` also
+    # runs the scheduler in-process, so the SCHEDULE entry (ping every minute)
+    # fires here — watch this service's logs for "pong" once a minute.
+    command: nanodjango manage app.py absurd_worker --beat
     depends_on:
       - app
     restart: on-failure

@@ -18,6 +18,7 @@ to sqlite, so DATABASES is overridden below.
 
 import dataclasses
 import html
+import logging
 import os
 import pprint
 
@@ -48,17 +49,30 @@ app = Django(
     TASKS={
         "default": {
             "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "QUEUES": ["default"],
+            "OPTIONS": {
+                "QUEUES": {"default": {}},
+                # Recurring task: the beat scheduler (run via `absurd_worker
+                # --beat`) enqueues ping() every minute; the worker then runs it.
+                "SCHEDULE": {
+                    "ping": {"task": "app.ping", "cron": "* * * * *"},
+                },
+            },
         }
     },
-    # Surface django-absurd's per-task worker logging on the console.
+    # Surface django-absurd's per-task worker logging + the demo task's own
+    # output on the console.
     LOGGING={
         "version": 1,
         "disable_existing_loggers": False,
         "handlers": {"console": {"class": "logging.StreamHandler"}},
-        "loggers": {"django_absurd": {"handlers": ["console"], "level": "INFO"}},
+        "loggers": {
+            "django_absurd": {"handlers": ["console"], "level": "INFO"},
+            "demo": {"handlers": ["console"], "level": "INFO"},
+        },
     },
 )
+
+logger = logging.getLogger("demo")
 
 
 @task
@@ -66,6 +80,13 @@ def add(a: str, b: str) -> float:
     """Run in the worker, not the web request. Coerces here so non-numeric input
     fails the task (-> FAILED) rather than being rejected up front."""
     return float(a) + float(b)
+
+
+@task
+def ping() -> None:
+    """Scheduled every minute (see SCHEDULE above). The beat scheduler enqueues
+    it; the worker runs it and logs 'pong' to the console."""
+    logger.info("pong 🏓")
 
 
 class AddForm(forms.Form):

@@ -2,6 +2,7 @@ import asyncio
 import inspect
 import logging
 import signal
+import threading
 import time
 import typing as t
 from concurrent.futures import ThreadPoolExecutor
@@ -19,6 +20,7 @@ from django.utils.module_loading import import_string
 
 from django_absurd.backends import AbsurdBackend
 from django_absurd.connection import register_jsonb_loader, validate_backend
+from django_absurd.scheduler import run_beat
 
 logger = logging.getLogger("django_absurd")
 
@@ -67,11 +69,14 @@ def run_worker(
     queue: str,
     *,
     burst: bool = False,
+    run_beat: bool = False,
     options: WorkerOptions | None = None,
 ) -> None:
     options = options or WorkerOptions()
     validate_backend(backend.database)
-    asyncio.run(arun_worker(backend, queue, burst=burst, options=options))
+    asyncio.run(
+        arun_worker(backend, queue, burst=burst, run_beat=run_beat, options=options)
+    )
 
 
 async def arun_worker(
@@ -79,6 +84,7 @@ async def arun_worker(
     queue: str,
     *,
     burst: bool = False,
+    run_beat: bool = False,
     options: WorkerOptions,
 ) -> None:
     with ThreadPoolExecutor(max_workers=options.concurrency) as executor:
@@ -102,6 +108,8 @@ async def arun_worker(
                     batch_size=options.batch_size,
                     worker_id=options.worker_id,
                 )
+            elif run_beat:
+                await run_worker_with_beat(client, options, backend)
             else:
                 await run_blocking_worker(client, options)
 
@@ -190,7 +198,7 @@ def build_handler(task: Task) -> t.Callable[[t.Any, t.Any], t.Awaitable[t.Any]]:
         attempt = read_sdk_attempt(ctx)
         start = time.monotonic()
         logger.info(
-            "django-absurd task starting: name=%s task_id=%s attempt=%d",
+            "django-absurd task started: name=%s task_id=%s attempt=%d",
             task.module_path,
             ctx.task_id,
             attempt,
@@ -249,8 +257,12 @@ def read_sdk_attempt(ctx: t.Any) -> int:
 
 async def run_blocking_worker(client: AsyncAbsurd, options: WorkerOptions) -> None:
     loop = asyncio.get_running_loop()
-    loop.add_signal_handler(signal.SIGINT, client.stop_worker)
-    loop.add_signal_handler(signal.SIGTERM, client.stop_worker)
+
+    def handle_stop() -> None:
+        client.stop_worker()
+
+    loop.add_signal_handler(signal.SIGINT, handle_stop)
+    loop.add_signal_handler(signal.SIGTERM, handle_stop)
     try:
         await client.start_worker(
             worker_id=options.worker_id,
@@ -262,3 +274,20 @@ async def run_blocking_worker(client: AsyncAbsurd, options: WorkerOptions) -> No
     finally:
         loop.remove_signal_handler(signal.SIGINT)
         loop.remove_signal_handler(signal.SIGTERM)
+
+
+async def run_worker_with_beat(
+    client: AsyncAbsurd,
+    options: WorkerOptions,
+    backend: AbsurdBackend,
+) -> None:
+    beat_stop = threading.Event()
+    beat_thread = threading.Thread(
+        target=run_beat, args=(backend,), kwargs={"stop": beat_stop}, daemon=True
+    )
+    beat_thread.start()
+    try:
+        await run_blocking_worker(client, options)
+    finally:
+        beat_stop.set()
+        await asyncio.get_running_loop().run_in_executor(None, beat_thread.join, 5)

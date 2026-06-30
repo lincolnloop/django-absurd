@@ -12,10 +12,10 @@ Absurd's queue tables through the Django admin (which django-absurd auto-registe
 
 ```
 examples/
-  compose.yaml   # db (Postgres, internal-only) + app (web/admin) + worker (absurd_worker)
+  compose.yaml   # db (Postgres, internal-only) + app (web/admin) + worker (absurd_worker --beat)
   Dockerfile     # image built from the repo root so it installs local django-absurd
   pyproject.toml # deps: nanodjango, django-absurd (local path), psycopg[binary]
-  app.py         # the whole app: Django(...) config, the add task, two views, admin
+  app.py         # the whole app: Django(...) config, add + ping tasks, a SCHEDULE (ping/min), views, admin
 ```
 
 ## Run it
@@ -31,8 +31,10 @@ That brings up three services:
 1. **db** — Postgres, reachable only over the compose network (no published host port).
 2. **app** — migrates, creates an `admin` / `admin` superuser (idempotent), and serves
    the web app + admin on **http://localhost:8000/**.
-3. **worker** — a long-lived `absurd_worker` consuming the `default` queue; it starts
-   once the app is healthy (i.e. migrations have run).
+3. **worker** — a long-lived `absurd_worker --beat` consuming the `default` queue; it
+   starts once the app is healthy (i.e. migrations have run). `--beat` also runs the
+   scheduler in-process: the `ping` task is enqueued every minute and run here, so the
+   worker logs print **"pong 🏓"** once a minute.
 
 Then, in a browser:
 
@@ -51,7 +53,7 @@ docker compose down -v
 ## Try more
 
 ```bash
-# Tail just the worker's per-task logs
+# Tail the worker's logs — per-task lines plus "pong 🏓" every minute (the scheduled ping)
 docker compose logs -f worker
 
 # Run a one-off management command against the stack

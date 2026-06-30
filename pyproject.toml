@@ -9,6 +9,7 @@ dev = [
   "build==1.5.0",
   "django-coverage-plugin==3.2.2",
   "django-stubs==6.0.5",
+  "freezegun==1.5.5",
   "hatch-vcs==0.5.0",
   "hatchling==1.30.1",
   "mypy==2.1.0",
@@ -18,6 +19,7 @@ dev = [
   "pytest-socket==0.8.0",
   "pytest==9.1.1",
   "ruff==0.15.18",
+  "types-croniter==6.2.2.20260518",
 ]
 
 [project]
@@ -43,6 +45,7 @@ classifiers = [
 ]
 dependencies = [
   "absurd-sdk>=0.4.0,<0.5.0",
+  "croniter>=2.0",
   "Django>=6.0",
 ]
 description = "Django integration for Absurd, the Postgres-native workflow engine."
@@ -127,6 +130,9 @@ addopts = [
 ]
 filterwarnings = [
   "error::bs4.GuessedAtParserWarning",  # Raise error when parser not set.
+]
+markers = [
+  "packaging: builds/inspects the distribution; run only in the dev tox env (needs the build backend)",
 ]
 pythonpath = ["."]
 testpaths = ["tests"]

@@ -62,6 +62,9 @@ result = add.enqueue(2, 3)  # returns a TaskResult; the worker runs it
 - **[Integration guide](django_absurd/AGENTS.md)** — full configuration and `OPTIONS`,
   workers, task parameters, retrieving results, admin introspection, querying queue
   state with the ORM, deployment notes, and adopting an existing Absurd database.
+  Includes
+  [scheduling recurring tasks](django_absurd/AGENTS.md#scheduling-recurring-tasks) via
+  `absurd_beat`.
 - **[Runnable example](examples/)** — a single-file nanodjango app (web form, worker,
   and the Absurd admin) that runs with one `docker compose up`.
 

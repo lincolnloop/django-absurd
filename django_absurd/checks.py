@@ -1,6 +1,10 @@
+import json
+import logging
+import sys
 import typing as t
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
+import croniter
 from absurd_sdk import CreateQueueOptions, QueueDetachMode, QueueStorageMode
 from django.apps import AppConfig
 from django.conf import settings
@@ -9,6 +13,7 @@ from django.core.checks import CheckMessage, Error, Tags, register
 from django.core.checks import Warning as DjangoWarning
 from django.core.exceptions import ImproperlyConfigured
 from django.db.utils import OperationalError, ProgrammingError
+from django.tasks import Task
 from django.utils.connection import ConnectionDoesNotExist
 from django.utils.module_loading import import_string
 
@@ -17,6 +22,8 @@ from django_absurd.connection import BACKEND_ERROR_MESSAGE, validate_backend
 from django_absurd.models import Queue
 from django_absurd.queues import get_absurd_backend, get_absurd_database
 from django_absurd.routers import AbsurdRouter
+
+logger = logging.getLogger(__name__)
 
 W002_MSG = (
     "django-absurd: a queue's declared storage_mode differs from the database"
@@ -58,6 +65,20 @@ E006_ADMIN_SITE_TYPE_MSG = (
 E006_ADMIN_SITE_HINT = (
     "Set ADMIN_SITE to a tuple of dotted paths to AdminSite instances."
 )
+
+E007_MSG = "django-absurd: invalid SCHEDULE entry."
+E007_HINT_IMPORT = (
+    "Ensure the task path is importable and points to a @task-decorated function."
+)
+E007_HINT_NOT_TASK = "The path must point to a Django @task-decorated callable."
+E007_HINT_CRON = "Provide a valid 5-field cron expression (e.g. '0 2 * * *')."
+E007_HINT_UNKNOWN_KEY = (
+    "Remove unknown keys; valid keys are: task, cron, queue, args, kwargs."
+)
+E007_HINT_SERIALIZE = "Ensure args and kwargs contain only JSON-serializable values."
+E007_HINT_QUEUE = "Declare the queue under OPTIONS['QUEUES'] or correct the queue name."
+
+VALID_SCHEDULE_KEYS = {"task", "cron", "queue", "args", "kwargs"}
 
 
 @register("absurd")
@@ -124,6 +145,125 @@ def validate_admin_site_option(value: t.Any) -> list[CheckMessage]:
                 )
             )
     return errors
+
+
+@register("absurd")
+def check_absurd_schedule_config(
+    *,
+    app_configs: Sequence[AppConfig] | None,
+    **kwargs: t.Any,
+) -> list[CheckMessage]:
+    errors: list[CheckMessage] = []
+    for backend in get_absurd_backends().values():
+        declared_queues = set(get_declared_queues(backend))
+        raw_schedule = backend.options.get("SCHEDULE", {})
+        if not isinstance(raw_schedule, Mapping):
+            errors.append(
+                Error(
+                    f'{E007_MSG} OPTIONS["SCHEDULE"] must be a mapping'
+                    " of name -> spec.",
+                    hint="Set SCHEDULE to a dict mapping schedule names to spec dicts.",
+                    id="absurd.E007",
+                )
+            )
+            continue
+        for name, spec in raw_schedule.items():
+            errors.extend(validate_schedule(name, spec, declared_queues))
+    return errors
+
+
+def validate_schedule(
+    name: str,
+    spec: t.Any,
+    declared_queues: set[str],
+) -> list[CheckMessage]:
+    if not isinstance(spec, Mapping):
+        return [
+            Error(
+                f"{E007_MSG} Schedule {name!r} must be a mapping.",
+                hint=(
+                    "Set the schedule entry to a dict"
+                    " with task, cron, and optional queue/args/kwargs."
+                ),
+                id="absurd.E007",
+            )
+        ]
+
+    errors: list[CheckMessage] = [
+        Error(
+            f"{E007_MSG} Schedule {name!r}: unknown key {key!r}.",
+            hint=E007_HINT_UNKNOWN_KEY,
+            id="absurd.E007",
+        )
+        for key in spec
+        if key not in VALID_SCHEDULE_KEYS
+    ]
+
+    errors.extend(validate_schedule_task(name, spec.get("task", "")))
+
+    cron = spec.get("cron", "")
+    if not isinstance(cron, str) or not croniter.croniter.is_valid(cron):
+        errors.append(
+            Error(
+                f"{E007_MSG} Schedule {name!r}: invalid cron expression {cron!r}.",
+                hint=E007_HINT_CRON,
+                id="absurd.E007",
+            )
+        )
+
+    for field in ("args", "kwargs"):
+        value = spec.get(field)
+        if value is not None:
+            try:
+                json.dumps(value)
+            except (TypeError, ValueError):
+                errors.append(
+                    Error(
+                        f"{E007_MSG} Schedule {name!r}:"
+                        f" {field} is not JSON-serializable.",
+                        hint=E007_HINT_SERIALIZE,
+                        id="absurd.E007",
+                    )
+                )
+
+    queue = spec.get("queue")
+    if queue is not None and (
+        not isinstance(queue, str) or queue not in declared_queues
+    ):
+        errors.append(
+            Error(
+                f"{E007_MSG} Schedule {name!r}: queue {queue!r} is not declared.",
+                hint=E007_HINT_QUEUE,
+                id="absurd.E007",
+            )
+        )
+
+    return errors
+
+
+def validate_schedule_task(name: str, task_path: str) -> list[CheckMessage]:
+    try:
+        task_obj = import_string(task_path)
+    except Exception:
+        logger.exception("absurd.E007: task %r could not be imported", task_path)
+        exc = sys.exc_info()[1]
+        return [
+            Error(
+                f"{E007_MSG} Schedule {name!r}: task {task_path!r}"
+                f" could not be imported: {exc!r}",
+                hint=E007_HINT_IMPORT,
+                id="absurd.E007",
+            )
+        ]
+    if not isinstance(task_obj, Task):
+        return [
+            Error(
+                f"{E007_MSG} Schedule {name!r}: {task_path!r} is not a Django task.",
+                hint=E007_HINT_NOT_TASK,
+                id="absurd.E007",
+            )
+        ]
+    return []
 
 
 @register("absurd")
