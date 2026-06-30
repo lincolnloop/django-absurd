@@ -53,6 +53,8 @@ DATABASES = {
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+TIME_ZONE = "UTC"
+
 DATABASE_ROUTERS = ["django_absurd.routers.AbsurdRouter"]
 
 TASKS = {

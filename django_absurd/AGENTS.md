@@ -134,6 +134,9 @@ System check IDs:
 - `absurd.E005` — `AbsurdRouter` missing from `DATABASE_ROUTERS`.
 - `absurd.E006` — `ENABLE_ADMIN` is not a bool, or `ADMIN_SITE` paths don't resolve to
   `AdminSite` instances.
+- `absurd.E007` — invalid `SCHEDULE` entry (bad task path, bad cron expression, unknown
+  key, non-serializable args/kwargs, or undeclared queue). See
+  [Scheduling recurring tasks](#scheduling-recurring-tasks).
 
 ## Defining and enqueuing tasks
 
@@ -193,6 +196,98 @@ whole catalog, not just the served queue — and reports to stdout.
   concurrency and the sync thread pool. Other flags: `--claim-timeout`,
   `--poll-interval`, `--batch-size`, `--worker-id`, and `--alias` (required only when
   several Absurd backends are configured).
+
+## Scheduling recurring tasks
+
+django-absurd has a built-in beat scheduler that fires
+[Absurd cron tasks](https://earendil-works.github.io/absurd/patterns/cron/) from
+settings-declared schedules. Schedules are cron expressions interpreted in Django's
+[`TIME_ZONE`](https://docs.djangoproject.com/en/stable/ref/settings/#time-zone).
+
+### Declare schedules
+
+Add a `SCHEDULE` map to `OPTIONS`. Each entry is a schedule name (arbitrary, unique
+within the backend) mapped to a spec dict:
+
+```python
+TASKS = {
+    "default": {
+        "BACKEND": "django_absurd.backends.AbsurdBackend",
+        "OPTIONS": {
+            "SCHEDULE": {
+                "nightly-report": {
+                    "task": "myapp.tasks.generate_report",  # dotted import path
+                    "cron": "0 2 * * *",                   # 5-field cron expression
+                },
+                "hourly-cleanup": {
+                    "task": "myapp.tasks.cleanup",
+                    "cron": "0 * * * *",
+                    "queue": "low-priority",               # optional; defaults to backend default
+                    "args": [30],                          # optional positional args
+                    "kwargs": {"dry_run": False},          # optional keyword args
+                },
+            },
+        },
+    },
+}
+```
+
+**Spec keys:**
+
+| Key      | Required | Description                                                    |
+| -------- | -------- | -------------------------------------------------------------- |
+| `task`   | yes      | Dotted import path to a `@task`-decorated function             |
+| `cron`   | yes      | 5-field cron expression (e.g. `"0 2 * * *"`)                   |
+| `queue`  | no       | Queue name; omit to use the backend's default queue            |
+| `args`   | no       | List of positional arguments passed to the task on each firing |
+| `kwargs` | no       | Dict of keyword arguments passed to the task on each firing    |
+
+Cron expressions are evaluated in Django's configured
+[`TIME_ZONE`](https://docs.djangoproject.com/en/stable/ref/settings/#time-zone).
+
+### Run the beat
+
+Start the beat scheduler as a standalone process:
+
+```bash
+python manage.py absurd_beat
+```
+
+Or run it co-located with a worker (saves a process in simple deployments):
+
+```bash
+python manage.py absurd_worker --beat
+```
+
+**Per-slot idempotency.** Each scheduled spawn carries an idempotency key derived from
+the schedule name and slot time (UTC minute), following the
+[Absurd cron pattern](https://earendil-works.github.io/absurd/patterns/cron/). If two
+beat processes briefly overlap, or a beat restarts and re-fires a slot it already
+attempted, Absurd collapses the duplicate to one task — each slot fires **at most
+once**. Single-instance is still the recommendation (leader election is not built in),
+but brief overlap is now safe.
+
+**Run exactly one beat process.** Running two or more beat processes against the same
+schedule causes double-firing under normal conditions: both processes independently fire
+each task at the same time. Per-slot idempotency protects against brief overlaps; it
+does not replace proper single-instance supervision. Use process supervision or a
+container orchestrator to enforce a single instance.
+
+**Fire-forward only.** The beat does not backfill missed firings. If it is down when a
+scheduled time passes, that firing is skipped; the next firing proceeds on schedule.
+
+### Validate
+
+`python manage.py check django_absurd` validates every schedule entry and reports
+`absurd.E007` for:
+
+- an unimportable or non-`@task` `task` path
+- an invalid cron expression
+- unknown keys in the spec
+- `args`/`kwargs` values that are not JSON-serializable
+- a `queue` that is not declared in `OPTIONS["QUEUES"]`
+
+Fix everything `absurd.E007` reports before relying on the schedule in production.
 
 ## Retrieving results
 

@@ -3,8 +3,7 @@ import typing as t
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management.base import CommandError
 
-from django_absurd.backends import get_absurd_backends
-from django_absurd.management.base import AbsurdReportCommand
+from django_absurd.management.base import AbsurdReportCommand, resolve_backend
 from django_absurd.queues import provision_backend
 from django_absurd.worker import WorkerOptions, run_worker
 
@@ -60,27 +59,21 @@ class Command(AbsurdReportCommand):
             default=None,
             help="Worker identifier; SDK synthesizes <host>:<pid> when omitted.",
         )
+        parser.add_argument(
+            "--beat",
+            action="store_true",
+            help=(
+                "Run the beat scheduler in the worker loop"
+                " (not compatible with --burst)."
+            ),
+        )
 
     def handle(self, *args: t.Any, **options: t.Any) -> None:
-        backends = get_absurd_backends()
-        alias = options["alias"]
+        alias, backend = resolve_backend(options)
         queue = options["queue"]
 
-        if alias is not None:
-            if alias not in backends:
-                valid = ", ".join(sorted(backends))
-                msg = (
-                    f"'{alias}' is not an Absurd backend alias. Valid aliases: {valid}"
-                )
-                raise CommandError(msg)
-            backend = backends[alias]
-        elif len(backends) == 1:
-            alias, backend = next(iter(backends.items()))
-        else:
-            aliases = ", ".join(sorted(backends))
-            msg = (
-                f"Multiple Absurd backends found: {aliases}. Use --alias to select one."
-            )
+        if options["burst"] and options["beat"]:
+            msg = "--beat is not compatible with --burst."
             raise CommandError(msg)
 
         if queue not in backend.queues:
@@ -107,4 +100,10 @@ class Command(AbsurdReportCommand):
             worker_id=options["worker_id"],
         )
         self.stdout.write(f"Started worker on queue '{queue}'.")
-        run_worker(backend, queue, burst=options["burst"], options=worker_options)
+        run_worker(
+            backend,
+            queue,
+            burst=options["burst"],
+            run_beat=options["beat"],
+            options=worker_options,
+        )
