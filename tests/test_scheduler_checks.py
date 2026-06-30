@@ -83,6 +83,14 @@ def test_bad_cron(run_check):
     assert "absurd.E007" in out
 
 
+def test_non_string_cron(run_check):
+    # A non-string cron (e.g. forgot the quotes) must yield a clean E007, not an
+    # AttributeError from croniter.is_valid — the check runs at worker/beat boot.
+    out = run_check({"x": {"task": "tests.tasks.add", "cron": 300}})
+    assert (f"{E007_MSG} Schedule 'x': invalid cron expression 300.") in out
+    assert "absurd.E007" in out
+
+
 def test_unknown_key(run_check):
     out = run_check({"x": {"task": "tests.tasks.add", "cron": "0 2 * * *", "bogus": 1}})
     assert (f"{E007_MSG} Schedule 'x': unknown key 'bogus'.") in out
@@ -102,4 +110,14 @@ def test_undeclared_queue(run_check):
         {"x": {"task": "tests.tasks.add", "cron": "0 2 * * *", "queue": "ghost"}}
     )
     assert (f"{E007_MSG} Schedule 'x': queue 'ghost' is not declared.") in out
+    assert "absurd.E007" in out
+
+
+def test_non_string_queue(run_check):
+    # A non-string queue (e.g. a list) must yield a clean E007, not a TypeError
+    # from the `queue not in declared_queues` membership test.
+    out = run_check(
+        {"x": {"task": "tests.tasks.add", "cron": "0 2 * * *", "queue": ["bad"]}}
+    )
+    assert (f"{E007_MSG} Schedule 'x': queue ['bad'] is not declared.") in out
     assert "absurd.E007" in out

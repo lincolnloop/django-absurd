@@ -202,7 +202,7 @@ def validate_schedule(
     errors.extend(validate_schedule_task(name, spec.get("task", "")))
 
     cron = spec.get("cron", "")
-    if not croniter.croniter.is_valid(cron):
+    if not isinstance(cron, str) or not croniter.croniter.is_valid(cron):
         errors.append(
             Error(
                 f"{E007_MSG} Schedule {name!r}: invalid cron expression {cron!r}.",
@@ -227,7 +227,9 @@ def validate_schedule(
                 )
 
     queue = spec.get("queue")
-    if queue is not None and queue not in declared_queues:
+    if queue is not None and (
+        not isinstance(queue, str) or queue not in declared_queues
+    ):
         errors.append(
             Error(
                 f"{E007_MSG} Schedule {name!r}: queue {queue!r} is not declared.",
