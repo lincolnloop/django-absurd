@@ -10,6 +10,8 @@ dev = [
   "django-coverage-plugin==3.2.2",
   "django-stubs==6.0.5",
   "freezegun==1.5.5",
+  "hatch-vcs==0.5.0",
+  "hatchling==1.30.1",
   "mypy==2.1.0",
   "psycopg[binary]==3.3.4",
   "pytest-cov==7.1.0",
@@ -128,6 +130,9 @@ addopts = [
 ]
 filterwarnings = [
   "error::bs4.GuessedAtParserWarning",  # Raise error when parser not set.
+]
+markers = [
+  "packaging: builds/inspects the distribution; run only in the dev tox env (needs the build backend)",
 ]
 pythonpath = ["."]
 testpaths = ["tests"]
