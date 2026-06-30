@@ -217,7 +217,7 @@ TASKS = {
             "SCHEDULE": {
                 "nightly-report": {
                     "task": "myapp.tasks.generate_report",  # dotted import path
-                    "cron": "0 2 * * *",                   # 5-field cron expression
+                    "cron": "0 2 * * *",                   # cron expression (see table)
                 },
                 "hourly-cleanup": {
                     "task": "myapp.tasks.cleanup",
@@ -234,16 +234,18 @@ TASKS = {
 
 **Spec keys:**
 
-| Key      | Required | Description                                                    |
-| -------- | -------- | -------------------------------------------------------------- |
-| `task`   | yes      | Dotted import path to a `@task`-decorated function             |
-| `cron`   | yes      | 5-field cron expression (e.g. `"0 2 * * *"`)                   |
-| `queue`  | no       | Queue name; omit to use the backend's default queue            |
-| `args`   | no       | List of positional arguments passed to the task on each firing |
-| `kwargs` | no       | Dict of keyword arguments passed to the task on each firing    |
+| Key      | Required | Description                                                                                                                                                                                                                                             |
+| -------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `task`   | yes      | Dotted import path to a `@task`-decorated function                                                                                                                                                                                                      |
+| `cron`   | yes      | Cron expression, parsed by [croniter](https://pypi.org/project/croniter/): standard **5-field** `min hour dom mon dow` (e.g. `"0 2 * * *"`), or **6-field** with a leading seconds column for sub-minute cadences (e.g. `"*/30 * * * * *"` = every 30s) |
+| `queue`  | no       | Queue name; omit to use the backend's default queue                                                                                                                                                                                                     |
+| `args`   | no       | List of positional arguments passed to the task on each firing                                                                                                                                                                                          |
+| `kwargs` | no       | Dict of keyword arguments passed to the task on each firing                                                                                                                                                                                             |
 
 Cron expressions are evaluated in Django's configured
 [`TIME_ZONE`](https://docs.djangoproject.com/en/stable/ref/settings/#time-zone).
+Sub-minute (6-field) schedules are supported; each slot enqueues a task, so size the
+cadence to what your worker can keep up with.
 
 ### Run the beat
 
@@ -260,7 +262,7 @@ python manage.py absurd_worker --beat
 ```
 
 **Per-slot idempotency.** Each scheduled spawn carries an idempotency key derived from
-the schedule name and slot time (UTC minute), following the
+the schedule name and slot time (UTC, to the second), following the
 [Absurd cron pattern](https://earendil-works.github.io/absurd/patterns/cron/). If two
 beat processes briefly overlap, or a beat restarts and re-fires a slot it already
 attempted, Absurd collapses the duplicate to one task — each slot fires **at most
