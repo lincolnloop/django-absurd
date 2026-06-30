@@ -40,8 +40,32 @@ def test_valid_schedule_no_error(run_check):
 def test_unimportable_task(run_check):
     out = run_check({"x": {"task": "tests.tasks.nope", "cron": "0 2 * * *"}})
     assert (
-        f"{E007_MSG} Schedule 'x': task 'tests.tasks.nope' could not be imported."
+        f"{E007_MSG} Schedule 'x': task 'tests.tasks.nope' could not be imported"
     ) in out
+    assert "absurd.E007" in out
+
+
+def test_non_import_error_at_task_import(run_check):
+    out = run_check(
+        {"x": {"task": "tests.raises_on_import.anything", "cron": "0 2 * * *"}}
+    )
+    assert (
+        f"{E007_MSG} Schedule 'x': task 'tests.raises_on_import.anything' could not be imported"
+    ) in out
+    assert "RuntimeError" in out
+    assert "boom at import" in out
+    assert "absurd.E007" in out
+
+
+def test_schedule_not_a_mapping(run_check):
+    out = run_check(["nightly"])
+    assert 'OPTIONS["SCHEDULE"] must be a mapping of name -> spec' in out
+    assert "absurd.E007" in out
+
+
+def test_schedule_entry_not_a_mapping(run_check):
+    out = run_check({"nightly": "0 2 * * *"})
+    assert f"{E007_MSG} Schedule 'nightly' must be a mapping." in out
     assert "absurd.E007" in out
 
 

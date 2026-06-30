@@ -1,6 +1,8 @@
 import json
+import logging
+import sys
 import typing as t
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import croniter
 from absurd_sdk import CreateQueueOptions, QueueDetachMode, QueueStorageMode
@@ -20,6 +22,8 @@ from django_absurd.connection import BACKEND_ERROR_MESSAGE, validate_backend
 from django_absurd.models import Queue
 from django_absurd.queues import get_absurd_backend, get_absurd_database
 from django_absurd.routers import AbsurdRouter
+
+logger = logging.getLogger(__name__)
 
 W002_MSG = (
     "django-absurd: a queue's declared storage_mode differs from the database"
@@ -152,7 +156,17 @@ def check_absurd_schedule_config(
     errors: list[CheckMessage] = []
     for backend in get_absurd_backends().values():
         declared_queues = set(get_declared_queues(backend))
-        raw_schedule: dict[str, t.Any] = backend.options.get("SCHEDULE", {})
+        raw_schedule = backend.options.get("SCHEDULE", {})
+        if not isinstance(raw_schedule, Mapping):
+            errors.append(
+                Error(
+                    f'{E007_MSG} OPTIONS["SCHEDULE"] must be a mapping'
+                    " of name -> spec.",
+                    hint="Set SCHEDULE to a dict mapping schedule names to spec dicts.",
+                    id="absurd.E007",
+                )
+            )
+            continue
         for name, spec in raw_schedule.items():
             errors.extend(validate_schedule(name, spec, declared_queues))
     return errors
@@ -160,9 +174,21 @@ def check_absurd_schedule_config(
 
 def validate_schedule(
     name: str,
-    spec: dict[str, t.Any],
+    spec: t.Any,
     declared_queues: set[str],
 ) -> list[CheckMessage]:
+    if not isinstance(spec, Mapping):
+        return [
+            Error(
+                f"{E007_MSG} Schedule {name!r} must be a mapping.",
+                hint=(
+                    "Set the schedule entry to a dict"
+                    " with task, cron, and optional queue/args/kwargs."
+                ),
+                id="absurd.E007",
+            )
+        ]
+
     errors: list[CheckMessage] = [
         Error(
             f"{E007_MSG} Schedule {name!r}: unknown key {key!r}.",
@@ -216,11 +242,13 @@ def validate_schedule(
 def validate_schedule_task(name: str, task_path: str) -> list[CheckMessage]:
     try:
         task_obj = import_string(task_path)
-    except ImportError:
+    except Exception:
+        logger.exception("absurd.E007: task %r could not be imported", task_path)
+        exc = sys.exc_info()[1]
         return [
             Error(
                 f"{E007_MSG} Schedule {name!r}: task {task_path!r}"
-                " could not be imported.",
+                f" could not be imported: {exc!r}",
                 hint=E007_HINT_IMPORT,
                 id="absurd.E007",
             )
