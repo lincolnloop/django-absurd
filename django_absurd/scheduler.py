@@ -81,6 +81,7 @@ def run_beat(
         logger.info("no schedules declared")
         return
 
+    logger.info("beat started: %d schedule(s)", len(schedules))
     stop = stop or threading.Event()
     wait = wait or stop.wait
 
@@ -106,3 +107,9 @@ def fire_schedule(schedule: Schedule, slot: datetime.datetime) -> None:
         spawn_scheduled(schedule, slot)
     except Exception:
         logger.exception("failed to spawn schedule %r", schedule.name)
+    else:
+        logger.info(
+            "enqueued scheduled task %r (slot %s)",
+            schedule.name,
+            slot.astimezone(datetime.UTC).strftime("%Y-%m-%dT%H:%MZ"),
+        )

@@ -198,7 +198,7 @@ def build_handler(task: Task) -> t.Callable[[t.Any, t.Any], t.Awaitable[t.Any]]:
         attempt = read_sdk_attempt(ctx)
         start = time.monotonic()
         logger.info(
-            "django-absurd task starting: name=%s task_id=%s attempt=%d",
+            "django-absurd task started: name=%s task_id=%s attempt=%d",
             task.module_path,
             ctx.task_id,
             attempt,
