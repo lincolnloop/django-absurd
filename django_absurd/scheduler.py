@@ -78,10 +78,10 @@ def run_beat(
     validate_backend(backend.database)
     schedules = get_settings_schedules(backend)
     if not schedules:
-        logger.info("no schedules declared")
+        logger.info("django-absurd beat: no schedules declared")
         return
 
-    logger.info("beat started: %d schedule(s)", len(schedules))
+    logger.info("django-absurd beat started: schedules=%d", len(schedules))
     stop = stop or threading.Event()
     wait = wait or stop.wait
 
@@ -106,10 +106,10 @@ def fire_schedule(schedule: Schedule, slot: datetime.datetime) -> None:
     try:
         spawn_scheduled(schedule, slot)
     except Exception:
-        logger.exception("failed to spawn schedule %r", schedule.name)
+        logger.exception("django-absurd schedule failed: name=%s", schedule.name)
     else:
         logger.info(
-            "enqueued scheduled task %r (slot %s)",
+            "django-absurd schedule enqueued: name=%s slot=%s",
             schedule.name,
             slot.astimezone(datetime.UTC).strftime("%Y-%m-%dT%H:%MZ"),
         )
