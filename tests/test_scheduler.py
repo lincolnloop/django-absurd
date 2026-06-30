@@ -22,6 +22,7 @@ from django_absurd.scheduler import (
     spawn_scheduled,
 )
 from tests.models import Payload
+from tests.tasks import make_group as make_group_task
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -300,7 +301,7 @@ def test_absurd_beat_valid_alias_and_signal_handler(settings):
         # Gating on the handler (vs a fixed sleep) removes the race where the
         # signal could arrive before the command replaces the default handler.
         deadline = time.monotonic() + 2
-        while time.monotonic() < deadline:
+        while time.monotonic() < deadline:  # pragma: no branch
             if signal.getsignal(signal.SIGINT) is not prev_sigint:
                 break
             time.sleep(0.005)
@@ -388,7 +389,7 @@ def test_worker_with_beat_runs_scheduled_task(settings):
 
     def watch():
         deadline = time.monotonic() + 15
-        while time.monotonic() < deadline:
+        while time.monotonic() < deadline:  # pragma: no branch
             if Group.objects.filter(name="beat-ran").exists():
                 break
             time.sleep(0.05)
@@ -403,3 +404,84 @@ def test_worker_with_beat_runs_scheduled_task(settings):
     watcher.join(timeout=5)
 
     assert Group.objects.filter(name="beat-ran").exists()
+
+
+def test_beat_already_stopped_on_entry_skips_loop(settings):
+    # Covers scheduler.py 92->exit: while-False branch when stop is pre-set.
+    # Beat has at least one schedule so it passes the early-return guard, reaches
+    # the while loop with stop already set → exits without enqueueing anything.
+    settings.TASKS = make_tasks_setting(
+        {
+            "p": {
+                "task": "tests.tasks.create_payload",
+                "cron": "*/1 * * * *",
+                "args": ["should-not-fire"],
+            }
+        }
+    )
+    call_command("absurd_sync_queues")
+    backend = get_absurd_backends()["default"]
+
+    stop = threading.Event()
+    stop.set()
+    run_beat(backend, stop=stop)
+
+    assert Payload.objects.count() == 0
+
+
+def test_beat_skips_not_yet_due_schedule(settings):
+    # Covers scheduler.py 99->98: if due <= current False branch.
+    # Two schedules: one every minute (due), one at 02:00 (far future, not due).
+    # After one slot cutoff only the due schedule fires.
+    settings.TASKS = make_tasks_setting(
+        {
+            "due": {
+                "task": "tests.tasks.create_payload",
+                "cron": "*/1 * * * *",
+                "args": ["due"],
+            },
+            "later": {
+                "task": "tests.tasks.create_payload",
+                "cron": "0 2 * * *",
+                "args": ["later"],
+            },
+        }
+    )
+    backend = get_absurd_backends()["default"]
+    call_command("absurd_sync_queues")
+    # Cutoff at 00:01:30 → "due" slot 00:01 fires, "later" slot 02:00 does not.
+    run_beat_until(backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC))
+    call_command("absurd_worker", queue="default", burst=True)
+    assert Payload.objects.count() == 1
+    assert Payload.objects.filter(data="due").exists()
+    assert not Payload.objects.filter(data="later").exists()
+
+
+def test_plain_worker_runs_blocking_worker(settings):
+    # Covers worker.py line 114: else branch of arun_worker (no burst, no beat).
+    settings.TASKS = make_tasks_setting(
+        {
+            "g": {
+                "task": "tests.tasks.make_group",
+                "cron": "*/1 * * * *",
+                "args": ["plain-worker"],
+            }
+        }
+    )
+    call_command("absurd_sync_queues")
+    make_group_task.enqueue("plain-worker")
+
+    def watch():
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:  # pragma: no branch
+            if Group.objects.filter(name="plain-worker").exists():
+                break
+            time.sleep(0.05)
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    watcher = threading.Thread(target=watch, daemon=True)
+    watcher.start()
+    call_command("absurd_worker", queue="default", poll_interval=0.05)
+    watcher.join(timeout=5)
+
+    assert Group.objects.filter(name="plain-worker").exists()
