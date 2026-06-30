@@ -8,7 +8,7 @@ dev = [
   "beautifulsoup4==4.15.0",
   "build==1.5.0",
   "django-coverage-plugin==3.2.2",
-  "django-stubs==6.0.5",
+  "django-stubs==6.0.6",
   "freezegun==1.5.5",
   "hatch-vcs==0.5.0",
   "hatchling==1.30.1",
