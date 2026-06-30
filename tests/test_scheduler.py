@@ -242,6 +242,18 @@ def test_derive_idempotency_key_differs_across_names():
     assert derive_idempotency_key(s_a, slot) != derive_idempotency_key(s_b, slot)
 
 
+def test_derive_idempotency_key_distinguishes_sub_minute_slots():
+    # 6-field crons (croniter accepts them) yield sub-minute slots; the key must
+    # distinguish slots in the same minute, or two fires would collide and the
+    # second would be wrongly deduped.
+    schedule = Schedule(name="n", task="tests.tasks.add", cron="*/30 * * * * *")
+    slot_a = dt.datetime(2026, 1, 1, 2, 0, 0, tzinfo=dt.UTC)
+    slot_b = dt.datetime(2026, 1, 1, 2, 0, 30, tzinfo=dt.UTC)
+    assert derive_idempotency_key(schedule, slot_a) != derive_idempotency_key(
+        schedule, slot_b
+    )
+
+
 def test_idempotency_key_dedups_same_slot(settings):
     # The command/loop never re-fires a single slot; this tests spawn_scheduled directly
     # to prove our key + Absurd's real dedup together collapse repeated fires to one task.

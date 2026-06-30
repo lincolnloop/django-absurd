@@ -47,7 +47,7 @@ def get_settings_schedules(backend: AbsurdBackend) -> list[Schedule]:
 
 
 def derive_idempotency_key(schedule: Schedule, slot: datetime.datetime) -> str:
-    utc_slot = slot.astimezone(datetime.UTC).strftime("%Y-%m-%dT%H:%MZ")
+    utc_slot = slot.astimezone(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     return f"{schedule.name}:{utc_slot}"
 
 
@@ -111,5 +111,5 @@ def fire_schedule(schedule: Schedule, slot: datetime.datetime) -> None:
         logger.info(
             "django-absurd schedule enqueued: name=%s slot=%s",
             schedule.name,
-            slot.astimezone(datetime.UTC).strftime("%Y-%m-%dT%H:%MZ"),
+            slot.astimezone(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         )
