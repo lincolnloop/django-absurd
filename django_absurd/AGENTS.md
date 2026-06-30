@@ -261,8 +261,9 @@ Or run it co-located with a worker (saves a process in simple deployments):
 python manage.py absurd_worker --beat
 ```
 
-**Per-slot idempotency.** Each scheduled spawn carries an idempotency key derived from
-the schedule name and slot time (UTC, to the second), following the
+**Per-slot idempotency.** Each scheduled spawn carries an idempotency key — a
+`cron:`-prefixed SHA-256 of the schedule name, cron, and slot time (UTC, second
+resolution) — following the
 [Absurd cron pattern](https://earendil-works.github.io/absurd/patterns/cron/). If two
 beat processes briefly overlap, or a beat restarts and re-fires a slot it already
 attempted, Absurd collapses the duplicate to one task — each slot fires **at most

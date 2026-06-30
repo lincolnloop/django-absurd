@@ -1,5 +1,6 @@
 import dataclasses
 import datetime
+import hashlib
 import logging
 import threading
 import typing as t
@@ -47,8 +48,11 @@ def get_settings_schedules(backend: AbsurdBackend) -> list[Schedule]:
 
 
 def derive_idempotency_key(schedule: Schedule, slot: datetime.datetime) -> str:
-    utc_slot = slot.astimezone(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return f"{schedule.name}:{utc_slot}"
+    # Dedup key, anchored on the schedule name (not task/cron) so args/queue-varying
+    # entries don't collide. https://earendil-works.github.io/absurd/patterns/cron/
+    utc_slot = slot.astimezone(datetime.UTC).isoformat(timespec="seconds")
+    raw = f"{schedule.name}|{schedule.cron}|{utc_slot}"
+    return "cron:" + hashlib.sha256(raw.encode()).hexdigest()[:24]
 
 
 def spawn_scheduled(schedule: Schedule, slot: datetime.datetime) -> None:
