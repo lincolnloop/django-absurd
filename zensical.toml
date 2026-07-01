@@ -1,0 +1,84 @@
+[project]
+copyright = "Copyright &copy; Lincoln Loop"
+docs_dir = "docs/web"
+extra_css = ["stylesheets/extra.css"]
+nav = [
+  {"Home" = "index.md"},
+  {"Configuration" = "configuration.md"},
+  {"Tasks" = "tasks.md"},
+  {"Cron Jobs" = "cron-jobs.md"},
+  {"How it works" = "how-it-works.md"},
+]
+repo_name = "lincolnloop/django-absurd"
+repo_url = "https://github.com/lincolnloop/django-absurd"
+site_description = "Django integration for Absurd, the Postgres-native workflow engine."
+site_name = "django-absurd"
+site_url = "https://lincolnloop.github.io/django-absurd/"
+
+[[project.extra.social]]
+icon = "fontawesome/brands/github"
+link = "https://github.com/lincolnloop/django-absurd"
+
+[project.markdown_extensions.admonition]
+
+[project.markdown_extensions.attr_list]
+
+[project.markdown_extensions.def_list]
+
+[project.markdown_extensions.md_in_html]
+
+[project.markdown_extensions.pymdownx.betterem]
+
+[project.markdown_extensions.pymdownx.details]
+
+[project.markdown_extensions.pymdownx.emoji]
+emoji_generator = "zensical.extensions.emoji.to_svg"
+emoji_index = "zensical.extensions.emoji.twemoji"
+
+[project.markdown_extensions.pymdownx.highlight]
+anchor_linenums = true
+line_spans = "__span"
+pygments_lang_class = true
+
+[project.markdown_extensions.pymdownx.inlinehilite]
+
+[project.markdown_extensions.pymdownx.magiclink]
+
+[project.markdown_extensions.pymdownx.superfences]
+
+[project.markdown_extensions.pymdownx.tabbed]
+alternate_style = true
+
+[project.markdown_extensions.toc]
+permalink = true
+
+[project.theme]
+favicon = "assets/favicon.png"
+features = [
+  "content.code.copy",
+  "content.code.annotate",
+  "navigation.instant",
+  "navigation.instant.prefetch",
+  "navigation.top",
+  "navigation.tracking",
+  "navigation.footer",
+  "search.highlight",
+  "toc.follow",
+]
+font = false
+language = "en"
+logo = "assets/logo.png"
+
+[[project.theme.palette]]
+accent = "grey"
+primary = "grey"
+scheme = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+accent = "grey"
+primary = "grey"
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
