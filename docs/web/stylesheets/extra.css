@@ -1,0 +1,189 @@
+/* django-absurd docs theme.
+ *
+ * Structure borrowed from the Absurd docs (Commit Mono everywhere, grayscale
+ * chrome on a white page, compact ledger tables, underlined document links).
+ * Flavor is Django's: the warm gold accents become Django green.
+ */
+
+/* Commit Mono — hosted via Fontsource on jsDelivr (version-pinned).
+ * Source: https://commitmono.com/ · https://www.npmjs.com/package/@fontsource/commit-mono
+ * License: SIL Open Font License 1.1. @import must precede all style rules. */
+@import url("https://cdn.jsdelivr.net/npm/@fontsource/commit-mono@5.2.5/300.css");
+@import url("https://cdn.jsdelivr.net/npm/@fontsource/commit-mono@5.2.5/300-italic.css");
+@import url("https://cdn.jsdelivr.net/npm/@fontsource/commit-mono@5.2.5/400.css");
+@import url("https://cdn.jsdelivr.net/npm/@fontsource/commit-mono@5.2.5/400-italic.css");
+@import url("https://cdn.jsdelivr.net/npm/@fontsource/commit-mono@5.2.5/700.css");
+@import url("https://cdn.jsdelivr.net/npm/@fontsource/commit-mono@5.2.5/700-italic.css");
+
+:root {
+  --md-text-font: "Commit Mono", ui-monospace, monospace;
+  --md-code-font: "Commit Mono", ui-monospace, monospace;
+
+  /* Django greens. */
+  --dj-green: #0c4b33;
+  --dj-green-strong: #092e20;
+  --dj-mint: #20aa76;
+  --dj-mint-light: #44b78b;
+  --dj-surface: #eef4f0;
+}
+
+/* Typography — slightly smaller, document-like. */
+.md-typeset {
+  font-size: 0.65rem;
+  line-height: 1.65;
+}
+
+.md-typeset code {
+  font-size: 1em;
+}
+
+.md-nav {
+  font-size: 0.65rem;
+}
+
+.md-content {
+  overflow-x: hidden;
+}
+
+/* Light mode — grayscale chrome, Django-green interactive color. The full
+ * attribute triple matches the theme's own default-scheme rule specificity, so
+ * links win the same way the slate rule below does. */
+[data-md-color-scheme="default"][data-md-color-primary="grey"][data-md-color-accent="grey"] {
+  --md-default-bg-color: #fff;
+  --md-default-fg-color: rgba(24, 28, 25, 0.92);
+  --md-default-fg-color--light: rgba(24, 28, 25, 0.65);
+  --md-default-fg-color--lighter: rgba(24, 28, 25, 0.4);
+  --md-default-fg-color--lightest: rgba(24, 28, 25, 0.1);
+
+  --md-primary-fg-color: rgba(24, 28, 25, 0.86);
+  --md-accent-fg-color: var(--dj-mint);
+  --md-accent-fg-color--transparent: rgba(32, 170, 118, 0.1);
+
+  --md-typeset-a-color: var(--dj-green);
+
+  /* Code: a faint green-grey panel with green-leaning syntax. */
+  --md-code-bg-color: var(--dj-surface);
+  --md-code-fg-color: #2c332e;
+  --md-code-hl-keyword-color: #0c4b33;
+  --md-code-hl-string-color: #3f7d52;
+  --md-code-hl-number-color: #a0552d;
+  --md-code-hl-function-color: #4a6f9a;
+  --md-code-hl-constant-color: #8a5a2f;
+  --md-code-hl-variable-color: #4f5b50;
+  --md-code-hl-operator-color: #6b746c;
+  --md-code-hl-punctuation-color: #6b746c;
+  --md-code-hl-comment-color: #7c897e;
+  --md-code-hl-color: var(--dj-mint-light);
+  --md-code-hl-color--light: rgba(68, 183, 139, 0.16);
+
+  --md-typeset-table-color: rgba(24, 28, 25, 0.12);
+}
+
+/* Dark mode — lighter mint links on the slate chrome. The full attribute
+ * triple matches the theme's own slate rule specificity; a bare
+ * [data-md-color-scheme="slate"] loses to it and links fall back to blue. */
+[data-md-color-scheme="slate"][data-md-color-primary="grey"][data-md-color-accent="grey"] {
+  --md-typeset-a-color: var(--dj-mint-light);
+  --md-primary-fg-color: rgba(232, 234, 232, 0.85);
+  --md-accent-fg-color: #5ec79b;
+  --md-accent-fg-color--transparent: rgba(68, 183, 139, 0.18);
+
+  --md-code-bg-color: #18201b;
+  --md-code-fg-color: #dfe7e0;
+  --md-code-hl-keyword-color: #5ec79b;
+  --md-code-hl-string-color: #9cc98a;
+  --md-code-hl-number-color: #d89b6a;
+  --md-code-hl-function-color: #8fb3e0;
+  --md-code-hl-constant-color: #e0b074;
+  --md-code-hl-variable-color: #c2cabf;
+  --md-code-hl-comment-color: #84907f;
+  --md-code-hl-color: #5ec79b;
+  --md-code-hl-color--light: rgba(94, 199, 155, 0.16);
+}
+
+/* Links read like a document: underlined, green, mint on hover. */
+.md-typeset a {
+  color: var(--md-typeset-a-color, var(--md-accent-fg-color));
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 25%, transparent);
+  text-underline-offset: 0.12em;
+}
+
+.md-typeset a:hover,
+.md-typeset a:focus-visible {
+  color: var(--md-accent-fg-color);
+  text-decoration-color: color-mix(in srgb, currentColor 55%, transparent);
+}
+
+/* Sidebar links. */
+.md-nav__link {
+  color: var(--md-default-fg-color--light);
+}
+
+.md-nav__link:hover,
+.md-nav__link--active {
+  color: var(--md-default-fg-color);
+}
+
+.md-nav--primary .md-nav__link:hover,
+.md-nav--primary .md-nav__link:focus-visible,
+.md-nav--primary .md-nav__item .md-nav__link--active {
+  background: rgba(32, 170, 118, 0.08);
+}
+
+/* Header site name: looks like text, behaves like a link. */
+header.md-header .md-header__topic > a.md-ellipsis {
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+header.md-header .md-header__topic > a.md-ellipsis:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.12em;
+}
+
+/* Branded logo image in the header/nav. */
+.md-header__button.md-logo img,
+.md-nav__button.md-logo img {
+  width: 1.3rem;
+  height: 1.3rem;
+  object-fit: contain;
+}
+
+/* Compact ledger tables. */
+.md-typeset__table {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0 0.8rem;
+}
+
+.md-typeset table:not([class]) {
+  width: 100%;
+  min-width: 100%;
+  font-size: 0.62rem;
+  line-height: 1.45;
+  border: 0;
+  border-top: 0.05rem solid var(--md-typeset-table-color);
+  border-bottom: 0.05rem solid var(--md-typeset-table-color);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.md-typeset table:not([class]) th,
+.md-typeset table:not([class]) td {
+  padding: 0.35em 0.4rem;
+  vertical-align: top;
+}
+
+.md-typeset table:not([class]) th:nth-child(1),
+.md-typeset table:not([class]) td:nth-child(1) {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.md-typeset .highlight > pre > code {
+  padding-left: 0.6rem;
+  padding-right: 0.6rem;
+}

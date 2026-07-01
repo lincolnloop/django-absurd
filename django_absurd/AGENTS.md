@@ -222,7 +222,7 @@ TASKS = {
                 "hourly-cleanup": {
                     "task": "myapp.tasks.cleanup",
                     "cron": "0 * * * *",
-                    "queue": "low-priority",               # optional; defaults to backend default
+                    "queue": "low-priority",               # optional; must be a declared queue
                     "args": [30],                          # optional positional args
                     "kwargs": {"dry_run": False},          # optional keyword args
                 },
@@ -238,7 +238,7 @@ TASKS = {
 | -------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `task`   | yes      | Dotted import path to a `@task`-decorated function                                                                                                                                                                                                      |
 | `cron`   | yes      | Cron expression, parsed by [croniter](https://pypi.org/project/croniter/): standard **5-field** `min hour dom mon dow` (e.g. `"0 2 * * *"`), or **6-field** with a leading seconds column for sub-minute cadences (e.g. `"*/30 * * * * *"` = every 30s) |
-| `queue`  | no       | Queue name; omit to use the backend's default queue                                                                                                                                                                                                     |
+| `queue`  | no       | Queue name; omit to use the backend's default queue. Must be a declared queue (see Configure), else `check` reports `absurd.E007`                                                                                                                       |
 | `args`   | no       | List of positional arguments passed to the task on each firing                                                                                                                                                                                          |
 | `kwargs` | no       | Dict of keyword arguments passed to the task on each firing                                                                                                                                                                                             |
 

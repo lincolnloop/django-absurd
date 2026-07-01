@@ -47,6 +47,36 @@ is at-least-once by design — there is no atomicity between a handler's own wri
 Absurd marking the run complete — so handlers must tolerate re-execution (idempotency
 keys exist for this).
 
+## Recurring scheduling
+
+Recurring tasks are declared in settings and driven by an in-process beat that wakes on
+cadence and enqueues through the normal path. The beat is the default because it needs
+nothing beyond Postgres; the database-side alternative (pg_cron) requires an extension
+and privileges that aren't available everywhere, so it is a deliberate opt-in rather
+than the default. Cron is evaluated in Django's configured timezone, not UTC, so an
+operator who writes "2am" gets local 2am.
+
+The beat only ever fires forward: a slot missed while it was down is skipped, never
+backfilled. This matches the database-side scheduler (so the two stay consistent) and
+avoids a thundering re-fire when a stopped beat comes back.
+
+Each firing carries a per-slot idempotency key derived from the schedule name, the cron
+expression, and the slot instant. The first design skipped this — a single beat firing
+forward is already at-most-once. It was added because the key is cheap insurance that
+keeps at-most-once true when a beat restart straddles a slot or a second beat is started
+by accident, following Absurd's documented cron dedup pattern. The key is anchored on
+the schedule name (not the task or args) so entries that differ only by arguments or
+queue don't collide.
+
+The beat is synchronous even though the worker is async. The worker must be async — it
+runs async task handlers and drives the async SDK — but the beat only sleeps and
+enqueues, so keeping it synchronous removed the extra concurrency machinery a shared
+async loop would have demanded. Co-located with a worker, it runs on its own thread.
+
+Database-side scheduling (pg_cron) is a deferred follow-on. An admin/model-managed
+schedule store was considered and deliberately not pursued: settings is the only
+declaration source for the beat.
+
 ## Routing & multiple databases
 
 The router claims only this app's models; it never dictates routing for the rest of a
@@ -56,6 +86,7 @@ and the cross-database atomicity questions aren't worth it yet.
 
 ## Deliberately not doing (yet)
 
-Native async enqueue, deferred scheduling, and task priority are unsupported on purpose:
-Absurd has no notion of priority, and async/deferral aren't wired — we won't fake them
-behind a flag that implies otherwise.
+Native async enqueue, one-shot deferred (scheduled-for-later) enqueue, and task priority
+are unsupported on purpose: Absurd has no notion of priority, and async/one-shot
+deferral aren't wired — we won't fake them behind a flag that implies otherwise.
+(Recurring scheduling is supported — see above.)
