@@ -2,115 +2,108 @@
 
 Issue: [#20](https://github.com/lincolnloop/django-absurd/issues/20). Database-side
 execution backend for django-absurd's recurring schedules. SP2 of #20 (SP1 = beat,
-merged). Reuses SP1's settings-declared `SCHEDULE`; swaps the in-process beat for
-pg_cron jobs that call `absurd.spawn_task` directly in Postgres. No new tables, no
-admin, no separate app.
+merged). Settings-declared `SCHEDULE` (shared with beat) reconciled into pg_cron jobs
+that fire tasks via `absurd.spawn_task`. No admin UI (SP3, deferred).
 
-Depends on the beat leading-seconds fix (PR #40): the 6-field seconds convention here
-assumes leading seconds (`second_at_beginning=True`).
+Depends on the beat leading-seconds fix (merged, PR #40) only for the shared `SCHEDULE`
+schema; pg_cron itself is minute-granularity here (see Sub-minute).
 
 ## Goal
 
-Declare recurring tasks in settings (same as beat). Select DB-side execution with
-`OPTIONS["SCHEDULER"]="pg_cron"`. A reconcile step turns declared entries into pg_cron
-jobs; Postgres fires them; existing workers run the enqueued tasks. Celery-beat shape,
-DB-side engine, no scheduler process.
+Declare recurring tasks in settings. Select DB-side execution with
+`OPTIONS["SCHEDULER"]="pg_cron"`. A reconcile step materializes each declared entry into
+(a) a row in a projection table and (b) a pg_cron job whose command is a **constant**
+call into a wrapper function that reads the row and spawns the task. Postgres fires;
+existing workers run the task. No scheduler process.
 
 ## Scope (SP2)
 
-In: `SCHEDULER="pg_cron"` selector; `sync_crons` reconcile (upsert + prune owned jobs)
-and `teardown_crons` (remove all owned jobs when pg_cron is deselected);
-`absurd_sync_crons` command + `post_migrate` hook; injection-safe command build
-(server-side `format('%L')`); croniter→pg_cron schedule translation with the sub-minute
-shim; `E007` extension (pg_cron-translatable cron) plus `E008` (pg_cron availability +
-schedulability, error); beat/pg_cron mutual exclusion; docs.
+In: `SCHEDULER="pg_cron"` selector; a **projection model** (`ScheduledJob`) + a
+**wrapper SQL function**; `sync_crons` / `teardown_crons` reconcile; `absurd_sync_crons`
+command + `post_migrate` hook; **static** `E007` (no DB); beat/pg_cron mutual exclusion;
+docs.
 
-Out: multi-DB topologies T2/T3 (`schedule_in_database`, cron-DB separate from Absurd DB)
-— seam-ready, not built. Runtime TZ check (docs-only now). Admin/model-managed schedules
-(not pursued). Idempotency key (single DB scheduler — none needed). Retry/headers/
-cancellation beyond `max_attempts` (additive later).
+Out: sub-minute on pg_cron (beat-only — see Sub-minute). Admin/DB-declared schedules
+(SP3 — the projection model reserves a `source` column so it slots in without rework).
+Multi-DB topologies T2/T3. Runtime TZ check. Retry/headers/cancellation beyond what the
+enqueue path already resolves. A DB-touching system check (validation happens at sync).
 
 ## Topology (T1 only)
 
-pg_cron co-located with Absurd on one DB (the backend's `DATABASE`). `cron.schedule`
-runs locally. pg_cron's scheduler + `cron.job` table live in exactly one DB
-(extension-install DB); T1 = that DB is the Absurd DB. T2 (designated cron DB via
-`schedule_in_database`) and T3 (Absurd on non-default Django DB) are future — isolated
-behind the reconcile seam so the later change is localized, not a redesign.
+pg_cron co-located with Absurd on one DB (the backend's `DATABASE`); `cron.schedule`
+runs locally; the projection table + wrapper function live on that same DB. pg_cron's
+scheduler and its `cron.job` table live in the extension-install DB (= the Absurd DB in
+T1). T2 (`schedule_in_database`) and T3 (Absurd on a non-default Django DB) are future,
+isolated behind the reconcile seam.
 
-## Components / files
+## Architecture: projection table + wrapper function
 
-`django_absurd/scheduler.py` — add:
+The cron command never contains task data — only a schedule name. Data lives in a table;
+a wrapper function reads it at fire time. This removes SQL-string-from-data entirely (no
+`format('%L')` over args/kwargs, no injection surface).
 
-- `sync_crons(backend) -> None` — the one seam. Reads `get_settings_schedules(backend)`;
-  per entry upserts a job (`cron.schedule` upserts by name); computes the owned set from
-  `cron.job` in the same connection, then **prunes by `jobid`** —
-  `SELECT jobid FROM cron.job WHERE jobname LIKE 'absurd:<alias>:%'` minus declared,
-  then `cron.unschedule(jobid)`. Pruning by jobid (not name) tolerates the fact that
-  `cron.unschedule(name)` **raises** on a missing job (not returns false) — a name-based
-  prune racing a concurrent sync would abort the txn. All pg_cron SQL confined here
-  (local `cron.schedule` for T1). Runs on the Absurd DB connection (`backend.database`).
-- `teardown_crons(backend) -> None` — unschedule **every** `absurd:<alias>:%` job, again
-  **by jobid** (missing-job-tolerant). Called when pg_cron is deselected (see
-  post_migrate) and by `absurd_sync_crons --teardown`, so switching `SCHEDULER` away
-  from `pg_cron` doesn't leave orphaned jobs firing (C2). Idempotent (re-run = no-op).
-- `build_schedule_call(jobname, pg_schedule, schedule) -> (sql, params)` — returns a
-  **parameterized** statement, NOT an assembled string. The inner spawn command is built
-  **server-side** so runtime values can't inject (C1). Note the psycopg gotcha: psycopg
-  scans the whole query for `%`, so SQL `format`'s `%L` must be **doubled** (`%%L`) and
-  the bound params cast (`::text`), else psycopg raises
-  `only '%s','%b','%t' are allowed`:
-  ```sql
-  select cron.schedule(%s, %s, format(
-      'select absurd.spawn_task(%%L, %%L, %%L::jsonb, %%L::jsonb)',
-      %s::text, %s::text, %s::text, %s::text))
-  ```
-  bind params `(jobname, pg_schedule, queue, dotted_task, params_json, options_json)`.
-  `format('%L', …)` (rendered `%%L`) does the literal-quoting server-side; Python never
-  interpolates values into SQL.
-- `resolve_spawn_options(schedule) -> str` — build the `p_options` JSON **exactly as the
-  enqueue path does** (I2). Reusing only `build_merged_spawn_options` is insufficient:
-  `enqueue` (backends.py) pops `max_attempts` with a `default_max_attempts` (=5)
-  fallback so `p_options` **always** carries it, and the SDK's `_prepare_spawn` /
-  `_normalize_spawn_options` reshape `retry_strategy` / `cancellation`. So either
-  re-apply the default-`max_attempts` fallback + the SDK normalization here, or drive
-  the SDK's own option-render (a build-only seam) so there's a single source of truth.
-  Requires importing the task (already done by E007 validation).
-- `to_pg_cron_schedule(cron: str) -> str` — translate. 5-field → validate against a
-  **defined** pg_cron-acceptable subset, NOT `croniter.is_valid` (which accepts `L`,
-  `#`, `?`, names, 7-field that pg_cron rejects — I1). Accepted tokens: numeric fields,
-  `*`, `,` lists, `-` ranges, `*/step`; reject names, `L`/`W`/`#`/`?`, extra fields.
-  (Cheaper, authoritative alternative: attempt `cron.schedule` in a rolled-back
-  savepoint against the live DB during the check.) 6-field leading seconds: `*/N` (N
-  1–59) or `*` in the seconds field AND other five fields all `*` → `"N seconds"`
-  (`*`→1). Anything else (seconds combined with non-`*` units; non-step seconds
-  list/value) → raise `ValueError`. Used by reconcile (emit) and E007 (validate).
-- job naming: `absurd:<backend_alias>:<schedule_name>`. Prune/teardown scope =
-  `absurd:<alias>:%` (never touches hand-made `cron.job` rows). **Constraint (M1):**
-  pg_cron's upsert key is `(jobname, username)` and a job runs as its **stored
-  username** (the role that called `sync_crons`). So two projects sharing one DB with
-  the same alias but **different** roles produce **duplicate jobs both firing** (no
-  upsert collision), and the name-scoped prune then deletes the other role's job.
-  Documented constraint; reconcile must run as a single stable role; a configurable
-  namespace is a future knob.
+- **`django_absurd.models.ScheduledJob`** (managed model, own migration; table
+  `django_absurd_scheduledjob`). Columns: `name` (unique), `source` (`"settings"` |
+  `"admin"`, default `"settings"`), `alias` (backend alias), `task` (dotted path),
+  `queue`, `params` (jsonb `{"args": …, "kwargs": …}`), `options` (jsonb — resolved
+  spawn options), `cron` (the schedule string), `enabled` (bool), timestamps. For this
+  SP the settings lane owns `source="settings"` rows; a future admin owns
+  `source="admin"` (SP3).
+- **Wrapper function** `django_absurd_run_scheduled(p_name text)` (public schema,
+  created by a `RunSQL` migration). Reads the row by name; if absent or `not enabled`,
+  **no-op** (a pruned/disabled job can't error); else
+  `select absurd.spawn_task(queue, task, params, options)`. Fire-time reads live values,
+  so a param edit takes effect on the next fire without touching `cron.job`.
+- **pg_cron job**: name `absurd:settings:<alias>:<name>`, schedule = the (5-field) cron,
+  command = a **constant** `select django_absurd_run_scheduled('<name>')` (the only
+  literal is the schedule name, built server-side with `format('%L')` — one controlled,
+  charset-restricted value; see E007). `cron.schedule` upserts by name.
 
-`django_absurd/management/commands/absurd_sync_crons.py` — `sync_crons` (or
-`teardown_crons` with `--teardown`); logs upserted/pruned counts; refuses (CommandError)
-unless `SCHEDULER="pg_cron"` (except `--teardown`, allowed to clean up after
-deselection).
+## `sync_crons(backend)` (the seam)
 
-`django_absurd/apps.py` — `post_migrate` handler: run `sync_crons` when
-`SCHEDULER="pg_cron"`, else `teardown_crons` (removes orphans after switching away).
-**Best-effort**, mirroring `provision_queues_after_migrate`: catch
-`ImproperlyConfigured/OperationalError/ProgrammingError` (pg_cron/schema absent) and
-skip so a missing extension never breaks `migrate` (I3); E008 is the loud surface.
+Runs on the Absurd DB connection, inside one transaction guarded by
+`pg_advisory_xact_lock(<const>)` to serialize concurrent deploys.
 
-`absurd_beat` / `absurd_worker --beat` — raise `CommandError` when `SCHEDULER="pg_cron"`
+1. Resolve declared entries: `get_settings_schedules(backend)`; per entry compute
+   `params`, `options` (see Spawn parity), effective `queue` (see Effective queue),
+   validated `cron`.
+2. **Table**: upsert `source="settings"` rows (ORM / parameterized DML — no string SQL);
+   `DELETE … WHERE source='settings' AND alias=<alias> AND name NOT IN (declared)`.
+3. **pg_cron**: per declared entry
+   `cron.schedule('absurd:settings:<alias>:<name>', <cron>, format('select django_absurd_run_scheduled(%L)', <name>))`.
+   Prune: `SELECT jobid FROM cron.job WHERE jobname LIKE 'absurd:settings:<alias>:%'`
+   minus declared, then `cron.unschedule(jobid)` **each wrapped in a savepoint that
+   swallows the not-found error** (pg_cron `ereport`s with no errcode → SQLSTATE `XX000`
+   → Django `InternalError`, NOT `ProgrammingError` — catch
+   `InternalError`/`DatabaseError` + message, C-1). Set-based `DELETE FROM cron.job` is
+   NOT usable — pg_cron grants no DELETE on `cron.job`. Assert `active` on upserted jobs
+   (`cron.alter_job(jobid, active := true)`) so an operator-disabled settings job is
+   re-enabled to match its declaration.
+
+All pg_cron SQL confined here (local `cron.schedule` for T1; `schedule_in_database` is
+the future swap point).
+
+`teardown_crons(backend)` — unschedule every `absurd:settings:<alias>:%` job (same
+savepoint-swallow loop) and delete `source="settings"` rows. Idempotent.
+
+## Triggers & error posture
+
+Both call the same `sync_crons`; they differ in how failure surfaces.
+
+- **`absurd_sync_crons`** (management command) — **loud**. A bad cron / missing
+  extension / missing privilege is reported per entry; hard failures raise
+  `CommandError`. Refuses unless `SCHEDULER="pg_cron"`, except `--teardown` (allowed, to
+  clean up after switching away).
+- **`post_migrate`** (in `apps.py`) — **best-effort**, must never break `migrate`. Runs
+  `sync_crons` when `SCHEDULER="pg_cron"`, else `teardown_crons` (removes orphans after
+  a switch to beat). Connect **after** `provision_queues_after_migrate` (N-5) so queue
+  tables the jobs target already exist. Catch and skip-with-log:
+  `ImproperlyConfigured/OperationalError/ProgrammingError/InternalError/ImportError/TypeError`
+  (pg_cron absent, faked migration, bad dotted path, unserializable arg, pre-1.3
+  pg_cron).
+
+`absurd_beat` / `absurd_worker --beat` raise `CommandError` when `SCHEDULER="pg_cron"`
 ("SCHEDULER is pg_cron — beat disabled; run `absurd_sync_crons`"). No double-fire path.
-
-`django_absurd/checks.py` — extend E007; add E008.
-
-Conventions: verb names, helpers below callers, absolute imports, `import typing as t`.
 
 ## Settings
 
@@ -123,7 +116,7 @@ TASKS = {
             "SCHEDULE": {                 # unchanged schema, shared with beat
                 "nightly-report": {
                     "task": "myapp.tasks.send_report",
-                    "cron": "0 2 * * *",
+                    "cron": "0 2 * * *",  # 5-field only under pg_cron
                 },
             },
         },
@@ -134,172 +127,165 @@ TASKS = {
 `SCHEDULER` ∈ `{"beat"(default), "pg_cron"}`, exactly one per backend. `SCHEDULE` schema
 identical to beat: required `task`, `cron`; optional `queue`, `args`, `kwargs`.
 
-## Spawn mapping
+## Spawn parity (options + queue)
 
-Verified
-`absurd.spawn_task(p_queue_name text, p_task_name text, p_params jsonb, p_options jsonb default '{}')`.
-`p_options` reads `max_attempts`, `retry_strategy`, `idempotency_key`, `headers`,
-`cancellation`. Emit:
+Computed in Python at reconcile, written to the row; the wrapper just passes them
+through.
 
-```sql
-select cron.schedule(
-  'absurd:default:nightly-report',
-  '0 2 * * *',
-  $$ select absurd.spawn_task(
-       'default',
-       'myapp.tasks.send_report',
-       '{"args": [], "kwargs": {}}'::jsonb,
-       '{"max_attempts": 5}'::jsonb
-     ); $$
-);
-```
+- **`resolve_spawn_options(backend, schedule) -> dict`**: import the task;
+  `defaults = getattr(task.func, "absurd_default_params", None)`;
+  `merged = build_merged_spawn_options(defaults, None)` (no per-call params — a
+  `Schedule` carries none);
+  `merged["max_attempts"] = merged.pop("max_attempts", backend.default_max_attempts)`
+  (I1 — the **configured** `DEFAULT_MAX_ATTEMPTS`, NOT literal 5; a NULL `max_attempts`
+  means retry-forever in Absurd, so this fallback is load-bearing); reshape
+  `retry_strategy` / `cancellation` the way the SDK's `_normalize_spawn_options` does
+  (import the private helpers or duplicate ~15 lines with a version-pin note — do NOT
+  route through `client.spawn`: the enqueue client has no `default_max_attempts` and an
+  empty registry, so the SDK-render path is dead code, I2). No `idempotency_key` (single
+  DB scheduler; beat sets one, pg_cron intentionally doesn't — documented asymmetry).
+- **Effective queue** = `schedule.queue or import_string(task).queue_name` (N-3 — beat
+  routes to the task's own `queue_name` when unset; pg_cron must match). The pg_cron
+  command has no lazy queue-create rescue (unlike `enqueue`), so E007 validates the
+  **effective** queue is declared → migrate provisions its tables → fire-time INSERT
+  works (N-4).
 
-That literal is the **rendered** result; it is NOT assembled by string interpolation in
-Python — see `build_schedule_call` above. The command text is produced **server-side**
-via
-`format('select absurd.spawn_task(%L,%L,%L::jsonb,%L::jsonb)', queue, task, params, options)`
-(written `%%L` in the psycopg query, params cast `::text`), values passed as bind
-parameters (C1). `%L` guarantees literal-safe quoting, so a string arg containing quotes
-/ `$$` / backslashes renders as inert doubled-quote data, not injectable SQL.
+Verified:
+`absurd.spawn_task(queue text, task text, params jsonb, options jsonb default '{}')`;
+`options` reads `max_attempts/retry_strategy/idempotency_key/headers/cancellation`. It
+is plain `plpgsql` (not `SECURITY DEFINER`), so it runs with the fire-time role's
+privileges — that role is the reconcile role (pg_cron runs jobs as their stored
+`username`), i.e. the Django app role that already enqueues, so INSERT on the queue
+tables is inherently present.
 
-`p_task_name` = dotted path (worker resolves via `import_string`, same as enqueue).
-`p_params` = `{"args": …, "kwargs": …}` (byte-shape the worker deserializes; args/kwargs
-already E007-JSON-validated). `p_options` = built by `resolve_spawn_options` to match
-the enqueue path exactly — including the `default_max_attempts`=5 fallback and SDK
-normalization (I2) — so pg_cron and beat behave identically for the same task. No
-idempotency key (single DB scheduler).
+## Cron handling — 5-field only, no shim (B-3)
 
-## Cron translation + sub-minute shim
+pg_cron backend accepts **standard 5-field** cron only. Sub-minute is **beat-only** in
+v1: E007 rejects a 6-field entry under `SCHEDULER="pg_cron"` ("pg_cron backend is
+minute-granularity; use the beat scheduler for sub-minute"). This drops the
+croniter→`"N seconds"` translation shim entirely and its costs: the pg_cron ≥1.5 floor,
+the `*`→`"1 seconds"` runaway (~86k `job_run_details` rows/day), and the false "both
+backends behave identically" promise. The cron string passes through to `cron.schedule`
+unchanged; pg_cron is the authoritative parser at apply time.
 
-- 5-field standard → validate against **pg_cron's** grammar, then passthrough.
-  `croniter` is more permissive than pg_cron's Vixie parser (accepts exprs pg_cron
-  rejects), so `croniter.is_valid` alone would let `check` pass and then fail at
-  `cron.schedule` runtime (I1). Restrict to the strict common 5-field subset both
-  accept, or validate the string against pg_cron's rules directly.
-- 6-field leading seconds: `*/N` (N 1–59) or `*` in the seconds field, **other five
-  fields all `*`** → `"N seconds"` (pass N through; `*`→1). Accepts alignment/boundary
-  imprecision (`*/7`→`"7 seconds"` fires evenly on pg_cron vs beat's uneven {0,7,…,56}).
-  "Good enough."
-- Reject (raise): seconds combined with any non-`*` unit (pg_cron hard rule: "cannot use
-  seconds with other time units"), or non-step seconds (specific value / list — no
-  interval to translate).
+## Checks — static only, no DB (Option A)
 
-## Checks
+`manage.py check` stays DB-free for this feature; pg_cron facts (grammar, privilege,
+extension) are validated **at sync** by the real `cron.schedule` (loud in the command;
+skip-with-log at migrate). This deletes the E008 DB-probe and its whole failure surface
+(wrong function signature, INSERT-probe on not-yet-created tables, catch-set).
 
-- **E007** (extend, existing per-entry SCHEDULE validation): when `SCHEDULER="pg_cron"`,
-  each `cron` must pass `to_pg_cron_schedule` (else precise reject msg — e.g. "pg_cron
-  can't combine seconds with other fields; use beat for this schedule"). 6-field parsing
-  reads the **leading** seconds column (matches beat's `second_at_beginning=True` from
-  PR #40) — both backends must agree which field is seconds. Beat path unchanged
-  (accepts full croniter).
-- **E008** (new, **error**): when `SCHEDULER="pg_cron"`, probe in order and
-  short-circuit so a missing extension never aborts the check txn:
-  1. **extension present** — `pg_extension` has `pg_cron` (and Absurd co-located on
-     `DATABASE`). If absent, emit the "enable extension" error and stop — do NOT run the
-     privilege probe (`has_function_privilege('cron.schedule…')` raises
-     `UndefinedFunction` when `cron` is absent, poisoning the connection for the rest of
-     the run).
-  2. **schedule privilege** —
-     `has_function_privilege(current_user, 'cron.schedule(text,text,text)', 'EXECUTE')`
-     (I4: `USAGE` on `cron` doesn't prove schedulability; `cron.schedule` needs the
-     pg_cron-privileged role or superuser).
-  3. **fire-time privilege** — the job runs as its stored `username` (the reconcile
-     role), so that role also needs `EXECUTE` on `absurd.spawn_task` and `INSERT` on the
-     queue tables; otherwise the job schedules cleanly but fails silently at fire time.
-     Wrap every probe in try/except mapping DB errors to E008 text (mirror
-     `check_absurd_config`). `msg` = problem, `hint` = fix (enable extension / grant
-     EXECUTE / co-locate). Read-only.
+- **`E007`** (`@register("absurd")`, static): per `SCHEDULE` entry — task imports to a
+  Django `Task`; `cron` is croniter-parseable and **5-field** (reject 6-field under
+  pg*cron per B-3); `args`/`kwargs` JSON-serializable; `SCHEDULER` value ∈ known set (a
+  typo like `"pgcron"` must not silently fall through to beat + teardown); **schedule
+  name** matches
+  `[A-Za-z0-9*-]+`(keeps the constant command literal safe and predictable); the composed jobname`absurd:settings:<alias>:<name>` is **≤ 63 bytes** (`cron.job.jobname`is Postgres`name`; over-63 truncates silently → the entry is pruned-right-after-create every sync and never fires, C-2); effective `queue`
+  (above) is declared. All offline.
+
+No `E008`, no dry-run, no DB-tagged check.
 
 ## Timezone
 
-Docs-only (v1). pg_cron fires in `cron.timezone` (GMT default; global GUC, not per-job).
-Document: (a) state it's GMT/cron.timezone-native and differs from beat's
-Django-`TIME_ZONE` local-time semantics; (b) recommend setting `cron.timezone` = Django
-`TIME_ZONE` when non-UTC. Common modern case (both UTC) = no-op. Runtime warn/check
-deferred (own follow-on).
+Docs-only. pg_cron fires in `cron.timezone` (GMT default, global GUC, not per-job) —
+differs from beat's Django-`TIME_ZONE` local time. Document: (a) state the GMT-native
+default; (b) recommend `cron.timezone` = Django `TIME_ZONE` when non-UTC. Common
+UTC-both case = no-op. The emitted command carries no timestamp (`spawn_task` stamps
+server-side), so no payload/slot TZ mismatch. Runtime check deferred.
+
+## Privileges & version
+
+- pg_cron **≥ 1.3** required (named `cron.schedule(name,text,text)` upsert). No ≥1.5
+  need (no seconds). Not statically checkable (Option A) → a pre-1.3 `cron.schedule`
+  fails at sync (loud in the command; skip-with-log at migrate). Document the floor.
+- Reconcile role needs: EXECUTE on `cron.schedule`/`cron.unschedule`/`cron.alter_job`
+  (pg_cron-privileged role or superuser), plus ownership of the projection table +
+  wrapper function (created by our migration as that role). Fire-time = same role.
+- **M1 (constraint):** `cron.schedule` upserts on `(jobname, username)` and jobs run as
+  the stored `username`. Two projects sharing one DB under **different** roles get
+  duplicate firing (no upsert collision); RLS (`username = current_user`) also hides the
+  other role's rows from our prune, so we can't clean them up. Reconcile must run as a
+  single stable role. Documented; a configurable namespace is a future knob.
 
 ## Testing
 
-Function-based pytest, behavior-driven. pg_cron added to the dev compose Postgres image
-(build/extend the DB service so `create extension pg_cron` works on the host suite).
+Function-based pytest, behavior-driven, real pg*cron. Because `CREATE EXTENSION pg_cron`
+is only allowed in `cron.database_name` and the suite uses a runner-created
+`test*\*`DB, the compose Postgres must set`cron.database_name` to the test DB (or the
+pg_cron e2e runs in a dedicated job) — pin this explicitly, don't hand-wave.
 
-- `to_pg_cron_schedule`: unit table — 5-field passthrough; `*/30`→`"30 seconds"`;
-  `*/7`→`"7 seconds"`; `*`→`"1 seconds"`; reject `*/30 9 * * * *`, reject
-  `15,45 * * * * *`, reject `30 * * * * *`. RED-first.
-- `absurd_sync_crons` (behavioral): run command against **real pg_cron** (executes
-  `build_schedule_call`'s statement through psycopg — this alone catches the
-  `%%L`/`::text` gotcha, which a stored-command assertion would miss). Assert emitted
-  text AND resulting `cron.job` rows (jobname, schedule, command). Upsert idempotent
-  (re-run = same rows). Prune: remove a declared entry, re-sync, assert its
-  `absurd:<alias>:%` job gone; a hand-made non-prefixed `cron.job` survives.
-  **Unschedule tolerance:** prune/teardown a set that includes an already-removed job →
-  no error (by-jobid path).
-- `post_migrate`: reconcile fires under `SCHEDULER="pg_cron"`; **teardown** fires when
-  switched away (`beat`/unset) — assert prior `absurd:<alias>:*` jobs removed (C2).
-  Extension absent → post_migrate skips silently, `migrate` succeeds (I3).
-- **Injection (C1):** a schedule with `args=["'; drop schema absurd cascade; --", "$$"]`
-  syncs (executing the real statement) to a `cron.job` whose command calls `spawn_task`
-  with those exact values as data; a subsequent fire spawns the literal args — schema
-  `absurd` still exists, no SQL executed out of band.
-- **Spawn parity (I2):** `@absurd_default_params(max_attempts=3)` → `p_options` carries
-  `max_attempts=3`; a task with **no** default → `p_options` carries `max_attempts=5`
-  (the enqueue default fallback, the case raw-merge would have dropped).
-- E007 pg_cron-cron rejects incl. a **croniter-valid-but-pg_cron-invalid** 5-field expr
-  (e.g. a name like `JAN` or an `L`) — full text per entry. E008: extension absent →
-  error text **and the check run doesn't abort** (later checks still evaluate); role
-  lacking EXECUTE on `cron.schedule` (I4) → error text. Drive with real DB conditions
-  where possible.
-- beat commands raise `CommandError` under `SCHEDULER="pg_cron"` (assert message).
-- End-to-end: sync a `*/1 * * * *` schedule, let pg_cron fire, worker burst, assert task
+- `resolve_spawn_options`: `@absurd_default_params(max_attempts=3)` → `options` has 3; a
+  task with **no** default under a backend with `DEFAULT_MAX_ATTEMPTS=7` → `options` has
+  **7** (I1 — the literal-5 bug can't pass); effective queue = task's `queue_name` when
+  `queue` unset (N-3).
+- `sync_crons` (behavioral, real pg_cron): run, assert `ScheduledJob` rows AND
+  `cron.job` rows (jobname, schedule, constant command). Idempotent (re-run = same
+  rows). Prune: drop a declared entry, re-sync → its row + job gone; a hand-made
+  non-prefixed `cron.job` survives. **Prune tolerance:** reconcile a set where a job was
+  already removed → no error (savepoint-swallow). `enabled=false`/operator-disabled job
+  re-enabled on sync.
+- `teardown_crons`: switch `SCHEDULER` to beat → `post_migrate` removes all
+  `absurd:settings:<alias>:*` jobs + rows (C2). Idempotent.
+- `post_migrate`: reconcile under pg_cron; teardown when switched away; runs **after**
+  provision (queue tables exist); pg_cron/extension absent or bad dotted path → skips,
+  `migrate` succeeds (N-2/N-5).
+- **Injection:** a schedule whose `args` contain `"'; drop schema absurd cascade; --"`
+  and `"$$"` — the value lands in the `ScheduledJob.params` column via DML and fires as
+  literal data; `cron.job.command` is the constant wrapper call; schema `absurd` intact.
+- **Wrapper no-op:** delete a row out from under an existing job → the next fire is a
+  no-op (no error in `job_run_details`).
+- E007 rejects: 6-field under pg_cron; unknown `SCHEDULER`; over-63-byte jobname; bad
+  name charset; undeclared effective queue — full text per entry.
+- beat commands raise `CommandError` under `SCHEDULER="pg_cron"`.
+- End-to-end: sync a `* * * * *` schedule, let pg_cron fire, worker burst, assert task
   ran.
 
 ## Docs
 
-`docs/web/cron-jobs.md` Database-side section: "coming soon" → real. Enable extension,
+`docs/web/cron-jobs.md` Database-side section → real: enable extension (≥1.3),
 `SCHEDULER="pg_cron"`, `absurd_sync_crons` (+ auto on migrate), TZ note (both framings),
-sub-minute rules (5-field / clean `*/N`; rejects), beat mutual-exclusion, E007/E008.
-`AGENTS.md` scheduling section: add pg_cron backend, SCHEDULER selector, reconcile,
-availability. README unchanged. WHY.md: capture DB-side-vs-beat rationale after build.
+**sub-minute = beat-only**, mutual exclusion, the single-stable-role constraint, and a
+note that **uninstall is not self-cleaning** (removing the app / flipping to beat
+without `migrate` leaves jobs — run `absurd_sync_crons --teardown` first) plus a
+`cron.job_run_details` purge recommendation (it's the only fire-failure surface).
+`AGENTS.md`: pg_cron backend, selector, reconcile, wrapper model. README unchanged.
+WHY.md: capture the projection-table / constant-command rationale after build.
 
-**Limitation to document:** teardown fires only on `post_migrate` (with `django_absurd`
-still installed) or explicit `absurd_sync_crons --teardown`. Removing the app from
-`INSTALLED_APPS`, or flipping to `beat` and deploying **without** running `migrate`,
-leaves owned jobs firing — uninstall is not self-cleaning; run `--teardown` first.
+## Decisions (resolved in brainstorming + 3 review rounds)
 
-## Decisions (resolved in brainstorming)
-
-- **Settings-declared, not admin/DB tables.** Abandoned the CronJob model / admin /
-  task-dropdown path: Django Tasks has no task registry (only lazy `import_string`
-  resolution), a dropdown would be the sole thing needing whole-codebase discovery, and
-  it cut against the project grain. Settings + E007 reuse the existing dotted-path
-  model.
-- **Reconcile on migrate AND command** (both) — mirrors `sync_queues`.
-- **Own-prefix prune** (`absurd:<alias>:`) — destructive for our jobs only. **Teardown
-  on deselect (C2):** switching `SCHEDULER` away from pg_cron removes all owned jobs
-  (post_migrate + `--teardown`), so they can't orphan and double-fire with beat.
-- **Injection-safe command build (C1):** spawn command assembled server-side with
-  `format('%L', …)` over bind params — never Python interpolation. In psycopg the `%L`
-  is written `%%L` and params cast `::text`; a test executes the real statement.
-- **Spawn parity (I2):** `p_options` is rebuilt to match the enqueue path exactly (the
-  `default_max_attempts`=5 fallback + SDK normalization) — `build_merged_spawn_options`
-  alone is insufficient and would drop `max_attempts` in the common case.
-- **Validate against pg_cron grammar, not croniter (I1):** `croniter.is_valid` is too
-  permissive; the check must reject exprs pg_cron would reject at schedule time.
-- **E008 proves schedulability (I4):** EXECUTE on `cron.schedule`, not just schema
-  USAGE.
-- **beat vs pg_cron mutually exclusive** — one `SCHEDULER` per backend; beat commands
-  refuse under pg_cron.
-- **E008 = error** (not warn).
-- **TZ docs-only** in v1; runtime check deferred.
-- **Sub-minute shim = pass-through `*/N`**, imprecision accepted; reject only genuinely-
-  impossible combos. No PyPI lib parses pg_cron's `"N seconds"` grammar — shim is ~20
-  lines.
-- **No idempotency key** — DB-side single scheduler, no concurrent runs.
-- **T1 only** — reconcile seam isolates the future `schedule_in_database` swap.
+- **Settings-declared** source of truth (not admin). SP3 (admin) deferred; the
+  `ScheduledJob.source` column + `absurd:settings:` / `absurd:admin:` name split reserve
+  the coexistence seam — a future admin lane writes `source="admin"` rows that reconcile
+  reads but `sync_crons` never clobbers.
+- **Projection table + wrapper function** (not inline commands). Moves task data out of
+  the cron command into a row; command is constant. Deletes the SQL-string-from-data
+  injection surface (C1) rather than mitigating it; param edits don't churn `cron.job`;
+  parity is computed once at reconcile.
+- **Static checks only; validate at sync** (Option A). `manage.py check` never touches
+  the DB; the real `cron.schedule` is the authoritative gate. Removes E008 + I3/I4/N-1.
+- **No sub-minute on pg_cron (B-3)** — beat-only; drops the shim + its version floor and
+  footguns.
+- **Reconcile on migrate AND command**, same core; loud in the command, best-effort at
+  migrate; advisory-lock serialized; per-entry savepoint isolation.
+- **Prune/teardown by jobid with savepoint-swallow** (C-1: both `cron.unschedule`
+  overloads raise on missing; tolerance comes from error-handling, not id-vs-name; catch
+  `InternalError`/XX000). No raw `DELETE` (no grant).
+- **Spawn parity uses the configured `default_max_attempts` + decorator + SDK
+  normalization** (I1/I2), not literal 5 and not the dead SDK-render path.
+- **Effective queue = `schedule.queue or task.queue_name`**, E007-validated as declared
+  (N-3/N-4).
+- **Jobname ≤ 63 bytes, name charset-restricted** (C-2, injection-safety of the constant
+  command).
+- **Single stable reconcile role** (M1: `(jobname,username)` upsert + RLS).
+- **T1 only** — seam isolates the future `schedule_in_database` swap.
 
 ## Decomposition (future)
 
-- SP3 — multi-DB topologies (T2 designated cron DB via `schedule_in_database`; T3 Absurd
-  on non-default Django DB). Seam-ready.
-- Runtime TZ check (E-code warning when `cron.timezone` ≠ Django `TIME_ZONE`).
-- Extended `p_options` (retry_strategy, headers, cancellation) from schedule spec.
+- **SP3 — admin/DB-declared schedules.** Reuses the `ScheduledJob` model
+  (`source="admin"` rows); adds the admin UI + the task-input problem (Django Tasks has
+  no registry — the dropdown/discovery design shelved earlier). Reconcile already reads
+  all sources; only the editing surface + precedence are new.
+- Multi-DB topologies (T2 designated cron DB via `schedule_in_database`; T3 Absurd on a
+  non-default Django DB).
+- Runtime TZ check (warn when `cron.timezone` ≠ Django `TIME_ZONE`).
+- Sub-minute on pg_cron (the `"N seconds"` shim) if demanded.
