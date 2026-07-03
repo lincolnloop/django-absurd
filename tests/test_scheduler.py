@@ -108,6 +108,30 @@ def test_get_next_datetime_uses_django_timezone(settings):
     assert result == expected
 
 
+@freeze_time("2026-01-01 12:00:00")
+def test_get_next_datetime_six_field_leading_seconds():
+    # A 6-field cron uses a LEADING seconds column, so "*/30 * * * * *" means every
+    # 30 seconds -> next fire at :30, not every second (which is what a trailing-seconds
+    # reading of the same string produces).
+    expected = dt.datetime(2026, 1, 1, 12, 0, 30, tzinfo=dt.UTC)
+    assert get_next_datetime("*/30 * * * * *", timezone.now()) == expected
+
+
+@freeze_time("2026-01-01 12:00:00")
+def test_get_next_datetime_six_field_non_divisor_seconds():
+    # Leading seconds holds for any step: "*/7 * * * * *" fires at :07, not :01.
+    expected = dt.datetime(2026, 1, 1, 12, 0, 7, tzinfo=dt.UTC)
+    assert get_next_datetime("*/7 * * * * *", timezone.now()) == expected
+
+
+@freeze_time("2026-01-01 12:00:00")
+def test_get_next_datetime_six_field_zero_seconds():
+    # Leading seconds=0 with a minute step fires on the minute boundary, not every
+    # second: "0 */5 * * * *" -> next at 12:05:00.
+    expected = dt.datetime(2026, 1, 1, 12, 5, 0, tzinfo=dt.UTC)
+    assert get_next_datetime("0 */5 * * * *", timezone.now()) == expected
+
+
 # run_beat_until and tests below it use run_beat's injected wait/now seam because a real
 # threading.Event.wait can't be fast-forwarded by freezegun; the command path is not
 # deterministic enough for exact multi-slot counts.

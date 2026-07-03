@@ -28,8 +28,13 @@ class Schedule:
 
 
 def get_next_datetime(cron: str, after: datetime.datetime) -> datetime.datetime:
+    # second_at_beginning=True: a 6-field cron carries a LEADING seconds column, so
+    # "*/30 * * * * *" means every 30 seconds. Without it croniter reads seconds as the
+    # trailing field and the expression silently degrades to every-second firing.
     local_after = timezone.localtime(after)
-    return croniter.croniter(cron, local_after).get_next(datetime.datetime)
+    return croniter.croniter(cron, local_after, second_at_beginning=True).get_next(
+        datetime.datetime
+    )
 
 
 def get_settings_schedules(backend: AbsurdBackend) -> list[Schedule]:

@@ -45,7 +45,7 @@ classifiers = [
 ]
 dependencies = [
   "absurd-sdk>=0.4.0,<0.5.0",
-  "croniter>=2.0",
+  "croniter>=3.0",
   "Django>=6.0",
 ]
 description = "Django integration for Absurd, the Postgres-native workflow engine."
