@@ -199,21 +199,23 @@ whole catalog, not just the served queue — and reports to stdout.
 
 ## Scheduling recurring tasks
 
-django-absurd has a built-in beat scheduler that fires
-[Absurd cron tasks](https://earendil-works.github.io/absurd/patterns/cron/) from
-settings-declared schedules. Schedules are cron expressions interpreted in Django's
-[`TIME_ZONE`](https://docs.djangoproject.com/en/stable/ref/settings/#time-zone).
+django-absurd supports two schedulers, selected per backend with `OPTIONS["SCHEDULER"]`:
+
+| Value       | Default | Description                                                      |
+| ----------- | ------- | ---------------------------------------------------------------- |
+| `"beat"`    | yes     | In-process beat; evaluates cron and enqueues via the normal path |
+| `"pg_cron"` | no      | Database-side; Postgres fires jobs directly via `pg_cron`        |
 
 ### Declare schedules
 
-Add a `SCHEDULE` map to `OPTIONS`. Each entry is a schedule name (arbitrary, unique
-within the backend) mapped to a spec dict:
+Add a `SCHEDULE` map to `OPTIONS`. The schema is the same for both schedulers:
 
 ```python
 TASKS = {
     "default": {
         "BACKEND": "django_absurd.backends.AbsurdBackend",
         "OPTIONS": {
+            # "SCHEDULER": "beat",   # default; omit for beat
             "SCHEDULE": {
                 "nightly-report": {
                     "task": "myapp.tasks.generate_report",  # dotted import path
@@ -234,20 +236,20 @@ TASKS = {
 
 **Spec keys:**
 
-| Key      | Required | Description                                                                                                                                                                                                                                             |
-| -------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `task`   | yes      | Dotted import path to a `@task`-decorated function                                                                                                                                                                                                      |
-| `cron`   | yes      | Cron expression, parsed by [croniter](https://pypi.org/project/croniter/): standard **5-field** `min hour dom mon dow` (e.g. `"0 2 * * *"`), or **6-field** with a leading seconds column for sub-minute cadences (e.g. `"*/30 * * * * *"` = every 30s) |
-| `queue`  | no       | Queue name; omit to use the backend's default queue. Must be a declared queue (see Configure), else `check` reports `absurd.E007`                                                                                                                       |
-| `args`   | no       | List of positional arguments passed to the task on each firing                                                                                                                                                                                          |
-| `kwargs` | no       | Dict of keyword arguments passed to the task on each firing                                                                                                                                                                                             |
+| Key      | Required | Description                                                                                                                                                                                                                                                                            |
+| -------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `task`   | yes      | Dotted import path to a `@task`-decorated function                                                                                                                                                                                                                                     |
+| `cron`   | yes      | Cron expression, parsed by [croniter](https://pypi.org/project/croniter/): standard **5-field** `min hour dom mon dow` (e.g. `"0 2 * * *"`), or **6-field** with a leading seconds column for sub-minute cadences (e.g. `"*/30 * * * * *"` = every 30s) (beat only — see pg_cron note) |
+| `queue`  | no       | Queue name; omit to use the backend's default queue. Must be a declared queue (see Configure), else `check` reports `absurd.E007`                                                                                                                                                      |
+| `args`   | no       | List of positional arguments passed to the task on each firing                                                                                                                                                                                                                         |
+| `kwargs` | no       | Dict of keyword arguments passed to the task on each firing                                                                                                                                                                                                                            |
+
+### Beat scheduler
 
 Cron expressions are evaluated in Django's configured
 [`TIME_ZONE`](https://docs.djangoproject.com/en/stable/ref/settings/#time-zone).
 Sub-minute (6-field) schedules are supported; each slot enqueues a task, so size the
 cadence to what your worker can keep up with.
-
-### Run the beat
 
 Start the beat scheduler as a standalone process:
 
@@ -279,6 +281,66 @@ container orchestrator to enforce a single instance.
 **Fire-forward only.** The beat does not backfill missed firings. If it is down when a
 scheduled time passes, that firing is skipped; the next firing proceeds on schedule.
 
+### pg_cron backend
+
+Set `SCHEDULER = "pg_cron"` to let Postgres fire schedules directly — no beat process
+needed.
+
+**Prerequisites (operator-side):**
+
+- **`pg_cron` ≥ 1.4** (`cron.alter_job`, used every reconcile, was added in 1.4).
+- `shared_preload_libraries = pg_cron` in `postgresql.conf` (requires a server restart).
+- `cron.database_name = <your_db>` pointing at the Absurd database.
+- `CREATE EXTENSION pg_cron` executed by a superuser in that database.
+
+django-absurd ships no `CREATE EXTENSION` migration — that is an operator step. A
+typical pattern is a one-off migration in your own app:
+
+```python
+from django.db import migrations
+
+class Migration(migrations.Migration):
+    operations = [
+        migrations.RunSQL("CREATE EXTENSION IF NOT EXISTS pg_cron"),
+    ]
+```
+
+**Enabling:**
+
+```python
+OPTIONS = {
+    "SCHEDULER": "pg_cron",
+    "SCHEDULE": {
+        "nightly-report": {"task": "myapp.tasks.send_report", "cron": "0 2 * * *"},
+    },
+}
+```
+
+Sub-minute (6-field) cron expressions are **beat-only** — `pg_cron` fires at minute
+granularity and `absurd.E007` rejects a 6-field entry when `SCHEDULER="pg_cron"`.
+
+Beat and pg_cron are **mutually exclusive** per backend: running `absurd_beat` or
+`absurd_worker --beat` against a backend with `SCHEDULER="pg_cron"` raises
+`CommandError`.
+
+**Reconcile:**
+
+```bash
+python manage.py migrate              # reconciles on every deploy (recommended)
+python manage.py absurd_sync_crons    # explicit reconcile / backstop
+python manage.py absurd_sync_crons --teardown  # remove all jobs + rows (before uninstall)
+```
+
+`migrate` fires `post_migrate`, which reconciles the declared `SCHEDULE` into `pg_cron`
+jobs automatically — a settings-only change needs no new migration file.
+`absurd_sync_crons` is the backstop for pipelines that skip `migrate`.
+
+**Wrapper model:** each schedule is materialised as a `ScheduledJob` row (the projection
+table). The `pg_cron` job command is a constant call to
+`public.django_absurd_run_scheduled(source, alias, name)`; the wrapper reads the row at
+fire time and calls `absurd.spawn_task`. Editing args/kwargs takes effect on the next
+fire without touching `cron.job`.
+
 ### Validate
 
 `python manage.py check django_absurd` validates every schedule entry and reports
@@ -286,9 +348,11 @@ scheduled time passes, that firing is skipped; the next firing proceeds on sched
 
 - an unimportable or non-`@task` `task` path
 - an invalid cron expression
+- 6-field (sub-minute) cron under `SCHEDULER="pg_cron"`
 - unknown keys in the spec
 - `args`/`kwargs` values that are not JSON-serializable
 - a `queue` that is not declared in `OPTIONS["QUEUES"]`
+- an unknown `SCHEDULER` value
 
 Fix everything `absurd.E007` reports before relying on the schedule in production.
 
