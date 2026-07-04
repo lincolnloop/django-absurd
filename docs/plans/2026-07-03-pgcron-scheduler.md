@@ -124,30 +124,41 @@ def test_can_schedule_and_unschedule():
       `pg_cron`).
 
 - [ ] **Step 3: Build the image + wire compose (prose).** Add `Dockerfile.pgcron`:
-      `FROM postgres:18` then install the matching `postgresql-18-cron` package
-      (Debian-based `postgres:18`, not alpine — alpine has no pg_cron package). Add
-      `docker/initdb-pgcron.sh` (runs at container init as superuser) doing
-      `CREATE EXTENSION IF NOT EXISTS pg_cron;`. In `compose.yaml`: build the db from
-      `Dockerfile.pgcron`; mount the initdb script into `/docker-entrypoint-initdb.d/`;
-      set
-      `command: postgres -c shared_preload_libraries=pg_cron -c cron.database_name=<TESTDB>`.
-      Pick a fixed `<TESTDB>` (e.g. `absurd_test`).
+      `FROM postgres:18` (Debian; alpine has no pg_cron package) then
+      `apt-get install postgresql-18-cron` (build-time risk M3 — if the PGDG repo lacks
+      it, fall back to building pg_cron from source; pin an image known to ship ≥1.4).
+      In `compose.yaml` build the db from `Dockerfile.pgcron` and set
+      `command: postgres -c shared_preload_libraries=pg_cron -c cron.database_name=absurd_test`.
+      **No initdb script** — an `initdb.d` script runs against `POSTGRES_DB` at first
+      boot, NOT against pytest-django's later-created test DB, so it can't enable the
+      extension where the tests connect (C1). `shared_preload_libraries` is server-wide
+      (correct at the `command`); `CREATE EXTENSION` is done in Step 4.
 
-- [ ] **Step 4: Fix the test DB name (prose).** In `tests/settings.py` set
-      `DATABASES["default"]["TEST"] = {"NAME": "<TESTDB>"}` so pytest-django uses the DB
-      whose name matches `cron.database_name` (else `CREATE EXTENSION`/`cron.schedule`
-      won't be in the right DB). Register the `pgcron` marker in `pyproject.toml`
-      `[tool.pytest.ini_options]` `markers` (mirror the existing `packaging` marker).
+- [ ] **Step 4: Make the test DB `pg_cron`-enabled (prose, C1).** Two coordinated
+      pieces: (a) in `tests/settings.py` set
+      `DATABASES["default"]["TEST"] = {"NAME": "absurd_test"}` so the connected test
+      DB's name == `cron.database_name` (only that DB may `CREATE EXTENSION pg_cron`);
+      (b) add a **session-scoped fixture** in `tests/conftest.py` (requested by pgcron
+      tests, NOT autouse — so the default run never needs pg_cron) that runs
+      `CREATE EXTENSION IF NOT EXISTS pg_cron` on the default connection. The suite
+      connects as the `postgres` superuser, so it succeeds; `IF NOT EXISTS` +
+      `--reuse-db` make it idempotent across reruns. The pgcron `pytestmark` includes
+      this fixture (e.g.
+      `pytestmark = [pytest.mark.django_db(transaction=True),     pytest.mark.pgcron, pytest.mark.usefixtures("ensure_pgcron")]`).
 
-- [ ] **Step 5: CI (prose).** Add a dedicated CI job (or extend the DB service) that
-      brings up the `Dockerfile.pgcron` compose service and runs
-      `uv run pytest -m pgcron`. The existing matrix runs `-m "not pgcron"` (mirror the
-      `packaging` exclusion in `tox.ini`). Document that local runs need
-      `docker compose up -d db` on the new image.
+- [ ] **Step 5: Keep pg_cron OUT of the default run (prose, C2).** Add `-m "not pgcron"`
+      to `pyproject.toml` `[tool.pytest.ini_options].addopts` and register the `pgcron`
+      marker there — so a bare `uv run pytest` (CLAUDE.md's single-DB command) skips
+      them and needs no `pg_cron`. A CLI `-m pgcron` overrides addopts. CI: a
+      **dedicated job** brings up the `Dockerfile.pgcron` compose service and runs
+      `uv run pytest -m pgcron`; the existing matrix already runs `-m "not pgcron"`
+      implicitly via addopts (drop the redundant `tox.ini` change). Document: local
+      pgcron run = `docker compose up -d     --build db && uv run pytest -m pgcron`.
 
 - [ ] **Step 6: Run — expect PASS.**
       `docker compose up -d --build db && uv run pytest tests/test_pgcron_infra.py -m pgcron -v`
-      → 2 passed.
+      → 2 passed. Also confirm a bare `uv run pytest tests/test_pgcron_infra.py` (no
+      `-m`) **deselects** them (C2 check).
 
 - [ ] **Step 7: Commit** —
       `chore(test): pg_cron-enabled Postgres image + pgcron marker`.
@@ -424,9 +435,14 @@ def test_effective_queue_uses_task_queue_name_when_unset(settings):
     assert effective_queue(s) == "reports"
 ```
 
-(Add test fixtures `tests.tasks.capped` =
-`@task`/`@absurd_default_params(max_attempts=3)` and `tests.tasks.on_reports` =
-`@task(queue_name="reports")` if absent.)
+**Step 0 (this task): add the fixtures to `tests/tasks.py`** — they do NOT exist (I1).
+Add `capped` (`@task` + `@absurd_default_params(max_attempts=3)`) and `on_reports`
+(`@task(queue_name="reports")`). Note: the existing `with_default_attempts` uses
+`max_attempts=7`, and the fallback test below also uses `DEFAULT_MAX_ATTEMPTS=7` —
+that's fine because the decorator fixture is `3` (≠ 7), so `3` proves "decorator wins"
+and `7` (with no decorator) proves "backend default, not literal 5". Do NOT test the
+unset-default case: `backend.default_max_attempts` defaults to `5`, indistinguishable
+from the bug (M2). `"reports"` must be a declared queue in these tests' `QUEUES`.
 
 - [ ] **Step 2: Run — expect FAIL** (module/functions missing).
 
@@ -492,9 +508,12 @@ def test_jobname_format():
   bad-charset `alias`; validate the **effective** queue is declared. Plus a
   SCHEDULER-value check (unknown value → error). All static (no DB).
 
-- [ ] **Step 1: Failing tests** — `tests/test_pgcron_checks.py` (reuse the `run_check`
-      callable-fixture pattern from `tests/test_scheduler_checks.py`; each asserts the
-      full emitted `absurd.E007` text):
+- [ ] **Step 1: Failing tests** — `tests/test_pgcron_checks.py`. Do NOT reuse the
+      existing `run_check` fixture (I2) — it hard-codes `OPTIONS` (fixed queues, single
+      alias `default`, no `SCHEDULER`) and can't express these inputs. Write a **local
+      settings-building helper** taking `scheduler`, `alias`, `queues`, `schedule`,
+      driving `call_command("check", "django_absurd")` and asserting on captured text
+      (same capsys+SystemCheckError style as `test_scheduler_checks.py`):
 
 ```python
 # cases (one test each), all under OPTIONS["SCHEDULER"]="pg_cron":
@@ -514,9 +533,11 @@ asserting on captured text, matching `test_scheduler_checks.py` style.)
 - [ ] **Step 3: Implement (prose).** Thread `backend.scheduler` + `alias` into
       `validate_schedule` (or a sibling `validate_pgcron_schedule` called when scheduler
       is pg_cron). Add: a SCHEDULER-value check in `check_absurd_schedule_config`;
-      6-field detection (count fields on the cron string; reject when 6 under pg_cron);
-      `name` charset regex; composed-jobname length
-      (`len(build_jobname(alias,name).encode()) <= 63`)
+      6-field detection — **`croniter.is_valid` accepts 6-field** (verified), so
+      field-counting is the SOLE gate: reject when `len(cron.split()) == 6` under
+      pg_cron (leading-seconds, the beat-only sub-minute case). Use `.split()`
+      (collapses runs of whitespace), not a space count. Then: `name` charset regex;
+      composed-jobname length (`len(build_jobname(alias,name).encode()) <= 63`)
   - alias charset; effective-queue-declared (compute `effective_queue`, check membership
     in `declared_queues`). Each emits an `absurd.E007` `Error` with a distinct message +
     hint. Keep beat's path unchanged (still accepts full croniter). No DB access.
@@ -629,6 +650,9 @@ def owned_jobs(cur, alias="default"):
 # - idempotent: sync twice -> same single row
 # - prune: drop entry b, re-sync -> job b gone; a hand-made non-prefixed cron.job survives
 # - prune-tolerance: pre-delete a job's row via cron.unschedule, then sync -> no error
+# - re-arm (I4): after first sync, cron.alter_job(jobid, active:=false); sync again;
+#   assert cron.job.active is TRUE again (proves the ≥1.4 alter_job re-arm + the
+#   "kill via SCHEDULE, not cron.alter_job" contract)
 # - injection: schedule args ["'; drop schema absurd cascade; --", "$$"] -> command is the
 #   constant wrapper call; `select to_regnamespace('absurd')` still non-null
 ```
@@ -760,9 +784,12 @@ def owned_jobs(cur, alias="default"):
       the wrapper directly is deterministic; keep a separate slow/marked test for real
       pg_cron timing if desired.)
 
-- [ ] **Step 2: Run — expect FAIL / then PASS after wiring** (this exercises the full
-      path; if Tasks 1–12 pass it should pass — treat a failure as an integration gap to
-      fix).
+- [ ] **Step 2: Run — expect FAIL / then PASS after wiring** (full-path integration; if
+      Tasks 1–12 pass it should pass). Likely gaps to check if it fails (M4): the
+      effective queue wasn't provisioned (no `t_<queue>` table → fire errors in
+      `cron.job_run_details`), the wrapper's `search_path` didn't resolve
+      `public.django_absurd_scheduledjob`, or the `params`/`options` jsonb shape
+      mismatches what the worker deserializes.
 
 - [ ] **Step 3: Docs (prose).** `docs/web/cron-jobs.md` Database-side: "coming soon" →
       real (enable extension ≥1.4, `SCHEDULER="pg_cron"`, `absurd_sync_crons` + auto on
@@ -794,9 +821,15 @@ def owned_jobs(cur, alias="default"):
   default_max_attempts + SDK normalize (T5), effective queue (T5), injection (T9), no-op
   invariant (T12), install (T1 infra + T13 example, no shipped CREATE EXTENSION), docs
   (T13). ✔ all mapped.
-- **Coverage gaps to watch during execution:** the `cron.alter_job` re-arm has no
-  dedicated test — add an assertion in a T9 test (operator disables a job, sync re-arms
-  `active=true`). Add it when implementing T9.
+- **Coverage (project holds 100% patch coverage, I5/I4):** the `cron.alter_job` re-arm
+  now has a dedicated RED test in T9. The T12 `post_migrate` best-effort `except` list
+  and the T9/T10 savepoint-swallow branch are coverage traps — cover **each** reachable
+  arm with a real DB condition (extension-absent → the DB error; bad dotted path →
+  `ImportError`; unserializable arg is blocked by E007 so `TypeError` may be unreachable
+  defense) or **narrow the except list** to what a real input can trigger; a genuinely
+  unreachable arm gets `# pragma: no cover` only after confirming no real input reaches
+  it. Also cover the savepoint's non-error (job-exists) path, not just the not-found
+  path.
 - **Type consistency:** `sync_crons(backend)`, `teardown_crons(backend)`,
   `resolve_spawn_options(backend, schedule) -> dict`,
   `effective_queue(schedule) -> str`,
