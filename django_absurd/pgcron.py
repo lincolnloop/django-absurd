@@ -154,15 +154,6 @@ def teardown_crons(backend: AbsurdBackend) -> None:
         ).delete()
 
 
-def find_owned_pgcron_jobids(cur: t.Any, prefix: str) -> list[int]:
-    """Return all jobids of pg_cron jobs matching the given prefix."""
-    cur.execute(
-        "select jobid from cron.job where jobname like %s",
-        [prefix + "%"],
-    )
-    return [row[0] for row in cur.fetchall()]
-
-
 def find_stale_pgcron_jobids(
     cur: t.Any, prefix: str, declared_jobnames: list[str]
 ) -> list[int]:
@@ -170,6 +161,15 @@ def find_stale_pgcron_jobids(
     cur.execute(
         "select jobid from cron.job where jobname like %s and not (jobname = any(%s))",
         [prefix + "%", declared_jobnames],
+    )
+    return [row[0] for row in cur.fetchall()]
+
+
+def find_owned_pgcron_jobids(cur: t.Any, prefix: str) -> list[int]:
+    """Return all jobids of pg_cron jobs matching the given prefix."""
+    cur.execute(
+        "select jobid from cron.job where jobname like %s",
+        [prefix + "%"],
     )
     return [row[0] for row in cur.fetchall()]
 
