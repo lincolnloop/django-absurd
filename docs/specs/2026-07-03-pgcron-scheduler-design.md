@@ -105,6 +105,14 @@ Both call the same `sync_crons`; they differ in how failure surfaces.
 `absurd_beat` / `absurd_worker --beat` raise `CommandError` when `SCHEDULER="pg_cron"`
 ("SCHEDULER is pg_cron — beat disabled; run `absurd_sync_crons`"). No double-fire path.
 
+**Deploy workflow.** The intended path is "**run `migrate` on deploy**" — nothing more.
+`manage.py migrate` fires `post_migrate` on **every** invocation, even with no pending
+migrations, so the reconcile re-reads the _current_ settings and applies the diff on
+each deploy; a settings-only `SCHEDULE` change needs no new migration.
+`absurd_sync_crons` is the backstop for pipelines that _skip_ `migrate` when no
+migration files changed. (No worker-boot reconcile — `post_migrate` + the command cover
+it.)
+
 ## Settings
 
 ```python
