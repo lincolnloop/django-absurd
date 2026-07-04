@@ -246,10 +246,16 @@ server-side), so no payload/slot TZ mismatch. Runtime check deferred.
   (image/package or managed-Postgres parameter group) + `shared_preload_libraries` +
   `CREATE EXTENSION pg_cron` in `cron.database_name`. If absent, reconcile degrades per
   Option A (loud in `absurd_sync_crons`; skip-with-log at migrate).
-- **Dev/test/example automate it**: a `pg_cron`-enabled Postgres image started with
-  `shared_preload_libraries=pg_cron` and a `docker-entrypoint-initdb.d` script running
-  `CREATE EXTENSION pg_cron` (init runs as superuser in the right DB). Serves both the
-  test suite and the `examples/` demo.
+- **Dev/test/example automate it** on a `pg_cron`-enabled Postgres image started with
+  `shared_preload_libraries=pg_cron` and `cron.database_name` = the app DB:
+  - **Test suite**: a `docker-entrypoint-initdb.d` script runs
+    `CREATE EXTENSION pg_cron` (init runs as superuser; deterministic across the dynamic
+    `test_*` DB).
+  - **`examples/` demo**: a **custom Django migration in the example app** does
+    `CreateExtension("pg_cron")` (or `RunSQL "CREATE EXTENSION IF NOT EXISTS pg_cron"`)
+    — this **demonstrates the user-owned pattern** the prereq above describes (the
+    example connects as superuser with the preload already set, so its own migration can
+    do it). django-absurd still ships no such migration; the example teaches it.
 
 ## Testing
 
