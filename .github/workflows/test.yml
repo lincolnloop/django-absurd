@@ -63,6 +63,32 @@ jobs:
           flags: ${{ matrix.env }}
           fail_ci_if_error: true
 
+  pgcron:
+    name: pgcron
+    runs-on: ubuntu-latest
+    env:
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: postgres
+      PGPORT: "5432"
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - name: Start pg_cron Postgres
+        run: docker compose up -d --build db
+      - name: Wait for Postgres
+        run: |
+          for _ in $(seq 1 30); do
+            if docker compose exec -T db pg_isready -U postgres; then exit 0; fi
+            sleep 1
+          done
+          echo "Postgres did not become ready" >&2
+          exit 1
+      - name: Run pgcron tests
+        run: uv run pytest -m pgcron
+
   build:
     name: build distribution
     runs-on: ubuntu-latest

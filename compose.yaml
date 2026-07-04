@@ -1,9 +1,17 @@
 ---
 services:
   db:
+    build:
+      context: .
+      dockerfile: Dockerfile.pgcron
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_cron
+      - -c
+      - cron.database_name=absurd_test
     environment:
       - POSTGRES_PASSWORD=postgres
-    image: postgres:18-alpine
     ports:
       - "${PGPORT:-5432}:5432"
     volumes:
