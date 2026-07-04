@@ -35,3 +35,13 @@ def effective_queue(schedule: Schedule) -> str:
     task's own queue_name.
     """
     return schedule.queue or import_string(schedule.task).queue_name
+
+
+def build_jobname(alias: str, name: str, source: str = "settings") -> str:
+    """Return the pg_cron job name for a scheduled task."""
+    return f"absurd:{source}:{alias}:{name}"
+
+
+def jobname_prefix(alias: str, source: str = "settings") -> str:
+    """Return the LIKE prefix used to prune pg_cron jobs for an alias."""
+    return f"absurd:{source}:{alias}:"
