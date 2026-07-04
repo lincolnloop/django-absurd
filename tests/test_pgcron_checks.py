@@ -150,6 +150,26 @@ def test_unknown_scheduler_value_rejected(settings, capsys):
     assert "'pgcron'" in out
 
 
+def test_pgcron_trailing_newline_name_rejected(settings, capsys):
+    """Schedule name with a trailing newline must be rejected (fullmatch, not match)."""
+    out = run_pgcron_check(
+        settings,
+        capsys,
+        {
+            "scheduler": "pg_cron",
+            "queues": BASE_QUEUES,
+            "schedule": {
+                "nightly\n": {
+                    "task": "tests.tasks.add",
+                    "cron": "0 2 * * *",
+                }
+            },
+        },
+    )
+    assert "absurd.E007" in out
+    assert "invalid schedule name" in out
+
+
 def test_pgcron_valid_five_field_cron_no_error(settings, capsys):
     """Valid 5-field cron under pg_cron must pass without absurd.E007."""
     out = run_pgcron_check(

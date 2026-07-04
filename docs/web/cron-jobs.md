@@ -173,8 +173,8 @@ changed):
 python manage.py absurd_sync_crons
 ```
 
-The command is loud: it reports each upserted/pruned entry and raises `CommandError` on
-any failure (missing extension, bad privilege, etc.).
+The command is loud: it reports upserted/pruned counts and raises `CommandError` on any
+failure (missing extension, bad privilege, etc.).
 
 ### Timezone
 

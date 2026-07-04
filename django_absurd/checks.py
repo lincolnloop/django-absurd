@@ -94,7 +94,7 @@ E007_HINT_PGCRON_JOBNAME = (
 
 VALID_SCHEDULE_KEYS = {"task", "cron", "queue", "args", "kwargs"}
 VALID_SCHEDULERS = {"beat", "pg_cron"}
-PGCRON_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+PGCRON_NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
 
 
 @register("absurd")
@@ -311,7 +311,7 @@ def check_pgcron_cron_fields(name: str, cron: t.Any) -> list[CheckMessage]:
 
 def check_pgcron_names(name: str, alias: str) -> list[CheckMessage]:
     errors: list[CheckMessage] = []
-    if not PGCRON_NAME_RE.match(name):
+    if not PGCRON_NAME_RE.fullmatch(name):
         errors.append(
             Error(
                 f"{E007_MSG} Schedule {name!r}: invalid schedule name"
@@ -320,7 +320,7 @@ def check_pgcron_names(name: str, alias: str) -> list[CheckMessage]:
                 id="absurd.E007",
             )
         )
-    if not PGCRON_NAME_RE.match(alias):
+    if not PGCRON_NAME_RE.fullmatch(alias):
         errors.append(
             Error(
                 f"{E007_MSG} Schedule {name!r}: backend alias {alias!r} contains"

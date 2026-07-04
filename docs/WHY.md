@@ -85,9 +85,10 @@ The `pg_cron` command is a constant call —
 dynamically assembled SQL string. Task data (args, kwargs, options) lives in a
 `ScheduledJob` projection table row; the wrapper function reads it at fire time and
 calls `absurd.spawn_task`. This removes the SQL-string-from-data injection surface
-entirely: there is no `format('%L')` over user-supplied args, no escaped-string
+entirely: there is no `format('%L')` over task arguments or kwargs, no escaped-string
 gymnastics, no injection path — the cron command is a literal of the schedule name only,
-and that name is charset-restricted by a static check.
+and that name is charset-restricted by a static check. (`format('%L')` is used, but only
+over source/alias/name — fixed-charset identifiers, never free-form task data.)
 
 The wrapper is defined `SET search_path = pg_catalog` and fully schema-qualifies every
 object it touches. `pg_cron` fires each job as the stored role with that role's default
