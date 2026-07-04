@@ -7,7 +7,7 @@ import typing as t
 # We import it directly instead of routing through client.spawn so we get the
 # exact same serialisation without creating a client or touching the DB.
 from absurd_sdk import _normalize_spawn_options
-from django.db import connections, transaction
+from django.db import DatabaseError, InternalError, connections, transaction
 from django.utils.module_loading import import_string
 
 from django_absurd.backends import AbsurdBackend, build_merged_spawn_options
@@ -60,7 +60,8 @@ def sync_crons(backend: AbsurdBackend) -> None:
     (source="settings"), then prunes undeclared settings rows for this alias.
     The source="admin" scope is never touched.
 
-    The pg_cron-job phase (cron.schedule calls) is added in Task 9.
+    After the table phase, materializes one pg_cron job per declared entry
+    (upsert + active re-arm) and prunes owned-but-undeclared pg_cron jobs.
     """
     schedules = get_settings_schedules(backend)
     declared_names = [s.name for s in schedules]
@@ -88,3 +89,72 @@ def sync_crons(backend: AbsurdBackend) -> None:
         ScheduledJob.objects.using(backend.database).filter(
             source="settings", alias=backend.alias
         ).exclude(name__in=declared_names).delete()
+
+        sync_pgcron_jobs(backend, schedules)
+
+
+# psycopg scans the whole query for %, so SQL format()'s %L placeholders must be
+# doubled to %%L; the bound params carry an explicit ::text cast. Without both,
+# psycopg raises "only '%s','%b','%t' are allowed". Building the command
+# server-side means runtime arg values can never inject into the scheduled SQL.
+SCHEDULE_JOB_SQL = (
+    "select cron.schedule(%s, %s, "
+    "format('select public.django_absurd_run_scheduled(%%L, %%L, %%L)', "
+    "%s::text, %s::text, %s::text))"
+)
+
+
+def sync_pgcron_jobs(backend: AbsurdBackend, schedules: list[Schedule]) -> None:
+    """Upsert one pg_cron job per declared schedule and prune stale ones.
+
+    Runs inside sync_crons' transaction on backend.database. Each declared entry
+    is (re)scheduled with a constant wrapper command and re-armed to active;
+    pg_cron jobs owned by this alias but no longer declared are unscheduled.
+    """
+    conn = connections[backend.database]
+    prefix = jobname_prefix(backend.alias)
+    declared_jobnames = [build_jobname(backend.alias, s.name) for s in schedules]
+
+    with conn.cursor() as cur:
+        for schedule in schedules:
+            jobname = build_jobname(backend.alias, schedule.name)
+            cur.execute(
+                SCHEDULE_JOB_SQL,
+                [jobname, schedule.cron, "settings", backend.alias, schedule.name],
+            )
+            jobid = cur.fetchone()[0]
+            cur.execute("select cron.alter_job(%s, active := true)", [jobid])
+
+        stale_jobids = find_stale_pgcron_jobids(cur, prefix, declared_jobnames)
+        prune_pgcron_jobs(cur, stale_jobids)
+
+
+def find_stale_pgcron_jobids(
+    cur: t.Any, prefix: str, declared_jobnames: list[str]
+) -> list[int]:
+    """Return jobids of pg_cron jobs matching prefix that are no longer declared."""
+    cur.execute(
+        "select jobid from cron.job where jobname like %s and not (jobname = any(%s))",
+        [prefix + "%", declared_jobnames],
+    )
+    return [row[0] for row in cur.fetchall()]
+
+
+def prune_pgcron_jobs(cur: t.Any, stale_jobids: list[int]) -> None:
+    """Unschedule each stale pg_cron jobid, tolerating already-removed rows.
+
+    Each unschedule runs inside its own savepoint: if the job's cron.job row was
+    removed out-of-band between the stale-id scan and this call, cron.unschedule
+    raises InternalError (SQLSTATE XX000, "could not find valid entry"); we roll
+    back to the savepoint and continue rather than abort the whole reconcile.
+    """
+    for jobid in stale_jobids:
+        cur.execute("savepoint prune_sp")
+        try:
+            cur.execute("select cron.unschedule(%s)", [jobid])
+        except (InternalError, DatabaseError) as exc:
+            if "could not find" not in str(exc):
+                raise
+            cur.execute("rollback to savepoint prune_sp")
+        else:
+            cur.execute("release savepoint prune_sp")
