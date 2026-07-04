@@ -63,6 +63,6 @@ DATABASE_ROUTERS = ["django_absurd.routers.AbsurdRouter"]
 TASKS = {
     "default": {
         "BACKEND": "django_absurd.backends.AbsurdBackend",
-        "QUEUES": ["default", "other"],
+        "QUEUES": ["default", "other", "reports"],
     }
 }

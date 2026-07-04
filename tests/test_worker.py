@@ -230,6 +230,7 @@ def test_worker_start_provisions_all_declared_queues(capsys):
     assert set(created_line.removeprefix("Created: ").split(", ")) == {
         "default",
         "other",
+        "reports",
     }
     assert started_line == "Started worker on queue 'default'."
     assert Queue.objects.filter(queue_name="default").exists()
