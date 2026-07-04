@@ -129,6 +129,40 @@ def sync_pgcron_jobs(backend: AbsurdBackend, schedules: list[Schedule]) -> None:
         prune_pgcron_jobs(cur, stale_jobids)
 
 
+def teardown_crons(backend: AbsurdBackend) -> None:
+    """Remove every pg_cron job and ScheduledJob row owned by this backend alias.
+
+    Opens a transaction on backend.database and acquires the same advisory lock
+    used by sync_crons to serialise concurrent reconcilers. All jobs matching the
+    absurd:settings:<alias>:% prefix are unscheduled via the savepoint-swallow
+    helper (tolerating already-gone rows). All source="settings" ScheduledJob rows
+    for this alias are deleted; source="admin" rows are left untouched.
+
+    Idempotent: a second call with no owned jobs or rows is a clean no-op.
+    """
+    with transaction.atomic(using=backend.database):
+        conn = connections[backend.database]
+        with conn.cursor() as cur:
+            cur.execute("select pg_advisory_xact_lock(%s)", [SYNC_CRONS_ADVISORY_LOCK])
+
+            prefix = jobname_prefix(backend.alias)
+            owned_jobids = find_owned_pgcron_jobids(cur, prefix)
+            prune_pgcron_jobs(cur, owned_jobids)
+
+        ScheduledJob.objects.using(backend.database).filter(
+            source="settings", alias=backend.alias
+        ).delete()
+
+
+def find_owned_pgcron_jobids(cur: t.Any, prefix: str) -> list[int]:
+    """Return all jobids of pg_cron jobs matching the given prefix."""
+    cur.execute(
+        "select jobid from cron.job where jobname like %s",
+        [prefix + "%"],
+    )
+    return [row[0] for row in cur.fetchall()]
+
+
 def find_stale_pgcron_jobids(
     cur: t.Any, prefix: str, declared_jobnames: list[str]
 ) -> list[int]:
