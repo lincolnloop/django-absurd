@@ -1,11 +1,27 @@
 ---
 services:
   db:
-    image: postgres:18.4-alpine
+    # pg_cron-enabled Postgres: the Debian-based image with the pg_cron package.
+    # Alpine has no pg_cron package, so we use the Debian variant here.
+    build:
+      context: ..
+      dockerfile: Dockerfile.pgcron
+    # shared_preload_libraries loads pg_cron; cron.database_name tells pg_cron
+    # which database to install itself in (must match PGDATABASE below).
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_cron
+      - -c
+      - cron.database_name=postgres
     environment:
       - POSTGRES_PASSWORD=postgres
     volumes:
       - pgdata:/var/lib/postgresql
+      # initdb.d script installs pg_cron on first start (runs as superuser,
+      # before any Django migrations run). This is the operator-side step that
+      # django-absurd does not ship — each project installs its own extension.
+      - ./initdb.d:/docker-entrypoint-initdb.d
 
   app:
     build:
@@ -31,11 +47,13 @@ services:
     build:
       context: ..
       dockerfile: examples/Dockerfile
-    # Long-lived blocking worker consuming "default". On start it reconciles the
-    # queue (creating it + indexing the admin views on first run). `--beat` also
-    # runs the scheduler in-process, so the SCHEDULE entry (ping every minute)
-    # fires here — watch this service's logs for "pong" once a minute.
-    command: nanodjango manage app.py absurd_worker --beat
+    # Long-lived blocking worker consuming "default". On start it reconciles
+    # the queue (creating it + indexing the admin views on first run).
+    # With SCHEDULER="pg_cron", the beat is disabled — pg_cron fires the
+    # schedule directly from Postgres. Watch the worker logs for "pong" once
+    # a minute (after pg_cron fires the wrapper function and the worker drains
+    # the resulting task).
+    command: nanodjango manage app.py absurd_worker
     depends_on:
       - app
     restart: on-failure

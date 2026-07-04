@@ -21,6 +21,10 @@ COPY django_absurd ./django_absurd
 # The single-file nanodjango app lives at /app.
 WORKDIR /app
 COPY examples/app.py ./
+# Migrations package: nanodjango maps the "app" module's migrations to a
+# "migrations" directory relative to the working directory. The pg_cron
+# migration here demonstrates the user-owned CREATE EXTENSION pattern.
+COPY examples/migrations ./migrations
 # Editable install of the local package so a bind-mounted django_absurd source (see
 # compose.yaml volumes) is picked up live by the dev server's auto-reload.
 RUN uv venv && uv pip install -e /src \

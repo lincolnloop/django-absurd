@@ -51,8 +51,11 @@ app = Django(
             "BACKEND": "django_absurd.backends.AbsurdBackend",
             "OPTIONS": {
                 "QUEUES": {"default": {}},
-                # Recurring task: the beat scheduler (run via `absurd_worker
-                # --beat`) enqueues ping() every minute; the worker then runs it.
+                # Database-side scheduler: pg_cron fires the ping task directly
+                # from Postgres every minute. No beat process needed — the worker
+                # only consumes the queue (no --beat flag). The schedule is
+                # reconciled into pg_cron on each `migrate` run via post_migrate.
+                "SCHEDULER": "pg_cron",
                 "SCHEDULE": {
                     "ping": {"task": "app.ping", "cron": "* * * * *"},
                 },
@@ -84,8 +87,8 @@ def add(a: str, b: str) -> float:
 
 @task
 def ping() -> None:
-    """Scheduled every minute (see SCHEDULE above). The beat scheduler enqueues
-    it; the worker runs it and logs 'pong' to the console."""
+    """Scheduled every minute (see SCHEDULE above). pg_cron enqueues it via the
+    wrapper function; the worker runs it and logs 'pong' to the console."""
     logger.info("pong 🏓")
 
 
