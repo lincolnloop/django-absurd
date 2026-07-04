@@ -52,7 +52,7 @@ def jobname_prefix(alias: str, source: str = "settings") -> str:
     return f"absurd:{source}:{alias}:"
 
 
-def sync_crons(backend: AbsurdBackend) -> None:
+def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:
     """Reconcile ScheduledJob rows for this backend's declared SCHEDULE entries.
 
     Opens a transaction on backend.database and acquires an advisory lock to
@@ -62,6 +62,9 @@ def sync_crons(backend: AbsurdBackend) -> None:
 
     After the table phase, materializes one pg_cron job per declared entry
     (upsert + active re-arm) and prunes owned-but-undeclared pg_cron jobs.
+
+    Returns (upserted, pruned): count of declared entries synced and count of
+    ScheduledJob rows deleted.
     """
     schedules = get_settings_schedules(backend)
     declared_names = [s.name for s in schedules]
@@ -86,11 +89,16 @@ def sync_crons(backend: AbsurdBackend) -> None:
                 },
             )
 
-        ScheduledJob.objects.using(backend.database).filter(
-            source="settings", alias=backend.alias
-        ).exclude(name__in=declared_names).delete()
+        pruned, _ = (
+            ScheduledJob.objects.using(backend.database)
+            .filter(source="settings", alias=backend.alias)
+            .exclude(name__in=declared_names)
+            .delete()
+        )
 
         sync_pgcron_jobs(backend, schedules)
+
+    return len(schedules), pruned
 
 
 # psycopg scans the whole query for %, so SQL format()'s %L placeholders must be
@@ -129,7 +137,7 @@ def sync_pgcron_jobs(backend: AbsurdBackend, schedules: list[Schedule]) -> None:
         prune_pgcron_jobs(cur, stale_jobids)
 
 
-def teardown_crons(backend: AbsurdBackend) -> None:
+def teardown_crons(backend: AbsurdBackend) -> int:
     """Remove every pg_cron job and ScheduledJob row owned by this backend alias.
 
     Opens a transaction on backend.database and acquires the same advisory lock
@@ -139,6 +147,8 @@ def teardown_crons(backend: AbsurdBackend) -> None:
     for this alias are deleted; source="admin" rows are left untouched.
 
     Idempotent: a second call with no owned jobs or rows is a clean no-op.
+
+    Returns removed: count of ScheduledJob rows deleted.
     """
     with transaction.atomic(using=backend.database):
         conn = connections[backend.database]
@@ -149,9 +159,13 @@ def teardown_crons(backend: AbsurdBackend) -> None:
             owned_jobids = find_owned_pgcron_jobids(cur, prefix)
             prune_pgcron_jobs(cur, owned_jobids)
 
-        ScheduledJob.objects.using(backend.database).filter(
-            source="settings", alias=backend.alias
-        ).delete()
+        removed, _ = (
+            ScheduledJob.objects.using(backend.database)
+            .filter(source="settings", alias=backend.alias)
+            .delete()
+        )
+
+    return removed
 
 
 def find_stale_pgcron_jobids(

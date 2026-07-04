@@ -4,7 +4,6 @@ from django.core.management.base import BaseCommand, CommandError
 
 from django_absurd.management.base import resolve_backend
 from django_absurd.pgcron import sync_crons, teardown_crons
-from django_absurd.scheduler import get_settings_schedules
 
 
 class Command(BaseCommand):
@@ -26,8 +25,8 @@ class Command(BaseCommand):
         alias, backend = resolve_backend(options)
 
         if options["teardown"]:
-            teardown_crons(backend)
-            self.stdout.write(f"Removed pg_cron jobs for backend '{alias}'.")
+            removed = teardown_crons(backend)
+            self.stdout.write(f"Removed {removed} cron(s) — backend '{alias}'.")
             return
 
         if backend.scheduler != "pg_cron":
@@ -37,6 +36,7 @@ class Command(BaseCommand):
             )
             raise CommandError(msg)
 
-        schedules = get_settings_schedules(backend)
-        sync_crons(backend)
-        self.stdout.write(f"Synced {len(schedules)} cron job(s) for backend '{alias}'.")
+        upserted, pruned = sync_crons(backend)
+        self.stdout.write(
+            f"Synced {upserted} cron(s); pruned {pruned} — backend '{alias}'."
+        )

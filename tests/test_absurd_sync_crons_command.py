@@ -77,7 +77,7 @@ def test_sync_crons_command_creates_cron_jobs(settings, capsys):
     assert len(jobs) == 2
 
     out = capsys.readouterr().out
-    assert out.strip()
+    assert out.strip() == "Synced 2 cron(s); pruned 0 — backend 'default'."
 
 
 def test_sync_crons_command_writes_summary_to_stdout(settings, capsys):
@@ -87,7 +87,7 @@ def test_sync_crons_command_writes_summary_to_stdout(settings, capsys):
     call_command("absurd_sync_crons")
 
     out = capsys.readouterr().out
-    assert "1" in out or "synced" in out.lower() or "done" in out.lower()
+    assert out.strip() == "Synced 1 cron(s); pruned 0 — backend 'default'."
 
 
 def test_sync_crons_command_refuses_when_scheduler_is_beat(settings):
@@ -123,15 +123,12 @@ def test_teardown_removes_owned_cron_jobs(settings, capsys):
     assert not ScheduledJob.objects.filter(source="settings", alias="default").exists()
 
     out = capsys.readouterr().out
-    assert out.strip()
+    assert out.strip() == "Removed 2 cron(s) — backend 'default'."
 
 
 def test_teardown_allowed_when_scheduler_is_beat(settings, capsys):
-    # --teardown must bypass the pg_cron scheduler check so operators can clean
-    # up after switching away from pg_cron to beat.
     settings.TASKS = beat_tasks({"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}})
-    # Must not raise CommandError despite scheduler="beat"
     call_command("absurd_sync_crons", teardown=True)
 
     out = capsys.readouterr().out
-    assert out.strip()
+    assert out.strip() == "Removed 0 cron(s) — backend 'default'."
