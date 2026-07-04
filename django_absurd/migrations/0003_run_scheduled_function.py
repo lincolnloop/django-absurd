@@ -1,7 +1,7 @@
 from django.db import migrations
 
 CREATE_FN = """
-CREATE OR REPLACE FUNCTION public.django_absurd_run_scheduled(p_name text)
+CREATE OR REPLACE FUNCTION public.django_absurd_run_scheduled(p_source text, p_alias text, p_name text)
 RETURNS void
 LANGUAGE plpgsql
 SET search_path = pg_catalog
@@ -12,8 +12,9 @@ BEGIN
     SELECT *
       INTO v
       FROM public.django_absurd_scheduledjob
-     WHERE name = p_name
-     LIMIT 1;
+     WHERE source = p_source
+       AND alias = p_alias
+       AND name = p_name;
 
     IF NOT FOUND OR NOT v.enabled THEN
         RETURN;
@@ -29,7 +30,9 @@ END;
 $$;
 """
 
-DROP_FN = "DROP FUNCTION IF EXISTS public.django_absurd_run_scheduled(text);"
+DROP_FN = (
+    "DROP FUNCTION IF EXISTS public.django_absurd_run_scheduled(text, text, text);"
+)
 
 
 class Migration(migrations.Migration):
