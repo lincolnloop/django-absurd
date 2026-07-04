@@ -231,6 +231,26 @@ server-side), so no payload/slot TZ mismatch. Runtime check deferred.
   other role's rows from our prune, so we can't clean them up. Reconcile must run as a
   single stable role. Documented; a configurable namespace is a future knob.
 
+## Installation & prerequisites
+
+- **We ship**: the `ScheduledJob` table migration + the wrapper-function `RunSQL`
+  migration — **unconditionally** (both run as the ordinary app/provisioning role, need
+  no `pg_cron`, and are inert for beat users). The wrapper only reads our table and
+  calls `absurd.spawn_task`, so it is creatable whether or not `pg_cron` is installed.
+- **We do NOT ship** a `CREATE EXTENSION pg_cron` migration. `pg_cron` needs
+  `shared_preload_libraries=pg_cron` + a server restart (a migration can't do that),
+  must be created in `cron.database_name` by a **superuser**, and is opt-in — a shipped
+  extension migration would fail for most deployments. Django's `CreateExtension` op is
+  the wrong fit for the same reasons.
+- **`pg_cron` install is an operator prerequisite**, documented: provide the extension
+  (image/package or managed-Postgres parameter group) + `shared_preload_libraries` +
+  `CREATE EXTENSION pg_cron` in `cron.database_name`. If absent, reconcile degrades per
+  Option A (loud in `absurd_sync_crons`; skip-with-log at migrate).
+- **Dev/test/example automate it**: a `pg_cron`-enabled Postgres image started with
+  `shared_preload_libraries=pg_cron` and a `docker-entrypoint-initdb.d` script running
+  `CREATE EXTENSION pg_cron` (init runs as superuser in the right DB). Serves both the
+  test suite and the `examples/` demo.
+
 ## Testing
 
 Function-based pytest, behavior-driven, against real `pg_cron`.
