@@ -76,6 +76,10 @@ class Command(AbsurdReportCommand):
             msg = "--beat is not compatible with --burst."
             raise CommandError(msg)
 
+        if options["beat"] and backend.scheduler == "pg_cron":
+            msg = "SCHEDULER is pg_cron — beat disabled; run absurd_sync_crons"
+            raise CommandError(msg)
+
         if queue not in backend.queues:
             valid = ", ".join(sorted(backend.queues))
             msg = (

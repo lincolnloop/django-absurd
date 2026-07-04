@@ -2,7 +2,7 @@ import signal
 import threading
 import typing as t
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 
 from django_absurd.management.base import resolve_backend
 from django_absurd.scheduler import get_settings_schedules, run_beat
@@ -20,6 +20,10 @@ class Command(BaseCommand):
 
     def handle(self, *args: t.Any, **options: t.Any) -> None:
         _, backend = resolve_backend(options)
+
+        if backend.scheduler == "pg_cron":
+            msg = "SCHEDULER is pg_cron — beat disabled; run absurd_sync_crons"
+            raise CommandError(msg)
 
         stop = threading.Event()
 
