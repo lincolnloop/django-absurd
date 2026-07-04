@@ -1,7 +1,10 @@
+import logging
 import typing as t
 
 from django.apps import AppConfig
 from django.db.models.signals import post_migrate
+
+logger = logging.getLogger("django_absurd")
 
 
 class AbsurdConfig(AppConfig):
@@ -20,6 +23,10 @@ class AbsurdConfig(AppConfig):
 
         # Provision declared queues + their admin views as part of `migrate`.
         post_migrate.connect(provision_queues_after_migrate, sender=self)
+
+        # Reconcile pg_cron jobs AFTER queue provisioning, so the queue tables
+        # the scheduled jobs target already exist when reconcile runs.
+        post_migrate.connect(reconcile_crons_after_migrate, sender=self)
 
 
 def provision_queues_after_migrate(
@@ -52,3 +59,39 @@ def provision_queues_after_migrate(
             stdout.write(style.MIGRATE_HEADING(heading))
             for line in lines:
                 stdout.write(line)
+
+
+def reconcile_crons_after_migrate(sender: AppConfig, **kwargs: object) -> None:
+    from django.core.exceptions import ImproperlyConfigured  # noqa: PLC0415
+    from django.db.utils import (  # noqa: PLC0415
+        InternalError,
+        OperationalError,
+        ProgrammingError,
+    )
+
+    from django_absurd.backends import get_absurd_backends  # noqa: PLC0415
+    from django_absurd.pgcron import sync_crons, teardown_crons  # noqa: PLC0415
+
+    for alias, backend in get_absurd_backends().items():
+        try:
+            if backend.scheduler == "pg_cron":
+                sync_crons(backend)
+            else:
+                teardown_crons(backend)
+        except (
+            ImproperlyConfigured,
+            OperationalError,
+            ProgrammingError,
+            InternalError,
+            ImportError,
+            TypeError,
+        ):
+            # Best-effort: migrate must never break. Skip this backend on a
+            # missing pg_cron extension, a faked/adopted migration, a bad dotted
+            # path in a schedule, an unserializable arg, or a pre-1.4 pg_cron.
+            logger.warning(
+                "django-absurd: skipped cron reconcile for backend %r",
+                alias,
+                exc_info=True,
+            )
+            continue
