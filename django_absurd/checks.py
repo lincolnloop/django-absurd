@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import sys
 import typing as t
 from collections.abc import Mapping, Sequence
@@ -20,8 +21,10 @@ from django.utils.module_loading import import_string
 from django_absurd.backends import get_absurd_backends, get_declared_queues
 from django_absurd.connection import BACKEND_ERROR_MESSAGE, validate_backend
 from django_absurd.models import Queue
+from django_absurd.pgcron import build_jobname, effective_queue
 from django_absurd.queues import get_absurd_backend, get_absurd_database
 from django_absurd.routers import AbsurdRouter
+from django_absurd.scheduler import Schedule
 
 logger = logging.getLogger(__name__)
 
@@ -77,8 +80,21 @@ E007_HINT_UNKNOWN_KEY = (
 )
 E007_HINT_SERIALIZE = "Ensure args and kwargs contain only JSON-serializable values."
 E007_HINT_QUEUE = "Declare the queue under OPTIONS['QUEUES'] or correct the queue name."
+E007_HINT_SCHEDULER = "Set SCHEDULER to 'beat' or 'pg_cron'."
+E007_HINT_PGCRON_SUBMINUTE = (
+    "pg_cron is minute-granularity; use the beat scheduler for sub-minute schedules."
+)
+E007_HINT_PGCRON_NAME = (
+    "Schedule names must match [A-Za-z0-9_-]+ when using the pg_cron scheduler."
+)
+E007_HINT_PGCRON_JOBNAME = (
+    "Shorten the schedule name or backend alias so the composed job name"
+    " (absurd:settings:<alias>:<name>) fits within 63 bytes."
+)
 
 VALID_SCHEDULE_KEYS = {"task", "cron", "queue", "args", "kwargs"}
+VALID_SCHEDULERS = {"beat", "pg_cron"}
+PGCRON_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 @register("absurd")
@@ -155,6 +171,17 @@ def check_absurd_schedule_config(
 ) -> list[CheckMessage]:
     errors: list[CheckMessage] = []
     for backend in get_absurd_backends().values():
+        scheduler = backend.scheduler
+        if scheduler not in VALID_SCHEDULERS:
+            errors.append(
+                Error(
+                    f"{E007_MSG} unknown SCHEDULER {scheduler!r}.",
+                    hint=E007_HINT_SCHEDULER,
+                    id="absurd.E007",
+                )
+            )
+            continue
+
         declared_queues = set(get_declared_queues(backend))
         raw_schedule = backend.options.get("SCHEDULE", {})
         if not isinstance(raw_schedule, Mapping):
@@ -169,6 +196,10 @@ def check_absurd_schedule_config(
             continue
         for name, spec in raw_schedule.items():
             errors.extend(validate_schedule(name, spec, declared_queues))
+            if scheduler == "pg_cron":
+                errors.extend(
+                    validate_pgcron_schedule(name, spec, backend.alias, declared_queues)
+                )
     return errors
 
 
@@ -239,6 +270,111 @@ def validate_schedule(
         )
 
     return errors
+
+
+def validate_pgcron_schedule(
+    name: str,
+    spec: t.Any,
+    alias: str,
+    declared_queues: set[str],
+) -> list[CheckMessage]:
+    if not isinstance(spec, Mapping):
+        return []
+
+    cron = spec.get("cron", "")
+    task_path = spec.get("task", "")
+    queue_override = spec.get("queue")
+    errors: list[CheckMessage] = []
+    errors.extend(check_pgcron_cron_fields(name, cron))
+    errors.extend(check_pgcron_names(name, alias))
+    errors.extend(
+        check_pgcron_effective_queue(
+            name, task_path, cron, queue_override, declared_queues
+        )
+    )
+    return errors
+
+
+def check_pgcron_cron_fields(name: str, cron: t.Any) -> list[CheckMessage]:
+    if isinstance(cron, str) and len(cron.split()) == 6:
+        return [
+            Error(
+                f"{E007_MSG} Schedule {name!r}: 6-field cron expressions are not"
+                " supported by pg_cron (pg_cron is minute-granularity; use the beat"
+                " scheduler for sub-minute schedules).",
+                hint=E007_HINT_PGCRON_SUBMINUTE,
+                id="absurd.E007",
+            )
+        ]
+    return []
+
+
+def check_pgcron_names(name: str, alias: str) -> list[CheckMessage]:
+    errors: list[CheckMessage] = []
+    if not PGCRON_NAME_RE.match(name):
+        errors.append(
+            Error(
+                f"{E007_MSG} Schedule {name!r}: invalid schedule name"
+                " for pg_cron (only [A-Za-z0-9_-] characters are allowed).",
+                hint=E007_HINT_PGCRON_NAME,
+                id="absurd.E007",
+            )
+        )
+    if not PGCRON_NAME_RE.match(alias):
+        errors.append(
+            Error(
+                f"{E007_MSG} Schedule {name!r}: backend alias {alias!r} contains"
+                " characters not allowed in pg_cron job names ([A-Za-z0-9_-] only).",
+                hint=E007_HINT_PGCRON_NAME,
+                id="absurd.E007",
+            )
+        )
+    if not errors:
+        jobname = build_jobname(alias, name)
+        if len(jobname.encode()) > 63:
+            errors.append(
+                Error(
+                    f"{E007_MSG} Schedule {name!r}: job name exceeds 63 bytes"
+                    f" (composed name {jobname!r} is {len(jobname.encode())} bytes;"
+                    " Postgres silently truncates longer names).",
+                    hint=E007_HINT_PGCRON_JOBNAME,
+                    id="absurd.E007",
+                )
+            )
+    return errors
+
+
+def check_pgcron_effective_queue(
+    name: str,
+    task_path: t.Any,
+    cron: t.Any,
+    queue_override: t.Any,
+    declared_queues: set[str],
+) -> list[CheckMessage]:
+    if not isinstance(task_path, str) or not task_path:
+        return []
+    try:
+        task_obj = import_string(task_path)
+    except ImportError:
+        return []
+    if not isinstance(task_obj, Task):
+        return []
+    schedule_obj = Schedule(
+        name=name,
+        task=task_path,
+        cron=cron if isinstance(cron, str) else "",
+        queue=queue_override,
+    )
+    eff_queue = effective_queue(schedule_obj)
+    if eff_queue not in declared_queues:
+        return [
+            Error(
+                f"{E007_MSG} Schedule {name!r}: queue {eff_queue!r} is not declared.",
+                hint=E007_HINT_QUEUE,
+                id="absurd.E007",
+            )
+        ]
+    return []
 
 
 def validate_schedule_task(name: str, task_path: str) -> list[CheckMessage]:
