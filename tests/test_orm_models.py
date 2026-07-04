@@ -36,7 +36,7 @@ def test_view_models_absent_from_global_registry():
         for m in global_apps.get_models()
         if m._meta.app_label == "django_absurd"
     }
-    assert names == {"Queue"}  # only the real managed=False Queue is global
+    assert names == {"Queue", "ScheduledJob"}  # dynamic view-backed models are absent
 
 
 def test_queue_table_model_db_table_is_quote_safe():
