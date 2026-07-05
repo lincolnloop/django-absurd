@@ -1,26 +1,42 @@
-# django-absurd example
+# django-absurd example — pg_cron scheduler
 
-A single-file [nanodjango](https://nanodjango.dev) app using **django-absurd** as the
-[Django Tasks](https://docs.djangoproject.com/en/6.0/topics/tasks/) backend, backed by
-Postgres. Fully containerized — `docker compose up` runs the whole thing; no host
-Python, uv, or Postgres needed.
+A minimal, standard Django project using **django-absurd** as the
+[Django Tasks](https://docs.djangoproject.com/en/6.0/topics/tasks/) backend, with the
+schedule driven **database-side by [`pg_cron`](https://github.com/citusdata/pg_cron)**.
+Postgres fires a `ping` task every minute — no beat process — and a worker drains it and
+logs `pong 🏓`.
 
-It enqueues a task from a web form, runs it in a separate worker process, and exposes
-Absurd's queue tables through the Django admin (which django-absurd auto-registers). A
-`ping` task is scheduled every minute via **pg_cron** — Postgres fires it directly, no
-beat process needed.
+The `pg_cron` extension is created by a **Django migration** using
+[`CreateExtension`](https://docs.djangoproject.com/en/stable/ref/contrib/postgres/operations/#django.contrib.postgres.operations.CreateExtension)
+(see [`demo/migrations/0001_pgcron.py`](demo/migrations/0001_pgcron.py)) — the standard
+way to install an extension in a Django project.
 
 ## Layout
 
 ```
 examples/
-  compose.yaml       # db (pg_cron Postgres) + app (web/admin) + worker (absurd_worker)
-  Dockerfile         # image built from the repo root so it installs local django-absurd
-  initdb.d/          # Postgres init scripts: 01_pgcron.sql installs the extension
-  migrations/        # reference Django migration for non-nanodjango projects (see note)
-  pyproject.toml     # deps: nanodjango, django-absurd (local path), psycopg[binary]
-  app.py             # the whole app: Django(...) config, add + ping tasks, views, admin
+  compose.yaml            # db (pg_cron Postgres) + migrate (one-shot) + worker
+  Dockerfile              # example image; deps from pyproject, source bind-mounted
+  pyproject.toml          # deps: django, psycopg[binary], django-absurd (local path)
+  manage.py
+  config/                 # project: settings.py (TASKS + pg_cron), urls.py, wsgi.py
+  demo/                   # app
+    tasks.py              #   the ping/pong @task
+    migrations/
+      0001_pgcron.py      #   CreateExtension("pg_cron")
 ```
+
+## How deps and source work (dev / bind-mount style)
+
+Following the [django-layout](https://github.com/lincolnloop/django-layout) idioms:
+
+- **Dependencies** are declared in [`pyproject.toml`](pyproject.toml). django-absurd is
+  installed from the **local checkout** (the parent repo) as an editable path
+  dependency, so the example exercises _this branch's_ code — not a released version.
+- The image installs those deps into a venv at `/opt/venv`; it does **not** `COPY` the
+  app source in. Instead compose **bind-mounts** the example source (`./ → /app`) and
+  the `django_absurd` package (`../django_absurd → /src/django_absurd`) at run time, so
+  edits are picked up without a rebuild.
 
 ## Run it
 
@@ -30,59 +46,59 @@ From this `examples/` directory:
 docker compose up --build
 ```
 
-That brings up three services:
+Three services come up in order:
 
-1. **db** — pg_cron-enabled Postgres (`shared_preload_libraries=pg_cron`). On first
-   start, `initdb.d/01_pgcron.sql` runs as superuser and creates the `pg_cron`
-   extension. This is the operator-side installation step that django-absurd does not
-   ship — each project installs its own `CREATE EXTENSION`.
-2. **app** — migrates (with `post_migrate` reconciling the schedule into pg_cron),
-   creates an `admin` / `admin` superuser (idempotent), and serves the web app + admin
-   on **http://localhost:8000/**.
-3. **worker** — a long-lived `absurd_worker` consuming the `default` queue; it starts
-   once the app is healthy. pg_cron fires `ping` every minute; the worker drains it and
-   logs **"pong 🏓"**.
+1. **db** — Postgres with `pg_cron`. `shared_preload_libraries=pg_cron` is set as a
+   server GUC in the compose `command` (it must be loaded at server start, before any
+   `CREATE EXTENSION` — a migration can't enable it). `cron.database_name=demo` points
+   `pg_cron` at the app's database so the extension can be created there and jobs run
+   against it.
+2. **migrate** — a one-shot `manage.py migrate`. The `demo.0001_pgcron` migration runs
+   `CreateExtension("pg_cron")` (as the superuser `postgres` role), then django-absurd's
+   `post_migrate` handler reconciles the `SCHEDULE` into a `pg_cron` job.
+   Extension-first ordering holds naturally: `post_migrate` fires after all migrations.
+   The container exits when done.
+3. **worker** — a long-lived `absurd_worker` consuming the `default` queue, started once
+   `migrate` completes successfully. With `SCHEDULER="pg_cron"` there is **no beat** —
+   Postgres fires `ping` every minute; the worker drains it and logs **`pong 🏓`**.
 
-Then, in a browser:
+Tail the worker to watch it fire (within a minute):
 
-- **http://localhost:8000/** — submit `add(a, b)`; you're redirected to a task page that
-  auto-refreshes until the worker finishes and shows the result.
-- **http://localhost:8000/admin/** — log in as **admin / admin** and browse **Tasks**,
-  **Runs**, **Checkpoints**, **Events**, **Waits**, and the **Queues** catalog (all
-  read-only, filterable by queue).
+```bash
+docker compose logs -f worker
+```
 
-Tear down with:
+Tear down (removes the volume, so the extension/schedule are recreated next run):
 
 ```bash
 docker compose down -v
 ```
 
-## Try more
+## Verify the wiring
 
 ```bash
-# Tail the worker's logs — per-task lines plus "pong 🏓" every minute (pg_cron fires it)
-docker compose logs -f worker
+# The extension was created by the migration:
+docker compose exec db psql -U postgres -d demo -c '\dx'
 
-# Run a one-off management command against the stack
-docker compose run --rm worker nanodjango manage app.py absurd_sync_queues
-docker compose run --rm worker nanodjango manage app.py absurd_sync_crons
-docker compose run --rm worker nanodjango manage app.py check
+# The pg_cron job was materialized by the reconcile:
+docker compose exec db psql -U postgres -d demo -c 'select jobname, schedule, active from cron.job;'
+
+# pg_cron's own record of firings:
+docker compose exec db psql -U postgres -d demo -c 'select jobid, status from cron.job_run_details order by runid desc limit 5;'
 ```
 
 ## Notes
 
-- The superuser is created by `nanodjango run … --user=admin --pass=admin` (in the
-  Dockerfile) — insecure, for the local demo only.
-- `nanodjango run` makes + applies migrations and creates the superuser before serving,
-  so a single `docker compose up` is fully self-provisioning.
-- django-absurd requires the **psycopg (v3)** PostgreSQL backend — `app.py` overrides
-  nanodjango's sqlite default with `django.db.backends.postgresql`.
-- **pg_cron installation:** `initdb.d/01_pgcron.sql` runs
-  `CREATE EXTENSION IF NOT EXISTS pg_cron` at DB init time (as superuser). This is the
-  **operator-side** installation step that django-absurd never ships — each project owns
-  its pg_cron setup. In a standard Django project (not nanodjango), this would be a
-  migration `RunSQL("CREATE EXTENSION IF NOT EXISTS pg_cron")` in your app. The
-  `migrations/` directory in this example shows what such a migration looks like.
-- With `SCHEDULER="pg_cron"`, the worker runs without `--beat` — Postgres schedules
-  tasks directly. Beat and pg_cron are mutually exclusive per backend.
+- django-absurd requires the **psycopg (v3)** PostgreSQL backend — the Absurd SDK reuses
+  Django's connection. `config/settings.py` uses `django.db.backends.postgresql`.
+- The migration role must be a **superuser** (or hold `CREATE ON DATABASE`) for
+  `CreateExtension` to succeed; the demo connects as the compose `postgres` superuser.
+- `SCHEDULER="pg_cron"` and the beat are **mutually exclusive** per backend — the worker
+  runs without `--beat`.
 - Tasks are delivered at-least-once, so handlers should be idempotent.
+- Insecure demo settings (`SECRET_KEY`, `DEBUG=True`, `ALLOWED_HOSTS=["*"]`) — local
+  demo only. To browse the queue tables in the admin, add `manage.py createsuperuser`
+  and mount the app (the admin is auto-registered by django-absurd; see
+  [`config/urls.py`](config/urls.py)).
+- See the [Cron Jobs docs](../docs/web/cron-jobs.md) for the full `pg_cron` scheduler
+  reference.

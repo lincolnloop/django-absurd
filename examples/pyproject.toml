@@ -2,12 +2,13 @@
 dependencies = [
   "django-absurd",
   "django==6.0.6",
-  "nanodjango==0.16.3",
   "psycopg[binary]==3.3.4",
 ]
 name = "django-absurd-example"
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 version = "0"
 
+# Install django-absurd from the local checkout (the parent repo) so the demo
+# exercises THIS branch's code, live via the bind mount in compose.yaml.
 [tool.uv.sources]
 django-absurd = {path = "..", editable = true}

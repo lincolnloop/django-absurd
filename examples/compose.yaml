@@ -1,73 +1,67 @@
 ---
 services:
   db:
-    # pg_cron-enabled Postgres: the Debian-based image with the pg_cron package.
-    # Alpine has no pg_cron package, so we use the Debian variant here.
+    # pg_cron-enabled Postgres (Debian image + the PGDG pg_cron package).
+    # Reuses the repo-root Dockerfile.pgcron also used by the test suite.
     build:
       context: ..
       dockerfile: Dockerfile.pgcron
-    # shared_preload_libraries loads pg_cron; cron.database_name tells pg_cron
-    # which database to install itself in (must match PGDATABASE below).
+    # shared_preload_libraries loads pg_cron at server start (a GUC, set BEFORE
+    # any CREATE EXTENSION — it cannot be enabled by a migration). cron.database_name
+    # points pg_cron at the app's database (must match PGDATABASE below), so the
+    # extension can be created there and jobs run against it.
     command:
       - postgres
       - -c
       - shared_preload_libraries=pg_cron
       - -c
-      - cron.database_name=postgres
+      - cron.database_name=demo
     environment:
+      - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=demo
     volumes:
       - pgdata:/var/lib/postgresql
-      # initdb.d script installs pg_cron on first start (runs as superuser,
-      # before any Django migrations run). This is the operator-side step that
-      # django-absurd does not ship — each project installs its own extension.
-      - ./initdb.d:/docker-entrypoint-initdb.d
 
-  app:
+  # One-shot: apply migrations. The 0001_pgcron migration runs CreateExtension
+  # (as the superuser `postgres` role), then django-absurd's post_migrate handler
+  # reconciles the SCHEDULE into a pg_cron job. Extension-first ordering holds
+  # because post_migrate fires after all migrations. Exits when done.
+  migrate:
     build:
       context: ..
       dockerfile: examples/Dockerfile
+    command: python manage.py migrate
     depends_on:
       - db
     restart: on-failure
-    environment:
+    environment: &django-env
       - PGHOST=db
       - PGPORT=5432
       - PGUSER=postgres
       - PGPASSWORD=postgres
-      - PGDATABASE=postgres
-    ports:
-      - "8000:8000"
-    volumes:
-      # Live source: edits reload automatically (the dev server watches both).
-      - ./app.py:/app/app.py
+      - PGDATABASE=demo
+    volumes: &source-mounts
+      # Live source (django-layout dev style): edits are picked up without a
+      # rebuild. The example project and the django_absurd package are both
+      # bind-mounted over their in-image copies.
+      - ./:/app
       - ../django_absurd:/src/django_absurd
 
+  # Long-lived worker consuming the "default" queue. With SCHEDULER="pg_cron"
+  # there is no beat: pg_cron fires `ping` every minute, and the worker drains
+  # the resulting task and logs "pong 🏓".
   worker:
     build:
       context: ..
       dockerfile: examples/Dockerfile
-    # Long-lived blocking worker consuming "default". On start it reconciles
-    # the queue (creating it + indexing the admin views on first run).
-    # With SCHEDULER="pg_cron", the beat is disabled — pg_cron fires the
-    # schedule directly from Postgres. Watch the worker logs for "pong" once
-    # a minute (after pg_cron fires the wrapper function and the worker drains
-    # the resulting task).
-    command: nanodjango manage app.py absurd_worker
+    command: python manage.py absurd_worker
     depends_on:
-      - app
+      migrate:
+        condition: service_completed_successfully
     restart: on-failure
-    environment:
-      - PGHOST=db
-      - PGPORT=5432
-      - PGUSER=postgres
-      - PGPASSWORD=postgres
-      - PGDATABASE=postgres
-    volumes:
-      # Live source. Note: the worker does not auto-reload — restart it
-      # (docker compose restart worker) to pick up code changes.
-      - ./app.py:/app/app.py
-      - ../django_absurd:/src/django_absurd
+    environment: *django-env
+    volumes: *source-mounts
 
 volumes:
   pgdata:

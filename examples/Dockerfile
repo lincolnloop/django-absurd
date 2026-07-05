@@ -1,5 +1,9 @@
-# Build context is the REPO ROOT (not examples/) so the local django-absurd source
-# is available to install. Build via compose — see compose.yaml.
+# Build context is the REPO ROOT (see compose.yaml) so the local django-absurd
+# source can be installed as an editable path dependency.
+#
+# Dependencies come from examples/pyproject.toml (django-layout style); the app
+# source is BIND-MOUNTED at run time (see compose.yaml volumes), not copied into
+# the image — so edits to the example or to django_absurd are picked up live.
 FROM python:3.14-slim
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /bin/
@@ -7,33 +11,28 @@ COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /bin/
 ENV PYTHONUNBUFFERED=1
 ENV UV_COMPILE_BYTECODE=1
 ENV UV_LINK_MODE=copy
-# Autoload the venv: its bin on PATH means `nanodjango …` runs in the venv directly.
-ENV PATH=/app/.venv/bin:${PATH}
+# The venv lives OUTSIDE /app so the bind-mounted app source (compose.yaml)
+# doesn't shadow it. Its bin on PATH makes `python` resolve to the venv.
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH=/opt/venv/bin:${PATH}
 # The build context has no .git (see .dockerignore), so hatch-vcs can't derive
-# django-absurd's version — feed it a pretend version for the in-image build.
+# django-absurd's version — feed it a placeholder for the in-image build.
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0
 
-# The local django-absurd package source (installed into the example venv below).
+# The local django-absurd package source, installed as an editable dependency
+# of the example project below. The bind mount in compose.yaml overlays this
+# with the live checkout at run time.
 WORKDIR /src
 COPY pyproject.toml README.md ./
 COPY django_absurd ./django_absurd
 
-# The single-file nanodjango app lives at /app.
+# Install the example project's dependencies into /opt/venv: django-absurd as
+# an editable install of the local /src checkout, plus the pinned Django and
+# psycopg3 from examples/pyproject.toml. The app source itself is not copied —
+# it arrives via the bind mount in compose.yaml.
 WORKDIR /app
-COPY examples/app.py ./
-# Migrations package: nanodjango maps the "app" module's migrations to a
-# "migrations" directory relative to the working directory. The pg_cron
-# migration here demonstrates the user-owned CREATE EXTENSION pattern.
-COPY examples/migrations ./migrations
-# Editable install of the local package so a bind-mounted django_absurd source (see
-# compose.yaml volumes) is picked up live by the dev server's auto-reload.
-RUN uv venv && uv pip install -e /src \
-  "django==6.0.6" \
-  "nanodjango==0.16.3" \
-  "psycopg[binary]==3.3.4"
+RUN uv venv /opt/venv && uv pip install -e /src "django==6.0.6" "psycopg[binary]==3.3.4"
 
 EXPOSE 8000
-# Default service: `nanodjango run` makes+applies migrations, creates the admin/admin
-# superuser (idempotent), then serves the dev server. The worker service overrides
-# `command:` in compose.yaml.
-CMD ["nanodjango", "run", "app.py", "0.0.0.0:8000", "--user=admin", "--pass=admin"]
+# Default service migrates then serves; the worker service overrides `command:`.
+CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
