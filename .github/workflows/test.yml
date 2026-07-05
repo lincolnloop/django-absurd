@@ -29,43 +29,6 @@ jobs:
           - dev
           - py312-django60-mypy
           - py314-django60-mypy
-    services:
-      postgres:
-        image: postgres:18-alpine
-        env:
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-    env:
-      PGHOST: localhost
-      PGUSER: postgres
-      PGPASSWORD: postgres
-      PGDATABASE: postgres
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-      - name: Install uv
-        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-      - name: Run tox
-        run: uvx --with tox-uv tox -e "${{ matrix.env }}"
-      - name: Upload coverage to Codecov
-        if: ${{ (success() || failure()) && !contains(matrix.env, 'mypy') }}
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          flags: ${{ matrix.env }}
-          fail_ci_if_error: true
-      - name: Upload test results to Codecov
-        if: ${{ (success() || failure()) && !contains(matrix.env, 'mypy') }}
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          report_type: test_results
-          flags: ${{ matrix.env }}
-          fail_ci_if_error: true
-
-  pgcron:
-    name: pgcron
-    runs-on: ubuntu-latest
     env:
       PGHOST: localhost
       PGUSER: postgres
@@ -86,8 +49,23 @@ jobs:
           done
           echo "Postgres did not become ready" >&2
           exit 1
-      - name: Run pgcron tests
-        run: uv run pytest -m pgcron
+      - name: Run tox
+        run: uvx --with tox-uv tox -e "${{ matrix.env }}"
+      - name: Upload coverage to Codecov
+        if: ${{ (success() || failure()) && !contains(matrix.env, 'mypy') }}
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          flags: ${{ matrix.env }}
+          fail_ci_if_error: true
+      - name: Upload test results to Codecov
+        if: ${{ (success() || failure()) && !contains(matrix.env, 'mypy') }}
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          report_type: test_results
+          flags: ${{ matrix.env }}
+          fail_ci_if_error: true
 
   build:
     name: build distribution
