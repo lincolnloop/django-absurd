@@ -100,16 +100,18 @@ The standard way to deliver step 4 in a Django project is a one-off migration in
 own app:
 
 ```python title="yourapp/migrations/000x_create_pgcron.py"
+from django.contrib.postgres.operations import CreateExtension
 from django.db import migrations
 
 class Migration(migrations.Migration):
     operations = [
-        migrations.RunSQL(
-            "CREATE EXTENSION IF NOT EXISTS pg_cron",
-            reverse_sql="DROP EXTENSION IF EXISTS pg_cron",
-        ),
+        CreateExtension("pg_cron"),
     ]
 ```
+
+[`CreateExtension`](https://docs.djangoproject.com/en/stable/ref/contrib/postgres/operations/#django.contrib.postgres.operations.CreateExtension)
+is Django's first-class operation for this (it issues `CREATE EXTENSION IF NOT EXISTS`
+and a matching reverse) — prefer it over raw `RunSQL`.
 
 The migration role must be a superuser (or granted `CREATE ON DATABASE`). This is the
 same pattern that `CREATE EXTENSION "uuid-ossp"` uses — it is deliberately not shipped

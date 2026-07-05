@@ -43,8 +43,6 @@ DATABASES = {
         "PASSWORD": os.environ.get("PGPASSWORD", "postgres"),
         "HOST": os.environ.get("PGHOST", "localhost"),
         "PORT": os.environ.get("PGPORT", "5432"),
-        # pg_cron allows CREATE EXTENSION only in cron.database_name; the compose
-        # db sets that GUC to "absurd_test", so the test DB must share that name.
         "TEST": {"NAME": "absurd_test"},
     },
     "sqlite": {
