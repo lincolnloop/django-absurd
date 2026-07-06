@@ -360,16 +360,34 @@ python manage.py absurd_sync_crons --teardown  # remove all jobs + rows (before 
 jobs automatically — a settings-only change needs no new migration file.
 `absurd_sync_crons` is the backstop for pipelines that skip `migrate`.
 
-**Wrapper model:** each schedule is materialised as a `ScheduledJob` row (the projection
-table). The `pg_cron` job command is a constant call to
-`public.django_absurd_run_scheduled(source, alias, name)`; the wrapper reads the row at
-fire time and calls `absurd.spawn_task`. Editing args/kwargs takes effect on the next
-fire without touching `cron.job`. Both the projection table and the wrapper function
-live in the `public` schema (Django app tables live there); the `absurd` schema is owned
-by the Absurd SDK's migration and is dropped wholesale on reverse, which would remove a
-wrapper placed there while the `ScheduledJob` table survived — keeping both in `public`
-avoids that hazard. They are created and managed by the `django_absurd_pg_cron` app
-migration, applied by `manage.py migrate`.
+**Wrapper model:** each schedule is materialised as a `ScheduledTask` row (the
+projection table, `django_absurd_scheduledtask`). The row stores explicit option columns
+— `args`, `kwargs`, `max_attempts`, `retry_strategy`, `headers`, `cancellation`,
+`idempotency_key` — rather than opaque JSON blobs. The `pg_cron` job command is a
+constant call to `public.django_absurd_run_scheduled(source, alias, name)`; the wrapper
+reads the row at fire time, reassembles `params`/`options` jsonb from those named
+columns server-side, then calls `absurd.spawn_task`. Editing args/kwargs/options takes
+effect on the next fire without touching `cron.job`. Both the projection table and the
+wrapper function live in the `public` schema (Django app tables live there); the
+`absurd` schema is owned by the Absurd SDK's migration and is dropped wholesale on
+reverse, which would remove a wrapper placed there while the `ScheduledTask` table
+survived — keeping both in `public` avoids that hazard. They are created and managed by
+the `django_absurd_pg_cron` app migration, applied by `manage.py migrate`.
+
+The reconcile path never stores `{}` in `retry_strategy` or `cancellation` — it stores
+`None` (SQL `NULL`) when those options are absent. A row inserted directly (not via
+reconcile) that stores `{}` in either column would pass the wrapper's `IS NOT NULL`
+check; settings-managed rows are unaffected.
+
+**Non-default-backend schedules.** A schedule entry without an explicit `queue` falls
+back to the task function's own `queue_name`. When the backend is not the default one,
+that queue may not be declared for that backend — set `queue` explicitly for every
+schedule on a non-default backend (mirrors `task.using(backend=...)` semantics). The
+system check (`absurd.E007`) catches undeclared queue names.
+
+**Admin.** The `ScheduledTask` table is registered read-only in the admin. Settings is
+the only source of truth for schedules; edit `SCHEDULE` in settings rather than editing
+rows directly.
 
 ### Validate
 

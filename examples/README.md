@@ -1,10 +1,14 @@
-# django-absurd example — pg_cron scheduler
+# django-absurd example — dual scheduler
 
 A minimal, standard Django project using **django-absurd** as the
-[Django Tasks](https://docs.djangoproject.com/en/6.0/topics/tasks/) backend, with the
-schedule driven **database-side by [`pg_cron`](https://github.com/citusdata/pg_cron)**.
-Postgres fires a `ping` task every minute — no beat process — and a worker drains it and
-logs `pong 🏓`.
+[Django Tasks](https://docs.djangoproject.com/en/6.0/topics/tasks/) backend,
+demonstrating **both schedulers in one project** (one database, two backends):
+
+- **`default` backend** — `SCHEDULER="pg_cron"`: Postgres fires a `ping` task every
+  minute via [`pg_cron`](https://github.com/citusdata/pg_cron) — no beat process — and a
+  `worker` drains it and logs `pong 🏓`.
+- **`beat` backend** — `SCHEDULER="beat"`: an in-process beat fires a `tick` task every
+  minute; a `beatworker` (co-located worker+beat) drains it and logs `tock ⏰`.
 
 The `pg_cron` extension is created by a **Django migration** using
 [`CreateExtension`](https://docs.djangoproject.com/en/stable/ref/contrib/postgres/operations/#django.contrib.postgres.operations.CreateExtension)
@@ -15,13 +19,13 @@ standard way to install an extension in a Django project.
 
 ```
 examples/
-  compose.yaml            # db (pg_cron Postgres) + migrate (one-shot) + worker
+  compose.yaml            # db + migrate (one-shot) + worker + beatworker
   Dockerfile              # example image; deps from pyproject, source bind-mounted
   pyproject.toml          # deps: django, psycopg[binary], django-absurd (local path)
   manage.py
-  config/                 # project: settings.py (TASKS + pg_cron), urls.py, wsgi.py
+  config/                 # project: settings.py (TASKS + both schedulers), urls.py, wsgi.py
   demo/                   # app
-    tasks.py              #   the ping/pong @task
+    tasks.py              #   ping/pong (@task, pg_cron) + tick/tock (@task, beat)
     migrations/
       0001_pg_cron.py      #   CreateExtension("pg_cron")
 ```
@@ -46,7 +50,10 @@ From this `examples/` directory:
 docker compose up --build
 ```
 
-Three services come up in order:
+> **First run / after a schema change:** add `docker compose down -v` first to remove
+> the Postgres volume so migrations and the pg_cron schedule are applied from scratch.
+
+Four services come up in order:
 
 1. **db** — Postgres with `pg_cron`. `shared_preload_libraries=pg_cron` is set as a
    server GUC in the compose `command` (it must be loaded at server start, before any
@@ -58,14 +65,17 @@ Three services come up in order:
    `django_absurd.pg_cron` app's `post_migrate` handler reconciles the `SCHEDULE` into
    `pg_cron` jobs. Extension-first ordering holds naturally: `post_migrate` fires after
    all migrations. The container exits when done.
-3. **worker** — a long-lived `absurd_worker` consuming the `default` queue, started once
-   `migrate` completes successfully. With `SCHEDULER="pg_cron"` there is **no beat** —
-   Postgres fires `ping` every minute; the worker drains it and logs **`pong 🏓`**.
+3. **worker** — a long-lived `absurd_worker --alias default --queue default`, started
+   once `migrate` completes. With `SCHEDULER="pg_cron"` there is **no beat** — Postgres
+   fires `ping` every minute; the worker drains it and logs **`pong 🏓`**.
+4. **beatworker** — a long-lived `absurd_worker --alias beat --queue beat --beat`,
+   started once `migrate` completes. The beat fires `tick` every minute; the worker
+   drains it and logs **`tock ⏰`**.
 
-Tail the worker to watch it fire (within a minute):
+Tail both workers to watch them fire (within a minute):
 
 ```bash
-docker compose logs -f worker
+docker compose logs -f worker beatworker
 ```
 
 Tear down (removes the volume, so the extension/schedule are recreated next run):
@@ -93,8 +103,8 @@ docker compose exec db psql -U postgres -d demo -c 'select jobid, status from cr
   Django's connection. `config/settings.py` uses `django.db.backends.postgresql`.
 - The migration role must be a **superuser** (or hold `CREATE ON DATABASE`) for
   `CreateExtension` to succeed; the demo connects as the compose `postgres` superuser.
-- `SCHEDULER="pg_cron"` and the beat are **mutually exclusive** per backend — the worker
-  runs without `--beat`.
+- `SCHEDULER="pg_cron"` and the beat are **mutually exclusive** per backend — `worker`
+  runs without `--beat`; `beatworker` pairs `--beat` with `SCHEDULER="beat"`.
 - Tasks are delivered at-least-once, so handlers should be idempotent.
 - Insecure demo settings (`SECRET_KEY`, `DEBUG=True`, `ALLOWED_HOSTS=["*"]`) — local
   demo only. To browse the queue tables in the admin, add `manage.py createsuperuser`

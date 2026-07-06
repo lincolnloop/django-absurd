@@ -50,12 +50,13 @@ duplicate that material here.
   schema; `override_settings` for an unreachable DB) — not mocks.
 - HTTP mocking (when ever needed): the `responses` library, not `mock`.
 - Tests run on the HOST via uv/tox (no app container). `docker compose up -d db`
-  provides Postgres; `PGPORT` sets the host port (default 5432; `.envrc` reserves 5433
-  for this project). Single-DB suite: `uv run pytest`. Multi-DB suite:
-  `uv run pytest tests/multidb`. Full Python×Django matrix + min-max mypy:
-  `uvx --with tox-uv tox`. The suite runs with `--reuse-db` (addopts); to rebuild the
-  test DB from scratch (e.g. after a migration change), add `--create-db` to override
-  it: `uv run pytest --create-db`.
+  provides Postgres with `pg_cron` enabled; `PGPORT` sets the host port (default 5432;
+  `.envrc` reserves 5433 for this project). Default suite: `uv run pytest` (includes
+  `pg_cron`-marked tests — the compose db has the extension). To skip pg_cron tests on a
+  plain Postgres, add `-m "not pg_cron"`. Multi-DB suite: `uv run pytest tests/multidb`.
+  Full Python×Django matrix + min-max mypy: `uvx --with tox-uv tox`. The suite runs with
+  `--reuse-db` (addopts); to rebuild the test DB from scratch (e.g. after a migration
+  change), add `--create-db` to override it: `uv run pytest --create-db`.
 - **Comment hygiene:** don't write comments that restate code or justify
   obviously-needed lines — let tests validate necessity. Remove noisy/distracting test
   comments.

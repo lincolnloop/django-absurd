@@ -83,7 +83,7 @@ reserves a `source` column so an admin lane can slot in later without rework.
 The `pg_cron` command is a constant call —
 `select public.django_absurd_run_scheduled('settings', '<alias>', '<name>')` — not a
 dynamically assembled SQL string. Task data (args, kwargs, options) lives in a
-`ScheduledJob` projection table row; the wrapper function reads it at fire time and
+`ScheduledTask` projection table row; the wrapper function reads it at fire time and
 calls `absurd.spawn_task`. This removes the SQL-string-from-data injection surface
 entirely: there is no `format('%L')` over task arguments or kwargs, no escaped-string
 gymnastics, no injection path — the cron command is a literal of the schedule name only,

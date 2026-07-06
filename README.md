@@ -65,8 +65,8 @@ result = add.enqueue(2, 3)  # returns a TaskResult; the worker runs it
   Includes
   [scheduling recurring tasks](django_absurd/AGENTS.md#scheduling-recurring-tasks) (beat
   and pg_cron schedulers).
-- **[Runnable example](examples/)** — a dockerized Django project (worker, pg_cron
-  scheduler) that runs with one `docker compose up`.
+- **[Runnable example](examples/)** — a dockerized Django project (pg_cron and beat
+  schedulers) that runs with one `docker compose up`.
 
 ## License
 
