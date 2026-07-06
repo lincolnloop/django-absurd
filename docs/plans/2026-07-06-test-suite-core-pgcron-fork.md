@@ -22,6 +22,11 @@ explicitly and tox runs all three.
 **Tech Stack:** pytest / pytest-django, tox-uv, Docker Compose, Postgres 18 (+ pg_cron
 ≥1.4 on one service), Django 6.
 
+> **RED WINDOW WARNING:** Tasks 1–4 land in sequence; the suite is partially broken from
+> the Task 2 commit (pg_cron-only fixtures not yet split out) until Task 3 finishes. The
+> only commits that are fully green end-to-end are after Task 3 Step 6 and after Task 4
+> Step 5. Do NOT try to run the full tox matrix between Task 2 and Task 3.
+
 ## Global Constraints
 
 - Runtime floor **Django 6.0 / Python 3.12**; **psycopg3**.
@@ -39,31 +44,32 @@ explicitly and tox runs all three.
 - Coverage source stays `["django_absurd", "tests"]`; combine across suites with `--cov`
   (core) + `--cov-append` (pg_cron); `tests/multidb/*` stays omitted.
 - Preserve every existing test's assertions verbatim on move — this is a relocation, not
-  a rewrite (except the E008/W003 split in Task 4, which is a genuine behavioral
-  improvement).
+  a rewrite (except: the E008/W003 split in Task 4; the `test_orm_models.py` pg_cron
+  assertion split in Task 2 Step 5; both are sanctioned behavioral improvements).
+  **Comments MAY be corrected** where they narrate the pg_cron app being restored or
+  unapplied (Task 2 Step 6).
 
 ---
 
-### Task 1: Two-DB compose + base settings = core (no pg_cron)
+### Task 1: Two-DB compose + `.envrc` only
 
 Split the single pg_cron db into a plain default `db` (core/multidb) and a pg_cron
-`db_pg_cron`; make base `tests/settings.py` the core config (pg_cron app dropped, points
-at the plain server).
+`db_pg_cron`. This task touches ONLY `compose.yaml` and `.envrc` — the base
+`tests/settings.py` flip happens in Task 2 (same commit as the core suite) to avoid a
+red committed state where pg_cron tests still run against a pg_cron-appless base.
 
 **Files:**
 
-- Modify: `compose.yaml` (plain `db` + new `db_pg_cron` service)
-- Modify: `.envrc` (add `PGPORT_PGCRON`)
-- Modify: `tests/settings.py` (drop `"django_absurd.pg_cron"` from INSTALLED_APPS; TEST
-  NAME `absurd_test_core`)
+- Modify: `compose.yaml` (plain `db` + new `db_pg_cron` service; drop both named volumes
+  — test DBs are disposable)
+- Modify: `.envrc` (add `PGPORT_PGCRON`; update two-service comment)
 
 **Interfaces:**
 
 - Produces: plain server on host `${PGPORT:-5432}` (db `postgres`, TEST
   `absurd_test_core`); pg_cron server on host `${PGPORT_PGCRON:-5434}`
   (`shared_preload_libraries=pg_cron`, `cron.database_name=absurd_test_pg_cron`). Base
-  `tests/settings.py` INSTALLED_APPS has NO pg_cron app and DB points at the plain
-  server.
+  `tests/settings.py` still has the pg_cron app at this commit — it flips in Task 2.
 
 - [ ] **Step 1: Rewrite `compose.yaml` to two services**
 
@@ -104,29 +110,25 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-    volumes:
-      - pgdata_pg_cron:/var/lib/postgresql
-
-volumes:
-  pgdata_pg_cron:
 ```
 
-(The plain `db` needs no named volume — test DBs are disposable; dropping the old
-`pgdata` volume avoids the alpine→glibc collation note entirely.)
+No named volumes in either service — test DBs are disposable. After updating, run:
+
+```bash
+docker compose down --remove-orphans
+docker volume rm django-absurd_pgdata django-absurd_pgdata_pg_cron 2>/dev/null || true
+```
+
+(Both volumes are orphaned: the old single-service `pgdata` from the previous compose,
+and any pre-existing `pgdata_pg_cron`.)
 
 - [ ] **Step 2: Add `PGPORT_PGCRON` to `.envrc`**
 
 Append: `export PGPORT_PGCRON=5434` with a one-line comment (host port for the pg_cron
-test server; `tests/pg_cron/settings.py` reads it).
+test server; `tests/pg_cron/settings.py` reads it). Update any `.envrc` comment that
+references a single compose service to mention both `db` and `db_pg_cron`.
 
-- [ ] **Step 3: Make base `tests/settings.py` the core config**
-
-Remove `"django_absurd.pg_cron"` from `INSTALLED_APPS` (leave `"django_absurd"` + the
-rest). Change `DATABASES["default"]["TEST"]` to `{"NAME": "absurd_test_core"}`. Leave
-`DATABASE_ROUTERS`, `TASKS` (default backend, beat) as-is. This base is imported by
-every suite; core uses it directly.
-
-- [ ] **Step 4: Verify the two servers**
+- [ ] **Step 3: Verify the two servers**
 
 Run:
 
@@ -138,22 +140,27 @@ docker compose exec db_pg_cron psql -U postgres -c "show shared_preload_librarie
 
 Expected: plain `db` has no pg_cron; `db_pg_cron` loads it.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add compose.yaml .envrc tests/settings.py
-git commit -m "test: split compose into plain db + db_pg_cron; base settings drop pg_cron app"
+git add compose.yaml .envrc
+git commit -m "test: split compose into plain db + db_pg_cron; drop named volumes"
 ```
 
 ---
 
 ### Task 2: `tests/core/` nested suite (app absent, plain DB)
 
-Create the core suite and move every NON-pg_cron test into it. Mirror `tests/multidb/`
-wiring.
+Create the core suite and move every NON-pg_cron test into it. Flip base
+`tests/settings.py` to the core config in this same commit (dropping the pg_cron app
+from INSTALLED_APPS). Mirror `tests/multidb/` wiring.
 
 **Files:**
 
+- Modify: `tests/settings.py` (drop `"django_absurd.pg_cron"` from INSTALLED_APPS; TEST
+  NAME `absurd_test_core`)
+- Rename: `tests/conftest.py` → `tests/fixtures.py` (plain module; no longer a parent
+  conftest that could be double-loaded; each suite's conftest imports from it)
 - Create: `tests/core/__init__.py`, `tests/core/pytest.toml`, `tests/core/settings.py`,
   `tests/core/conftest.py`
 - Move (git mv, verbatim) into `tests/core/`: `test_admin_backend_resolve.py`,
@@ -163,9 +170,11 @@ wiring.
   `test_packaging.py`, `test_params.py`, `test_queue_sync.py`, `test_results.py`,
   `test_router_default.py`, `test_scheduler.py`, `test_scheduler_checks.py`,
   `test_worker.py`
+- Move (git mv): `tests/test_admin/` package → `tests/core/test_admin/`
 - Keep at `tests/` root (shared, imported by suites): `__init__.py`, `settings.py`,
-  `conftest.py` (shared fixtures — see Step 3), `tasks.py`, `atasks.py`, `jobs.py`,
-  `models.py`, `admin.py`, `urls.py`, `raises_on_import.py`
+  `fixtures.py` (renamed from `conftest.py`), `tasks.py`, `atasks.py`, `jobs.py`,
+  `models.py`, `admin.py`, `urls.py`, `raises_on_import.py`, `backends.py`,
+  `migrations/` (tests-app migrations)
 
 **Interfaces:**
 
@@ -177,7 +186,8 @@ wiring.
   `pythonpath=["../.."]`).
 
 - [ ] **Step 1: Create `tests/core/pytest.toml`** (mirror `tests/multidb/pytest.toml`,
-      add coverage since core is the primary cov run)
+      add coverage since core is the primary cov run; add markers for `packaging` and
+      junit path)
 
 ```toml
 [pytest]
@@ -188,8 +198,15 @@ addopts = [
   "--cov-report=term",
   "--cov-report=xml",
   "--disable-socket",
+  "--junitxml=junit-core.xml",
   "--reuse-db",
   "--strict-markers",
+]
+filterwarnings = [
+  "error::bs4.GuessedAtParserWarning",
+]
+markers = [
+  "packaging: builds/inspects the distribution; run only in the dev tox env",
 ]
 pythonpath = ["../.."]
 testpaths = ["."]
@@ -205,27 +222,25 @@ from tests.settings import *  # noqa: F403
 # the tests/multidb pattern.
 ```
 
-(If `from tests.settings import *` triggers a ruff F403/F401, keep the `# noqa: F403` —
-matches `tests/multidb/settings.py` which already uses it.)
+- [ ] **Step 3: Rename `tests/conftest.py` → `tests/fixtures.py`**
 
-- [ ] **Step 3: Shared fixtures — one home, imported by suites**
+Rename the file (git mv); keep all fixture definitions unchanged. Remove the
+`tests/conftest.py` so it is never double-loaded as both a parent conftest and an
+imported module.
 
-The root `tests/conftest.py` currently holds fixtures used by BOTH core and pg_cron
-tests (`_enable_db`, `_reset_absurd_queues`, `admin_user`, `staff_user`) AND
-pg_cron-only ones (`ensure_pg_cron`, `_clear_owned_pg_cron_jobs`, `owned_cron_jobs`,
-`cron_job_rows`). Split:
+```bash
+git mv tests/conftest.py tests/fixtures.py
+```
 
-- Move the pg_cron-only fixtures OUT of `tests/conftest.py` into
-  `tests/pg_cron/conftest.py` (Task 3).
-- Keep the shared ones (`_enable_db`, `_reset_absurd_queues`, `admin_user`,
-  `staff_user`) in `tests/conftest.py`.
-- A nested suite does NOT automatically inherit `tests/conftest.py` across its own
-  `pytest.toml` rootdir. Follow the multidb precedent: `tests/core/conftest.py` and
-  `tests/pg_cron/conftest.py` each import the shared fixtures. Create
-  `tests/core/conftest.py`:
+The pg_cron-only fixtures (`ensure_pg_cron`, `_clear_owned_pg_cron_jobs`,
+`owned_cron_jobs`, `cron_job_rows`) stay in `tests/fixtures.py` at this commit; they
+move to `tests/pg_cron/conftest.py` in Task 3.
+
+- [ ] **Step 4: Create `tests/core/conftest.py`** (import shared fixtures from the
+      renamed module)
 
 ```python
-from tests.conftest import (  # noqa: F401
+from tests.fixtures import (  # noqa: F401
     _enable_db,
     _reset_absurd_queues,
     admin_user,
@@ -233,24 +248,91 @@ from tests.conftest import (  # noqa: F401
 )
 ```
 
-(pytest fixtures are usable when imported into a conftest. Verify collection sees them;
-if import-of-fixtures proves flaky, fall back to the multidb approach of defining
-`_enable_db`/`_reset_absurd_queues` inline in each suite's conftest.)
+(pytest fixtures are usable when imported into a conftest; autouse is preserved.)
 
-- [ ] **Step 4: Move the core test files**
+- [ ] **Step 5: Flip base `tests/settings.py` to the core config**
 
-`git mv tests/<file> tests/core/<file>` for each file in the "Move" list above. Imports
-inside them already use absolute `tests.` / `django_absurd.` paths, so no edits needed
-(the suite keeps `pythonpath=["../.."]`).
+Remove `"django_absurd.pg_cron"` from `INSTALLED_APPS` (leave `"django_absurd"` + the
+rest). Change `DATABASES["default"]["TEST"]` to `{"NAME": "absurd_test_core"}`. Leave
+`DATABASE_ROUTERS`, `TASKS` (default backend, beat) as-is. This base is imported by
+every suite; core uses it directly.
 
-- [ ] **Step 5: Run the core suite**
+- [ ] **Step 6: Move the core test files**
+
+First, record the pre-move collection count:
+
+```bash
+uv run pytest --collect-only -q 2>/dev/null | tail -1   # note N items
+```
+
+Then:
+
+```bash
+git mv tests/test_admin tests/core/test_admin
+for f in test_admin_backend_resolve.py test_admin_checks.py test_admin_models.py \
+          test_admin_views.py test_app.py test_async_worker.py test_backend.py \
+          test_checks.py test_enqueue.py test_migrations.py test_models.py \
+          test_orm_models.py test_orm_views.py test_packaging.py test_params.py \
+          test_queue_sync.py test_results.py test_router_default.py test_scheduler.py \
+          test_scheduler_checks.py test_worker.py; do
+  git mv "tests/$f" "tests/core/$f"
+done
+```
+
+Fix `tests/core/test_admin/conftest.py` import:
+
+```python
+# Before: from tests.test_admin.support import register_admin
+# After:
+from tests.core.test_admin.support import register_admin
+```
+
+Fix `tests/core/test_admin/support.py` import (no change needed — `tests.tasks` is still
+at `tests/tasks.py`).
+
+Fix `test_orm_models.py` pg_cron assertion:
+`test_view_models_absent_from_global_registry` asserts
+`pg_cron_names == {"ScheduledTask"}` — red in core (app absent). Change that assertion
+to `pg_cron_names == set()` (correct boundary assertion for app-absent environment).
+
+Fix stale comments in moved files that narrate the pg_cron migration being restored or
+unapplied:
+
+- `tests/core/test_checks.py:92`: `# restore core AND the pg_cron app` →
+  `# restore absurd schema`
+- `tests/core/test_enqueue.py:116`: same → `# restore absurd schema`
+- `tests/core/test_migrations.py:23`:
+  `# Unapplies the dependent django_absurd_pg_cron.0001 too.` → remove or replace with
+  accurate description
+- `tests/core/test_migrations.py:26`: `# restore core AND the pg_cron app` →
+  `# restore absurd schema`
+- `tests/core/test_orm_views.py:53`: `# restores the pg_cron app too` →
+  `# restores absurd schema`
+- `tests/core/test_orm_views.py:80`: `# restore core AND the pg_cron app` →
+  `# restore absurd schema`
+- `tests/core/test_worker.py:92` and `:337`: `# restore core AND the pg_cron app` →
+  `# restore absurd schema`
+
+Verify post-move collection count across all three suites adds up to the pre-move total:
+
+```bash
+uv run pytest tests/core --collect-only -q 2>/dev/null | tail -1    # A items
+uv run pytest tests/pg_cron --collect-only -q 2>/dev/null | tail -1 # B items (0 for now — suite not yet created)
+uv run pytest tests/multidb --collect-only -q 2>/dev/null | tail -1 # C items
+# Assert A + B + C == N (or will equal N once Task 3 lands)
+```
+
+Confirm `tests/core/test_admin/` package is present and collected (not silently
+missing).
+
+- [ ] **Step 7: Run the core suite**
 
 Run: `uv run pytest tests/core -q` Expected: all moved core tests pass against the plain
-`db`; the pg_cron package is present on disk but its app is not installed, so nothing
-pg_cron runs. If any moved test imported a pg_cron-only fixture or the `pg_cron` marker,
-it was misclassified — move it to `tests/pg_cron/` (Task 3) instead.
+`db`; pg_cron package present on disk but app not installed; nothing pg_cron runs. Any
+test that needs the pg_cron-only fixtures was misclassified — move it to
+`tests/pg_cron/` in Task 3.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add -A
@@ -275,11 +357,17 @@ fixtures.
   `test_scheduledtask_model.py`, `test_absurd_sync_crons_command.py`,
   `test_scheduler_selector.py`
 
+> Note on `test_scheduler_selector.py`: this file tests that SCHEDULER="pg*cron" is
+> valid config (calls the beat command / worker with it). It does NOT need the extension
+> or `ensure_pg_cron`. It lives in pg_cron because SCHEDULER="pg_cron" is only a
+> \_valid* config when the app is installed — in core it would trigger E008 rather than
+> the behavior under test.
+
 **Interfaces:**
 
 - Produces: `tests/pg_cron/settings.py` — `from tests.settings import *`, then re-add
   the pg_cron app + point at the pg_cron server.
-- Consumes: `PGPORT_PGCRON` (Task 1); shared fixtures from `tests/conftest.py`.
+- Consumes: `PGPORT_PGCRON` (Task 1); shared fixtures from `tests/fixtures.py`.
 
 - [ ] **Step 1: Create `tests/pg_cron/settings.py`**
 
@@ -297,7 +385,7 @@ DATABASES["default"]["TEST"] = {"NAME": "absurd_test_pg_cron"}  # noqa: F405
 ```
 
 - [ ] **Step 2: Create `tests/pg_cron/pytest.toml`** (`--cov-append` so its coverage
-      combines with core's)
+      combines with core's; distinct junit path)
 
 ```toml
 [pytest]
@@ -309,6 +397,7 @@ addopts = [
   "--cov-report=term",
   "--cov-report=xml",
   "--disable-socket",
+  "--junitxml=junit-pg_cron.xml",
   "--reuse-db",
   "--strict-markers",
 ]
@@ -319,28 +408,43 @@ testpaths = ["."]
 - [ ] **Step 3: Move pg_cron-only fixtures into `tests/pg_cron/conftest.py`**
 
 Cut `ensure_pg_cron`, `_clear_owned_pg_cron_jobs`, `owned_cron_jobs`, `cron_job_rows`
-from `tests/conftest.py` and paste into `tests/pg_cron/conftest.py`, plus import the
+from `tests/fixtures.py` and paste into `tests/pg_cron/conftest.py`, plus import the
 shared fixtures:
 
 ```python
-from tests.conftest import (  # noqa: F401
+from tests.fixtures import (  # noqa: F401
     _enable_db,
     _reset_absurd_queues,
     admin_user,
     staff_user,
 )
-# ...then the four pg_cron fixtures moved verbatim from tests/conftest.py...
+# ...then the four pg_cron fixtures moved verbatim from tests/fixtures.py...
 ```
 
-Update `ensure_pg_cron`'s docstring to state the pg_cron suite runs on the pg_cron
-server (`db_pg_cron`), TEST db `absurd_test_pg_cron` = `cron.database_name`. Remove the
-now-stale "default `uv run pytest` runs pg_cron tests" sentence (that behavior is gone —
-the suite is directory-scoped).
+Update `ensure_pg_cron`'s docstring: state the pg_cron suite runs on the pg_cron server
+(`db_pg_cron`), TEST db `absurd_test_pg_cron` = `cron.database_name`. Remove the
+now-stale "default `uv run pytest` runs pg_cron tests" sentence.
+
+Add a small `test_orm_models.py`-equivalent test in `tests/pg_cron/` asserting:
+
+```python
+def test_pg_cron_model_in_global_registry():
+    pg_cron_names = {
+        m.__name__
+        for m in global_apps.get_models()
+        if m._meta.app_label == "django_absurd_pg_cron"
+    }
+    assert pg_cron_names == {"ScheduledTask"}
+```
+
+(Counterpart to the `pg_cron_names == set()` assertion now in core — each side asserts
+the correct boundary for its environment.)
 
 - [ ] **Step 4: Move the pg_cron test files + drop the marker usage**
 
-`git mv` each pg_cron test file into `tests/pg_cron/`. Every one currently carries
-`pytestmark = [..., pytest.mark.pg_cron]` or `@pytest.mark.pg_cron` /
+`git mv` each pg_cron test file (including `test_scheduler_selector.py`) into
+`tests/pg_cron/`. Every one currently carries `pytestmark = [..., pytest.mark.pg_cron]`
+or `@pytest.mark.pg_cron` /
 `pytest.mark.usefixtures("ensure_pg_cron", "_clear_owned_pg_cron_jobs")`. Remove the
 `pytest.mark.pg_cron` entries (the marker is retired in Task 5) but KEEP the
 `usefixtures("ensure_pg_cron", ...)` — those are still needed to create the extension +
@@ -391,9 +495,14 @@ depend on the app being ABSENT (E008) vs PRESENT+mis-ordered (W003).
 In `tests/core/test_scheduler_app_checks.py`: the pg_cron app is genuinely absent from
 this suite's INSTALLED_APPS, so `apps.is_installed("django_absurd.pg_cron")` is False
 without manipulation. Test: set the default backend `OPTIONS["SCHEDULER"]="pg_cron"` via
-the `settings` fixture, run `call_command("check", "django_absurd")`, assert the exact
+the `settings` fixture, run `call_command("check", "django_absurd")` with capsys (wrap
+in try/except SystemCheckError — Error-level findings raise), assert the exact
 `E008_MSG` + `E008_HINT`. Also a clean-case test: with the default (beat) scheduler,
 `check` reports no issues.
+
+Use the `run_check` helper pattern from the existing `test_checks.py` (a try/except
+capturing capsys output) rather than a bare `call_command` — Error-level system checks
+raise `SystemCheckError`.
 
 - [ ] **Step 3: pg_cron W003 test — app present**
 
@@ -425,20 +534,24 @@ Retire the marker (directory replaces it) and point all the config at the three 
 **Files:**
 
 - Modify: `pyproject.toml` (`[tool.pytest.ini_options]` addopts/markers/testpaths;
-  `[tool.coverage.run].omit`)
+  `[tool.coverage.run].omit`; `[tool.django-stubs]`)
 - Modify: `tox.ini` (`[testenv]` + `[testenv:dev]` commands)
-- Verify: `.github/workflows/test.yml` (compose brings up both db services)
+- Modify: `tests/multidb/pytest.toml` (add `--junitxml=junit-multidb.xml`)
+- Verify: `.github/workflows/test.yml` (compose brings up both db services; junit paths
+  updated)
 
 **Interfaces:**
 
 - Produces: `uv run pytest tests/core` / `tests/pg_cron` / `tests/multidb` as the three
   suites; tox runs all three; the `pg_cron` marker no longer exists.
 
-- [ ] **Step 1: `pyproject.toml` — retire the root flat run + marker**
+- [ ] **Step 1: `pyproject.toml` — retire the root flat run + markers; fix
+      django-stubs**
 
-In `[tool.pytest.ini_options]`: remove the `pg_cron` entry from `markers`; the root
-config no longer collects a flat suite. Set `addopts` to ignore all nested suites so a
-bare `pytest` from root doesn't misfire, and keep the shared knobs:
+In `[tool.pytest.ini_options]`: remove `pg_cron` entry from `markers`; also remove
+`packaging` (now registered in `tests/core/pytest.toml`). Root config no longer collects
+a flat suite. Set `addopts` to ignore all nested suites so a bare `pytest` from root
+doesn't misfire:
 
 ```toml
 addopts = [
@@ -449,17 +562,26 @@ addopts = [
 ]
 ```
 
-(Coverage/junit/socket flags now live in each suite's `pytest.toml`; the root run
-collects nothing, which is intended — invoke a suite explicitly.) In
-`[tool.coverage.run].omit`, keep `tests/multidb/*`; the core + pg_cron suites ARE
-measured (via their own `--cov`/`--cov-append`).
+(Coverage/junit/socket flags now live in each suite's `pytest.toml`; root run collects
+nothing — intended; bare `pytest` exits code 5 which is a loud, obvious failure.) Remove
+`--junitxml=junit.xml` from root addopts. In `[tool.coverage.run].omit`, keep
+`tests/multidb/*`; the core + pg_cron suites ARE measured (via their own
+`--cov`/`--cov-append`).
 
-- [ ] **Step 2: `tox.ini` — a line per suite**
+Update `[tool.django-stubs]` to point at the superset settings so mypy sees the pg_cron
+app:
+
+```toml
+[tool.django-stubs]
+django_settings_module = "tests.pg_cron.settings"
+```
+
+- [ ] **Step 2: `tox.ini` — a line per suite; canonical packaging deselect**
 
 `[testenv].commands` (drop the old marker lines):
 
 ```
-!mypy: pytest tests/core {posargs}
+!mypy: pytest tests/core -m "not packaging" {posargs}
 !mypy: pytest tests/pg_cron {posargs}
 !mypy: pytest tests/multidb {posargs}
 mypy: mypy .
@@ -473,21 +595,46 @@ pytest tests/pg_cron {posargs}
 pytest tests/multidb {posargs}
 ```
 
-Keep `pass_env = PG*` so `PGPORT`/`PGPORT_PGCRON`/`PGHOST` reach both servers. Update
-the `packaging`-marker comment: `test_packaging.py` now lives in `tests/core/` — confirm
-the `packaging` marker still deselects correctly in CI (the matrix must still skip it;
-`dev` runs it). If `packaging` tests need the build backend, keep them in core and
-ensure the matrix line excludes them:
-`!mypy: pytest tests/core -m "not packaging" {posargs}`.
+(The `dev` env keeps `pytest tests/core` without `-m "not packaging"`, so packaging
+tests run there as today.) Keep `pass_env = PG*` so `PGPORT`/`PGPORT_PGCRON`/`PGHOST`
+reach both servers.
 
-- [ ] **Step 3: CI `.github/workflows/test.yml` — bring up both servers**
+- [ ] **Step 3: Add `--junitxml=junit-multidb.xml` to `tests/multidb/pytest.toml`**
+
+```toml
+addopts = [
+  "--allow-hosts=db,localhost,127.0.0.1",
+  "--disable-socket",
+  "--junitxml=junit-multidb.xml",
+  "--reuse-db",
+  "--strict-markers",
+]
+```
+
+Each suite now writes a distinct junit file (`junit-core.xml`, `junit-pg_cron.xml`,
+`junit-multidb.xml`). Never reuse one filename across suites — second run would
+overwrite the first.
+
+- [ ] **Step 4: CI `.github/workflows/test.yml` — bring up both servers; point at all
+      junit files**
 
 Change the db step to `docker compose up -d --build --wait db db_pg_cron` so both
 services are ready; export `PGPORT`/`PGPORT_PGCRON` matching the compose host ports for
-the tox step (tox `pass_env = PG*` forwards them). Confirm the matrix env still runs
-`uvx tox -e "${{ matrix.env }}"` (unchanged).
+the tox step (tox `pass_env = PG*` forwards them). In the "Upload test results to
+Codecov" action, add `files:` pointing at all three junit paths:
 
-- [ ] **Step 4: Full verification (all three suites + boundary)**
+```yaml
+with:
+  token: ${{ secrets.CODECOV_TOKEN }}
+  report_type: test_results
+  flags: ${{ matrix.env }}
+  fail_ci_if_error: true
+  files: junit-core.xml,junit-pg_cron.xml,junit-multidb.xml
+```
+
+Confirm the matrix env still runs `uvx tox -e "${{ matrix.env }}"` (unchanged).
+
+- [ ] **Step 5: Full verification (all three suites + boundary)**
 
 Run:
 
@@ -496,18 +643,25 @@ docker compose up -d --wait db db_pg_cron
 uv run pytest tests/core -q          # green, plain db, no pg_cron
 uv run pytest tests/pg_cron -q       # green, pg_cron db
 uv run pytest tests/multidb -q       # green, plain db
-uv run python -m django makemigrations --check --settings tests.settings   # clean
+uv run python -m django makemigrations --check --settings tests.settings   # clean (core migrations)
+uv run python -m django makemigrations --check --settings tests.pg_cron.settings  # clean (pg_cron migrations)
 uvx --with tox-uv tox -e py312-django60   # all three suites run under tox
+uvx --with tox-uv tox -e py312-django60-mypy  # mypy with pg_cron settings
 grep -rn "mark.pg_cron\|\"pg_cron\":" pyproject.toml tests   # no marker refs remain
 ```
+
+Coverage note: `pytest tests/pg_cron` appends onto `.coverage` from the core run. Always
+run core first (or `coverage erase`) before running pg_cron standalone; coverage config
+(`.coveragerc` / `pyproject.toml [tool.coverage]`) is discovered only when pytest is
+invoked from the repo root.
 
 Boundary check: `tests/core` runs on `db` (no `shared_preload_libraries=pg_cron`), so
 any accidental pg_cron dependency there fails loudly rather than silently passing.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add pyproject.toml tox.ini .github/workflows/test.yml
+git add pyproject.toml tox.ini .github/workflows/test.yml tests/multidb/pytest.toml
 git commit -m "test: drop pg_cron marker; run core/pg_cron/multidb suites via tox"
 ```
 
@@ -529,6 +683,9 @@ compose services (`db` plain, `db_pg_cron`) and that
 wording and any "single-DB suite / default `uv run pytest` runs everything" phrasing.
 Keep the `--create-db` note (now applies per suite). No history-narration.
 
+Note: bare `pytest` (or `uv run pytest`) at repo root collects nothing and exits code 5
+— this is intentional; always invoke a suite explicitly.
+
 - [ ] **Step 2: Verify + commit**
 
 Grep `CLAUDE.md` for stale `-m pg_cron` / "deselected" / single-suite wording. Then:
@@ -542,23 +699,33 @@ git commit -m "docs: document the core/pg_cron/multidb test-suite fork"
 
 ## Self-Review
 
-**Spec coverage:** two-DB compose + base=core (Task 1) ✓; `tests/core/` full fork of
-non-pg_cron tests (Task 2) ✓; `tests/pg_cron/` + fixtures + co-existence/dual-scheduler
-already live in the pg_cron test files being moved (Task 3) ✓; E008/W003 split (Task 4)
-✓; drop marker + pyproject/tox/CI rewiring (Task 5) ✓; docs (Task 6) ✓; multidb
-untouched on plain db ✓.
+**Spec coverage:** two-DB compose + `.envrc` (Task 1) ✓; base `tests/settings.py` flip
 
-**Open decisions flagged for plan review:** (a) root `uv run pytest` collects nothing —
-suites are explicit (matches multidb precedent); (b) coverage combined via core
-`--cov` + pg_cron `--cov-append`; (c) `packaging` tests land in `tests/core/` and the
-matrix must keep deselecting them; (d) the dual-scheduler multi-backend beat test
-currently in `test_scheduler.py` — it uses two beat backends (no pg_cron), so it moves
-to `tests/core/` with `test_scheduler.py`; a test is "co-existence → pg_cron suite" only
-when it actually involves the pg_cron scheduler.
+- `tests/conftest.py` → `tests/fixtures.py` rename + `tests/core/` full fork of
+  non-pg_cron tests including `tests/test_admin/` package (Task 2) ✓; `tests/pg_cron/` +
+  fixtures + pg_cron model registry assertion + co-existence/dual-scheduler tests
+  already in the pg_cron test files being moved (Task 3) ✓; E008/W003 split (Task 4) ✓;
+  drop marker + pyproject/tox/CI rewiring + `tests/multidb/pytest.toml` junit addition +
+  mypy settings fix (Task 5) ✓; docs (Task 6) ✓; multidb untouched on plain db ✓.
+
+**Open decisions flagged for plan review:** (a) root `uv run pytest` collects nothing
+(exits code 5) — suites are explicit; document in Task 6 CLAUDE.md; (b) coverage
+combined via core `--cov` + pg_cron `--cov-append`; run core first or erase before
+standalone pg_cron run; (c) `packaging` tests land in `tests/core/` and the matrix keeps
+deselecting them (registered in `tests/core/pytest.toml`); (d) the dual-scheduler
+multi-backend beat test currently in `test_scheduler.py` — it uses two beat backends (no
+pg_cron), so it moves to `tests/core/` with `test_scheduler.py`; a test is "co-existence
+→ pg_cron suite" only when it actually involves the pg_cron scheduler; (e)
+`test_scheduler_selector.py` lives in pg_cron because SCHEDULER="pg_cron" is only valid
+config when the app is installed.
 
 **Placeholder scan:** new config files shown in full; moves enumerated file-by-file; the
-one behavioral change (E008/W003 split) has explicit per-half specs. No TBD.
+sanctioned behavioral changes (E008/W003 split; `test_orm_models.py` pg_cron assertion
+split) have explicit per-half specs. No TBD.
 
 **Consistency:** `absurd_test_core` (plain) vs `absurd_test_pg_cron` (=
 `cron.database_name`) used consistently; `PGPORT` (plain) vs `PGPORT_PGCRON` (pg_cron)
-consistent across compose/.envrc/settings/tox/CI.
+consistent across compose/.envrc/settings/tox/CI; `junit-core.xml` / `junit-pg_cron.xml`
+/ `junit-multidb.xml` distinct across all three suites; mypy uses
+`tests.pg_cron.settings` (superset); shared fixtures live in `tests/fixtures.py` (plain
+module, not a conftest) and are imported by each suite's `conftest.py`.
