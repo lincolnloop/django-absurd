@@ -25,13 +25,16 @@ ENV SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0
 WORKDIR /src
 COPY pyproject.toml README.md ./
 COPY django_absurd ./django_absurd
+# examples/pyproject.toml declares django-absurd as {path="..", editable=true}.
+# Placing it at /src/examples/ keeps ".." pointing at /src (the package root).
+COPY examples/pyproject.toml ./examples/pyproject.toml
 
 # Install the example project's dependencies into /opt/venv: django-absurd as
-# an editable install of the local /src checkout, plus the pinned Django and
-# psycopg3 from examples/pyproject.toml. The app source itself is not copied —
-# it arrives via the bind mount in compose.yaml.
+# an editable install of the local /src checkout, plus Django and psycopg3 from
+# examples/pyproject.toml. The app source itself is not copied — it arrives via
+# the bind mount in compose.yaml.
 WORKDIR /app
-RUN uv venv /opt/venv && uv pip install -e /src "django==6.0.6" "psycopg[binary]==3.3.4"
+RUN uv venv /opt/venv && UV_PROJECT_ENVIRONMENT=/opt/venv uv sync --no-install-project --project /src/examples
 
 EXPOSE 8000
 # Default service migrates then serves; the worker service overrides `command:`.
