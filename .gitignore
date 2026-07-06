@@ -1,10 +1,12 @@
 # Example project resolves deps from examples/pyproject.toml at image build; local
 # Zensical docs build output
+# direnv local env (port reservations + venv activation); not shared via VCS.
 # lock is a build artifact, not shipped.
 *.egg-info/
 *.pyc
 .coverage
 .direnv/
+.envrc
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
