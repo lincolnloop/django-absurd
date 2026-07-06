@@ -137,6 +137,11 @@ System check IDs:
 - `absurd.E007` — invalid `SCHEDULE` entry (bad task path, bad cron expression, unknown
   key, non-serializable args/kwargs, or undeclared queue). See
   [Scheduling recurring tasks](#scheduling-recurring-tasks).
+- `absurd.E008` — `SCHEDULER="pg_cron"` is configured but `"django_absurd.pg_cron"` is
+  not in `INSTALLED_APPS`. See [pg_cron backend](#pg_cron-backend).
+- `absurd.W003` (Warning) — `"django_absurd.pg_cron"` is in `INSTALLED_APPS` but ordered
+  before `"django_absurd"`, causing its `post_migrate` cron reconcile to run before
+  queue provisioning. See [pg_cron backend](#pg_cron-backend).
 
 ## Defining and enqueuing tasks
 
@@ -294,18 +299,38 @@ needed.
 - `CREATE EXTENSION pg_cron` executed by a superuser in that database.
 
 django-absurd ships no `CREATE EXTENSION` migration — that is an operator step. A
-typical pattern is a one-off migration in your own app:
+typical pattern is a one-off migration in your own app, using Django's first-class
+[`CreateExtension`](https://docs.djangoproject.com/en/stable/ref/contrib/postgres/operations/#django.contrib.postgres.operations.CreateExtension)
+operation (it issues `CREATE EXTENSION IF NOT EXISTS` with a matching reverse — prefer
+it over raw `RunSQL`):
 
 ```python
+from django.contrib.postgres.operations import CreateExtension
 from django.db import migrations
 
 class Migration(migrations.Migration):
     operations = [
-        migrations.RunSQL("CREATE EXTENSION IF NOT EXISTS pg_cron"),
+        CreateExtension("pg_cron"),
     ]
 ```
 
 **Enabling:**
+
+Add `"django_absurd.pg_cron"` to `INSTALLED_APPS` **after** `"django_absurd"` — the
+opt-in app owns the projection table and wrapper function migrations and reconciles the
+`SCHEDULE` on `post_migrate`. Running `manage.py check` reports `absurd.E008` if
+`SCHEDULER="pg_cron"` is set but the app is absent, and `absurd.W003` if the app is
+present but ordered before `"django_absurd"`.
+
+```python
+INSTALLED_APPS = [
+    # ...
+    "django_absurd",
+    "django_absurd.pg_cron",   # must come after "django_absurd"
+]
+```
+
+Then configure the scheduler:
 
 ```python
 OPTIONS = {
@@ -339,7 +364,12 @@ jobs automatically — a settings-only change needs no new migration file.
 table). The `pg_cron` job command is a constant call to
 `public.django_absurd_run_scheduled(source, alias, name)`; the wrapper reads the row at
 fire time and calls `absurd.spawn_task`. Editing args/kwargs takes effect on the next
-fire without touching `cron.job`.
+fire without touching `cron.job`. Both the projection table and the wrapper function
+live in the `public` schema (Django app tables live there); the `absurd` schema is owned
+by the Absurd SDK's migration and is dropped wholesale on reverse, which would remove a
+wrapper placed there while the `ScheduledJob` table survived — keeping both in `public`
+avoids that hazard. They are created and managed by the `django_absurd_pg_cron` app
+migration, applied by `manage.py migrate`.
 
 ### Validate
 

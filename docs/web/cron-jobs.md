@@ -7,8 +7,8 @@ icon: lucide/timer
 Run [tasks](tasks.md) on a recurring **cron** cadence. django-absurd offers two ways to
 drive schedules, both following
 [Absurd's cron patterns](https://earendil-works.github.io/absurd/patterns/cron/):
-**application-side** (a beat process — available now) and **database-side**
-([`pg_cron`](#database-side-pg_cron) — coming soon).
+**application-side** ([beat process](#application-side-beat)) and
+**[database-side: pg_cron](#database-side-pg_cron)** (Postgres fires jobs directly).
 
 ## Application-side (beat)
 
@@ -121,6 +121,23 @@ concern.
 
 ### Enable the pg_cron backend
 
+Add `"django_absurd.pg_cron"` to `INSTALLED_APPS` **after** `"django_absurd"` — the
+opt-in app owns the projection table and wrapper function migrations (applied by
+`migrate`) and reconciles the `SCHEDULE` on `post_migrate`. Running `manage.py check`
+reports [`absurd.E008`](configuration.md#absurde008) if `SCHEDULER="pg_cron"` is set but
+the app is absent, and [`absurd.W003`](configuration.md#absurdw003) (Warning) if the app
+is present but ordered before `"django_absurd"`.
+
+```python title="settings.py"
+INSTALLED_APPS = [
+    # ...
+    "django_absurd",
+    "django_absurd.pg_cron",   # must come after "django_absurd"
+]
+```
+
+Then configure the scheduler:
+
 ```python title="settings.py"
 TASKS = {
     "default": {
@@ -177,6 +194,11 @@ python manage.py absurd_sync_crons
 
 The command is loud: it reports upserted/pruned counts and raises `CommandError` on any
 failure (missing extension, bad privilege, etc.).
+
+**Projection table and wrapper function.** The `ScheduledJob` projection table and the
+`public.django_absurd_run_scheduled` wrapper function both live in the `public` schema
+(where Django app tables live). They are created and managed by the
+`django_absurd_pg_cron` app's own migration, applied by `manage.py migrate`.
 
 ### Timezone
 
