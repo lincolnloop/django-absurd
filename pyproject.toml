@@ -120,7 +120,6 @@ addopts = [
   "--ignore=tests/pg_cron",
   "--strict-markers",
 ]
-pythonpath = ["."]
 
 [tool.ruff]
 target-version = "py312"
