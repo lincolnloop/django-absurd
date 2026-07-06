@@ -7,7 +7,7 @@ from django.core.management import call_command
 from django.db import connection
 
 from django_absurd.pg_cron.apps import reconcile_crons_after_migrate
-from django_absurd.pg_cron.models import ScheduledJob
+from django_absurd.pg_cron.models import ScheduledTask
 from django_absurd.queues import get_absurd_client
 
 pytestmark = [
@@ -66,7 +66,7 @@ def test_reconcile_creates_owned_cron_jobs_under_pg_cron(settings, owned_cron_jo
         "absurd:settings:default:a",
         "absurd:settings:default:b",
     ]
-    assert ScheduledJob.objects.filter(source="settings", alias="default").count() == 2
+    assert ScheduledTask.objects.filter(source="settings", alias="default").count() == 2
 
 
 def test_reconcile_tears_down_when_scheduler_switches_to_beat(
@@ -82,7 +82,7 @@ def test_reconcile_tears_down_when_scheduler_switches_to_beat(
     reconcile_crons_after_migrate(sender=None)
 
     assert owned_cron_jobs() == []
-    assert not ScheduledJob.objects.filter(source="settings", alias="default").exists()
+    assert not ScheduledTask.objects.filter(source="settings", alias="default").exists()
 
 
 def test_reconcile_missing_row_fires_clean_noop(settings, owned_cron_jobs):
@@ -93,7 +93,7 @@ def test_reconcile_missing_row_fires_clean_noop(settings, owned_cron_jobs):
 
     # Drop the backing row out-of-band; the committed cron.job wrapper must fire
     # as a clean no-op (the reconcile does not leave a firing job that errors).
-    ScheduledJob.objects.filter(source="settings", alias="default", name="a").delete()
+    ScheduledTask.objects.filter(source="settings", alias="default", name="a").delete()
 
     run_scheduled("settings", "default", "a")  # no exception
 
@@ -158,7 +158,7 @@ def test_migrate_provisions_queues_and_reconciles_crons(settings, owned_cron_job
 
     assert set(get_absurd_client().list_queues()) == {"default", "other", "reports"}
     assert owned_cron_jobs() == ["absurd:settings:default:a"]
-    assert ScheduledJob.objects.filter(source="settings", alias="default").count() == 1
+    assert ScheduledTask.objects.filter(source="settings", alias="default").count() == 1
 
 
 def test_reconcile_warns_on_none_task_path(settings, caplog):

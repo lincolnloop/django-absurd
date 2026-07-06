@@ -18,7 +18,7 @@ class Command(BaseCommand):
         parser.add_argument(
             "--teardown",
             action="store_true",
-            help="Remove all owned pg_cron jobs and settings ScheduledJob rows.",
+            help="Remove all owned pg_cron jobs and settings ScheduledTask rows.",
         )
 
     def handle(self, *args: t.Any, **options: t.Any) -> None:

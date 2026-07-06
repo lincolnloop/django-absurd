@@ -1,7 +1,7 @@
 import pytest
 
 from django_absurd.backends import get_absurd_backends
-from django_absurd.pg_cron.models import ScheduledJob
+from django_absurd.pg_cron.models import ScheduledTask
 from django_absurd.pg_cron.reconcile import sync_crons, teardown_crons
 
 pytestmark = [
@@ -39,22 +39,20 @@ def test_teardown_removes_all_owned_cron_jobs_and_settings_rows(
     sync_crons(be)
 
     assert len(owned_cron_jobs()) == 2
-    assert ScheduledJob.objects.filter(source="settings", alias="default").count() == 2
+    assert ScheduledTask.objects.filter(source="settings", alias="default").count() == 2
 
     teardown_crons(be)
 
     assert owned_cron_jobs() == []
-    assert not ScheduledJob.objects.filter(source="settings", alias="default").exists()
+    assert not ScheduledTask.objects.filter(source="settings", alias="default").exists()
 
 
 def test_teardown_leaves_admin_rows_intact(settings):
-    ScheduledJob.objects.create(
+    ScheduledTask.objects.create(
         name="admin-job",
         source="admin",
         alias="default",
         task="tests.tasks.add",
-        params={"args": [], "kwargs": {}},
-        options={},
         cron="0 4 * * *",
     )
     settings.TASKS = tasks({"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}})
@@ -62,8 +60,8 @@ def test_teardown_leaves_admin_rows_intact(settings):
     sync_crons(be)
     teardown_crons(be)
 
-    assert not ScheduledJob.objects.filter(source="settings", alias="default").exists()
-    assert ScheduledJob.objects.filter(source="admin", name="admin-job").exists()
+    assert not ScheduledTask.objects.filter(source="settings", alias="default").exists()
+    assert ScheduledTask.objects.filter(source="admin", name="admin-job").exists()
 
 
 def test_teardown_is_idempotent(settings, owned_cron_jobs):
@@ -74,4 +72,4 @@ def test_teardown_is_idempotent(settings, owned_cron_jobs):
     teardown_crons(be)  # must not raise
 
     assert owned_cron_jobs() == []
-    assert not ScheduledJob.objects.filter(source="settings", alias="default").exists()
+    assert not ScheduledTask.objects.filter(source="settings", alias="default").exists()

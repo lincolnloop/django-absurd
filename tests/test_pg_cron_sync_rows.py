@@ -1,7 +1,7 @@
 import pytest
 
 from django_absurd.backends import get_absurd_backends
-from django_absurd.pg_cron.models import ScheduledJob
+from django_absurd.pg_cron.models import ScheduledTask
 from django_absurd.pg_cron.reconcile import sync_crons
 
 pytestmark = [pytest.mark.django_db(transaction=True), pytest.mark.pg_cron]
@@ -31,22 +31,45 @@ def test_upsert_and_prune_settings_rows(settings):
     )
     be = get_absurd_backends()["default"]
     sync_crons(be)
-    assert set(ScheduledJob.objects.values_list("name", flat=True)) == {"a", "b"}
+    assert set(ScheduledTask.objects.values_list("name", flat=True)) == {"a", "b"}
     settings.TASKS = tasks({"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}})
     sync_crons(get_absurd_backends()["default"])
-    assert set(ScheduledJob.objects.values_list("name", flat=True)) == {"a"}
+    assert set(ScheduledTask.objects.values_list("name", flat=True)) == {"a"}
 
 
 def test_admin_rows_untouched(settings):
-    ScheduledJob.objects.create(
+    ScheduledTask.objects.create(
         name="a",
         source="admin",
         alias="default",
         task="tests.tasks.add",
-        params={"args": [], "kwargs": {}},
-        options={},
         cron="0 2 * * *",
     )
     settings.TASKS = tasks({})
     sync_crons(get_absurd_backends()["default"])
-    assert ScheduledJob.objects.filter(source="admin", name="a").exists()
+    assert ScheduledTask.objects.filter(source="admin", name="a").exists()
+
+
+def test_sync_writes_named_option_columns(settings):
+    settings.TASKS = {
+        "default": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "QUEUES": {"default": {}},
+            "OPTIONS": {
+                "SCHEDULE": {
+                    "nightly": {
+                        "task": "tests.tasks.capped",  # decorated max_attempts=3
+                        "cron": "0 2 * * *",
+                        "args": [1, 2],
+                        "kwargs": {"k": "v"},
+                    },
+                },
+            },
+        },
+    }
+    backend = get_absurd_backends()["default"]
+    sync_crons(backend)
+    row = ScheduledTask.objects.get(source="settings", alias="default", name="nightly")
+    assert row.args == [1, 2]
+    assert row.kwargs == {"k": "v"}
+    assert row.max_attempts == 3

@@ -42,7 +42,7 @@ def test_view_models_absent_from_global_registry():
         for m in global_apps.get_models()
         if m._meta.app_label == "django_absurd_pg_cron"
     }
-    assert pg_cron_names == {"ScheduledJob"}
+    assert pg_cron_names == {"ScheduledTask"}
 
 
 def test_queue_table_model_db_table_is_quote_safe():

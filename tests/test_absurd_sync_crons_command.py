@@ -5,7 +5,7 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 
 from django_absurd.backends import get_absurd_backends
-from django_absurd.pg_cron.models import ScheduledJob
+from django_absurd.pg_cron.models import ScheduledTask
 from django_absurd.pg_cron.reconcile import sync_crons
 
 pytestmark = [
@@ -101,7 +101,7 @@ def test_teardown_removes_owned_cron_jobs(settings, capsys, owned_cron_jobs):
     call_command("absurd_sync_crons", teardown=True)
 
     assert owned_cron_jobs() == []
-    assert not ScheduledJob.objects.filter(source="settings", alias="default").exists()
+    assert not ScheduledTask.objects.filter(source="settings", alias="default").exists()
 
     out = capsys.readouterr().out
     assert out.strip() == "Removed 2 cron(s) — backend 'default'."

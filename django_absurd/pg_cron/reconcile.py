@@ -6,7 +6,7 @@ from django.db import DatabaseError, InternalError, connections, transaction
 from django.utils.module_loading import import_string
 
 from django_absurd.backends import AbsurdBackend, build_merged_spawn_options
-from django_absurd.pg_cron.models import ScheduledJob
+from django_absurd.pg_cron.models import ScheduledTask
 from django_absurd.scheduler import Schedule, get_settings_schedules
 
 # Stable advisory lock key that serializes concurrent sync_crons reconcilers.
@@ -56,7 +56,7 @@ def build_jobname_prefix(alias: str, source: str = "settings") -> str:
 
 
 def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:
-    """Reconcile ScheduledJob rows for this backend's declared SCHEDULE entries.
+    """Reconcile ScheduledTask rows for this backend's declared SCHEDULE entries.
 
     Opens a transaction on backend.database and acquires an advisory lock to
     serialise concurrent reconcilers. Upserts one row per declared schedule
@@ -67,7 +67,7 @@ def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:
     (upsert + active re-arm) and prunes owned-but-undeclared pg_cron jobs.
 
     Returns (upserted, pruned): count of declared entries synced and count of
-    ScheduledJob rows deleted.
+    ScheduledTask rows deleted.
     """
     schedules = get_settings_schedules(backend)
     declared_names = [s.name for s in schedules]
@@ -78,22 +78,28 @@ def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:
             cur.execute("select pg_advisory_xact_lock(%s)", [SYNC_CRONS_ADVISORY_LOCK])
 
         for schedule in schedules:
-            ScheduledJob.objects.using(backend.database).update_or_create(
+            opts = resolve_spawn_options(backend, schedule)
+            ScheduledTask.objects.using(backend.database).update_or_create(
                 source="settings",
                 alias=backend.alias,
                 name=schedule.name,
                 defaults={
                     "task": schedule.task,
                     "queue": get_effective_queue(schedule),
-                    "params": {"args": schedule.args, "kwargs": schedule.kwargs},
-                    "options": resolve_spawn_options(backend, schedule),
+                    "args": schedule.args,
+                    "kwargs": schedule.kwargs,
+                    "max_attempts": opts.get("max_attempts"),
+                    "retry_strategy": opts.get("retry_strategy"),
+                    "headers": opts.get("headers"),
+                    "cancellation": opts.get("cancellation"),
+                    "idempotency_key": opts.get("idempotency_key") or "",
                     "cron": schedule.cron,
                     "enabled": True,
                 },
             )
 
         pruned, _ = (
-            ScheduledJob.objects.using(backend.database)
+            ScheduledTask.objects.using(backend.database)
             .filter(source="settings", alias=backend.alias)
             .exclude(name__in=declared_names)
             .delete()
@@ -145,17 +151,17 @@ def sync_pg_cron_jobs(backend: AbsurdBackend, schedules: list[Schedule]) -> None
 
 
 def teardown_crons(backend: AbsurdBackend) -> int:
-    """Remove every pg_cron job and ScheduledJob row owned by this backend alias.
+    """Remove every pg_cron job and ScheduledTask row owned by this backend alias.
 
     Opens a transaction on backend.database and acquires the same advisory lock
     used by sync_crons to serialise concurrent reconcilers. All jobs matching the
     absurd:settings:<alias>:% prefix are unscheduled via the savepoint-swallow
-    helper (tolerating already-gone rows). All source="settings" ScheduledJob rows
+    helper (tolerating already-gone rows). All source="settings" ScheduledTask rows
     for this alias are deleted; source="admin" rows are left untouched.
 
     Idempotent: a second call with no owned jobs or rows is a clean no-op.
 
-    Returns removed: count of ScheduledJob rows deleted.
+    Returns removed: count of ScheduledTask rows deleted.
     """
     with transaction.atomic(using=backend.database):
         conn = connections[backend.database]
@@ -167,7 +173,7 @@ def teardown_crons(backend: AbsurdBackend) -> int:
             prune_pg_cron_jobs(cur, owned_jobids)
 
         removed, _ = (
-            ScheduledJob.objects.using(backend.database)
+            ScheduledTask.objects.using(backend.database)
             .filter(source="settings", alias=backend.alias)
             .delete()
         )
