@@ -1,7 +1,11 @@
 import logging
 
 from django.apps import AppConfig
+from django.core.exceptions import ImproperlyConfigured
 from django.db.models.signals import post_migrate
+from django.db.utils import InternalError, OperationalError, ProgrammingError
+
+from django_absurd.backends import get_absurd_backends
 
 logger = logging.getLogger("django_absurd")
 
@@ -21,14 +25,6 @@ class PgCronConfig(AppConfig):
 
 
 def reconcile_crons_after_migrate(sender: AppConfig, **kwargs: object) -> None:
-    from django.core.exceptions import ImproperlyConfigured  # noqa: PLC0415
-    from django.db.utils import (  # noqa: PLC0415
-        InternalError,
-        OperationalError,
-        ProgrammingError,
-    )
-
-    from django_absurd.backends import get_absurd_backends  # noqa: PLC0415
     from django_absurd.pg_cron.reconcile import (  # noqa: PLC0415
         sync_crons,
         teardown_crons,
