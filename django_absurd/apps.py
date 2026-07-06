@@ -6,6 +6,7 @@ from django.core.management.color import color_style
 from django.db.models.signals import post_migrate
 from django.db.utils import OperationalError, ProgrammingError
 
+from django_absurd.admin_views import PRIVATE_ADMIN_APPS
 from django_absurd.backends import get_absurd_backends
 
 
@@ -16,7 +17,6 @@ class AbsurdConfig(AppConfig):
 
     def ready(self) -> None:
         import django_absurd.checks  # noqa: F401, PLC0415
-        from django_absurd.admin_views import PRIVATE_ADMIN_APPS  # noqa: PLC0415
 
         # The synthesized admin models live in PRIVATE_ADMIN_APPS, so their
         # _meta.app_config resolves there. Point it at this config so the admin
