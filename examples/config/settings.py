@@ -1,8 +1,9 @@
-"""Settings for the django-absurd pg_cron scheduler demo.
+"""Settings for the django-absurd scheduler demo.
 
-Minimal, single-purpose: enough Django to run migrations, the admin, and an
-Absurd worker. django-absurd is the Django Tasks backend, and the schedule is
-driven database-side by pg_cron (``OPTIONS["SCHEDULER"] = "pg_cron"``).
+Minimal, single-purpose: enough Django to run migrations, the admin, and
+Absurd workers. django-absurd is the Django Tasks backend. Two backends share
+the default database: ``"default"`` uses ``SCHEDULER="pg_cron"`` (no beat
+process), and ``"beat"`` uses ``SCHEDULER="beat"`` (co-located worker+beat).
 """
 
 import os
@@ -77,6 +78,22 @@ TASKS = {
             "SCHEDULER": "pg_cron",
             "SCHEDULE": {
                 "ping": {"task": "demo.tasks.ping", "cron": "* * * * *"},
+            },
+        },
+    },
+    "beat": {
+        "BACKEND": "django_absurd.backends.AbsurdBackend",
+        "OPTIONS": {
+            "QUEUES": {"beat": {}},
+            # Beat scheduler: a co-located worker+beat process fires the
+            # schedule from Python — no pg_cron required.
+            "SCHEDULER": "beat",
+            "SCHEDULE": {
+                "tick": {
+                    "task": "demo.tasks.tick",
+                    "cron": "* * * * *",
+                    "queue": "beat",
+                },
             },
         },
     },

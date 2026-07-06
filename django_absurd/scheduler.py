@@ -25,6 +25,7 @@ class Schedule:
     queue: str | None = None
     args: list = dataclasses.field(default_factory=list)
     kwargs: dict = dataclasses.field(default_factory=dict)
+    backend: str = "default"
 
 
 def get_next_datetime(cron: str, after: datetime.datetime) -> datetime.datetime:
@@ -47,6 +48,7 @@ def get_settings_schedules(backend: AbsurdBackend) -> list[Schedule]:
             queue=spec.get("queue", None),
             args=list(spec.get("args", [])),
             kwargs=dict(spec.get("kwargs", {})),
+            backend=backend.alias,
         )
         for name, spec in schedule_map.items()
     ]
@@ -64,8 +66,10 @@ def spawn_scheduled(schedule: Schedule, slot: datetime.datetime) -> None:
     close_old_connections()
     try:
         task = import_string(schedule.task)
+        overrides: dict[str, t.Any] = {"backend": schedule.backend}
         if schedule.queue is not None:
-            task = task.using(queue_name=schedule.queue)
+            overrides["queue_name"] = schedule.queue
+        task = task.using(**overrides)
         task.enqueue(
             *schedule.args,
             **schedule.kwargs,

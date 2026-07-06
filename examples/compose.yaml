@@ -55,7 +55,21 @@ services:
     build:
       context: ..
       dockerfile: examples/Dockerfile
-    command: python manage.py absurd_worker
+    command: python manage.py absurd_worker --alias default --queue default
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: on-failure
+    environment: *django-env
+    volumes: *source-mounts
+
+  # Long-lived beat+worker co-located for the "beat" backend. The beat process
+  # fires `tick` every minute; the worker drains it and logs "tock ⏰".
+  beatworker:
+    build:
+      context: ..
+      dockerfile: examples/Dockerfile
+    command: python manage.py absurd_worker --alias beat --queue beat --beat
     depends_on:
       migrate:
         condition: service_completed_successfully
