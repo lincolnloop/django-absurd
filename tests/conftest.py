@@ -31,11 +31,11 @@ def _reset_absurd_queues(_enable_db):
 
 
 @pytest.fixture(scope="session")
-def ensure_pgcron(django_db_setup, django_db_blocker):
-    """Enable ``pg_cron`` on the test DB for pgcron-marked tests.
+def ensure_pg_cron(django_db_setup, django_db_blocker):
+    """Enable ``pg_cron`` on the test DB for pg_cron-marked tests.
 
-    Non-autouse and opt-in via ``pytest.mark.usefixtures("ensure_pgcron")`` so
-    the default ``uv run pytest`` (which deselects ``pgcron``) never needs the
+    Non-autouse and opt-in via ``pytest.mark.usefixtures("ensure_pg_cron")`` so
+    the default ``uv run pytest`` (which deselects ``pg_cron``) never needs the
     extension. ``CREATE EXTENSION pg_cron`` is only permitted in the DB named by
     ``cron.database_name``; ``tests/settings.py`` pins the test DB to that name.
     """
@@ -44,11 +44,11 @@ def ensure_pgcron(django_db_setup, django_db_blocker):
 
 
 @pytest.fixture
-def _clear_owned_cron_jobs():
+def _clear_owned_pg_cron_jobs():
     """Unschedule all ``absurd:%`` pg_cron jobs after the test.
 
-    Opt-in via ``pytest.mark.usefixtures("_clear_owned_cron_jobs")`` on each
-    pgcron test module (alongside ``ensure_pgcron``). The broader ``absurd:%``
+    Opt-in via ``pytest.mark.usefixtures("_clear_owned_pg_cron_jobs")`` on each
+    pg_cron test module (alongside ``ensure_pg_cron``). The broader ``absurd:%``
     pattern (not a per-alias prefix) catches all jobs created during a test,
     including those outside ``absurd:settings:<alias>:`` scope.
     """

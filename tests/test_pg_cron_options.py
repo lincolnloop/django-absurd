@@ -1,7 +1,7 @@
 import pytest
 
 from django_absurd.backends import get_absurd_backends
-from django_absurd.pgcron import effective_queue, resolve_spawn_options
+from django_absurd.pg_cron.reconcile import effective_queue, resolve_spawn_options
 from django_absurd.scheduler import Schedule
 
 pytestmark = pytest.mark.django_db(transaction=True)

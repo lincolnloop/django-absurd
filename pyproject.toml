@@ -128,14 +128,14 @@ addopts = [
   "--reuse-db",
   "--strict-markers",
   "-m",
-  "not pgcron",
+  "not pg_cron",
 ]
 filterwarnings = [
   "error::bs4.GuessedAtParserWarning",  # Raise error when parser not set.
 ]
 markers = [
   "packaging: builds/inspects the distribution; run only in the dev tox env (needs the build backend)",
-  "pgcron: requires a pg_cron-enabled Postgres; deselected by default (run with -m pgcron against the compose db)",
+  "pg_cron: requires a pg_cron-enabled Postgres; deselected by default (run with -m pg_cron against the compose db)",
 ]
 pythonpath = ["."]
 testpaths = ["tests"]

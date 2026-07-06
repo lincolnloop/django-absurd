@@ -2,10 +2,10 @@
 services:
   db:
     # pg_cron-enabled Postgres (Debian image + the PGDG pg_cron package).
-    # Reuses the repo-root Dockerfile.pgcron also used by the test suite.
+    # Reuses the repo-root Dockerfile.pg_cron also used by the test suite.
     build:
       context: ..
-      dockerfile: Dockerfile.pgcron
+      dockerfile: Dockerfile.pg_cron
     # shared_preload_libraries loads pg_cron at server start (a GUC, set BEFORE
     # any CREATE EXTENSION — it cannot be enabled by a migration). cron.database_name
     # points pg_cron at the app's database (must match PGDATABASE below), so the
@@ -23,7 +23,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql
 
-  # One-shot: apply migrations. The 0001_pgcron migration runs CreateExtension
+  # One-shot: apply migrations. The 0001_pg_cron migration runs CreateExtension
   # (as the superuser `postgres` role), then django-absurd's post_migrate handler
   # reconciles the SCHEDULE into a pg_cron job. Extension-first ordering holds
   # because post_migrate fires after all migrations. Exits when done.

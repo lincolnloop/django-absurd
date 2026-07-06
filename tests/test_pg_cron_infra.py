@@ -3,12 +3,12 @@ from django.db import connection
 
 pytestmark = [
     pytest.mark.django_db(transaction=True),
-    pytest.mark.pgcron,
-    pytest.mark.usefixtures("ensure_pgcron"),
+    pytest.mark.pg_cron,
+    pytest.mark.usefixtures("ensure_pg_cron"),
 ]
 
 
-def test_pgcron_extension_available():
+def test_pg_cron_extension_available():
     with connection.cursor() as cur:
         cur.execute("select extversion from pg_extension where extname = 'pg_cron'")
         row = cur.fetchone()

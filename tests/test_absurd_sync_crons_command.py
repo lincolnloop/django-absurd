@@ -5,19 +5,19 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 
 from django_absurd.backends import get_absurd_backends
-from django_absurd.models import ScheduledJob
-from django_absurd.pgcron import sync_crons
+from django_absurd.pg_cron.models import ScheduledJob
+from django_absurd.pg_cron.reconcile import sync_crons
 
 pytestmark = [
     pytest.mark.django_db(transaction=True),
-    pytest.mark.pgcron,
-    pytest.mark.usefixtures("ensure_pgcron", "_clear_owned_cron_jobs"),
+    pytest.mark.pg_cron,
+    pytest.mark.usefixtures("ensure_pg_cron", "_clear_owned_pg_cron_jobs"),
 ]
 
 ABSURD = "django_absurd.backends.AbsurdBackend"
 
 
-def pgcron_tasks(schedule: dict[str, t.Any]) -> dict[str, t.Any]:
+def pg_cron_tasks(schedule: dict[str, t.Any]) -> dict[str, t.Any]:
     return {
         "default": {
             "BACKEND": ABSURD,
@@ -44,7 +44,7 @@ def beat_tasks(schedule: dict[str, t.Any]) -> dict[str, t.Any]:
 
 
 def test_sync_crons_command_creates_cron_jobs(settings, capsys, owned_cron_jobs):
-    settings.TASKS = pgcron_tasks(
+    settings.TASKS = pg_cron_tasks(
         {
             "a": {"task": "tests.tasks.add", "cron": "0 2 * * *"},
             "b": {"task": "tests.tasks.add", "cron": "0 3 * * *"},
@@ -62,7 +62,7 @@ def test_sync_crons_command_creates_cron_jobs(settings, capsys, owned_cron_jobs)
 
 
 def test_sync_crons_command_writes_summary_to_stdout(settings, capsys):
-    settings.TASKS = pgcron_tasks(
+    settings.TASKS = pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     call_command("absurd_sync_crons")
@@ -78,7 +78,7 @@ def test_sync_crons_command_refuses_when_scheduler_is_beat(settings):
 
 
 def test_sync_crons_command_is_idempotent(settings, capsys, owned_cron_jobs):
-    settings.TASKS = pgcron_tasks(
+    settings.TASKS = pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     call_command("absurd_sync_crons")
@@ -88,7 +88,7 @@ def test_sync_crons_command_is_idempotent(settings, capsys, owned_cron_jobs):
 
 
 def test_teardown_removes_owned_cron_jobs(settings, capsys, owned_cron_jobs):
-    settings.TASKS = pgcron_tasks(
+    settings.TASKS = pg_cron_tasks(
         {
             "a": {"task": "tests.tasks.add", "cron": "0 2 * * *"},
             "b": {"task": "tests.tasks.add", "cron": "0 3 * * *"},

@@ -36,7 +36,13 @@ def test_view_models_absent_from_global_registry():
         for m in global_apps.get_models()
         if m._meta.app_label == "django_absurd"
     }
-    assert names == {"Queue", "ScheduledJob"}  # dynamic view-backed models are absent
+    assert names == {"Queue"}  # dynamic view-backed models are absent
+    pg_cron_names = {
+        m.__name__
+        for m in global_apps.get_models()
+        if m._meta.app_label == "django_absurd_pg_cron"
+    }
+    assert pg_cron_names == {"ScheduledJob"}
 
 
 def test_queue_table_model_db_table_is_quote_safe():

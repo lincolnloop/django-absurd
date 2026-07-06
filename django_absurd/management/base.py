@@ -3,7 +3,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django_absurd.backends import AbsurdBackend, get_absurd_backends
 from django_absurd.queues import SyncResult
 
-BEAT_DISABLED_UNDER_PGCRON = (
+BEAT_DISABLED_UNDER_PG_CRON = (
     "SCHEDULER is 'pg_cron': schedules run in the database via pg_cron,"
     " so the beat process is disabled."
     " Reconcile the pg_cron jobs with 'manage.py absurd_sync_crons'"

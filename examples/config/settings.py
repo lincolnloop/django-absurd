@@ -22,6 +22,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "django_absurd",
+    "django_absurd.pg_cron",  # opt-in pg_cron scheduler app (after "django_absurd")
     "demo",
 ]
 

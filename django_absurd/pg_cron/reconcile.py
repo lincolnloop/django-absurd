@@ -2,16 +2,11 @@
 
 import typing as t
 
-# absurd_sdk._normalize_spawn_options is a module-level helper (pinned: absurd-sdk>=0.1)
-# that normalises spawn options into the jsonb dict passed to absurd.spawn_task.
-# We import it directly instead of routing through client.spawn so we get the
-# exact same serialisation without creating a client or touching the DB.
-from absurd_sdk import _normalize_spawn_options
 from django.db import DatabaseError, InternalError, connections, transaction
 from django.utils.module_loading import import_string
 
 from django_absurd.backends import AbsurdBackend, build_merged_spawn_options
-from django_absurd.models import ScheduledJob
+from django_absurd.pg_cron.models import ScheduledJob
 from django_absurd.scheduler import Schedule, get_settings_schedules
 
 # Stable advisory lock key that serializes concurrent sync_crons reconcilers.
@@ -26,6 +21,14 @@ def resolve_spawn_options(
     Reproduces the enqueue path's option resolution exactly: task-decorator
     defaults win over the backend's configured DEFAULT_MAX_ATTEMPTS fallback.
     """
+    # absurd_sdk._normalize_spawn_options is a module-level helper (bound:
+    # absurd-sdk>=0.4.0,<0.5.0) that normalises spawn options into the jsonb dict
+    # passed to absurd.spawn_task. We import it directly instead of routing through
+    # client.spawn so we get the exact same serialisation without creating a client
+    # or touching the DB — and lazily, so an SDK drift breaks pg_cron sync rather
+    # than app startup.
+    from absurd_sdk import _normalize_spawn_options  # noqa: PLC0415
+
     task = import_string(schedule.task)
     defaults = getattr(task.func, "absurd_default_params", None)
     merged = build_merged_spawn_options(defaults, None)
@@ -96,7 +99,7 @@ def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:
             .delete()
         )
 
-        sync_pgcron_jobs(backend, schedules)
+        sync_pg_cron_jobs(backend, schedules)
 
     return len(schedules), pruned
 
@@ -116,7 +119,7 @@ SCHEDULE_JOB_SQL = (
 )
 
 
-def sync_pgcron_jobs(backend: AbsurdBackend, schedules: list[Schedule]) -> None:
+def sync_pg_cron_jobs(backend: AbsurdBackend, schedules: list[Schedule]) -> None:
     """Upsert one pg_cron job per declared schedule and prune stale ones.
 
     Runs inside sync_crons' transaction on backend.database. Each declared entry
@@ -137,8 +140,8 @@ def sync_pgcron_jobs(backend: AbsurdBackend, schedules: list[Schedule]) -> None:
             jobid = cur.fetchone()[0]
             cur.execute("select cron.alter_job(%s, active := true)", [jobid])
 
-        stale_jobids = find_stale_pgcron_jobids(cur, prefix, declared_jobnames)
-        prune_pgcron_jobs(cur, stale_jobids)
+        stale_jobids = find_stale_pg_cron_jobids(cur, prefix, declared_jobnames)
+        prune_pg_cron_jobs(cur, stale_jobids)
 
 
 def teardown_crons(backend: AbsurdBackend) -> int:
@@ -160,8 +163,8 @@ def teardown_crons(backend: AbsurdBackend) -> int:
             cur.execute("select pg_advisory_xact_lock(%s)", [SYNC_CRONS_ADVISORY_LOCK])
 
             prefix = jobname_prefix(backend.alias)
-            owned_jobids = find_owned_pgcron_jobids(cur, prefix)
-            prune_pgcron_jobs(cur, owned_jobids)
+            owned_jobids = find_owned_pg_cron_jobids(cur, prefix)
+            prune_pg_cron_jobs(cur, owned_jobids)
 
         removed, _ = (
             ScheduledJob.objects.using(backend.database)
@@ -172,7 +175,7 @@ def teardown_crons(backend: AbsurdBackend) -> int:
     return removed
 
 
-def find_stale_pgcron_jobids(
+def find_stale_pg_cron_jobids(
     cur: t.Any, prefix: str, declared_jobnames: list[str]
 ) -> list[int]:
     """Return jobids of pg_cron jobs matching prefix that are no longer declared."""
@@ -183,7 +186,7 @@ def find_stale_pgcron_jobids(
     return [row[0] for row in cur.fetchall()]
 
 
-def find_owned_pgcron_jobids(cur: t.Any, prefix: str) -> list[int]:
+def find_owned_pg_cron_jobids(cur: t.Any, prefix: str) -> list[int]:
     """Return all jobids of pg_cron jobs matching the given prefix."""
     cur.execute(
         "select jobid from cron.job where jobname like %s",
@@ -192,7 +195,7 @@ def find_owned_pgcron_jobids(cur: t.Any, prefix: str) -> list[int]:
     return [row[0] for row in cur.fetchall()]
 
 
-def prune_pgcron_jobs(cur: t.Any, stale_jobids: list[int]) -> None:
+def prune_pg_cron_jobs(cur: t.Any, stale_jobids: list[int]) -> None:
     """Unschedule each stale pg_cron jobid, tolerating already-removed rows.
 
     Each unschedule runs inside its own savepoint: if the job's cron.job row was

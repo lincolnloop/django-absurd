@@ -89,7 +89,7 @@ def test_worker_client_absent_schema_errors():
             asyncio.run(_enter())
     finally:
         call_command("migrate", "django_absurd", "zero", verbosity=0)
-        call_command("migrate", "django_absurd", verbosity=0)
+        call_command("migrate", verbosity=0)  # restore core AND the pg_cron app
 
 
 def test_end_to_end_executes_and_records_result():
@@ -334,7 +334,7 @@ def test_worker_command_schema_absent_errors_migrate():
             call_command("absurd_worker", queue="default", burst=True)
     finally:
         call_command("migrate", "django_absurd", "zero", verbosity=0)
-        call_command("migrate", "django_absurd", verbosity=0)
+        call_command("migrate", verbosity=0)  # restore core AND the pg_cron app
 
 
 def test_start_worker_drains_concurrently():

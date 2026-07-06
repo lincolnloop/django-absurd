@@ -1,21 +1,25 @@
+import logging
 import typing as t
 
 import pytest
+from django.apps import apps
+from django.core.management import call_command
 from django.db import connection
 
-from django_absurd.apps import reconcile_crons_after_migrate
-from django_absurd.models import ScheduledJob
+from django_absurd.pg_cron.apps import reconcile_crons_after_migrate
+from django_absurd.pg_cron.models import ScheduledJob
+from django_absurd.queues import get_absurd_client
 
 pytestmark = [
     pytest.mark.django_db(transaction=True),
-    pytest.mark.pgcron,
-    pytest.mark.usefixtures("ensure_pgcron", "_clear_owned_cron_jobs"),
+    pytest.mark.pg_cron,
+    pytest.mark.usefixtures("ensure_pg_cron", "_clear_owned_pg_cron_jobs"),
 ]
 
 ABSURD = "django_absurd.backends.AbsurdBackend"
 
 
-def pgcron_tasks(schedule: dict[str, t.Any]) -> dict[str, t.Any]:
+def pg_cron_tasks(schedule: dict[str, t.Any]) -> dict[str, t.Any]:
     return {
         "default": {
             "BACKEND": ABSURD,
@@ -50,7 +54,7 @@ def run_scheduled(source: str, alias: str, name: str) -> None:
 
 
 def test_reconcile_creates_owned_cron_jobs_under_pg_cron(settings, owned_cron_jobs):
-    settings.TASKS = pgcron_tasks(
+    settings.TASKS = pg_cron_tasks(
         {
             "a": {"task": "tests.tasks.add", "cron": "0 2 * * *"},
             "b": {"task": "tests.tasks.add", "cron": "0 3 * * *"},
@@ -68,7 +72,7 @@ def test_reconcile_creates_owned_cron_jobs_under_pg_cron(settings, owned_cron_jo
 def test_reconcile_tears_down_when_scheduler_switches_to_beat(
     settings, owned_cron_jobs
 ):
-    settings.TASKS = pgcron_tasks(
+    settings.TASKS = pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     reconcile_crons_after_migrate(sender=None)
@@ -82,7 +86,7 @@ def test_reconcile_tears_down_when_scheduler_switches_to_beat(
 
 
 def test_reconcile_missing_row_fires_clean_noop(settings, owned_cron_jobs):
-    settings.TASKS = pgcron_tasks(
+    settings.TASKS = pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     reconcile_crons_after_migrate(sender=None)
@@ -102,24 +106,56 @@ def test_reconcile_missing_row_fires_clean_noop(settings, owned_cron_jobs):
         assert cur.fetchall() == []
 
 
-def test_reconcile_skips_when_extension_absent(settings):
-    settings.TASKS = pgcron_tasks(
+def test_reconcile_skips_when_extension_absent(settings, caplog):
+    settings.TASKS = pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     with connection.cursor() as cur:
         cur.execute("drop extension pg_cron cascade")
     try:
-        reconcile_crons_after_migrate(sender=None)  # must NOT raise
+        with caplog.at_level(logging.DEBUG, logger="django_absurd"):
+            reconcile_crons_after_migrate(sender=None)  # must NOT raise
     finally:
         with connection.cursor() as cur:
             cur.execute("create extension if not exists pg_cron")
 
+    # Expected case — a quiet no-op, not a warning-with-traceback on every migrate.
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warnings == []
+
+
+def test_reconcile_skips_on_malformed_schedule_spec(settings, owned_cron_jobs):
+    settings.TASKS = pg_cron_tasks({"broken": {}})  # no task/cron keys
+
+    reconcile_crons_after_migrate(sender=None)  # must NOT raise
+
+    assert owned_cron_jobs() == []
+
 
 def test_reconcile_skips_on_bad_dotted_path(settings, owned_cron_jobs):
-    settings.TASKS = pgcron_tasks(
+    settings.TASKS = pg_cron_tasks(
         {"a": {"task": "tests.tasks.does_not_exist", "cron": "0 2 * * *"}}
     )
 
     reconcile_crons_after_migrate(sender=None)  # must NOT raise
 
     assert owned_cron_jobs() == []
+
+
+def test_pg_cron_app_registered_after_core():
+    # post_migrate receivers fire in INSTALLED_APPS order; reconcile must run
+    # after core queue provisioning, so the app must be listed after the core app.
+    labels = [config.label for config in apps.get_app_configs()]
+    assert labels.index("django_absurd") < labels.index("django_absurd_pg_cron")
+
+
+def test_migrate_provisions_queues_and_reconciles_crons(settings, owned_cron_jobs):
+    settings.TASKS = pg_cron_tasks(
+        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
+    )
+
+    call_command("migrate", verbosity=0)
+
+    assert set(get_absurd_client().list_queues()) == {"default", "other", "reports"}
+    assert owned_cron_jobs() == ["absurd:settings:default:a"]
+    assert ScheduledJob.objects.filter(source="settings", alias="default").count() == 1

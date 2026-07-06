@@ -113,7 +113,7 @@ def test_enqueue_with_absent_schema_raises_clear_error():
             add.enqueue(1, 2)
     finally:
         call_command("migrate", "django_absurd", "zero", verbosity=0)
-        call_command("migrate", "django_absurd", verbosity=0)
+        call_command("migrate", verbosity=0)  # restore core AND the pg_cron app
 
 
 def test_max_attempts_uses_backend_default_when_unset():

@@ -4,7 +4,7 @@ import typing as t
 
 from django.core.management.base import BaseCommand, CommandError
 
-from django_absurd.management.base import BEAT_DISABLED_UNDER_PGCRON, resolve_backend
+from django_absurd.management.base import BEAT_DISABLED_UNDER_PG_CRON, resolve_backend
 from django_absurd.scheduler import get_settings_schedules, run_beat
 
 
@@ -22,7 +22,7 @@ class Command(BaseCommand):
         _, backend = resolve_backend(options)
 
         if backend.scheduler == "pg_cron":
-            raise CommandError(BEAT_DISABLED_UNDER_PGCRON)
+            raise CommandError(BEAT_DISABLED_UNDER_PG_CRON)
 
         stop = threading.Event()
 

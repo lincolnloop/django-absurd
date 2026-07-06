@@ -9,6 +9,9 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django_absurd",
+    # After "django_absurd": post_migrate receivers fire in INSTALLED_APPS order,
+    # and cron reconcile must run after core queue provisioning.
+    "django_absurd.pg_cron",
     "tests",
 ]
 

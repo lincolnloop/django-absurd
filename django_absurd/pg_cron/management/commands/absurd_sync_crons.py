@@ -3,7 +3,7 @@ import typing as t
 from django.core.management.base import BaseCommand, CommandError
 
 from django_absurd.management.base import resolve_backend
-from django_absurd.pgcron import sync_crons, teardown_crons
+from django_absurd.pg_cron.reconcile import sync_crons, teardown_crons
 
 
 class Command(BaseCommand):

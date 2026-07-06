@@ -8,8 +8,8 @@ logs `pong 🏓`.
 
 The `pg_cron` extension is created by a **Django migration** using
 [`CreateExtension`](https://docs.djangoproject.com/en/stable/ref/contrib/postgres/operations/#django.contrib.postgres.operations.CreateExtension)
-(see [`demo/migrations/0001_pgcron.py`](demo/migrations/0001_pgcron.py)) — the standard
-way to install an extension in a Django project.
+(see [`demo/migrations/0001_pg_cron.py`](demo/migrations/0001_pg_cron.py)) — the
+standard way to install an extension in a Django project.
 
 ## Layout
 
@@ -23,7 +23,7 @@ examples/
   demo/                   # app
     tasks.py              #   the ping/pong @task
     migrations/
-      0001_pgcron.py      #   CreateExtension("pg_cron")
+      0001_pg_cron.py      #   CreateExtension("pg_cron")
 ```
 
 ## How deps and source work (dev / bind-mount style)
@@ -53,7 +53,7 @@ Three services come up in order:
    `CREATE EXTENSION` — a migration can't enable it). `cron.database_name=demo` points
    `pg_cron` at the app's database so the extension can be created there and jobs run
    against it.
-2. **migrate** — a one-shot `manage.py migrate`. The `demo.0001_pgcron` migration runs
+2. **migrate** — a one-shot `manage.py migrate`. The `demo.0001_pg_cron` migration runs
    `CreateExtension("pg_cron")` (as the superuser `postgres` role), then django-absurd's
    `post_migrate` handler reconciles the `SCHEDULE` into a `pg_cron` job.
    Extension-first ordering holds naturally: `post_migrate` fires after all migrations.

@@ -1,7 +1,7 @@
 import pytest
 from django.db import IntegrityError
 
-from django_absurd.models import ScheduledJob
+from django_absurd.pg_cron.models import ScheduledJob
 
 pytestmark = pytest.mark.django_db(transaction=True)
 

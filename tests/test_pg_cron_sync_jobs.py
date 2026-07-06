@@ -4,12 +4,16 @@ from django.core.management import call_command
 from django.db import DatabaseError, connection, connections, transaction
 
 from django_absurd.backends import get_absurd_backends
-from django_absurd.pgcron import build_jobname, prune_pgcron_jobs, sync_crons
+from django_absurd.pg_cron.reconcile import (
+    build_jobname,
+    prune_pg_cron_jobs,
+    sync_crons,
+)
 
 pytestmark = [
     pytest.mark.django_db(transaction=True),
-    pytest.mark.pgcron,
-    pytest.mark.usefixtures("ensure_pgcron", "_clear_owned_cron_jobs"),
+    pytest.mark.pg_cron,
+    pytest.mark.usefixtures("ensure_pg_cron", "_clear_owned_pg_cron_jobs"),
 ]
 
 ABSURD = "django_absurd.backends.AbsurdBackend"
@@ -108,7 +112,7 @@ def test_prune_tolerates_already_unscheduled_job(settings, owned_cron_jobs):
 
 def test_prune_swallows_job_vanished_after_stale_scan(settings, cron_job_rows):
     # The stale-id scan and the unschedule are separate steps; a concurrent actor
-    # can remove a job's cron.job row in between. prune_pgcron_jobs must swallow
+    # can remove a job's cron.job row in between. prune_pg_cron_jobs must swallow
     # the resulting "could not find" error and finish the reconcile.
     settings.TASKS = tasks({"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}})
     sync_crons(get_absurd_backends()["default"])
@@ -130,7 +134,7 @@ def test_prune_swallows_job_vanished_after_stale_scan(settings, cron_job_rows):
         other.close()
 
     with transaction.atomic(), connection.cursor() as cur:
-        prune_pgcron_jobs(cur, [jobid])  # dangling id -> swallowed, no exception
+        prune_pg_cron_jobs(cur, [jobid])  # dangling id -> swallowed, no exception
 
     assert cron_job_rows() == []
 
@@ -142,7 +146,7 @@ def test_prune_reraises_unexpected_error(settings):
         connection.cursor() as cur,
         pytest.raises(DatabaseError),
     ):
-        prune_pgcron_jobs(cur, [{"bad": "type"}])
+        prune_pg_cron_jobs(cur, [{"bad": "type"}])
 
 
 def test_rearm_reenables_disabled_job(settings, cron_job_rows):

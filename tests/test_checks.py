@@ -89,7 +89,7 @@ def test_schema_absent_check_is_silent(settings, capsys):
         assert "absurd.W002" not in out
     finally:
         call_command("migrate", "django_absurd", "zero", verbosity=0)
-        call_command("migrate", "django_absurd", verbosity=0)
+        call_command("migrate", verbosity=0)  # restore core AND the pg_cron app
 
 
 @pytest.mark.django_db(databases=["default", "sqlite"])

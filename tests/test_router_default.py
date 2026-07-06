@@ -7,5 +7,6 @@ def test_router_is_noop_at_default():
     # routes django_absurd to "default" (a no-op).
     router = AbsurdRouter()
     assert router.allow_migrate("default", "django_absurd") is True
+    assert router.allow_migrate("default", "django_absurd_pg_cron") is True
     assert router.db_for_read(Queue) == "default"
     assert Queue.objects.db == "default"

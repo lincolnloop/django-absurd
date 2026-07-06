@@ -2,7 +2,7 @@ import pytest
 from django.core.management import call_command
 from django.db import connection
 
-from django_absurd.models import ScheduledJob
+from django_absurd.pg_cron.models import ScheduledJob
 from tests.models import Payload
 
 pytestmark = pytest.mark.django_db(transaction=True)

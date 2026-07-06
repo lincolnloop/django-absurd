@@ -99,7 +99,7 @@ the tasks as usual.
 The standard way to deliver step 4 in a Django project is a one-off migration in your
 own app:
 
-```python title="yourapp/migrations/000x_create_pgcron.py"
+```python title="yourapp/migrations/000x_create_pg_cron.py"
 from django.contrib.postgres.operations import CreateExtension
 from django.db import migrations
 

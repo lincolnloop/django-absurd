@@ -21,7 +21,7 @@ from django.utils.module_loading import import_string
 from django_absurd.backends import get_absurd_backends, get_declared_queues
 from django_absurd.connection import BACKEND_ERROR_MESSAGE, validate_backend
 from django_absurd.models import Queue
-from django_absurd.pgcron import build_jobname, effective_queue
+from django_absurd.pg_cron.reconcile import build_jobname, effective_queue
 from django_absurd.queues import get_absurd_backend, get_absurd_database
 from django_absurd.routers import AbsurdRouter
 from django_absurd.scheduler import Schedule
@@ -81,20 +81,20 @@ E007_HINT_UNKNOWN_KEY = (
 E007_HINT_SERIALIZE = "Ensure args and kwargs contain only JSON-serializable values."
 E007_HINT_QUEUE = "Declare the queue under OPTIONS['QUEUES'] or correct the queue name."
 E007_HINT_SCHEDULER = "Set SCHEDULER to 'beat' or 'pg_cron'."
-E007_HINT_PGCRON_SUBMINUTE = (
+E007_HINT_PG_CRON_SUBMINUTE = (
     "pg_cron is minute-granularity; use the beat scheduler for sub-minute schedules."
 )
-E007_HINT_PGCRON_NAME = (
+E007_HINT_PG_CRON_NAME = (
     "Schedule names must match [A-Za-z0-9_-]+ when using the pg_cron scheduler."
 )
-E007_HINT_PGCRON_JOBNAME = (
+E007_HINT_PG_CRON_JOBNAME = (
     "Shorten the schedule name or backend alias so the composed job name"
     " (absurd:settings:<alias>:<name>) fits within 63 bytes."
 )
 
 VALID_SCHEDULE_KEYS = {"task", "cron", "queue", "args", "kwargs"}
 VALID_SCHEDULERS = {"beat", "pg_cron"}
-PGCRON_NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
+PG_CRON_NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
 
 
 @register("absurd")
@@ -198,7 +198,9 @@ def check_absurd_schedule_config(
             errors.extend(validate_schedule(name, spec, declared_queues))
             if scheduler == "pg_cron":
                 errors.extend(
-                    validate_pgcron_schedule(name, spec, backend.alias, declared_queues)
+                    validate_pg_cron_schedule(
+                        name, spec, backend.alias, declared_queues
+                    )
                 )
     return errors
 
@@ -272,7 +274,7 @@ def validate_schedule(
     return errors
 
 
-def validate_pgcron_schedule(
+def validate_pg_cron_schedule(
     name: str,
     spec: t.Any,
     alias: str,
@@ -285,47 +287,47 @@ def validate_pgcron_schedule(
     task_path = spec.get("task", "")
     queue_override = spec.get("queue")
     errors: list[CheckMessage] = []
-    errors.extend(check_pgcron_cron_fields(name, cron))
-    errors.extend(check_pgcron_names(name, alias))
+    errors.extend(check_pg_cron_cron_fields(name, cron))
+    errors.extend(check_pg_cron_names(name, alias))
     errors.extend(
-        check_pgcron_effective_queue(
+        check_pg_cron_effective_queue(
             name, task_path, cron, queue_override, declared_queues
         )
     )
     return errors
 
 
-def check_pgcron_cron_fields(name: str, cron: t.Any) -> list[CheckMessage]:
+def check_pg_cron_cron_fields(name: str, cron: t.Any) -> list[CheckMessage]:
     if isinstance(cron, str) and len(cron.split()) == 6:
         return [
             Error(
                 f"{E007_MSG} Schedule {name!r}: 6-field cron expressions are not"
                 " supported by pg_cron (pg_cron is minute-granularity; use the beat"
                 " scheduler for sub-minute schedules).",
-                hint=E007_HINT_PGCRON_SUBMINUTE,
+                hint=E007_HINT_PG_CRON_SUBMINUTE,
                 id="absurd.E007",
             )
         ]
     return []
 
 
-def check_pgcron_names(name: str, alias: str) -> list[CheckMessage]:
+def check_pg_cron_names(name: str, alias: str) -> list[CheckMessage]:
     errors: list[CheckMessage] = []
-    if not PGCRON_NAME_RE.fullmatch(name):
+    if not PG_CRON_NAME_RE.fullmatch(name):
         errors.append(
             Error(
                 f"{E007_MSG} Schedule {name!r}: invalid schedule name"
                 " for pg_cron (only [A-Za-z0-9_-] characters are allowed).",
-                hint=E007_HINT_PGCRON_NAME,
+                hint=E007_HINT_PG_CRON_NAME,
                 id="absurd.E007",
             )
         )
-    if not PGCRON_NAME_RE.fullmatch(alias):
+    if not PG_CRON_NAME_RE.fullmatch(alias):
         errors.append(
             Error(
                 f"{E007_MSG} Schedule {name!r}: backend alias {alias!r} contains"
                 " characters not allowed in pg_cron job names ([A-Za-z0-9_-] only).",
-                hint=E007_HINT_PGCRON_NAME,
+                hint=E007_HINT_PG_CRON_NAME,
                 id="absurd.E007",
             )
         )
@@ -337,14 +339,14 @@ def check_pgcron_names(name: str, alias: str) -> list[CheckMessage]:
                     f"{E007_MSG} Schedule {name!r}: job name exceeds 63 bytes"
                     f" (composed name {jobname!r} is {len(jobname.encode())} bytes;"
                     " Postgres silently truncates longer names).",
-                    hint=E007_HINT_PGCRON_JOBNAME,
+                    hint=E007_HINT_PG_CRON_JOBNAME,
                     id="absurd.E007",
                 )
             )
     return errors
 
 
-def check_pgcron_effective_queue(
+def check_pg_cron_effective_queue(
     name: str,
     task_path: t.Any,
     cron: t.Any,

@@ -4,7 +4,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.core.management.base import CommandError
 
 from django_absurd.management.base import (
-    BEAT_DISABLED_UNDER_PGCRON,
+    BEAT_DISABLED_UNDER_PG_CRON,
     AbsurdReportCommand,
     resolve_backend,
 )
@@ -81,7 +81,7 @@ class Command(AbsurdReportCommand):
             raise CommandError(msg)
 
         if options["beat"] and backend.scheduler == "pg_cron":
-            raise CommandError(BEAT_DISABLED_UNDER_PGCRON)
+            raise CommandError(BEAT_DISABLED_UNDER_PG_CRON)
 
         if queue not in backend.queues:
             valid = ", ".join(sorted(backend.queues))

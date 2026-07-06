@@ -1,13 +1,13 @@
 import pytest
 
 from django_absurd.backends import get_absurd_backends
-from django_absurd.models import ScheduledJob
-from django_absurd.pgcron import sync_crons, teardown_crons
+from django_absurd.pg_cron.models import ScheduledJob
+from django_absurd.pg_cron.reconcile import sync_crons, teardown_crons
 
 pytestmark = [
     pytest.mark.django_db(transaction=True),
-    pytest.mark.pgcron,
-    pytest.mark.usefixtures("ensure_pgcron", "_clear_owned_cron_jobs"),
+    pytest.mark.pg_cron,
+    pytest.mark.usefixtures("ensure_pg_cron", "_clear_owned_pg_cron_jobs"),
 ]
 
 ABSURD = "django_absurd.backends.AbsurdBackend"

@@ -3,7 +3,7 @@ services:
   db:
     build:
       context: .
-      dockerfile: Dockerfile.pgcron
+      dockerfile: Dockerfile.pg_cron
     command:
       - postgres
       - -c
