@@ -1,4 +1,4 @@
-from django_absurd.pg_cron.reconcile import build_jobname, jobname_prefix
+from django_absurd.pg_cron.reconcile import build_jobname, build_jobname_prefix
 
 
 def test_jobname_format():
@@ -13,8 +13,8 @@ def test_jobname_custom_source():
 
 
 def test_jobname_prefix():
-    assert jobname_prefix("default") == "absurd:settings:default:"
+    assert build_jobname_prefix("default") == "absurd:settings:default:"
 
 
 def test_jobname_prefix_custom_source():
-    assert jobname_prefix("default", source="manual") == "absurd:manual:default:"
+    assert build_jobname_prefix("default", source="manual") == "absurd:manual:default:"

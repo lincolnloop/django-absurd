@@ -58,8 +58,9 @@ def test_pg_cron_six_field_cron_rejected(settings, capsys):
         },
     )
     assert "absurd.E007" in out
-    assert "minute-granularity" in out
-    assert "beat scheduler" in out
+    assert "6-field cron expressions are not supported by pg_cron." in out
+    # Resolution text lives only in the hint — not duplicated into the msg.
+    assert out.count("minute-granularity") == 1
 
 
 def test_pg_cron_bad_name_charset_rejected(settings, capsys):
@@ -108,8 +109,8 @@ def test_pg_cron_jobname_too_long_rejected(settings, capsys):
 def test_pg_cron_undeclared_task_queue_rejected(settings, capsys):
     """Task with queue_name='reports' not in declared queues must be rejected."""
     # tests.tasks.on_reports has @task(queue_name="reports"); exclude it from declared
-    # queues so effective_queue finds it undeclared. Still include "other" (required by
-    # tasks module import) but omit "reports".
+    # queues so get_effective_queue finds it undeclared. Still include "other"
+    # (required by the tasks module import) but omit "reports".
     out = run_pg_cron_check(
         settings,
         capsys,
@@ -120,13 +121,145 @@ def test_pg_cron_undeclared_task_queue_rejected(settings, capsys):
                 "ghostly": {
                     "task": "tests.tasks.on_reports",
                     "cron": "0 2 * * *",
-                    # no explicit "queue" key — effective_queue falls back to task.queue_name
+                    # no "queue" key — get_effective_queue falls back to task.queue_name
                 }
             },
         },
     )
     assert "absurd.E007" in out
     assert "queue 'reports' is not declared" in out
+
+
+def test_pg_cron_undeclared_explicit_queue_single_error(settings, capsys):
+    """An undeclared explicit queue override yields exactly ONE E007 (core's)."""
+    out = run_pg_cron_check(
+        settings,
+        capsys,
+        {
+            "scheduler": "pg_cron",
+            "queues": BASE_QUEUES,
+            "schedule": {
+                "nightly": {
+                    "task": "tests.tasks.add",
+                    "cron": "0 2 * * *",
+                    "queue": "ghost",
+                }
+            },
+        },
+    )
+    assert "absurd.E007" in out
+    assert out.count("queue 'ghost' is not declared") == 1
+
+
+def test_pg_cron_non_mapping_schedule_single_error(settings, capsys):
+    """A non-mapping SCHEDULE under pg_cron yields only core's mapping E007."""
+    out = run_pg_cron_check(
+        settings,
+        capsys,
+        {
+            "scheduler": "pg_cron",
+            "queues": BASE_QUEUES,
+            "schedule": ["nightly"],
+        },
+    )
+    assert out.count('OPTIONS["SCHEDULE"] must be a mapping of name -> spec') == 1
+
+
+def test_pg_cron_non_mapping_entry_single_error(settings, capsys):
+    """A non-mapping schedule entry under pg_cron yields only core's E007."""
+    out = run_pg_cron_check(
+        settings,
+        capsys,
+        {
+            "scheduler": "pg_cron",
+            "queues": BASE_QUEUES,
+            "schedule": {"nightly": "0 2 * * *"},
+        },
+    )
+    assert out.count("Schedule 'nightly' must be a mapping.") == 1
+
+
+def test_pg_cron_bad_alias_charset_rejected(settings, capsys):
+    """A backend alias with characters outside [A-Za-z0-9_-] must be rejected."""
+    out = run_pg_cron_check(
+        settings,
+        capsys,
+        {
+            "scheduler": "pg_cron",
+            "alias": "bad.alias",
+            "queues": BASE_QUEUES,
+            "schedule": {
+                "nightly": {
+                    "task": "tests.tasks.add",
+                    "cron": "0 2 * * *",
+                }
+            },
+        },
+    )
+    assert "absurd.E007" in out
+    assert "backend alias 'bad.alias' contains characters not allowed" in out
+
+
+def test_pg_cron_missing_task_no_queue_error(settings, capsys):
+    """A missing task under pg_cron yields core's import E007 only — no queue E007."""
+    out = run_pg_cron_check(
+        settings,
+        capsys,
+        {
+            "scheduler": "pg_cron",
+            "queues": BASE_QUEUES,
+            "schedule": {"nightly": {"cron": "0 2 * * *"}},
+        },
+    )
+    assert "could not be imported" in out
+    assert "is not declared" not in out
+
+
+def test_pg_cron_unimportable_task_no_queue_error(settings, capsys):
+    """An unimportable task under pg_cron yields core's import E007 — no queue E007."""
+    out = run_pg_cron_check(
+        settings,
+        capsys,
+        {
+            "scheduler": "pg_cron",
+            "queues": BASE_QUEUES,
+            "schedule": {"nightly": {"task": "tests.tasks.nope", "cron": "0 2 * * *"}},
+        },
+    )
+    assert "could not be imported" in out
+    assert "is not declared" not in out
+
+
+def test_pg_cron_non_task_no_queue_error(settings, capsys):
+    """A non-task path under pg_cron yields core's not-a-task E007 — no queue E007."""
+    out = run_pg_cron_check(
+        settings,
+        capsys,
+        {
+            "scheduler": "pg_cron",
+            "queues": BASE_QUEUES,
+            "schedule": {
+                "nightly": {"task": "tests.tasks.Payload", "cron": "0 2 * * *"}
+            },
+        },
+    )
+    assert "is not a Django task" in out
+    assert "is not declared" not in out
+
+
+def test_pg_cron_non_string_cron_rejected_cleanly(settings, capsys):
+    """A non-string cron under pg_cron yields core's E007, not a TypeError."""
+    out = run_pg_cron_check(
+        settings,
+        capsys,
+        {
+            "scheduler": "pg_cron",
+            "queues": BASE_QUEUES,
+            "schedule": {"nightly": {"task": "tests.tasks.add", "cron": 300}},
+        },
+    )
+    assert "invalid cron expression 300." in out
+    assert "is not declared" not in out
 
 
 def test_unknown_scheduler_value_rejected(settings, capsys):

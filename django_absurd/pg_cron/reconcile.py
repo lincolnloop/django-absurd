@@ -36,7 +36,7 @@ def resolve_spawn_options(
     return _normalize_spawn_options(**merged)
 
 
-def effective_queue(schedule: Schedule) -> str:
+def get_effective_queue(schedule: Schedule) -> str:
     """Return the queue name a scheduled task will run on.
 
     Uses the schedule's explicit queue override when set; falls back to the
@@ -50,7 +50,7 @@ def build_jobname(alias: str, name: str, source: str = "settings") -> str:
     return f"absurd:{source}:{alias}:{name}"
 
 
-def jobname_prefix(alias: str, source: str = "settings") -> str:
+def build_jobname_prefix(alias: str, source: str = "settings") -> str:
     """Return the LIKE prefix used to prune pg_cron jobs for an alias."""
     return f"absurd:{source}:{alias}:"
 
@@ -84,7 +84,7 @@ def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:
                 name=schedule.name,
                 defaults={
                     "task": schedule.task,
-                    "queue": effective_queue(schedule),
+                    "queue": get_effective_queue(schedule),
                     "params": {"args": schedule.args, "kwargs": schedule.kwargs},
                     "options": resolve_spawn_options(backend, schedule),
                     "cron": schedule.cron,
@@ -127,7 +127,7 @@ def sync_pg_cron_jobs(backend: AbsurdBackend, schedules: list[Schedule]) -> None
     pg_cron jobs owned by this alias but no longer declared are unscheduled.
     """
     conn = connections[backend.database]
-    prefix = jobname_prefix(backend.alias)
+    prefix = build_jobname_prefix(backend.alias)
     declared_jobnames = [build_jobname(backend.alias, s.name) for s in schedules]
 
     with conn.cursor() as cur:
@@ -162,7 +162,7 @@ def teardown_crons(backend: AbsurdBackend) -> int:
         with conn.cursor() as cur:
             cur.execute("select pg_advisory_xact_lock(%s)", [SYNC_CRONS_ADVISORY_LOCK])
 
-            prefix = jobname_prefix(backend.alias)
+            prefix = build_jobname_prefix(backend.alias)
             owned_jobids = find_owned_pg_cron_jobids(cur, prefix)
             prune_pg_cron_jobs(cur, owned_jobids)
 

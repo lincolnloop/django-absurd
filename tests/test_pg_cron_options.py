@@ -1,7 +1,7 @@
 import pytest
 
 from django_absurd.backends import get_absurd_backends
-from django_absurd.pg_cron.reconcile import effective_queue, resolve_spawn_options
+from django_absurd.pg_cron.reconcile import get_effective_queue, resolve_spawn_options
 from django_absurd.scheduler import Schedule
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -42,4 +42,4 @@ def test_effective_queue_uses_task_queue_name_when_unset(settings):
     s = Schedule(
         name="x", task="tests.tasks.on_reports", cron="0 2 * * *"
     )  # @task(queue_name="reports")
-    assert effective_queue(s) == "reports"
+    assert get_effective_queue(s) == "reports"
