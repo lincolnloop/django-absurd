@@ -40,15 +40,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - name: Start pg_cron Postgres
-        run: docker compose up -d --build db
-      - name: Wait for Postgres
-        run: |
-          for _ in $(seq 1 30); do
-            if docker compose exec -T db pg_isready -U postgres; then exit 0; fi
-            sleep 1
-          done
-          echo "Postgres did not become ready" >&2
-          exit 1
+        run: docker compose up -d --build --wait db
       - name: Run tox
         run: uvx --with tox-uv tox -e "${{ matrix.env }}"
       - name: Upload coverage to Codecov
