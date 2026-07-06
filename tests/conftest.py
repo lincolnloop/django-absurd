@@ -35,9 +35,9 @@ def ensure_pg_cron(django_db_setup, django_db_blocker):
     """Enable ``pg_cron`` on the test DB for pg_cron-marked tests.
 
     Non-autouse and opt-in via ``pytest.mark.usefixtures("ensure_pg_cron")``.
-    The default ``uv run pytest`` now runs pg_cron tests, so a pg_cron-enabled
-    Postgres is required (compose/tox db provides it; graceful skip is not
-    done — a non-pg_cron Postgres will hard-error here). ``CREATE EXTENSION
+    The default ``uv run pytest`` runs pg_cron tests, so a pg_cron-enabled
+    Postgres is required (compose/tox db provides it; there is no graceful
+    skip — a non-pg_cron Postgres hard-errors here). ``CREATE EXTENSION
     pg_cron`` is only permitted in the DB named by ``cron.database_name``;
     ``tests/settings.py`` pins the test DB to that name.
     """
