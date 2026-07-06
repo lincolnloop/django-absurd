@@ -303,6 +303,31 @@ def test_pg_cron_trailing_newline_name_rejected(settings, capsys):
     assert "invalid schedule name" in out
 
 
+def test_pg_cron_empty_string_queue_resolves_via_effective_queue(settings, capsys):
+    """queue: "" is falsy — pg_cron resolves via task queue_name, not literal "".
+
+    Core raises one E007 (empty string is not a declared queue name); the
+    pg_cron effective-queue check must not raise a second one by treating ""
+    as a declared-queue override rather than falling back to task.queue_name.
+    """
+    out = run_pg_cron_check(
+        settings,
+        capsys,
+        {
+            "scheduler": "pg_cron",
+            "queues": BASE_QUEUES,
+            "schedule": {
+                "nightly": {
+                    "task": "tests.tasks.add",
+                    "cron": "0 2 * * *",
+                    "queue": "",
+                }
+            },
+        },
+    )
+    assert out.count("queue '' is not declared") == 1
+
+
 def test_pg_cron_valid_five_field_cron_no_error(settings, capsys):
     """Valid 5-field cron under pg_cron must pass without absurd.E007."""
     out = run_pg_cron_check(

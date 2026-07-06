@@ -127,8 +127,8 @@ def check_pg_cron_effective_queue(
     queue_override: t.Any,
     declared_queues: set[str],
 ) -> list[CheckMessage]:
-    if queue_override is not None:
-        return []  # explicit overrides are validated generically by core
+    if queue_override:
+        return []  # explicit truthy overrides are validated generically by core
     if not isinstance(task_path, str) or not task_path:
         return []
     try:

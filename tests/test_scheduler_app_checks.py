@@ -31,36 +31,42 @@ def run_check(capsys, settings):
     return _run
 
 
-def apps_without_pg_cron(settings):
+def build_apps_without_pg_cron(settings):
     return [app for app in settings.INSTALLED_APPS if app != "django_absurd.pg_cron"]
 
 
-def apps_with_pg_cron_first(settings):
-    return ["django_absurd.pg_cron", *apps_without_pg_cron(settings)]
+def build_apps_with_pg_cron_first(settings):
+    return ["django_absurd.pg_cron", *build_apps_without_pg_cron(settings)]
 
 
 def test_pg_cron_scheduler_without_app_errors(settings, run_check):
-    out = run_check("pg_cron", installed_apps=apps_without_pg_cron(settings))
+    out = run_check("pg_cron", installed_apps=build_apps_without_pg_cron(settings))
     assert "absurd.E008" in out
     assert (
         "django-absurd: SCHEDULER is 'pg_cron' but 'django_absurd.pg_cron'"
         " is not in INSTALLED_APPS."
     ) in out
-    assert "Add 'django_absurd.pg_cron' to INSTALLED_APPS," in out
+    assert (
+        "Add 'django_absurd.pg_cron' to INSTALLED_APPS, after 'django_absurd'."
+    ) in out
 
 
 def test_beat_scheduler_without_app_clean(settings, run_check):
-    out = run_check("beat", installed_apps=apps_without_pg_cron(settings))
+    out = run_check("beat", installed_apps=build_apps_without_pg_cron(settings))
     assert "absurd.E008" not in out
     assert "absurd.W003" not in out
 
 
 def test_pg_cron_app_before_core_warns(settings, run_check):
-    out = run_check("pg_cron", installed_apps=apps_with_pg_cron_first(settings))
+    out = run_check("pg_cron", installed_apps=build_apps_with_pg_cron_first(settings))
     assert "absurd.W003" in out
     assert (
         "django-absurd: 'django_absurd.pg_cron' is ordered before 'django_absurd'"
-        " in INSTALLED_APPS"
+        " in INSTALLED_APPS (its post_migrate cron reconcile runs before queue"
+        " provisioning)."
+    ) in out
+    assert (
+        "Place 'django_absurd.pg_cron' after 'django_absurd' in INSTALLED_APPS."
     ) in out
 
 
@@ -68,3 +74,18 @@ def test_pg_cron_app_after_core_clean(run_check):
     out = run_check("pg_cron")
     assert "absurd.E008" not in out
     assert "absurd.W003" not in out
+
+
+def test_pg_cron_app_config_path_before_core_warns(settings, run_check):
+    """Dotted AppConfig path for pg_cron listed before core must still trigger W003."""
+    apps_with_config_path_first = [
+        "django_absurd.pg_cron.apps.PgCronConfig",
+        *[
+            app
+            for app in settings.INSTALLED_APPS
+            if app
+            not in ("django_absurd.pg_cron", "django_absurd.pg_cron.apps.PgCronConfig")
+        ],
+    ]
+    out = run_check("pg_cron", installed_apps=apps_with_config_path_first)
+    assert "absurd.W003" in out

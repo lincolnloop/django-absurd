@@ -292,6 +292,21 @@ def validate_schedule_task(name: str, task_path: str) -> list[CheckMessage]:
     return []
 
 
+def resolve_installed_app_names() -> list[str]:
+    """Return INSTALLED_APPS entries as canonical app names.
+
+    Plain module strings pass through unchanged; dotted AppConfig paths
+    (e.g. 'django_absurd.pg_cron.apps.PgCronConfig') are resolved via the
+    registry to their app's .name so ordering comparisons work regardless of
+    how the consumer specifies each app.
+    """
+    name_by_config_class: dict[str, str] = {
+        f"{type(cfg).__module__}.{type(cfg).__qualname__}": cfg.name
+        for cfg in apps.get_app_configs()
+    }
+    return [name_by_config_class.get(entry, entry) for entry in settings.INSTALLED_APPS]
+
+
 @register("absurd")
 def check_scheduler_app_installed(
     *,
@@ -303,11 +318,11 @@ def check_scheduler_app_installed(
         return []
     if not apps.is_installed(PG_CRON_APP_NAME):
         return [Error(E008_MSG, hint=E008_HINT, id="absurd.E008")]
-    installed = list(settings.INSTALLED_APPS)
+    app_names = resolve_installed_app_names()
     if (
-        PG_CRON_APP_NAME in installed
-        and "django_absurd" in installed
-        and installed.index(PG_CRON_APP_NAME) < installed.index("django_absurd")
+        PG_CRON_APP_NAME in app_names
+        and "django_absurd" in app_names
+        and app_names.index(PG_CRON_APP_NAME) < app_names.index("django_absurd")
     ):
         return [DjangoWarning(W003_MSG, hint=W003_HINT, id="absurd.W003")]
     return []
