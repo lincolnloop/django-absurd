@@ -15,4 +15,4 @@ build/
 coverage.xml
 dist/
 examples/uv.lock
-junit.xml
+junit*.xml

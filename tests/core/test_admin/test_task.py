@@ -9,8 +9,14 @@ from django.urls import reverse, reverse_lazy
 
 from django_absurd.admin_views import ADMIN_ENTITY_SPECS, build_admin_model
 from django_absurd.queues import get_absurd_client
+from tests.core.test_admin.support import (
+    BACKEND,
+    parse_html,
+    result_rows,
+    seed,
+    seed_mixed,
+)
 from tests.tasks import add
-from tests.test_admin.support import BACKEND, parse_html, result_rows, seed, seed_mixed
 
 pytestmark = pytest.mark.django_db(transaction=True)
 

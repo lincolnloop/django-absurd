@@ -8,7 +8,7 @@ from django_absurd.admin import (
     register_absurd_admin,
     resolve_admin_sites,
 )
-from tests.test_admin.support import BACKEND, parse_html
+from tests.core.test_admin.support import BACKEND, parse_html
 
 pytestmark = pytest.mark.django_db(transaction=True)
 

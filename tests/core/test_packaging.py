@@ -31,7 +31,7 @@ EXPECTED_SDIST_TOP = {
 
 
 def test_dist_ships_only_django_absurd(tmp_path):
-    root = Path(__file__).resolve().parent.parent
+    root = Path(__file__).resolve().parent.parent.parent
     shutil.rmtree(root / "build", ignore_errors=True)
     # --no-isolation builds with the dev venv (which has build + hatchling +
     # hatch-vcs), so the test reports packaging problems rather than a slow isolated

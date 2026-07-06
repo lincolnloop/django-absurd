@@ -4,8 +4,8 @@ from django.core.management import call_command
 from django.urls import reverse, reverse_lazy
 
 from django_absurd.models import Run
+from tests.core.test_admin.support import parse_html, result_rows, seed_mixed
 from tests.tasks import add
-from tests.test_admin.support import parse_html, result_rows, seed_mixed
 
 pytestmark = pytest.mark.django_db(transaction=True)
 

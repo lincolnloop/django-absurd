@@ -6,7 +6,7 @@ from django.core.management import call_command
 from django.db import connections
 from django.urls import reverse, reverse_lazy
 
-from tests.test_admin.support import parse_html, result_rows
+from tests.core.test_admin.support import parse_html, result_rows
 
 pytestmark = pytest.mark.django_db(transaction=True)
 

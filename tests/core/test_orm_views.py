@@ -50,7 +50,7 @@ def test_migrate_provisions_declared_queues_and_views(django_db_blocker):
     buf = StringIO()
     with django_db_blocker.unblock():
         call_command("migrate", "django_absurd", "zero", verbosity=0)
-        call_command("migrate", verbosity=1, stdout=buf)  # restores the pg_cron app too
+        call_command("migrate", verbosity=1, stdout=buf)  # restores absurd schema
     out = buf.getvalue()
     assert "Provisioning Absurd queues" in out
     assert "Created 'default'" in out
@@ -77,7 +77,7 @@ def test_provision_skips_when_schema_absent(django_db_blocker):
         assert provision_queues_after_migrate(AbsurdConfig) is None
     finally:
         with django_db_blocker.unblock():
-            call_command("migrate", verbosity=0)  # restore core AND the pg_cron app
+            call_command("migrate", verbosity=0)  # restore absurd schema
 
 
 def test_sync_command_rebuilds_views_with_new_queue():

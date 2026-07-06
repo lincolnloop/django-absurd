@@ -20,8 +20,7 @@ def test_migrate_installs_absurd_schema_at_pinned_version():
 
 @pytest.mark.django_db(transaction=True)
 def test_reverse_drops_absurd_schema():
-    # Unapplies the dependent django_absurd_pg_cron.0001 too.
     call_command("migrate", "django_absurd", "zero", verbosity=0)
     assert _scalar("SELECT to_regnamespace('absurd') IS NULL") is True
-    call_command("migrate", verbosity=0)  # restore core AND the pg_cron app
+    call_command("migrate", verbosity=0)  # restore absurd schema
     assert _scalar("SELECT absurd.get_schema_version()") == ABSURD_SCHEMA_VERSION
