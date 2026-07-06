@@ -3,7 +3,11 @@ import typing as t
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management.base import CommandError
 
-from django_absurd.management.base import AbsurdReportCommand, resolve_backend
+from django_absurd.management.base import (
+    BEAT_DISABLED_UNDER_PGCRON,
+    AbsurdReportCommand,
+    resolve_backend,
+)
 from django_absurd.queues import provision_backend
 from django_absurd.worker import WorkerOptions, run_worker
 
@@ -77,8 +81,7 @@ class Command(AbsurdReportCommand):
             raise CommandError(msg)
 
         if options["beat"] and backend.scheduler == "pg_cron":
-            msg = "SCHEDULER is pg_cron — beat disabled; run absurd_sync_crons"
-            raise CommandError(msg)
+            raise CommandError(BEAT_DISABLED_UNDER_PGCRON)
 
         if queue not in backend.queues:
             valid = ", ".join(sorted(backend.queues))
