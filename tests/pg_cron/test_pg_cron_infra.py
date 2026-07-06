@@ -3,7 +3,6 @@ from django.db import connection
 
 pytestmark = [
     pytest.mark.django_db(transaction=True),
-    pytest.mark.pg_cron,
     pytest.mark.usefixtures("ensure_pg_cron"),
 ]
 

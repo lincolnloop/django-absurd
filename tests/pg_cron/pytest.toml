@@ -1,0 +1,15 @@
+[pytest]
+DJANGO_SETTINGS_MODULE = "tests.pg_cron.settings"
+addopts = [
+  "--allow-hosts=db,db_pg_cron,localhost,127.0.0.1",
+  "--cov",
+  "--cov-append",
+  "--cov-report=term",
+  "--cov-report=xml",
+  "--disable-socket",
+  "--junitxml=junit-pg_cron.xml",
+  "--reuse-db",
+  "--strict-markers",
+]
+pythonpath = ["../.."]
+testpaths = ["."]

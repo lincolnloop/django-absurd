@@ -1,9 +1,5 @@
 """End-to-end test: sync a schedule via pg_cron, fire the wrapper directly,
 drain the queue, and assert the task result is persisted.
-
-Marked ``pg_cron`` (deselected by default). Run with::
-
-    uv run pytest -m pg_cron tests/test_pg_cron_e2e.py
 """
 
 import pytest
@@ -16,7 +12,6 @@ from tests.models import Payload
 
 pytestmark = [
     pytest.mark.django_db(transaction=True),
-    pytest.mark.pg_cron,
     pytest.mark.usefixtures("ensure_pg_cron", "_clear_owned_pg_cron_jobs"),
 ]
 

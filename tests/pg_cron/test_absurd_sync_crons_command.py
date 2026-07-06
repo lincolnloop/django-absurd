@@ -10,7 +10,6 @@ from django_absurd.pg_cron.reconcile import sync_crons
 
 pytestmark = [
     pytest.mark.django_db(transaction=True),
-    pytest.mark.pg_cron,
     pytest.mark.usefixtures("ensure_pg_cron", "_clear_owned_pg_cron_jobs"),
 ]
 
