@@ -58,7 +58,7 @@ def derive_idempotency_key(schedule: Schedule, slot: datetime.datetime) -> str:
     # Dedup key, anchored on the schedule name (not task/cron) so args/queue-varying
     # entries don't collide. https://earendil-works.github.io/absurd/patterns/cron/
     utc_slot = slot.astimezone(datetime.UTC).isoformat(timespec="seconds")
-    raw = f"{schedule.name}|{schedule.cron}|{utc_slot}"
+    raw = f"{schedule.backend}|{schedule.name}|{schedule.cron}|{utc_slot}"
     return "cron:" + hashlib.sha256(raw.encode()).hexdigest()[:24]
 
 

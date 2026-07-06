@@ -278,6 +278,77 @@ def test_derive_idempotency_key_distinguishes_sub_minute_slots():
     )
 
 
+def test_derive_idempotency_key_differs_across_backends():
+    slot = dt.datetime(2026, 1, 1, 2, 0, tzinfo=dt.UTC)
+    s_a = Schedule(
+        name="alpha", task="tests.tasks.add", cron="0 2 * * *", backend="default"
+    )
+    s_b = Schedule(
+        name="alpha", task="tests.tasks.add", cron="0 2 * * *", backend="second"
+    )
+    assert derive_idempotency_key(s_a, slot) != derive_idempotency_key(s_b, slot)
+
+
+def test_settings_provider_sets_backend_alias(settings):
+    settings.TASKS = {
+        "default": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {
+                "QUEUES": {"default": {}},
+            },
+        },
+        "second": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {
+                "DATABASE": "default",
+                "QUEUES": {"beat": {}},
+                "SCHEDULE": {
+                    "g": {
+                        "task": "tests.tasks.make_group",
+                        "cron": "*/1 * * * *",
+                        "queue": "beat",
+                        "args": ["cross-backend"],
+                    }
+                },
+            },
+        },
+    }
+    backend = get_absurd_backends()["second"]
+    (schedule,) = get_settings_schedules(backend)
+    assert schedule.backend == "second"
+
+
+def test_beat_routes_task_to_nondefault_backend(settings):
+    settings.TASKS = {
+        "default": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {
+                "QUEUES": {"default": {}},
+            },
+        },
+        "second": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {
+                "DATABASE": "default",
+                "QUEUES": {"beat": {}},
+                "SCHEDULE": {
+                    "g": {
+                        "task": "tests.tasks.make_group",
+                        "cron": "*/1 * * * *",
+                        "queue": "beat",
+                        "args": ["cross-backend"],
+                    }
+                },
+            },
+        },
+    }
+    call_command("absurd_sync_queues")
+    backend = get_absurd_backends()["second"]
+    run_beat_until(backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC))
+    call_command("absurd_worker", alias="second", queue="beat", burst=True)
+    assert Group.objects.filter(name="cross-backend").exists()
+
+
 def test_idempotency_key_dedups_same_slot(settings):
     # The command/loop never re-fires a single slot; this tests spawn_scheduled directly
     # to prove our key + Absurd's real dedup together collapse repeated fires to one task.
