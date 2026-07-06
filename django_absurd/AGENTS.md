@@ -383,6 +383,9 @@ migration, applied by `manage.py migrate`.
 - `args`/`kwargs` values that are not JSON-serializable
 - a `queue` that is not declared in `OPTIONS["QUEUES"]`
 - an unknown `SCHEDULER` value
+- (pg*cron only) schedule name or backend alias containing characters outside
+  `[A-Za-z0-9*-]`
+- (pg_cron only) composed job name (`absurd:settings:<alias>:<name>`) exceeding 63 bytes
 
 Fix everything `absurd.E007` reports before relying on the schedule in production.
 

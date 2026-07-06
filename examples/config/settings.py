@@ -71,8 +71,9 @@ TASKS = {
         "OPTIONS": {
             "QUEUES": {"default": {}},
             # Database-side scheduler: Postgres fires the schedule directly via
-            # pg_cron — no beat process. On each `migrate`, django-absurd's
-            # post_migrate handler reconciles SCHEDULE into pg_cron jobs.
+            # pg_cron — no beat process. On each `migrate`, the
+            # django_absurd.pg_cron app's post_migrate handler reconciles
+            # SCHEDULE into pg_cron jobs.
             "SCHEDULER": "pg_cron",
             "SCHEDULE": {
                 "ping": {"task": "demo.tasks.ping", "cron": "* * * * *"},

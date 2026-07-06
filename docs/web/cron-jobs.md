@@ -124,9 +124,8 @@ concern.
 Add `"django_absurd.pg_cron"` to `INSTALLED_APPS` **after** `"django_absurd"` — the
 opt-in app owns the projection table and wrapper function migrations (applied by
 `migrate`) and reconciles the `SCHEDULE` on `post_migrate`. Running `manage.py check`
-reports [`absurd.E008`](configuration.md#absurde008) if `SCHEDULER="pg_cron"` is set but
-the app is absent, and [`absurd.W003`](configuration.md#absurdw003) (Warning) if the app
-is present but ordered before `"django_absurd"`.
+reports `absurd.E008` if `SCHEDULER="pg_cron"` is set but the app is absent, and
+`absurd.W003` (Warning) if the app is present but ordered before `"django_absurd"`.
 
 ```python title="settings.py"
 INSTALLED_APPS = [
@@ -168,6 +167,14 @@ full field table.
 **Sub-minute schedules are beat-only.** `pg_cron` fires at minute granularity. A 6-field
 (leading-seconds) cron expression under `SCHEDULER="pg_cron"` is rejected by
 `manage.py check` (`absurd.E007`). Use the beat for sub-minute cadences.
+
+**pg_cron naming constraints.** `manage.py check` also reports `absurd.E007` for:
+
+- schedule name containing characters outside `[A-Za-z0-9_-]`
+- backend alias containing characters outside `[A-Za-z0-9_-]` (pg_cron job names share
+  the same charset restriction)
+- composed job name (`absurd:settings:<alias>:<name>`) exceeding 63 bytes (Postgres
+  silently truncates longer names)
 
 **Beat and pg_cron are mutually exclusive per backend.** Setting `SCHEDULER="pg_cron"`
 and running `absurd_beat` (or `absurd_worker --beat`) against the same backend raises a
@@ -228,12 +235,9 @@ key is `(jobname, username)`) and breaks pruning (each role sees only its own jo
 
 !!! warning "The kill switch is your `SCHEDULE`, not `cron.alter_job`"
 
-    Every reconcile re-arms all settings-owned jobs (`active := true`). If you disable a
-    job directly with `cron.alter_job(jobid, active := false)`, the next `migrate` or
-    `absurd_sync_crons` run will re-enable it. To stop a job permanently, either set
-    `enabled: false` on the entry (not yet supported via a settings key — remove the
-    entry from `SCHEDULE` instead) or remove it from `SCHEDULE`. The declaration is the
-    source of truth; operator edits to `cron.job` are not persistent.
+    Every reconcile re-arms all settings-owned jobs (`active := true`). Operator edits
+    to `cron.job` are not persistent. To stop a job permanently, remove its entry from
+    `SCHEDULE` — the declaration is the source of truth.
 
 !!! warning "Uninstalling is not self-cleaning"
 

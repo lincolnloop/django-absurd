@@ -54,10 +54,10 @@ Three services come up in order:
    `pg_cron` at the app's database so the extension can be created there and jobs run
    against it.
 2. **migrate** — a one-shot `manage.py migrate`. The `demo.0001_pg_cron` migration runs
-   `CreateExtension("pg_cron")` (as the superuser `postgres` role), then django-absurd's
-   `post_migrate` handler reconciles the `SCHEDULE` into a `pg_cron` job.
-   Extension-first ordering holds naturally: `post_migrate` fires after all migrations.
-   The container exits when done.
+   `CreateExtension("pg_cron")` (as the superuser `postgres` role), then the
+   `django_absurd.pg_cron` app's `post_migrate` handler reconciles the `SCHEDULE` into
+   `pg_cron` jobs. Extension-first ordering holds naturally: `post_migrate` fires after
+   all migrations. The container exits when done.
 3. **worker** — a long-lived `absurd_worker` consuming the `default` queue, started once
    `migrate` completes successfully. With `SCHEDULER="pg_cron"` there is **no beat** —
    Postgres fires `ping` every minute; the worker drains it and logs **`pong 🏓`**.
