@@ -174,7 +174,7 @@ def check_absurd_schedule_config(
         if scheduler not in VALID_SCHEDULERS:
             errors.append(
                 Error(
-                    f"{E007_MSG} unknown SCHEDULER {scheduler!r}.",
+                    f"django-absurd: unknown SCHEDULER {scheduler!r}.",
                     hint=E007_HINT_SCHEDULER,
                     id="absurd.E007",
                 )
@@ -292,21 +292,6 @@ def validate_schedule_task(name: str, task_path: str) -> list[CheckMessage]:
     return []
 
 
-def resolve_installed_app_names() -> list[str]:
-    """Return INSTALLED_APPS entries as canonical app names.
-
-    Plain module strings pass through unchanged; dotted AppConfig paths
-    (e.g. 'django_absurd.pg_cron.apps.PgCronConfig') are resolved via the
-    registry to their app's .name so ordering comparisons work regardless of
-    how the consumer specifies each app.
-    """
-    name_by_config_class: dict[str, str] = {
-        f"{type(cfg).__module__}.{type(cfg).__qualname__}": cfg.name
-        for cfg in apps.get_app_configs()
-    }
-    return [name_by_config_class.get(entry, entry) for entry in settings.INSTALLED_APPS]
-
-
 @register("absurd")
 def check_scheduler_app_installed(
     *,
@@ -326,6 +311,21 @@ def check_scheduler_app_installed(
     ):
         return [DjangoWarning(W003_MSG, hint=W003_HINT, id="absurd.W003")]
     return []
+
+
+def resolve_installed_app_names() -> list[str]:
+    """Return INSTALLED_APPS entries as canonical app names.
+
+    Plain module strings pass through unchanged; dotted AppConfig paths
+    (e.g. 'django_absurd.pg_cron.apps.PgCronConfig') are resolved via the
+    registry to their app's .name so ordering comparisons work regardless of
+    how the consumer specifies each app.
+    """
+    name_by_config_class: dict[str, str] = {
+        f"{type(cfg).__module__}.{type(cfg).__qualname__}": cfg.name
+        for cfg in apps.get_app_configs()
+    }
+    return [name_by_config_class.get(entry, entry) for entry in settings.INSTALLED_APPS]
 
 
 @register("absurd")

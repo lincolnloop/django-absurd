@@ -4,8 +4,17 @@ from django.db import connection
 
 from django_absurd.pg_cron.models import ScheduledJob
 from tests.models import Payload
+from tests.tasks import capped, on_reports
 
 pytestmark = pytest.mark.django_db(transaction=True)
+
+
+def test_capped_task_returns_sum():
+    assert capped.func(3, 4) == 7
+
+
+def test_on_reports_task_returns_string():
+    assert on_reports.func() == "on_reports"
 
 
 def _run(source: str, alias: str, name: str) -> None:

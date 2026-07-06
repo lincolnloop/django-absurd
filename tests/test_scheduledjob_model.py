@@ -19,6 +19,11 @@ def test_roundtrip_defaults():
     assert job.enabled is True
 
 
+def test_str_representation():
+    job = ScheduledJob(source="settings", alias="default", name="nightly")
+    assert str(job) == "settings:default:nightly"
+
+
 def test_unique_per_source_alias_name():
     kw = {
         "alias": "default",

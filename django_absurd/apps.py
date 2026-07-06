@@ -1,10 +1,7 @@
-import logging
 import typing as t
 
 from django.apps import AppConfig
 from django.db.models.signals import post_migrate
-
-logger = logging.getLogger("django_absurd")
 
 
 class AbsurdConfig(AppConfig):

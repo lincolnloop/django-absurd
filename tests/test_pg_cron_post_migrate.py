@@ -159,3 +159,23 @@ def test_migrate_provisions_queues_and_reconciles_crons(settings, owned_cron_job
     assert set(get_absurd_client().list_queues()) == {"default", "other", "reports"}
     assert owned_cron_jobs() == ["absurd:settings:default:a"]
     assert ScheduledJob.objects.filter(source="settings", alias="default").count() == 1
+
+
+def test_reconcile_warns_on_none_task_path(settings, caplog):
+    settings.TASKS = pg_cron_tasks({"x": {"task": None, "cron": "0 2 * * *"}})
+    with caplog.at_level(logging.WARNING, logger="django_absurd"):
+        reconcile_crons_after_migrate(sender=None)
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert len(warnings) == 1
+    assert "skipped cron reconcile" in warnings[0].message
+
+
+def test_reconcile_warns_on_string_kwargs(settings, caplog):
+    settings.TASKS = pg_cron_tasks(
+        {"x": {"task": "tests.tasks.add", "cron": "0 2 * * *", "kwargs": "abc"}}
+    )
+    with caplog.at_level(logging.WARNING, logger="django_absurd"):
+        reconcile_crons_after_migrate(sender=None)
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert len(warnings) == 1
+    assert "skipped cron reconcile" in warnings[0].message

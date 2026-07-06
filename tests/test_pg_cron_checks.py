@@ -345,3 +345,18 @@ def test_pg_cron_valid_five_field_cron_no_error(settings, capsys):
         },
     )
     assert "absurd.E007" not in out
+
+
+def test_pg_cron_non_string_name_yields_e007_not_typeerror(settings, capsys):
+    """SCHEDULE key that is an integer must yield E007, not a TypeError."""
+    out = run_pg_cron_check(
+        settings,
+        capsys,
+        {
+            "scheduler": "pg_cron",
+            "queues": BASE_QUEUES,
+            "schedule": {5: {"task": "tests.tasks.add", "cron": "0 2 * * *"}},
+        },
+    )
+    assert "absurd.E007" in out
+    assert "TypeError" not in out

@@ -56,10 +56,12 @@ def reconcile_crons_after_migrate(sender: AppConfig, **kwargs: object) -> None:
             ImportError,
             TypeError,
             KeyError,
+            AttributeError,
+            ValueError,
         ):
             # Best-effort: migrate must never break. Skip this backend on an
             # unreachable DB, a bad dotted path in a schedule, a malformed
-            # SCHEDULE spec, an unserializable arg, or a pre-1.4 pg_cron.
+            # SCHEDULE spec, or an unserializable arg.
             logger.warning(
                 "django-absurd: skipped cron reconcile for backend %r",
                 alias,

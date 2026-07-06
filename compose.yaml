@@ -1,6 +1,9 @@
 ---
 services:
   db:
+    # Upgrading the DB image requires `docker compose down -v` first — the image
+    # moved alpine (musl) → debian (glibc) and reusing an alpine-initialized
+    # pgdata volume under glibc risks collation/index corruption.
     build:
       context: .
       dockerfile: Dockerfile.pg_cron

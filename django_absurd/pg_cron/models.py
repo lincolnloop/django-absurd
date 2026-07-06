@@ -21,8 +21,8 @@ class ScheduledJob(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        # Explicit app_label so this module stays importable (core checks import
-        # the reconcile helpers) when the app isn't in INSTALLED_APPS.
+        # Explicit app_label so this module stays importable even when
+        # django_absurd.pg_cron is not in INSTALLED_APPS.
         app_label = "django_absurd_pg_cron"
         db_table = "django_absurd_scheduledjob"
         unique_together = (("source", "alias", "name"),)

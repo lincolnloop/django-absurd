@@ -6,6 +6,8 @@ from django.db import DatabaseError, connection, connections, transaction
 from django_absurd.backends import get_absurd_backends
 from django_absurd.pg_cron.reconcile import (
     build_jobname,
+    build_jobname_prefix,
+    find_stale_pg_cron_jobids,
     prune_pg_cron_jobs,
     sync_crons,
 )
@@ -166,6 +168,18 @@ def test_rearm_reenables_disabled_job(settings, cron_job_rows):
     rows = cron_job_rows()
     assert len(rows) == 1
     assert rows[0][3] is True
+
+
+def test_find_stale_does_not_match_wildcard_alias(settings):
+    """Alias with underscore must not claim jobs owned by an alias where _ is a literal char."""
+    with transaction.atomic(), connection.cursor() as cur:
+        cur.execute(
+            "select cron.schedule(%s, %s, %s)",
+            ["absurd:settings:aXb:job", "* * * * *", "select 1"],
+        )
+        prefix = build_jobname_prefix("a_b")
+        stale = find_stale_pg_cron_jobids(cur, prefix, [])
+        assert stale == []
 
 
 def test_injection_args_are_quoted_and_schema_survives(settings, cron_job_rows):

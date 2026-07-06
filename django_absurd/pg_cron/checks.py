@@ -20,6 +20,9 @@ E007_HINT_PG_CRON_SUBMINUTE = (
 E007_HINT_PG_CRON_NAME = (
     "Schedule names must match [A-Za-z0-9_-]+ when using the pg_cron scheduler."
 )
+E007_HINT_PG_CRON_ALIAS = (
+    "Backend aliases must match [A-Za-z0-9_-]+ when using the pg_cron scheduler."
+)
 E007_HINT_PG_CRON_JOBNAME = (
     "Shorten the schedule name or backend alias so the composed job name"
     " (absurd:settings:<alias>:<name>) fits within 63 bytes."
@@ -85,9 +88,9 @@ def check_pg_cron_cron_fields(name: str, cron: t.Any) -> list[CheckMessage]:
     return []
 
 
-def check_pg_cron_names(name: str, alias: str) -> list[CheckMessage]:
+def check_pg_cron_names(name: t.Any, alias: str) -> list[CheckMessage]:
     errors: list[CheckMessage] = []
-    if not PG_CRON_NAME_RE.fullmatch(name):
+    if not isinstance(name, str) or not PG_CRON_NAME_RE.fullmatch(name):
         errors.append(
             Error(
                 f"{E007_MSG} Schedule {name!r}: invalid schedule name"
@@ -101,7 +104,7 @@ def check_pg_cron_names(name: str, alias: str) -> list[CheckMessage]:
             Error(
                 f"{E007_MSG} Schedule {name!r}: backend alias {alias!r} contains"
                 " characters not allowed in pg_cron job names ([A-Za-z0-9_-] only).",
-                hint=E007_HINT_PG_CRON_NAME,
+                hint=E007_HINT_PG_CRON_ALIAS,
                 id="absurd.E007",
             )
         )
