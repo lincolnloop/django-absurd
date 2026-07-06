@@ -35,12 +35,13 @@ jobs:
       PGPASSWORD: postgres
       PGDATABASE: postgres
       PGPORT: "5432"
+      PGPORT_PGCRON: "5434"
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       - name: Install uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-      - name: Start pg_cron Postgres
-        run: docker compose up -d --build --wait db
+      - name: Start Postgres services
+        run: docker compose up -d --build --wait db db_pg_cron
       - name: Run tox
         run: uvx --with tox-uv tox -e "${{ matrix.env }}"
       - name: Upload coverage to Codecov
@@ -58,6 +59,7 @@ jobs:
           report_type: test_results
           flags: ${{ matrix.env }}
           fail_ci_if_error: true
+          files: junit-core.xml,junit-pg_cron.xml,junit-multidb.xml
 
   build:
     name: build distribution
