@@ -206,14 +206,18 @@ failure (missing extension, bad privilege, etc.).
 (`django_absurd_scheduledtask`) and the `public.django_absurd_run_scheduled` wrapper
 function both live in the `public` schema (where Django app tables live). The table
 stores explicit option columns — `args`, `kwargs`, `max_attempts`, `retry_strategy`,
-`headers`, `cancellation`, `idempotency_key` — rather than opaque JSON blobs; the
+`headers`, `cancellation`, `idempotency_key` — one typed column per spawn option; the
 wrapper reassembles `params`/`options` jsonb from those named columns server-side at
 fire time. They are created and managed by the `django_absurd_pg_cron` app's own
 migration, applied by `manage.py migrate`.
 
-The `ScheduledTask` table is registered read-only in the admin. Settings is the source
-of truth; use `SCHEDULE` in settings rather than editing rows directly (see
-[Cron Jobs — kill switch warning](#two-things-to-know-before-going-to-production)).
+`ScheduledTask` has no admin UI. Settings is the source of truth; use `SCHEDULE` in
+settings rather than editing rows directly (see
+[the kill switch warning](#two-things-to-know-before-going-to-production)).
+
+The runnable
+[`examples/`](https://github.com/lincolnloop/django-absurd/tree/main/examples) project
+demonstrates both the beat and pg_cron schedulers running in one project.
 
 ### Timezone
 

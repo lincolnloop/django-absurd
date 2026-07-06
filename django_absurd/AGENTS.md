@@ -363,7 +363,7 @@ jobs automatically — a settings-only change needs no new migration file.
 **Wrapper model:** each schedule is materialised as a `ScheduledTask` row (the
 projection table, `django_absurd_scheduledtask`). The row stores explicit option columns
 — `args`, `kwargs`, `max_attempts`, `retry_strategy`, `headers`, `cancellation`,
-`idempotency_key` — rather than opaque JSON blobs. The `pg_cron` job command is a
+`idempotency_key` — one typed column per spawn option. The `pg_cron` job command is a
 constant call to `public.django_absurd_run_scheduled(source, alias, name)`; the wrapper
 reads the row at fire time, reassembles `params`/`options` jsonb from those named
 columns server-side, then calls `absurd.spawn_task`. Editing args/kwargs/options takes
@@ -382,12 +382,14 @@ check; settings-managed rows are unaffected.
 **Non-default-backend schedules.** A schedule entry without an explicit `queue` falls
 back to the task function's own `queue_name`. When the backend is not the default one,
 that queue may not be declared for that backend — set `queue` explicitly for every
-schedule on a non-default backend (mirrors `task.using(backend=...)` semantics). The
-system check (`absurd.E007`) catches undeclared queue names.
+schedule on a non-default backend (mirrors `task.using(backend=...)` semantics). For
+`pg_cron` schedules `absurd.E007` also validates this resolved fallback queue; under the
+beat scheduler only an explicit `queue` key is checked, so setting `queue` explicitly
+matters most there.
 
-**Admin.** The `ScheduledTask` table is registered read-only in the admin. Settings is
-the only source of truth for schedules; edit `SCHEDULE` in settings rather than editing
-rows directly.
+**No admin UI.** `ScheduledTask` is not registered in the admin. Settings is the only
+source of truth for schedules; edit `SCHEDULE` in settings rather than editing rows
+directly (the projection table is managed by reconcile).
 
 ### Validate
 

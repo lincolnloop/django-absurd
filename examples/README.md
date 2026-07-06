@@ -50,8 +50,9 @@ From this `examples/` directory:
 docker compose up --build
 ```
 
-> **First run / after a schema change:** add `docker compose down -v` first to remove
-> the Postgres volume so migrations and the pg_cron schedule are applied from scratch.
+> **Re-running after an earlier build (or a schema change):** add
+> `docker compose down -v` first to remove the Postgres volume so migrations and the
+> pg_cron schedule are applied from scratch.
 
 Four services come up in order:
 
