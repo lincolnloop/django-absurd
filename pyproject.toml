@@ -127,15 +127,13 @@ addopts = [
   "--junitxml=junit.xml",
   "--reuse-db",
   "--strict-markers",
-  "-m",
-  "not pg_cron",
 ]
 filterwarnings = [
   "error::bs4.GuessedAtParserWarning",  # Raise error when parser not set.
 ]
 markers = [
   "packaging: builds/inspects the distribution; run only in the dev tox env (needs the build backend)",
-  "pg_cron: requires a pg_cron-enabled Postgres; deselected by default (run with -m pg_cron against the compose db)",
+  "pg_cron: requires a pg_cron-enabled Postgres; runs by default (compose/tox db has the extension); exclude with -m \"not pg_cron\" on a plain Postgres",
 ]
 pythonpath = ["."]
 testpaths = ["tests"]

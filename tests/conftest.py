@@ -34,10 +34,12 @@ def _reset_absurd_queues(_enable_db):
 def ensure_pg_cron(django_db_setup, django_db_blocker):
     """Enable ``pg_cron`` on the test DB for pg_cron-marked tests.
 
-    Non-autouse and opt-in via ``pytest.mark.usefixtures("ensure_pg_cron")`` so
-    the default ``uv run pytest`` (which deselects ``pg_cron``) never needs the
-    extension. ``CREATE EXTENSION pg_cron`` is only permitted in the DB named by
-    ``cron.database_name``; ``tests/settings.py`` pins the test DB to that name.
+    Non-autouse and opt-in via ``pytest.mark.usefixtures("ensure_pg_cron")``.
+    The default ``uv run pytest`` now runs pg_cron tests, so a pg_cron-enabled
+    Postgres is required (compose/tox db provides it; graceful skip is not
+    done — a non-pg_cron Postgres will hard-error here). ``CREATE EXTENSION
+    pg_cron`` is only permitted in the DB named by ``cron.database_name``;
+    ``tests/settings.py`` pins the test DB to that name.
     """
     with django_db_blocker.unblock(), connection.cursor() as cur:
         cur.execute("create extension if not exists pg_cron")
