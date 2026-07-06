@@ -51,22 +51,16 @@ def test_admin_rows_untouched(settings):
 
 
 def test_sync_writes_named_option_columns(settings):
-    settings.TASKS = {
-        "default": {
-            "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "QUEUES": {"default": {}},
-            "OPTIONS": {
-                "SCHEDULE": {
-                    "nightly": {
-                        "task": "tests.tasks.capped",  # decorated max_attempts=3
-                        "cron": "0 2 * * *",
-                        "args": [1, 2],
-                        "kwargs": {"k": "v"},
-                    },
-                },
+    settings.TASKS = tasks(
+        {
+            "nightly": {
+                "task": "tests.tasks.capped",  # decorated max_attempts=3
+                "cron": "0 2 * * *",
+                "args": [1, 2],
+                "kwargs": {"k": "v"},
             },
-        },
-    }
+        }
+    )
     backend = get_absurd_backends()["default"]
     sync_crons(backend)
     row = ScheduledTask.objects.get(source="settings", alias="default", name="nightly")
