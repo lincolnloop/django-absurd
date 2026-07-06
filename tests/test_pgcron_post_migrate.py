@@ -9,7 +9,7 @@ from django_absurd.models import ScheduledJob
 pytestmark = [
     pytest.mark.django_db(transaction=True),
     pytest.mark.pgcron,
-    pytest.mark.usefixtures("ensure_pgcron"),
+    pytest.mark.usefixtures("ensure_pgcron", "_clear_owned_cron_jobs"),
 ]
 
 ABSURD = "django_absurd.backends.AbsurdBackend"
@@ -41,15 +41,6 @@ def beat_tasks(schedule: dict[str, t.Any]) -> dict[str, t.Any]:
     }
 
 
-def owned_cron_jobs(alias: str = "default") -> list[str]:
-    with connection.cursor() as cur:
-        cur.execute(
-            "select jobname from cron.job where jobname like %s order by jobname",
-            [f"absurd:settings:{alias}:%"],
-        )
-        return [row[0] for row in cur.fetchall()]
-
-
 def run_scheduled(source: str, alias: str, name: str) -> None:
     with connection.cursor() as cur:
         cur.execute(
@@ -58,16 +49,7 @@ def run_scheduled(source: str, alias: str, name: str) -> None:
         )
 
 
-@pytest.fixture(autouse=True)
-def _clear_owned_jobs():
-    yield
-    with connection.cursor() as cur:
-        cur.execute("select jobid from cron.job where jobname like 'absurd:%'")
-        for (jobid,) in cur.fetchall():
-            cur.execute("select cron.unschedule(%s)", [jobid])
-
-
-def test_reconcile_creates_owned_cron_jobs_under_pg_cron(settings):
+def test_reconcile_creates_owned_cron_jobs_under_pg_cron(settings, owned_cron_jobs):
     settings.TASKS = pgcron_tasks(
         {
             "a": {"task": "tests.tasks.add", "cron": "0 2 * * *"},
@@ -83,7 +65,9 @@ def test_reconcile_creates_owned_cron_jobs_under_pg_cron(settings):
     assert ScheduledJob.objects.filter(source="settings", alias="default").count() == 2
 
 
-def test_reconcile_tears_down_when_scheduler_switches_to_beat(settings):
+def test_reconcile_tears_down_when_scheduler_switches_to_beat(
+    settings, owned_cron_jobs
+):
     settings.TASKS = pgcron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
@@ -97,7 +81,7 @@ def test_reconcile_tears_down_when_scheduler_switches_to_beat(settings):
     assert not ScheduledJob.objects.filter(source="settings", alias="default").exists()
 
 
-def test_reconcile_missing_row_fires_clean_noop(settings):
+def test_reconcile_missing_row_fires_clean_noop(settings, owned_cron_jobs):
     settings.TASKS = pgcron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
@@ -131,7 +115,7 @@ def test_reconcile_skips_when_extension_absent(settings):
             cur.execute("create extension if not exists pg_cron")
 
 
-def test_reconcile_skips_on_bad_dotted_path(settings):
+def test_reconcile_skips_on_bad_dotted_path(settings, owned_cron_jobs):
     settings.TASKS = pgcron_tasks(
         {"a": {"task": "tests.tasks.does_not_exist", "cron": "0 2 * * *"}}
     )

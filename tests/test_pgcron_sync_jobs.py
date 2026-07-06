@@ -9,7 +9,7 @@ from django_absurd.pgcron import build_jobname, prune_pgcron_jobs, sync_crons
 pytestmark = [
     pytest.mark.django_db(transaction=True),
     pytest.mark.pgcron,
-    pytest.mark.usefixtures("ensure_pgcron"),
+    pytest.mark.usefixtures("ensure_pgcron", "_clear_owned_cron_jobs"),
 ]
 
 ABSURD = "django_absurd.backends.AbsurdBackend"
@@ -28,30 +28,11 @@ def tasks(schedule):
     }
 
 
-def owned_jobs(alias="default"):
-    with connection.cursor() as cur:
-        cur.execute(
-            "select jobname, schedule, command, active from cron.job "
-            "where jobname like %s order by jobname",
-            [f"absurd:settings:{alias}:%"],
-        )
-        return cur.fetchall()
-
-
-@pytest.fixture(autouse=True)
-def _clear_owned_jobs():
-    yield
-    with connection.cursor() as cur:
-        cur.execute("select jobid from cron.job where jobname like 'absurd:%'")
-        for (jobid,) in cur.fetchall():
-            cur.execute("select cron.unschedule(%s)", [jobid])
-
-
-def test_creates_job_with_schedule_and_constant_command(settings):
+def test_creates_job_with_schedule_and_constant_command(settings, cron_job_rows):
     settings.TASKS = tasks({"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}})
     sync_crons(get_absurd_backends()["default"])
 
-    rows = owned_jobs()
+    rows = cron_job_rows()
     assert len(rows) == 1
     jobname, schedule, command, active = rows[0]
     assert jobname == "absurd:settings:default:a"
@@ -63,17 +44,17 @@ def test_creates_job_with_schedule_and_constant_command(settings):
     assert active is True
 
 
-def test_sync_is_idempotent(settings):
+def test_sync_is_idempotent(settings, owned_cron_jobs):
     settings.TASKS = tasks({"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}})
     sync_crons(get_absurd_backends()["default"])
     sync_crons(get_absurd_backends()["default"])
 
-    rows = owned_jobs()
+    rows = owned_cron_jobs()
     assert len(rows) == 1
-    assert rows[0][0] == "absurd:settings:default:a"
+    assert rows[0] == "absurd:settings:default:a"
 
 
-def test_prune_removes_undeclared_job_but_keeps_foreign(settings):
+def test_prune_removes_undeclared_job_but_keeps_foreign(settings, owned_cron_jobs):
     with connection.cursor() as cur:
         cur.execute(
             "select cron.schedule(%s, %s, %s)", ["keepme", "* * * * *", "select 1"]
@@ -86,21 +67,21 @@ def test_prune_removes_undeclared_job_but_keeps_foreign(settings):
         }
     )
     sync_crons(get_absurd_backends()["default"])
-    assert {r[0] for r in owned_jobs()} == {
+    assert set(owned_cron_jobs()) == {
         "absurd:settings:default:a",
         "absurd:settings:default:b",
     }
 
     settings.TASKS = tasks({"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}})
     sync_crons(get_absurd_backends()["default"])
-    assert {r[0] for r in owned_jobs()} == {"absurd:settings:default:a"}
+    assert set(owned_cron_jobs()) == {"absurd:settings:default:a"}
 
     with connection.cursor() as cur:
         cur.execute("select count(*) from cron.job where jobname = 'keepme'")
         assert cur.fetchone()[0] == 1
 
 
-def test_prune_tolerates_already_unscheduled_job(settings):
+def test_prune_tolerates_already_unscheduled_job(settings, owned_cron_jobs):
     settings.TASKS = tasks(
         {
             "a": {"task": "tests.tasks.add", "cron": "0 2 * * *"},
@@ -122,10 +103,10 @@ def test_prune_tolerates_already_unscheduled_job(settings):
     settings.TASKS = tasks({"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}})
     sync_crons(get_absurd_backends()["default"])  # no exception
 
-    assert {r[0] for r in owned_jobs()} == {"absurd:settings:default:a"}
+    assert set(owned_cron_jobs()) == {"absurd:settings:default:a"}
 
 
-def test_prune_swallows_job_vanished_after_stale_scan(settings):
+def test_prune_swallows_job_vanished_after_stale_scan(settings, cron_job_rows):
     # The stale-id scan and the unschedule are separate steps; a concurrent actor
     # can remove a job's cron.job row in between. prune_pgcron_jobs must swallow
     # the resulting "could not find" error and finish the reconcile.
@@ -151,7 +132,7 @@ def test_prune_swallows_job_vanished_after_stale_scan(settings):
     with transaction.atomic(), connection.cursor() as cur:
         prune_pgcron_jobs(cur, [jobid])  # dangling id -> swallowed, no exception
 
-    assert owned_jobs() == []
+    assert cron_job_rows() == []
 
 
 def test_prune_reraises_unexpected_error(settings):
@@ -164,7 +145,7 @@ def test_prune_reraises_unexpected_error(settings):
         prune_pgcron_jobs(cur, [{"bad": "type"}])
 
 
-def test_rearm_reenables_disabled_job(settings):
+def test_rearm_reenables_disabled_job(settings, cron_job_rows):
     settings.TASKS = tasks({"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}})
     sync_crons(get_absurd_backends()["default"])
 
@@ -178,12 +159,12 @@ def test_rearm_reenables_disabled_job(settings):
 
     sync_crons(get_absurd_backends()["default"])
 
-    rows = owned_jobs()
+    rows = cron_job_rows()
     assert len(rows) == 1
     assert rows[0][3] is True
 
 
-def test_injection_args_are_quoted_and_schema_survives(settings):
+def test_injection_args_are_quoted_and_schema_survives(settings, cron_job_rows):
     call_command("absurd_sync_queues")
     with connection.cursor() as cur:
         cur.execute("select to_regnamespace('absurd')")
@@ -200,7 +181,7 @@ def test_injection_args_are_quoted_and_schema_survives(settings):
     )
     sync_crons(get_absurd_backends()["default"])
 
-    rows = owned_jobs()
+    rows = cron_job_rows()
     assert len(rows) == 1
     assert (
         rows[0][2]

@@ -101,6 +101,10 @@ def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:
     return len(schedules), pruned
 
 
+# cron.schedule / cron.unschedule / cron.alter_job are pg_cron catalog functions,
+# not part of the Absurd SDK (which covers spawn/queues/claim only). Raw SQL here
+# is inherent to this DB-side scheduler backend.
+#
 # psycopg scans the whole query for %, so SQL format()'s %L placeholders must be
 # doubled to %%L; the bound params carry an explicit ::text cast. Without both,
 # psycopg raises "only '%s','%b','%t' are allowed". Building the command

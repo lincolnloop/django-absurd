@@ -17,7 +17,7 @@ from tests.models import Payload
 pytestmark = [
     pytest.mark.django_db(transaction=True),
     pytest.mark.pgcron,
-    pytest.mark.usefixtures("ensure_pgcron"),
+    pytest.mark.usefixtures("ensure_pgcron", "_clear_owned_cron_jobs"),
 ]
 
 ABSURD = "django_absurd.backends.AbsurdBackend"
@@ -38,15 +38,6 @@ TASKS_PGCRON = {
         },
     }
 }
-
-
-@pytest.fixture(autouse=True)
-def _clear_owned_jobs():
-    yield
-    with connection.cursor() as cur:
-        cur.execute("select jobid from cron.job where jobname like 'absurd:%'")
-        for (jobid,) in cur.fetchall():
-            cur.execute("select cron.unschedule(%s)", [jobid])
 
 
 def test_e2e_sync_fire_worker_assert_payload(settings):
