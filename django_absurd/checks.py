@@ -299,10 +299,17 @@ def check_scheduler_app_installed(
     **kwargs: t.Any,
 ) -> list[CheckMessage]:
     backends = get_absurd_backends()
-    if not any(backend.scheduler == "pg_cron" for backend in backends.values()):
+    app_installed = apps.is_installed(PG_CRON_APP_NAME)
+
+    if not app_installed:
+        # E008 only fires when a backend actually needs the app.
+        if any(backend.scheduler == "pg_cron" for backend in backends.values()):
+            return [Error(E008_MSG, hint=E008_HINT, id="absurd.E008")]
         return []
-    if not apps.is_installed(PG_CRON_APP_NAME):
-        return [Error(E008_MSG, hint=E008_HINT, id="absurd.E008")]
+
+    # W003 tracks INSTALLED_APPS ordering regardless of the active scheduler: a
+    # mis-ordered app runs its post_migrate reconcile before queue provisioning
+    # the moment any backend switches to pg_cron.
     app_names = resolve_installed_app_names()
     if (
         PG_CRON_APP_NAME in app_names

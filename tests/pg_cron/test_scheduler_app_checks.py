@@ -10,10 +10,12 @@ ABSURD = "django_absurd.backends.AbsurdBackend"
 BASE_QUEUES: dict = {"default": {}, "other": {}, "reports": {}}
 
 
-def run_check(capsys, settings, installed_apps=None, schedule=None):
+def run_check(
+    capsys, settings, installed_apps=None, schedule=None, scheduler="pg_cron"
+):
     if installed_apps is not None:
         settings.INSTALLED_APPS = installed_apps
-    options: dict = {"SCHEDULER": "pg_cron", "QUEUES": BASE_QUEUES}
+    options: dict = {"SCHEDULER": scheduler, "QUEUES": BASE_QUEUES}
     if schedule is not None:
         options["SCHEDULE"] = schedule
     settings.TASKS = {
@@ -49,6 +51,19 @@ def test_pg_cron_app_before_core_warns(capsys, settings):
     assert (
         "Place 'django_absurd.pg_cron' after 'django_absurd' in INSTALLED_APPS." in out
     )
+
+
+def test_pg_cron_app_before_core_warns_under_beat(capsys, settings):
+    """W003 tracks INSTALLED_APPS ordering, not the active scheduler: a beat
+    backend with the pg_cron app mis-ordered must still warn (the misordering
+    bites the moment the backend switches to pg_cron)."""
+    out = run_check(
+        capsys,
+        settings,
+        build_apps_with_pg_cron_first(settings),
+        scheduler="beat",
+    )
+    assert "absurd.W003" in out
 
 
 def test_pg_cron_app_after_core_clean(capsys, settings):
