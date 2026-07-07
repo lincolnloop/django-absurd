@@ -20,5 +20,9 @@ def test_can_schedule_and_unschedule():
             ["absurd:__probe__", "* * * * *", "select 1"],
         )
         jobid = cur.fetchone()[0]
+        cur.execute("select count(*) from cron.job where jobid = %s", [jobid])
+        assert cur.fetchone()[0] == 1, "cron.schedule did not create a job row"
+
         cur.execute("select cron.unschedule(%s)", [jobid])
-    assert jobid is not None
+        cur.execute("select count(*) from cron.job where jobid = %s", [jobid])
+        assert cur.fetchone()[0] == 0, "cron.unschedule did not remove the job row"
