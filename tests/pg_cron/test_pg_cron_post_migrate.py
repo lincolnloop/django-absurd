@@ -168,6 +168,18 @@ def test_reconcile_emits_migrate_stdout_on_sync(settings):
     assert "Scheduled 1" in out
 
 
+def test_reconcile_is_quiet_on_noop_migrate(settings):
+    """A second migrate with an unchanged SCHEDULE creates and prunes nothing,
+    so it must emit no reconcile output (parity with queue provisioning)."""
+    settings.TASKS = build_pg_cron_tasks(
+        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
+    )
+    reconcile_crons_after_migrate(sender=None)  # first run creates the row + job
+    buf = StringIO()
+    reconcile_crons_after_migrate(sender=None, verbosity=1, stdout=buf)
+    assert buf.getvalue() == ""
+
+
 def test_reconcile_emits_prune_line_on_sync(settings):
     settings.TASKS = build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}

@@ -42,10 +42,10 @@ def reconcile_crons_after_migrate(
     for alias, backend in get_absurd_backends().items():
         try:
             if backend.scheduler == "pg_cron":
-                upserted, pruned = sync_crons(backend)
+                created, pruned = sync_crons(backend)
                 lines = []
-                if upserted:
-                    lines.append(f"  Scheduled {upserted}")
+                if created:
+                    lines.append(f"  Scheduled {created}")
                 if pruned:
                     lines.append(f"  Pruned {pruned}")
                 if lines and verbosity >= 1 and stdout is not None:

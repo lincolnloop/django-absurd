@@ -1,4 +1,6 @@
-"""pg_cron scheduler helpers — option resolution and effective-queue computation."""
+"""pg_cron reconcile engine: materialize declared SCHEDULE entries into
+ScheduledTask rows and pg_cron jobs, prune undeclared ones, and tear down on
+scheduler switch — plus the option/effective-queue resolution they depend on."""
 
 import typing as t
 
@@ -66,12 +68,15 @@ def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:
     After the table phase, materializes one pg_cron job per declared entry
     (upsert + active re-arm) and prunes owned-but-undeclared pg_cron jobs.
 
-    Returns (upserted, pruned): count of declared entries synced and count of
-    ScheduledTask rows deleted.
+    Returns (created, pruned): count of ScheduledTask rows newly created and
+    count deleted. A no-op reconcile (every row already present, nothing stale)
+    returns (0, 0) so callers can stay quiet — matching queue provisioning,
+    which reports only deltas.
     """
     schedules = get_settings_schedules(backend)
     declared_names = [s.name for s in schedules]
 
+    created = 0
     with transaction.atomic(using=backend.database):
         conn = connections[backend.database]
         with conn.cursor() as cur:
@@ -79,7 +84,9 @@ def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:
 
         for schedule in schedules:
             opts = resolve_spawn_options(backend, schedule)
-            ScheduledTask.objects.using(backend.database).update_or_create(
+            _, was_created = ScheduledTask.objects.using(
+                backend.database
+            ).update_or_create(
                 source="settings",
                 alias=backend.alias,
                 name=schedule.name,
@@ -97,6 +104,7 @@ def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:
                     "enabled": True,
                 },
             )
+            created += was_created
 
         pruned, _ = (
             ScheduledTask.objects.using(backend.database)
@@ -107,7 +115,7 @@ def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:
 
         sync_pg_cron_jobs(backend, schedules)
 
-    return len(schedules), pruned
+    return created, pruned
 
 
 # cron.schedule / cron.unschedule / cron.alter_job are pg_cron catalog functions,
