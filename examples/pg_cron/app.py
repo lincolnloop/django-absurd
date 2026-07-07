@@ -5,12 +5,14 @@ worker drains it and logs 'pong 🏓'. The `django_absurd.pg_cron` app's migrati
 creates the extension. Watch Tasks/Runs in the admin.
 
     docker compose up
-    http://localhost:8000/admin/   Tasks / Runs / … (superuser: admin / admin)
+    http://localhost:8000/   → the admin (Tasks / Runs / …); login admin / admin
 """
 
 import logging
 import os
 
+from django.http import HttpRequest, HttpResponse
+from django.shortcuts import redirect
 from django.tasks import task
 from nanodjango import Django
 
@@ -55,6 +57,12 @@ logger = logging.getLogger("demo")
 def ping() -> None:
     """Fired every minute by pg_cron; the worker runs it and logs 'pong 🏓'."""
     logger.info("pong 🏓")
+
+
+@app.route("/")
+def index(request: HttpRequest) -> HttpResponse:
+    """This demo has no UI of its own — land on the admin."""
+    return redirect("/admin/")
 
 
 if __name__ == "__main__":
