@@ -51,7 +51,10 @@ def test_pg_cron_task_import_raise_reports_e007_not_crash(settings, capsys):
             "scheduler": "pg_cron",
             "queues": BASE_QUEUES,
             "schedule": {
-                "boom": {"task": "tests.import_boom.whatever", "cron": "0 2 * * *"},
+                "boom": {
+                    "task": "tests.raises_on_import.anything",
+                    "cron": "0 2 * * *",
+                },
             },
         },
     )
