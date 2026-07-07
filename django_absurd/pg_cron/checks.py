@@ -1,5 +1,6 @@
 """System checks for the pg_cron scheduler app (registered via PgCronConfig.ready)."""
 
+import logging
 import re
 import typing as t
 from collections.abc import Mapping, Sequence
@@ -28,6 +29,8 @@ E007_HINT_PG_CRON_JOBNAME = (
     "Shorten the schedule name or backend alias so the composed job name"
     " (absurd:settings:<alias>:<name>) fits within 63 bytes."
 )
+
+logger = logging.getLogger("django_absurd")
 
 PG_CRON_NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
 
@@ -137,7 +140,11 @@ def check_pg_cron_effective_queue(
         return []
     try:
         task_obj = import_string(task_path)
-    except ImportError:
+    except Exception:
+        # Any import-time failure (not just ImportError — a module-level env read
+        # can raise KeyError/ValueError) is already reported as E007 by core's
+        # validate_schedule_task; log and return rather than crash the check.
+        logger.exception("absurd.E007: task %r could not be imported", task_path)
         return []
     if not isinstance(task_obj, Task):
         return []

@@ -41,6 +41,24 @@ def run_pg_cron_check(settings, capsys, options):
     return cap.out + cap.err
 
 
+def test_pg_cron_task_import_raise_reports_e007_not_crash(settings, capsys):
+    """A scheduled task whose module raises a non-ImportError at import must
+    surface as E007, not crash `manage.py check` with a raw traceback."""
+    out = run_pg_cron_check(
+        settings,
+        capsys,
+        {
+            "scheduler": "pg_cron",
+            "queues": BASE_QUEUES,
+            "schedule": {
+                "boom": {"task": "tests.import_boom.whatever", "cron": "0 2 * * *"},
+            },
+        },
+    )
+    assert E007_MSG in out
+    assert "could not be imported" in out
+
+
 def test_pg_cron_six_field_cron_rejected(settings, capsys):
     """6-field cron (leading seconds) must be rejected under pg_cron."""
     out = run_pg_cron_check(
