@@ -210,8 +210,10 @@ settings rather than editing rows directly (see
 [the kill switch warning](#two-things-to-know-before-going-to-production)).
 
 The runnable
-[`examples/`](https://github.com/lincolnloop/django-absurd/tree/main/examples) project
-demonstrates both the beat and pg_cron schedulers running in one project.
+[`examples/pg_cron/`](https://github.com/lincolnloop/django-absurd/tree/main/examples/pg_cron)
+demo shows the pg_cron scheduler end-to-end (a companion
+[`examples/beat/`](https://github.com/lincolnloop/django-absurd/tree/main/examples/beat)
+demos the beat scheduler).
 
 ### Timezone
 
