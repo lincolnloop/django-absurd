@@ -24,7 +24,8 @@ def _clear_owned_pg_cron_jobs(request):
 
     The broader ``absurd:%`` pattern (not a per-alias prefix) catches all jobs
     created during a test, including those outside ``absurd:settings:<alias>:`` scope.
-    Skips cleanup for tests that never opened a DB connection.
+    Skips cleanup for tests without the ``django_db`` marker (they cannot
+    commit cron jobs, so there is nothing to unschedule).
     """
     yield
     if not request.node.get_closest_marker("django_db"):
