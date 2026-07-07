@@ -8,6 +8,12 @@ django-absurd plugs [Absurd](https://earendil-works.github.io/absurd/), a
 Postgres-native workflow engine, into Django's Tasks framework. It reuses Django's
 database connection and ships Absurd's schema as Django migrations — no separate broker.
 
+**Runnable examples** live in the repo's
+[`examples/`](https://github.com/lincolnloop/django-absurd/tree/main/examples) — three
+single-file [nanodjango](https://github.com/radiac/nanodjango) demos, each
+`docker compose up`: `web` (enqueue + result), `beat` (beat scheduler), and `pg_cron`
+(pg_cron scheduler).
+
 ## Hard requirements
 
 - **Python 3.12+**, **Django 6.0+**.
