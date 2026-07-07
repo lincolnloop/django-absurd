@@ -68,10 +68,11 @@ Four services come up in order:
    all migrations. The container exits when done.
 3. **worker** — a long-lived `absurd_worker --alias default --queue default`, started
    once `migrate` completes. With `SCHEDULER="pg_cron"` there is **no beat** — Postgres
-   fires `ping` every minute; the worker drains it and logs **`pong 🏓`**.
+   fires `ping` every minute; the worker drains it and logs
+   **`pong 🏓 — fired by the pg_cron scheduler (default backend)`**.
 4. **beatworker** — a long-lived `absurd_worker --alias beat --queue beat --beat`,
    started once `migrate` completes. The beat fires `tick` every minute; the worker
-   drains it and logs **`tock ⏰`**.
+   drains it and logs **`tock ⏰ — fired by the beat scheduler (beat backend)`**.
 
 Tail both workers to watch them fire (within a minute):
 
