@@ -179,9 +179,10 @@ pipeline that skips `migrate` when no migration files changed:
 python manage.py absurd_sync_crons
 ```
 
-The command is loud: it reports upserted/pruned counts, and fails with a non-zero exit
-on error — a wrong `SCHEDULER` raises `CommandError`, while a missing extension or
-insufficient privilege surfaces as the underlying database error.
+The command is loud: it reports synced/pruned counts, and fails with a non-zero exit on
+error — a wrong `SCHEDULER` or a malformed `SCHEDULE` entry (missing `task`/`cron`)
+raises `CommandError`, while a missing extension or insufficient privilege surfaces as
+the underlying database error.
 
 `ScheduledTask` (the projection table backing each job) has no admin UI. Settings is the
 source of truth; drive schedules through `SCHEDULE`, not by editing rows (see

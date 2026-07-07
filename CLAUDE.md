@@ -57,7 +57,9 @@ duplicate that material here.
     installed; plain `db` service (`PGPORT`, default 5432; `.envrc` reserves 5433).
   - `uv run pytest tests/pg_cron` — pg_cron app installed; requires the `db_pg_cron`
     service (`PGPORT_PGCRON`, default 5434); test DB `absurd_test_pg_cron` matches
-    `cron.database_name`.
+    `cron.database_name`. One opt-in e2e (`test_e2e_pg_cron_launcher_fires_wrapper…`)
+    lets the real launcher fire and is skipped unless `ABSURD_PGCRON_LIVE=1` (waits ~1
+    min for a minute boundary).
   - `uv run pytest tests/multidb` — multi-DB router suite; plain `db`.
 - Two compose services: `db` (plain `postgres:18`) and `db_pg_cron`
   (`Dockerfile.pg_cron` + `shared_preload_libraries=pg_cron`). Start both:
