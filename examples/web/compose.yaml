@@ -1,0 +1,51 @@
+---
+services:
+  db:
+    image: postgres:18
+    environment:
+      - POSTGRES_PASSWORD=postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  web:
+    build:
+      context: ../..
+      dockerfile: examples/web/Dockerfile
+    command: sh start.sh
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c 'import socket; socket.create_connection(("localhost", 8000), 2)'
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    environment: &env
+      - PGHOST=db
+      - PGPORT=5432
+      - PGUSER=postgres
+      - PGPASSWORD=postgres
+      - PGDATABASE=postgres
+      - DJANGO_SUPERUSER_USERNAME=admin
+      - DJANGO_SUPERUSER_PASSWORD=admin
+      - DJANGO_SUPERUSER_EMAIL=admin@example.com
+    volumes: &mounts
+      - ./:/app
+      - ../../django_absurd:/src/django_absurd
+  worker:
+    build:
+      context: ../..
+      dockerfile: examples/web/Dockerfile
+    command: nanodjango manage app.py absurd_worker
+    depends_on:
+      web:
+        condition: service_healthy
+    environment: *env
+    volumes: *mounts

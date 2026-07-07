@@ -1,0 +1,15 @@
+[project]
+dependencies = [
+  "django-absurd",
+  "django==6.0.6",
+  "nanodjango",
+  "psycopg[binary]==3.3.4",
+]
+name = "django-absurd-example-web"
+requires-python = ">=3.12"
+version = "0"
+
+# django-absurd from the local checkout (repo root), so the demo exercises THIS
+# branch's code — not a released version.
+[tool.uv.sources]
+django-absurd = {path = "../..", editable = true}
