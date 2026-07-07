@@ -2,15 +2,17 @@ import typing as t
 
 from django_absurd.queues import resolve_absurd_database
 
+ABSURD_APP_LABELS = frozenset({"django_absurd", "django_absurd_pg_cron"})
+
 
 class AbsurdRouter:
     def db_for_read(self, model: t.Any, **hints: t.Any) -> str | None:
-        if model._meta.app_label == "django_absurd":  # noqa: SLF001
+        if model._meta.app_label in ABSURD_APP_LABELS:  # noqa: SLF001
             return resolve_absurd_database()
         return None
 
     def db_for_write(self, model: t.Any, **hints: t.Any) -> str | None:
-        if model._meta.app_label == "django_absurd":  # noqa: SLF001
+        if model._meta.app_label in ABSURD_APP_LABELS:  # noqa: SLF001
             return resolve_absurd_database()
         return None
 
@@ -21,6 +23,6 @@ class AbsurdRouter:
         model_name: str | None = None,
         **hints: t.Any,
     ) -> bool | None:
-        if app_label == "django_absurd":
+        if app_label in ABSURD_APP_LABELS:
             return db == resolve_absurd_database()
         return None

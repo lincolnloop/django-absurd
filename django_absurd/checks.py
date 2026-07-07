@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 
 import croniter
 from absurd_sdk import CreateQueueOptions, QueueDetachMode, QueueStorageMode
-from django.apps import AppConfig
+from django.apps import AppConfig, apps
 from django.conf import settings
 from django.contrib.admin.sites import AdminSite
 from django.core.checks import CheckMessage, Error, Tags, register
@@ -77,8 +77,23 @@ E007_HINT_UNKNOWN_KEY = (
 )
 E007_HINT_SERIALIZE = "Ensure args and kwargs contain only JSON-serializable values."
 E007_HINT_QUEUE = "Declare the queue under OPTIONS['QUEUES'] or correct the queue name."
+E007_HINT_SCHEDULER = "Set SCHEDULER to 'beat' or 'pg_cron'."
+
+E008_MSG = (
+    "django-absurd: SCHEDULER is 'pg_cron' but 'django_absurd.pg_cron'"
+    " is not in INSTALLED_APPS."
+)
+E008_HINT = "Add 'django_absurd.pg_cron' to INSTALLED_APPS, after 'django_absurd'."
+W003_MSG = (
+    "django-absurd: 'django_absurd.pg_cron' is ordered before 'django_absurd'"
+    " in INSTALLED_APPS (its post_migrate cron reconcile runs before queue"
+    " provisioning)."
+)
+W003_HINT = "Place 'django_absurd.pg_cron' after 'django_absurd' in INSTALLED_APPS."
 
 VALID_SCHEDULE_KEYS = {"task", "cron", "queue", "args", "kwargs"}
+VALID_SCHEDULERS = {"beat", "pg_cron"}
+PG_CRON_APP_NAME = "django_absurd.pg_cron"
 
 
 @register("absurd")
@@ -155,6 +170,17 @@ def check_absurd_schedule_config(
 ) -> list[CheckMessage]:
     errors: list[CheckMessage] = []
     for backend in get_absurd_backends().values():
+        scheduler = backend.scheduler
+        if scheduler not in VALID_SCHEDULERS:
+            errors.append(
+                Error(
+                    f"django-absurd: unknown SCHEDULER {scheduler!r}.",
+                    hint=E007_HINT_SCHEDULER,
+                    id="absurd.E007",
+                )
+            )
+            continue
+
         declared_queues = set(get_declared_queues(backend))
         raw_schedule = backend.options.get("SCHEDULE", {})
         if not isinstance(raw_schedule, Mapping):
@@ -264,6 +290,49 @@ def validate_schedule_task(name: str, task_path: str) -> list[CheckMessage]:
             )
         ]
     return []
+
+
+@register("absurd")
+def check_scheduler_app_installed(
+    *,
+    app_configs: Sequence[AppConfig] | None,
+    **kwargs: t.Any,
+) -> list[CheckMessage]:
+    backends = get_absurd_backends()
+    app_installed = apps.is_installed(PG_CRON_APP_NAME)
+
+    if not app_installed:
+        # E008 only fires when a backend actually needs the app.
+        if any(backend.scheduler == "pg_cron" for backend in backends.values()):
+            return [Error(E008_MSG, hint=E008_HINT, id="absurd.E008")]
+        return []
+
+    # W003 tracks INSTALLED_APPS ordering regardless of the active scheduler: a
+    # mis-ordered app runs its post_migrate reconcile before queue provisioning
+    # the moment any backend switches to pg_cron.
+    app_names = resolve_installed_app_names()
+    if (
+        PG_CRON_APP_NAME in app_names
+        and "django_absurd" in app_names
+        and app_names.index(PG_CRON_APP_NAME) < app_names.index("django_absurd")
+    ):
+        return [DjangoWarning(W003_MSG, hint=W003_HINT, id="absurd.W003")]
+    return []
+
+
+def resolve_installed_app_names() -> list[str]:
+    """Return INSTALLED_APPS entries as canonical app names.
+
+    Plain module strings pass through unchanged; dotted AppConfig paths
+    (e.g. 'django_absurd.pg_cron.apps.PgCronConfig') are resolved via the
+    registry to their app's .name so ordering comparisons work regardless of
+    how the consumer specifies each app.
+    """
+    name_by_config_class: dict[str, str] = {
+        f"{type(cfg).__module__}.{type(cfg).__qualname__}": cfg.name
+        for cfg in apps.get_app_configs()
+    }
+    return [name_by_config_class.get(entry, entry) for entry in settings.INSTALLED_APPS]
 
 
 @register("absurd")

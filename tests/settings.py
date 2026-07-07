@@ -43,6 +43,7 @@ DATABASES = {
         "PASSWORD": os.environ.get("PGPASSWORD", "postgres"),
         "HOST": os.environ.get("PGHOST", "localhost"),
         "PORT": os.environ.get("PGPORT", "5432"),
+        "TEST": {"NAME": "absurd_test_core"},
     },
     "sqlite": {
         "ENGINE": "django.db.backends.sqlite3",
@@ -60,6 +61,6 @@ DATABASE_ROUTERS = ["django_absurd.routers.AbsurdRouter"]
 TASKS = {
     "default": {
         "BACKEND": "django_absurd.backends.AbsurdBackend",
-        "QUEUES": ["default", "other"],
+        "QUEUES": ["default", "other", "reports"],
     }
 }

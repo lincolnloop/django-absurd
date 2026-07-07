@@ -25,6 +25,7 @@ class Schedule:
     queue: str | None = None
     args: list = dataclasses.field(default_factory=list)
     kwargs: dict = dataclasses.field(default_factory=dict)
+    backend: str = "default"
 
 
 def get_next_datetime(cron: str, after: datetime.datetime) -> datetime.datetime:
@@ -44,9 +45,10 @@ def get_settings_schedules(backend: AbsurdBackend) -> list[Schedule]:
             name=name,
             task=spec["task"],
             cron=spec["cron"],
-            queue=spec.get("queue", None),
+            queue=spec.get("queue") or None,
             args=list(spec.get("args", [])),
             kwargs=dict(spec.get("kwargs", {})),
+            backend=backend.alias,
         )
         for name, spec in schedule_map.items()
     ]
@@ -56,7 +58,7 @@ def derive_idempotency_key(schedule: Schedule, slot: datetime.datetime) -> str:
     # Dedup key, anchored on the schedule name (not task/cron) so args/queue-varying
     # entries don't collide. https://earendil-works.github.io/absurd/patterns/cron/
     utc_slot = slot.astimezone(datetime.UTC).isoformat(timespec="seconds")
-    raw = f"{schedule.name}|{schedule.cron}|{utc_slot}"
+    raw = f"{schedule.backend}|{schedule.name}|{schedule.cron}|{utc_slot}"
     return "cron:" + hashlib.sha256(raw.encode()).hexdigest()[:24]
 
 
@@ -64,8 +66,10 @@ def spawn_scheduled(schedule: Schedule, slot: datetime.datetime) -> None:
     close_old_connections()
     try:
         task = import_string(schedule.task)
+        overrides: dict[str, t.Any] = {"backend": schedule.backend}
         if schedule.queue is not None:
-            task = task.using(queue_name=schedule.queue)
+            overrides["queue_name"] = schedule.queue
+        task = task.using(**overrides)
         task.enqueue(
             *schedule.args,
             **schedule.kwargs,

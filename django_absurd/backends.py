@@ -25,6 +25,8 @@ class AbsurdBackendOptions(t.TypedDict, total=False):
     QUEUES: dict[str, CreateQueueOptions]
     ENABLE_ADMIN: bool
     ADMIN_SITE: tuple[str, ...]
+    SCHEDULER: str
+    SCHEDULE: dict[str, t.Any]
 
 
 class AbsurdBackend(BaseTaskBackend):
@@ -40,6 +42,7 @@ class AbsurdBackend(BaseTaskBackend):
             self.queues = set(self.options["QUEUES"])  # type: ignore[assignment]
         self.database: str = self.options.get("DATABASE", "default")
         self.default_max_attempts: int = self.options.get("DEFAULT_MAX_ATTEMPTS", 5)
+        self.scheduler: str = self.options.get("SCHEDULER", "beat")
 
     def enqueue(
         self, task: "Task", args: list[t.Any], kwargs: dict[str, t.Any]

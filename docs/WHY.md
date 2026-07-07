@@ -51,7 +51,7 @@ keys exist for this).
 
 Recurring tasks are declared in settings and driven by an in-process beat that wakes on
 cadence and enqueues through the normal path. The beat is the default because it needs
-nothing beyond Postgres; the database-side alternative (pg_cron) requires an extension
+nothing beyond Postgres; the database-side alternative (`pg_cron`) requires an extension
 and privileges that aren't available everywhere, so it is a deliberate opt-in rather
 than the default. Cron is evaluated in Django's configured timezone, not UTC, so an
 operator who writes "2am" gets local 2am.
@@ -73,9 +73,67 @@ runs async task handlers and drives the async SDK — but the beat only sleeps a
 enqueues, so keeping it synchronous removed the extra concurrency machinery a shared
 async loop would have demanded. Co-located with a worker, it runs on its own thread.
 
-Database-side scheduling (pg_cron) is a deferred follow-on. An admin/model-managed
-schedule store was considered and deliberately not pursued: settings is the only
-declaration source for the beat.
+Database-side scheduling (`pg_cron`) is the opt-in alternative. An admin/model-managed
+schedule store was considered and deliberately not pursued for the initial release:
+settings is the only declaration source for both the beat and `pg_cron`. The model
+reserves a `source` column so an admin lane can slot in later without rework.
+
+### `pg_cron`: projection table + constant command
+
+The `pg_cron` command is a constant call —
+`select public.django_absurd_run_scheduled('settings', '<alias>', '<name>')` — not a
+dynamically assembled SQL string. Task data (args, kwargs, options) lives in a
+`ScheduledTask` projection table row; the wrapper function reads it at fire time and
+calls `absurd.spawn_task`. This removes the SQL-string-from-data injection surface
+entirely: there is no `format('%L')` over task arguments or kwargs, no escaped-string
+gymnastics, no injection path — the cron command is a literal of the schedule name only,
+and that name is charset-restricted by a static check. (`format('%L')` is used, but only
+over source/alias/name — fixed-charset identifiers, never free-form task data.)
+
+The wrapper is defined `SET search_path = pg_catalog` and fully schema-qualifies every
+object it touches. `pg_cron` fires each job as the stored role with that role's default
+search path, not the reconcile session's — an unqualified reference would fail silently
+into `cron.job_run_details`. The search-path-safe definition is load-bearing.
+
+### Settings as source of truth; admin seam reserved
+
+Settings is the single declaration source. A future admin lane (SP3) would write
+`source="admin"` rows; `sync_crons` is scoped to `source="settings"` and never touches
+admin rows. The `absurd:settings:<alias>:<name>` / `absurd:admin:<alias>:<name>`
+job-name split gives `pg_cron`'s prune the same scoping guarantee.
+
+### Static checks, validate at sync
+
+`manage.py check` stays DB-free. Grammar, privilege, and extension facts are validated
+by the real `cron.schedule` at sync time — loud in the command, skip-with-log at
+migrate. A DB-probe variant of `absurd.E008` (verifying the extension is present at
+check time) was considered and dropped: a connectivity error at `check` time is not a
+scheduling problem and should not block deployments. The shipped `absurd.E008` is a
+static configuration check — it fires when `SCHEDULER="pg_cron"` but
+`django_absurd.pg_cron` is absent from `INSTALLED_APPS`, which is knowable without any
+DB connection.
+
+### No sub-minute on `pg_cron`
+
+`pg_cron` fires at minute granularity. Rather than implement a `"N seconds"` shim (which
+would impose a `pg_cron` ≥ 1.5 floor and produce a `1 seconds` runaway that generates
+~86k `cron.job_run_details` rows per day), sub-minute schedules are beat-only. The
+static check rejects a 6-field expression under `SCHEDULER="pg_cron"` at configuration
+time, not at fire time.
+
+### Extension in the app migration (fail-fast)
+
+The `django_absurd.pg_cron` app migration runs `CREATE EXTENSION IF NOT EXISTS pg_cron`
+as its first operation. Empirically: when the extension is already present (managed
+Postgres, or pre-created as superuser), the statement is a no-op — no superuser needed.
+When it is absent and the migrate role is not a superuser, it fails loudly with
+`permission denied / must be superuser`. That fail-fast is exactly right for an opt-in
+app: adding it to `INSTALLED_APPS` on a DB that isn't pg_cron-ready breaks visibly at
+`migrate` time, not silently at reconcile time.
+
+`shared_preload_libraries = pg_cron` (a server restart GUC) and `cron.database_name` are
+still operator-side prerequisites that a migration can't deliver. Those stay documented
+as manual setup steps.
 
 ## Routing & multiple databases
 

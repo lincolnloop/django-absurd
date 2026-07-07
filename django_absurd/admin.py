@@ -17,6 +17,7 @@ from django_absurd.admin_views import (
     build_admin_model,
     fetch_catalog_queues,
 )
+from django_absurd.models import Queue
 from django_absurd.queues import get_absurd_backend, resolve_absurd_database
 
 ADMIN_COUNT_CAP = 1000
@@ -165,8 +166,6 @@ def resolve_admin_sites() -> list[AdminSite]:
 
 
 def register_absurd_admin(sites: t.Iterable[AdminSite]) -> None:
-    from django_absurd.models import Queue  # noqa: PLC0415
-
     backend = get_absurd_backend()
     using = backend.database if backend is not None else resolve_absurd_database()
 

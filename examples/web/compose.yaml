@@ -1,0 +1,41 @@
+---
+services:
+  db:
+    image: postgres:18.4-alpine
+    environment:
+      - POSTGRES_PASSWORD=postgres
+    volumes:
+      - pgdata:/var/lib/postgresql
+
+  app:
+    build:
+      context: ../..
+      dockerfile: examples/web/Dockerfile
+    depends_on:
+      - db
+    restart: on-failure
+    ports:
+      - "8000:8000"
+    environment: &env
+      - PGHOST=db
+      - PGPORT=5432
+      - PGUSER=postgres
+      - PGPASSWORD=postgres
+      - PGDATABASE=postgres
+    volumes: &mounts
+      - ./app.py:/app/app.py
+      - ../../django_absurd:/src/django_absurd
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: examples/web/Dockerfile
+    command: nanodjango manage app.py absurd_worker
+    depends_on:
+      - app
+    restart: on-failure
+    environment: *env
+    volumes: *mounts
+
+volumes:
+  pgdata:

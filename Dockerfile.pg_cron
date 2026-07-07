@@ -1,0 +1,9 @@
+# pg_cron-enabled Postgres for the test suite (and the examples/ demo).
+# Debian-based `postgres` image + the PGDG `postgresql-<major>-cron` package.
+# Alpine has no pg_cron package, so we use the Debian variant.
+FROM postgres:18
+
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends postgresql-18-cron; \
+    rm -rf /var/lib/apt/lists/*

@@ -35,10 +35,11 @@ duplicate that material here.
 ## Testing conventions
 
 - pytest, **function-based only** (never class-based).
-- An **autouse `_enable_db(db)` fixture** in `tests/conftest.py` gives every test DB
-  access — do NOT decorate tests with `@pytest.mark.django_db`. Only add
-  `@pytest.mark.django_db(transaction=True)` (or markers for multi-DB / reset-sequences)
-  when a test needs transactions/commits or DDL (`migrate`, `create_queue`).
+- An **autouse `_enable_db(db)` fixture** in `tests/fixtures.py` (imported by each
+  suite's `conftest.py`) gives every test DB access — do NOT decorate tests with
+  `@pytest.mark.django_db`. Only add `@pytest.mark.django_db(transaction=True)` (or
+  markers for multi-DB / reset-sequences) when a test needs transactions/commits or DDL
+  (`migrate`, `create_queue`).
 - **No monkeypatching / `unittest.mock.patch`.** Test observable behavior, not
   internals. If a test needs to patch our own functions to reach a branch, restructure
   so a real input drives that branch instead.
@@ -49,11 +50,24 @@ duplicate that material here.
 - Drive check/command states with real DB conditions (sync via the command; drop the
   schema; `override_settings` for an unreachable DB) — not mocks.
 - HTTP mocking (when ever needed): the `responses` library, not `mock`.
-- Tests run on the HOST via uv/tox (no app container). `docker compose up -d db`
-  provides Postgres; `PGPORT` sets the host port (default 5432; `.envrc` reserves 5433
-  for this project). Single-DB suite: `uv run pytest`. Multi-DB suite:
-  `uv run pytest tests/multidb`. Full Python×Django matrix + min-max mypy:
-  `uvx --with tox-uv tox`.
+- Tests run on the HOST via uv/tox (no app container). Three suites, each with its own
+  `pytest.toml` and settings; invoke explicitly (a bare `uv run pytest` at repo root
+  collects nothing and exits code 5 — intentional):
+  - `uv run pytest tests/core` — core django-absurd; `django_absurd.pg_cron` NOT
+    installed; plain `db` service (`PGPORT`, default 5432; `.envrc` reserves 5433).
+  - `uv run pytest tests/pg_cron` — pg_cron app installed; requires the `db_pg_cron`
+    service (`PGPORT_PGCRON`, default 5434); test DB `absurd_test_pg_cron` matches
+    `cron.database_name`.
+  - `uv run pytest tests/multidb` — multi-DB router suite; plain `db`.
+- Two compose services: `db` (plain `postgres:18`) and `db_pg_cron`
+  (`Dockerfile.pg_cron` + `shared_preload_libraries=pg_cron`). Start both:
+  `docker compose up -d db db_pg_cron`.
+- Full Python×Django matrix + min-max mypy: `uvx --with tox-uv tox`.
+- Each suite runs with `--reuse-db` (addopts); add `--create-db` to rebuild from scratch
+  after a migration change. Exception: `--create-db` does NOT work for `tests/pg_cron` —
+  the pg_cron launcher holds a persistent session on `cron.database_name`
+  (`absurd_test_pg_cron`), so Django cannot drop/recreate that DB; use `--reuse-db` (the
+  default) for the pg_cron suite.
 - **Comment hygiene:** don't write comments that restate code or justify
   obviously-needed lines — let tests validate necessity. Remove noisy/distracting test
   comments.

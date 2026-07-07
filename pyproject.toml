@@ -83,8 +83,6 @@ skip_covered = true
 [tool.coverage.run]
 branch = true
 omit = [
-  # Router suite runs separately (own config, no --cov); counting it here
-  # would report its files as 0% in the main run.
   "tests/multidb/*",
 ]
 plugins = [
@@ -93,7 +91,7 @@ plugins = [
 source = ["django_absurd", "tests"]
 
 [tool.django-stubs]
-django_settings_module = "tests.settings"
+django_settings_module = "tests.pg_cron.settings"
 
 [tool.hatch.build.targets.sdist]
 # Allowlist — only the package ships in the sdist (plus the always-included
@@ -116,26 +114,12 @@ exclude = [
 plugins = ["mypy_django_plugin.main"]
 
 [tool.pytest.ini_options]
-DJANGO_SETTINGS_MODULE = "tests.settings"
 addopts = [
-  "--allow-hosts=db,localhost,127.0.0.1",
-  "--cov",
-  "--cov-report=term",
-  "--cov-report=xml",
-  "--disable-socket",
+  "--ignore=tests/core",
   "--ignore=tests/multidb",
-  "--junitxml=junit.xml",
-  "--reuse-db",
+  "--ignore=tests/pg_cron",
   "--strict-markers",
 ]
-filterwarnings = [
-  "error::bs4.GuessedAtParserWarning",  # Raise error when parser not set.
-]
-markers = [
-  "packaging: builds/inspects the distribution; run only in the dev tox env (needs the build backend)",
-]
-pythonpath = ["."]
-testpaths = ["tests"]
 
 [tool.ruff]
 target-version = "py312"

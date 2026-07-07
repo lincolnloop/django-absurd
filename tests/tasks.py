@@ -52,3 +52,14 @@ def echo(value):
 @task
 def create_payload(data):
     return Payload.objects.create(data=data).pk
+
+
+@task
+@absurd_default_params(max_attempts=3)
+def capped(a, b):
+    return a + b
+
+
+@task(queue_name="reports")
+def on_reports():
+    return "on_reports"

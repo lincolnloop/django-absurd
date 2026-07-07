@@ -1,72 +1,21 @@
-# django-absurd example
+# django-absurd examples
 
-A single-file [nanodjango](https://nanodjango.dev) app using **django-absurd** as the
-[Django Tasks](https://docs.djangoproject.com/en/6.0/topics/tasks/) backend, backed by
-Postgres. Fully containerized — `docker compose up` runs the whole thing; no host
-Python, uv, or Postgres needed.
+Three small, self-contained [nanodjango](https://github.com/radiac/nanodjango) demos —
+each in its own directory with its own `docker compose`. Run **one at a time** (they all
+serve on http://localhost:8000; admin login `admin` / `admin`).
 
-It enqueues a task from a web form, runs it in a separate worker process, and exposes
-Absurd's queue tables through the Django admin (which django-absurd auto-registers).
-
-## Layout
-
-```
-examples/
-  compose.yaml   # db (Postgres, internal-only) + app (web/admin) + worker (absurd_worker --beat)
-  Dockerfile     # image built from the repo root so it installs local django-absurd
-  pyproject.toml # deps: nanodjango, django-absurd (local path), psycopg[binary]
-  app.py         # the whole app: Django(...) config, add + ping tasks, a SCHEDULE (ping/min), views, admin
-```
-
-## Run it
-
-From this `examples/` directory:
+- **[`web/`](web/)** — enqueue `add(a, b)` from a form and watch the result
+  (`get_result`); browse the read-only queue tables in the admin.
+- **[`beat/`](beat/)** — the in-process **beat** scheduler firing a task every minute.
+- **[`pg_cron/`](pg_cron/)** — the **pg_cron** scheduler firing a task directly from
+  Postgres (no beat process).
 
 ```bash
-docker compose up --build
+cd web        # or: cd beat / cd pg_cron
+docker compose up
+# open http://localhost:8000/  (admin at /admin/, login admin / admin)
 ```
 
-That brings up three services:
-
-1. **db** — Postgres, reachable only over the compose network (no published host port).
-2. **app** — migrates, creates an `admin` / `admin` superuser (idempotent), and serves
-   the web app + admin on **http://localhost:8000/**.
-3. **worker** — a long-lived `absurd_worker --beat` consuming the `default` queue; it
-   starts once the app is healthy (i.e. migrations have run). `--beat` also runs the
-   scheduler in-process: the `ping` task is enqueued every minute and run here, so the
-   worker logs print **"pong 🏓"** once a minute.
-
-Then, in a browser:
-
-- **http://localhost:8000/** — submit `add(a, b)`; you're redirected to a task page that
-  auto-refreshes until the worker finishes and shows the result.
-- **http://localhost:8000/admin/** — log in as **admin / admin** and browse **Tasks**,
-  **Runs**, **Checkpoints**, **Events**, **Waits**, and the **Queues** catalog (all
-  read-only, filterable by queue).
-
-Tear down with:
-
-```bash
-docker compose down -v
-```
-
-## Try more
-
-```bash
-# Tail the worker's logs — per-task lines plus "pong 🏓" every minute (the scheduled ping)
-docker compose logs -f worker
-
-# Run a one-off management command against the stack
-docker compose run --rm worker nanodjango manage app.py absurd_sync_queues
-docker compose run --rm worker nanodjango manage app.py check
-```
-
-## Notes
-
-- The superuser is created by `nanodjango run … --user=admin --pass=admin` (in the
-  Dockerfile) — insecure, for the local demo only.
-- `nanodjango run` makes + applies migrations and creates the superuser before serving,
-  so a single `docker compose up` is fully self-provisioning.
-- django-absurd requires the **psycopg (v3)** PostgreSQL backend — `app.py` overrides
-  nanodjango's sqlite default with `django.db.backends.postgresql`.
-- Tasks are delivered at-least-once, so handlers should be idempotent.
+Each demo installs django-absurd from this checkout (editable path dependency), so it
+exercises the local source, and `nanodjango run` applies migrations and creates the
+`admin`/`admin` superuser on startup.

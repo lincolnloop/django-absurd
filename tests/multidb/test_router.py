@@ -30,6 +30,8 @@ def test_allow_migrate_contract():
     router = AbsurdRouter()
     assert router.allow_migrate("absurd", "django_absurd") is True
     assert router.allow_migrate("default", "django_absurd") is False
+    assert router.allow_migrate("absurd", "django_absurd_pg_cron") is True
+    assert router.allow_migrate("default", "django_absurd_pg_cron") is False
     assert router.allow_migrate("absurd", "auth") is None
 
 

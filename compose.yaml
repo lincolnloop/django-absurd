@@ -1,13 +1,36 @@
 ---
 services:
   db:
+    # Plain Postgres (no pg_cron) — the core suite and tests/multidb run here so
+    # they cannot depend on the extension.
+    image: postgres:18
     environment:
       - POSTGRES_PASSWORD=postgres
-    image: postgres:18-alpine
     ports:
       - "${PGPORT:-5432}:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql
-
-volumes:
-  pgdata:
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  db_pg_cron:
+    # pg_cron-enabled Postgres for tests/pg_cron/. cron.database_name must match
+    # the pg_cron suite's TEST db NAME (CREATE EXTENSION is only allowed there).
+    build:
+      context: .
+      dockerfile: Dockerfile.pg_cron
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_cron
+      - -c
+      - cron.database_name=absurd_test_pg_cron
+    environment:
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - "${PGPORT_PGCRON:-5434}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
