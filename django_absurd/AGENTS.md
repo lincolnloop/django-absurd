@@ -309,9 +309,8 @@ the extension is already present (managed Postgres, pre-created by a superuser),
 loud `permission denied` / `must be superuser` failure when the extension is absent and
 the migrate role lacks superuser rights — exactly the fail-fast you want for an opt-in
 app. On managed Postgres where the migrate role is not a superuser, pre-create the
-extension as a superuser first so the migration no-ops cleanly. Reversing the migration
-runs `DROP EXTENSION pg_cron` — a destructive, superuser-only operation affecting the
-whole database; roll back only deliberately.
+extension as a superuser first so the migration no-ops cleanly. (Reversing it runs
+`DROP EXTENSION IF EXISTS pg_cron` — stock Django `CreateExtension` behavior.)
 
 **Enabling:**
 
