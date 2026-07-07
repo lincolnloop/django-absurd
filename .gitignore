@@ -12,5 +12,5 @@ __pycache__/
 build/
 coverage.xml
 dist/
-examples/uv.lock
+examples/**/uv.lock
 junit*.xml
