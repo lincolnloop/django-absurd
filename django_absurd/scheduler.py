@@ -45,7 +45,7 @@ def get_settings_schedules(backend: AbsurdBackend) -> list[Schedule]:
             name=name,
             task=spec["task"],
             cron=spec["cron"],
-            queue=spec.get("queue", None),
+            queue=spec.get("queue") or None,
             args=list(spec.get("args", [])),
             kwargs=dict(spec.get("kwargs", {})),
             backend=backend.alias,

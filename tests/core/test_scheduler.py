@@ -222,6 +222,26 @@ def test_beat_spawns_task_with_kwargs(settings):
     assert Group.objects.filter(name="beat-kw").exists()
 
 
+def test_beat_empty_queue_string_falls_back_to_task_queue(settings):
+    """queue: "" normalises to the task's own queue (parity with pg_cron's
+    fallback), not a literal "" queue that enqueue would reject."""
+    settings.TASKS = make_tasks_setting(
+        {
+            "g": {
+                "task": "tests.tasks.make_group",
+                "cron": "*/1 * * * *",
+                "kwargs": {"name": "beat-empty-q"},
+                "queue": "",
+            }
+        }
+    )
+    backend = get_absurd_backends()["default"]
+    call_command("absurd_sync_queues")
+    run_beat_until(backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC))
+    call_command("absurd_worker", queue="default", burst=True)
+    assert Group.objects.filter(name="beat-empty-q").exists()
+
+
 def test_beat_routes_task_to_queue(settings):
     settings.TASKS = make_tasks_setting(
         {
