@@ -36,7 +36,14 @@ class Command(BaseCommand):
             )
             raise CommandError(msg)
 
-        upserted, pruned = sync_crons(backend)
+        try:
+            upserted, pruned = sync_crons(backend)
+        except KeyError as exc:
+            msg = (
+                f"SCHEDULE entry is missing required key {exc} — "
+                "run `manage.py check` for the E007 details."
+            )
+            raise CommandError(msg) from exc
         self.stdout.write(
             f"Synced {upserted} cron(s); pruned {pruned} — backend '{alias}'."
         )

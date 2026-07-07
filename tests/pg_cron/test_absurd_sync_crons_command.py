@@ -39,6 +39,14 @@ def beat_tasks(schedule: dict[str, t.Any]) -> dict[str, t.Any]:
     }
 
 
+def test_sync_crons_command_malformed_schedule_raises_commanderror(settings):
+    """A SCHEDULE entry missing task/cron must surface as a clean CommandError,
+    not a raw KeyError traceback."""
+    settings.TASKS = pg_cron_tasks({"broken": {}})
+    with pytest.raises(CommandError):
+        call_command("absurd_sync_crons")
+
+
 def test_sync_crons_command_creates_cron_jobs(settings, capsys, get_managed_cron_jobs):
     settings.TASKS = pg_cron_tasks(
         {
