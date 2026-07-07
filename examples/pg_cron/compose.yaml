@@ -1,0 +1,46 @@
+---
+services:
+  db:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.pg_cron
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_cron
+      - -c
+      - cron.database_name=demo
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=demo
+
+  app:
+    build:
+      context: ../..
+      dockerfile: examples/pg_cron/Dockerfile
+    depends_on:
+      - db
+    restart: on-failure
+    ports:
+      - "8000:8000"
+    environment: &env
+      - PGHOST=db
+      - PGPORT=5432
+      - PGUSER=postgres
+      - PGPASSWORD=postgres
+      - PGDATABASE=demo
+    volumes: &mounts
+      - ./app.py:/app/app.py
+      - ../../django_absurd:/src/django_absurd
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: examples/pg_cron/Dockerfile
+    command: nanodjango manage app.py absurd_worker
+    depends_on:
+      - app
+    restart: on-failure
+    environment: *env
+    volumes: *mounts
