@@ -1,5 +1,33 @@
 # pg_cron scheduler (SP2) — design
 
+> **Status: superseded design record.** The pg_cron feature shipped, but the
+> implementation diverged from this document. The durable "why" lives in
+> [`docs/WHY.md`](../WHY.md); current usage is in
+> [`django_absurd/AGENTS.md`](../../django_absurd/AGENTS.md) and
+> [`docs/web/cron-jobs.md`](../web/cron-jobs.md); the test layout is in `CLAUDE.md`.
+> This file is kept for design context only — where it disagrees with the code, the code
+> wins.
+>
+> **Change of course (this spec → shipped):**
+>
+> - Projection model renamed `ScheduledJob` → **`ScheduledTask`**, and its opaque
+>   `params`/`options` JSON blobs replaced by **typed columns** (`args`, `kwargs`,
+>   `max_attempts`, `retry_strategy`, `headers`, `cancellation`, `idempotency_key`); the
+>   wrapper reassembles the spawn `params`/`options` from them server-side.
+> - The feature was **extracted into an opt-in app, `django_absurd.pg_cron`** (its own
+>   models, migration, checks, and command) — not part of core `django_absurd`.
+> - Checks grew beyond `E007`: **`E008`** (static — `SCHEDULER="pg_cron"` but the app is
+>   not in `INSTALLED_APPS`) and **`W003`** (the app ordered before `django_absurd`).
+> - The app's migration now runs **`CreateExtension("pg_cron")`** (a no-op if
+>   pre-created, a loud failure otherwise) — reversing "ships no `CREATE EXTENSION`".
+>   `shared_preload_libraries=pg_cron` and `cron.database_name` remain operator
+>   prerequisites.
+> - Beat gained **per-backend routing** (`task.using(backend=…)`) with a backend-keyed
+>   idempotency key, so multiple backends coexist.
+> - The test suite was **forked** into `tests/core` (app absent, plain DB) /
+>   `tests/pg_cron` (app installed, pg_cron DB) / `tests/multidb`, dropping the
+>   `pg_cron` marker — the opt-in boundary is enforced by construction.
+
 Issue: [#20](https://github.com/lincolnloop/django-absurd/issues/20). Database-side
 execution backend for django-absurd's recurring schedules. SP2 of #20 (SP1 = beat,
 merged). Settings-declared `SCHEDULE` (shared with beat) reconciled into `pg_cron` jobs
