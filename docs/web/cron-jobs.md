@@ -85,39 +85,26 @@ the tasks as usual.
 
 ### Prerequisites
 
-`pg_cron` is an operator-installed extension — django-absurd does **not** ship a
-`CREATE EXTENSION` migration. Before enabling the pg_cron backend you need:
+Before enabling the pg_cron backend you need:
 
 1. **pg_cron ≥ 1.4** (the `cron.alter_job` function, used every reconcile, was added in
    1.4). Managed Postgres offerings (Amazon RDS, Google Cloud SQL, Azure Database, etc.)
    support pg_cron as a parameter-group / flag option.
 2. `shared_preload_libraries = pg_cron` in `postgresql.conf` (requires a server
-   restart).
+   restart). A migration cannot set this — it must be in place before the DB starts.
 3. `cron.database_name = <your_db>` pointing at the database Absurd runs on.
-4. `CREATE EXTENSION pg_cron;` executed by a **superuser** in that database.
 
-The standard way to deliver step 4 in a Django project is a one-off migration in your
-own app:
+**Extension creation** is handled by the `django_absurd.pg_cron` app migration —
+`CREATE EXTENSION IF NOT EXISTS pg_cron` runs as the first operation. Behaviour:
 
-```python title="yourapp/migrations/000x_create_pg_cron.py"
-from django.contrib.postgres.operations import CreateExtension
-from django.db import migrations
+- **Extension already present** (managed Postgres, or pre-created by a superuser): the
+  statement is a no-op; no superuser rights needed at migration time.
+- **Extension absent, migrate role is not superuser**: the statement fails loudly with
+  `permission denied / must be superuser` — a clear signal that the operator prereqs
+  above aren't in place.
 
-class Migration(migrations.Migration):
-    operations = [
-        CreateExtension("pg_cron"),
-    ]
-```
-
-[`CreateExtension`](https://docs.djangoproject.com/en/stable/ref/contrib/postgres/operations/#django.contrib.postgres.operations.CreateExtension)
-is Django's first-class operation for this (it issues `CREATE EXTENSION IF NOT EXISTS`
-and a matching reverse) — prefer it over raw `RunSQL`.
-
-The migration role must be a superuser (or granted `CREATE ON DATABASE`). This is the
-same pattern that `CREATE EXTENSION "uuid-ossp"` uses — it is deliberately not shipped
-inside django-absurd itself because the superuser requirement and
-`shared_preload_libraries` restart make it an operator-side concern, not a library
-concern.
+On managed Postgres where the migrate role is not a superuser, pre-create the extension
+as a superuser before running `migrate`, then the migration no-ops cleanly.
 
 ### Enable the pg_cron backend
 

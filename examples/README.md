@@ -10,10 +10,10 @@ demonstrating **both schedulers in one project** (one database, two backends):
 - **`beat` backend** — `SCHEDULER="beat"`: an in-process beat fires a `tick` task every
   minute; a `beatworker` (co-located worker+beat) drains it and logs `tock ⏰`.
 
-The `pg_cron` extension is created by a **Django migration** using
-[`CreateExtension`](https://docs.djangoproject.com/en/stable/ref/contrib/postgres/operations/#django.contrib.postgres.operations.CreateExtension)
-(see [`demo/migrations/0001_pg_cron.py`](demo/migrations/0001_pg_cron.py)) — the
-standard way to install an extension in a Django project.
+The `pg_cron` extension is created by **`django_absurd.pg_cron`'s own migration** — it
+runs `CREATE EXTENSION IF NOT EXISTS pg_cron` as the first operation, so the extension
+is present before `post_migrate` reconciles the schedule. The demo's database container
+runs as the `postgres` superuser, so this applies cleanly.
 
 ## Layout
 
@@ -26,8 +26,7 @@ examples/
   config/                 # project: settings.py (TASKS + both schedulers), urls.py, wsgi.py
   demo/                   # app
     tasks.py              #   ping/pong (@task, pg_cron) + tick/tock (@task, beat)
-    migrations/
-      0001_pg_cron.py      #   CreateExtension("pg_cron")
+    migrations/           #   (no demo migrations — pg_cron extension created by django_absurd.pg_cron)
 ```
 
 ## How deps and source work (dev / bind-mount style)
@@ -61,11 +60,11 @@ Four services come up in order:
    `CREATE EXTENSION` — a migration can't enable it). `cron.database_name=demo` points
    `pg_cron` at the app's database so the extension can be created there and jobs run
    against it.
-2. **migrate** — a one-shot `manage.py migrate`. The `demo.0001_pg_cron` migration runs
-   `CreateExtension("pg_cron")` (as the superuser `postgres` role), then the
-   `django_absurd.pg_cron` app's `post_migrate` handler reconciles the `SCHEDULE` into
-   `pg_cron` jobs. Extension-first ordering holds naturally: `post_migrate` fires after
-   all migrations. The container exits when done.
+2. **migrate** — a one-shot `manage.py migrate`. The `django_absurd.pg_cron` app's
+   `0001_initial` migration runs `CREATE EXTENSION IF NOT EXISTS pg_cron` (as the
+   superuser `postgres` role), then its `post_migrate` handler reconciles the `SCHEDULE`
+   into `pg_cron` jobs. Extension-first ordering holds naturally: `post_migrate` fires
+   after all migrations. The container exits when done.
 3. **worker** — a long-lived `absurd_worker --alias default --queue default`, started
    once `migrate` completes. With `SCHEDULER="pg_cron"` there is **no beat** — Postgres
    fires `ping` every minute; the worker drains it and logs
@@ -103,8 +102,9 @@ docker compose exec db psql -U postgres -d demo -c 'select jobid, status from cr
 
 - django-absurd requires the **psycopg (v3)** PostgreSQL backend — the Absurd SDK reuses
   Django's connection. `config/settings.py` uses `django.db.backends.postgresql`.
-- The migration role must be a **superuser** (or hold `CREATE ON DATABASE`) for
-  `CreateExtension` to succeed; the demo connects as the compose `postgres` superuser.
+- The migration role must be a **superuser** for `CREATE EXTENSION pg_cron` to succeed;
+  the demo connects as the compose `postgres` superuser so the app migration applies
+  cleanly.
 - `SCHEDULER="pg_cron"` and the beat are **mutually exclusive** per backend — `worker`
   runs without `--beat`; `beatworker` pairs `--beat` with `SCHEDULER="beat"`.
 - Tasks are delivered at-least-once, so handlers should be idempotent.

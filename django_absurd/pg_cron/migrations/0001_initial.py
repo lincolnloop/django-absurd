@@ -1,3 +1,4 @@
+from django.contrib.postgres.operations import CreateExtension
 from django.db import migrations, models
 
 CREATE_FN = """
@@ -61,6 +62,7 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        CreateExtension("pg_cron"),
         migrations.CreateModel(
             name="ScheduledTask",
             fields=[

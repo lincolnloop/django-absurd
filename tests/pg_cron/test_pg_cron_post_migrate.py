@@ -1,5 +1,6 @@
 import logging
 import typing as t
+from io import StringIO
 
 import pytest
 from django.apps import apps
@@ -104,24 +105,6 @@ def test_reconcile_missing_row_fires_clean_noop(settings):
         assert cur.fetchall() == []
 
 
-def test_reconcile_skips_when_extension_absent(settings, caplog):
-    settings.TASKS = pg_cron_tasks(
-        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
-    )
-    with connection.cursor() as cur:
-        cur.execute("drop extension pg_cron cascade")
-    try:
-        with caplog.at_level(logging.DEBUG, logger="django_absurd"):
-            reconcile_crons_after_migrate(sender=None)  # must NOT raise
-    finally:
-        with connection.cursor() as cur:
-            cur.execute("create extension if not exists pg_cron")
-
-    # Expected case — a quiet no-op, not a warning-with-traceback on every migrate.
-    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
-    assert warnings == []
-
-
 def test_reconcile_skips_on_malformed_schedule_spec(settings, get_managed_cron_jobs):
     settings.TASKS = pg_cron_tasks({"broken": {}})  # no task/cron keys
 
@@ -159,6 +142,45 @@ def test_migrate_provisions_queues_and_reconciles_crons(
     assert set(get_absurd_client().list_queues()) == {"default", "other", "reports"}
     assert [r[0] for r in get_managed_cron_jobs()] == ["absurd:settings:default:a"]
     assert ScheduledTask.objects.filter(source="settings", alias="default").count() == 1
+
+
+def test_reconcile_emits_migrate_stdout_on_sync(settings):
+    settings.TASKS = pg_cron_tasks(
+        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
+    )
+    buf = StringIO()
+    reconcile_crons_after_migrate(sender=None, verbosity=1, stdout=buf)
+    out = buf.getvalue()
+    assert "Reconciling pg_cron schedules (default):" in out
+    assert "Scheduled 1" in out
+
+
+def test_reconcile_emits_prune_line_on_sync(settings, get_managed_cron_jobs):
+    settings.TASKS = pg_cron_tasks(
+        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
+    )
+    reconcile_crons_after_migrate(sender=None)
+    settings.TASKS = pg_cron_tasks({})
+    buf = StringIO()
+    reconcile_crons_after_migrate(sender=None, verbosity=1, stdout=buf)
+    out = buf.getvalue()
+    assert "Reconciling pg_cron schedules (default):" in out
+    assert "Pruned 1" in out
+
+
+def test_reconcile_emits_teardown_notice_when_backend_switches(
+    settings, get_managed_cron_jobs
+):
+    settings.TASKS = pg_cron_tasks(
+        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
+    )
+    reconcile_crons_after_migrate(sender=None)
+    settings.TASKS = beat_tasks({"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}})
+    buf = StringIO()
+    reconcile_crons_after_migrate(sender=None, verbosity=1, stdout=buf)
+    out = buf.getvalue()
+    assert "Removed 1 pg_cron schedule(s)" in out
+    assert 'no longer uses SCHEDULER="pg_cron"' in out
 
 
 def test_reconcile_warns_on_none_task_path(settings, caplog):

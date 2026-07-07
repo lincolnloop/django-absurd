@@ -59,8 +59,10 @@ def test_pg_cron_six_field_cron_rejected(settings, capsys):
     )
     assert "absurd.E007" in out
     assert "6-field cron expressions are not supported by pg_cron." in out
-    # Resolution text lives only in the hint — not duplicated into the msg.
-    assert out.count("minute-granularity") == 1
+    assert (
+        "pg_cron fires at minute granularity; use a 5-field cron expression"
+        " (no leading seconds column)."
+    ) in out
 
 
 def test_pg_cron_bad_name_charset_rejected(settings, capsys):

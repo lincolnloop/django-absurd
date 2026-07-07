@@ -23,10 +23,9 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql
 
-  # One-shot: apply migrations. The 0001_pg_cron migration runs CreateExtension
-  # (as the superuser `postgres` role), then django-absurd's post_migrate handler
-  # reconciles the SCHEDULE into a pg_cron job. Extension-first ordering holds
-  # because post_migrate fires after all migrations. Exits when done.
+  # One-shot: apply migrations. The django_absurd.pg_cron app migration creates the
+  # pg_cron extension (IF NOT EXISTS), then its post_migrate handler reconciles the
+  # SCHEDULE into a pg_cron job. Exits when done.
   migrate:
     build:
       context: ..

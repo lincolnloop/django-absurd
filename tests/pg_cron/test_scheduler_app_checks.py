@@ -10,13 +10,16 @@ ABSURD = "django_absurd.backends.AbsurdBackend"
 BASE_QUEUES: dict = {"default": {}, "other": {}, "reports": {}}
 
 
-def run_check(capsys, settings, installed_apps=None):
+def run_check(capsys, settings, installed_apps=None, schedule=None):
     if installed_apps is not None:
         settings.INSTALLED_APPS = installed_apps
+    options: dict = {"SCHEDULER": "pg_cron", "QUEUES": BASE_QUEUES}
+    if schedule is not None:
+        options["SCHEDULE"] = schedule
     settings.TASKS = {
         "default": {
             "BACKEND": ABSURD,
-            "OPTIONS": {"SCHEDULER": "pg_cron", "QUEUES": BASE_QUEUES},
+            "OPTIONS": options,
         }
     }
     try:
@@ -52,6 +55,16 @@ def test_pg_cron_app_after_core_clean(capsys, settings):
     out = run_check(capsys, settings)
     assert "absurd.E008" not in out
     assert "absurd.W003" not in out
+
+
+def test_pg_cron_schedule_error_reported(capsys, settings):
+    out = run_check(
+        capsys,
+        settings,
+        schedule={"half-minute": {"task": "tests.tasks.add", "cron": "*/30 * * * * *"}},
+    )
+    assert "absurd.E007" in out
+    assert "6-field cron expressions are not supported by pg_cron." in out
 
 
 def test_pg_cron_app_config_path_before_core_warns(capsys, settings):

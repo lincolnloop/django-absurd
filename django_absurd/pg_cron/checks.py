@@ -15,7 +15,8 @@ from django_absurd.pg_cron.reconcile import build_jobname, get_effective_queue
 from django_absurd.scheduler import Schedule
 
 E007_HINT_PG_CRON_SUBMINUTE = (
-    "pg_cron is minute-granularity; use the beat scheduler for sub-minute schedules."
+    "pg_cron fires at minute granularity; use a 5-field cron expression"
+    " (no leading seconds column)."
 )
 E007_HINT_PG_CRON_NAME = (
     "Schedule names must match [A-Za-z0-9_-]+ when using the pg_cron scheduler."

@@ -121,14 +121,19 @@ would impose a `pg_cron` ≥ 1.5 floor and produce a `1 seconds` runaway that ge
 static check rejects a 6-field expression under `SCHEDULER="pg_cron"` at configuration
 time, not at fire time.
 
-### Ships no CREATE EXTENSION
+### Extension in the app migration (fail-fast)
 
-`pg_cron` needs `shared_preload_libraries` (a server restart, not a migration) and
-superuser privileges to install. Django's `CreateExtension` migration op is the wrong
-fit — it would fail for most deployments and create a hard dependency on a
-superuser-at-migrate-time constraint that the library should not impose. Each project
-owns its `CREATE EXTENSION pg_cron` step; django-absurd documents the pattern and the
-example demonstrates it.
+The `django_absurd.pg_cron` app migration runs `CREATE EXTENSION IF NOT EXISTS pg_cron`
+as its first operation. Empirically: when the extension is already present (managed
+Postgres, or pre-created as superuser), the statement is a no-op — no superuser needed.
+When it is absent and the migrate role is not a superuser, it fails loudly with
+`permission denied / must be superuser`. That fail-fast is exactly right for an opt-in
+app: adding it to `INSTALLED_APPS` on a DB that isn't pg_cron-ready breaks visibly at
+`migrate` time, not silently at reconcile time.
+
+`shared_preload_libraries = pg_cron` (a server restart GUC) and `cron.database_name` are
+still operator-side prerequisites that a migration can't deliver. Those stay documented
+as manual setup steps.
 
 ## Routing & multiple databases
 

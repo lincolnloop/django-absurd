@@ -291,28 +291,19 @@ scheduled time passes, that firing is skipped; the next firing proceeds on sched
 Set `SCHEDULER = "pg_cron"` to let Postgres fire schedules directly — no beat process
 needed.
 
-**Prerequisites (operator-side):**
+**Prerequisites (operator-side — a migration cannot do these):**
 
 - **`pg_cron` ≥ 1.4** (`cron.alter_job`, used every reconcile, was added in 1.4).
 - `shared_preload_libraries = pg_cron` in `postgresql.conf` (requires a server restart).
 - `cron.database_name = <your_db>` pointing at the Absurd database.
-- `CREATE EXTENSION pg_cron` executed by a superuser in that database.
 
-django-absurd ships no `CREATE EXTENSION` migration — that is an operator step. A
-typical pattern is a one-off migration in your own app, using Django's first-class
-[`CreateExtension`](https://docs.djangoproject.com/en/stable/ref/contrib/postgres/operations/#django.contrib.postgres.operations.CreateExtension)
-operation (it issues `CREATE EXTENSION IF NOT EXISTS` with a matching reverse — prefer
-it over raw `RunSQL`):
-
-```python
-from django.contrib.postgres.operations import CreateExtension
-from django.db import migrations
-
-class Migration(migrations.Migration):
-    operations = [
-        CreateExtension("pg_cron"),
-    ]
-```
+**Extension creation:** the `django_absurd.pg_cron` app's `0001_initial` migration runs
+`CREATE EXTENSION IF NOT EXISTS pg_cron` as its first operation. This is a no-op when
+the extension is already present (managed Postgres, pre-created by a superuser), and a
+loud `permission denied` / `must be superuser` failure when the extension is absent and
+the migrate role lacks superuser rights — exactly the fail-fast you want for an opt-in
+app. On managed Postgres where the migrate role is not a superuser, pre-create the
+extension as a superuser first so the migration no-ops cleanly.
 
 **Enabling:**
 

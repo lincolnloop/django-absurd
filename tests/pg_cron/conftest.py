@@ -11,13 +11,6 @@ from tests.fixtures import (  # noqa: F401
 )
 
 
-@pytest.fixture(scope="session", autouse=True)
-def ensure_pg_cron(django_db_setup, django_db_blocker):
-    """Enable ``pg_cron`` on the test DB for the pg_cron suite."""
-    with django_db_blocker.unblock(), connection.cursor() as cur:
-        cur.execute("create extension if not exists pg_cron")
-
-
 @pytest.fixture(autouse=True)
 def _clear_owned_pg_cron_jobs(request):
     """Unschedule all ``absurd:%`` pg_cron jobs after the test.

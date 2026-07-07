@@ -1,9 +1,11 @@
 import logging
+import typing as t
 
 from django.apps import AppConfig
 from django.core.exceptions import ImproperlyConfigured
+from django.core.management.color import color_style
 from django.db.models.signals import post_migrate
-from django.db.utils import InternalError, OperationalError, ProgrammingError
+from django.db.utils import InternalError, OperationalError
 
 from django_absurd.backends import get_absurd_backends
 
@@ -24,27 +26,43 @@ class PgCronConfig(AppConfig):
         post_migrate.connect(reconcile_crons_after_migrate, sender=self)
 
 
-def reconcile_crons_after_migrate(sender: AppConfig, **kwargs: object) -> None:
+def reconcile_crons_after_migrate(
+    sender: AppConfig,
+    *,
+    verbosity: int = 1,
+    stdout: t.Any = None,
+    **kwargs: object,
+) -> None:
     from django_absurd.pg_cron.reconcile import (  # noqa: PLC0415
         sync_crons,
         teardown_crons,
     )
 
+    style = color_style()
     for alias, backend in get_absurd_backends().items():
         try:
             if backend.scheduler == "pg_cron":
-                sync_crons(backend)
+                upserted, pruned = sync_crons(backend)
+                lines = []
+                if upserted:
+                    lines.append(f"  Scheduled {upserted}")
+                if pruned:
+                    lines.append(f"  Pruned {pruned}")
+                if lines and verbosity >= 1 and stdout is not None:
+                    stdout.write(
+                        style.MIGRATE_HEADING(
+                            f"Reconciling pg_cron schedules ({alias}):"
+                        )
+                    )
+                    for line in lines:
+                        stdout.write(line)
             else:
-                teardown_crons(backend)
-        except ProgrammingError:
-            # Expected quiet no-op: the pg_cron extension isn't installed on the
-            # target DB, or the schema isn't there (faked/adopted migration).
-            logger.debug(
-                "django-absurd: skipped cron reconcile for backend %r"
-                " (pg_cron or schema absent)",
-                alias,
-            )
-            continue
+                removed = teardown_crons(backend)
+                if removed > 0 and verbosity >= 1 and stdout is not None:
+                    stdout.write(
+                        f"  Removed {removed} pg_cron schedule(s)"
+                        f' — backend {alias!r} no longer uses SCHEDULER="pg_cron"'
+                    )
         except (
             ImproperlyConfigured,
             OperationalError,
