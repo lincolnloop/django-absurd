@@ -10,10 +10,7 @@ from django_absurd.pg_cron.apps import reconcile_crons_after_migrate
 from django_absurd.pg_cron.models import ScheduledTask
 from django_absurd.queues import get_absurd_client
 
-pytestmark = [
-    pytest.mark.django_db(transaction=True),
-    pytest.mark.usefixtures("ensure_pg_cron", "_clear_owned_pg_cron_jobs"),
-]
+pytestmark = pytest.mark.django_db(transaction=True)
 
 ABSURD = "django_absurd.backends.AbsurdBackend"
 
@@ -52,7 +49,9 @@ def run_scheduled(source: str, alias: str, name: str) -> None:
         )
 
 
-def test_reconcile_creates_owned_cron_jobs_under_pg_cron(settings, owned_cron_jobs):
+def test_reconcile_creates_owned_cron_jobs_under_pg_cron(
+    settings, get_managed_cron_jobs
+):
     settings.TASKS = pg_cron_tasks(
         {
             "a": {"task": "tests.tasks.add", "cron": "0 2 * * *"},
@@ -61,7 +60,7 @@ def test_reconcile_creates_owned_cron_jobs_under_pg_cron(settings, owned_cron_jo
     )
     reconcile_crons_after_migrate(sender=None)
 
-    assert owned_cron_jobs() == [
+    assert [r[0] for r in get_managed_cron_jobs()] == [
         "absurd:settings:default:a",
         "absurd:settings:default:b",
     ]
@@ -69,22 +68,22 @@ def test_reconcile_creates_owned_cron_jobs_under_pg_cron(settings, owned_cron_jo
 
 
 def test_reconcile_tears_down_when_scheduler_switches_to_beat(
-    settings, owned_cron_jobs
+    settings, get_managed_cron_jobs
 ):
     settings.TASKS = pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     reconcile_crons_after_migrate(sender=None)
-    assert owned_cron_jobs() == ["absurd:settings:default:a"]
+    assert [r[0] for r in get_managed_cron_jobs()] == ["absurd:settings:default:a"]
 
     settings.TASKS = beat_tasks({"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}})
     reconcile_crons_after_migrate(sender=None)
 
-    assert owned_cron_jobs() == []
+    assert get_managed_cron_jobs() == []
     assert not ScheduledTask.objects.filter(source="settings", alias="default").exists()
 
 
-def test_reconcile_missing_row_fires_clean_noop(settings, owned_cron_jobs):
+def test_reconcile_missing_row_fires_clean_noop(settings):
     settings.TASKS = pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
@@ -123,22 +122,22 @@ def test_reconcile_skips_when_extension_absent(settings, caplog):
     assert warnings == []
 
 
-def test_reconcile_skips_on_malformed_schedule_spec(settings, owned_cron_jobs):
+def test_reconcile_skips_on_malformed_schedule_spec(settings, get_managed_cron_jobs):
     settings.TASKS = pg_cron_tasks({"broken": {}})  # no task/cron keys
 
     reconcile_crons_after_migrate(sender=None)  # must NOT raise
 
-    assert owned_cron_jobs() == []
+    assert get_managed_cron_jobs() == []
 
 
-def test_reconcile_skips_on_bad_dotted_path(settings, owned_cron_jobs):
+def test_reconcile_skips_on_bad_dotted_path(settings, get_managed_cron_jobs):
     settings.TASKS = pg_cron_tasks(
         {"a": {"task": "tests.tasks.does_not_exist", "cron": "0 2 * * *"}}
     )
 
     reconcile_crons_after_migrate(sender=None)  # must NOT raise
 
-    assert owned_cron_jobs() == []
+    assert get_managed_cron_jobs() == []
 
 
 def test_pg_cron_app_registered_after_core():
@@ -148,7 +147,9 @@ def test_pg_cron_app_registered_after_core():
     assert labels.index("django_absurd") < labels.index("django_absurd_pg_cron")
 
 
-def test_migrate_provisions_queues_and_reconciles_crons(settings, owned_cron_jobs):
+def test_migrate_provisions_queues_and_reconciles_crons(
+    settings, get_managed_cron_jobs
+):
     settings.TASKS = pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
@@ -156,7 +157,7 @@ def test_migrate_provisions_queues_and_reconciles_crons(settings, owned_cron_job
     call_command("migrate", verbosity=0)
 
     assert set(get_absurd_client().list_queues()) == {"default", "other", "reports"}
-    assert owned_cron_jobs() == ["absurd:settings:default:a"]
+    assert [r[0] for r in get_managed_cron_jobs()] == ["absurd:settings:default:a"]
     assert ScheduledTask.objects.filter(source="settings", alias="default").count() == 1
 
 

@@ -4,8 +4,6 @@ import pytest
 from django.core.management import call_command
 from django.core.management.base import SystemCheckError
 
-from django_absurd.checks import W003_HINT, W003_MSG
-
 pytestmark = pytest.mark.django_db(transaction=True)
 
 ABSURD = "django_absurd.backends.AbsurdBackend"
@@ -40,8 +38,14 @@ def build_apps_with_pg_cron_first(settings):
 def test_pg_cron_app_before_core_warns(capsys, settings):
     out = run_check(capsys, settings, build_apps_with_pg_cron_first(settings))
     assert "absurd.W003" in out
-    assert W003_MSG in out
-    assert W003_HINT in out
+    assert (
+        "django-absurd: 'django_absurd.pg_cron' is ordered before 'django_absurd'"
+        " in INSTALLED_APPS (its post_migrate cron reconcile runs before queue"
+        " provisioning)."
+    ) in out
+    assert (
+        "Place 'django_absurd.pg_cron' after 'django_absurd' in INSTALLED_APPS." in out
+    )
 
 
 def test_pg_cron_app_after_core_clean(capsys, settings):
@@ -63,5 +67,11 @@ def test_pg_cron_app_config_path_before_core_warns(capsys, settings):
     ]
     out = run_check(capsys, settings, installed_apps=apps_with_config_path_first)
     assert "absurd.W003" in out
-    assert W003_MSG in out
-    assert W003_HINT in out
+    assert (
+        "django-absurd: 'django_absurd.pg_cron' is ordered before 'django_absurd'"
+        " in INSTALLED_APPS (its post_migrate cron reconcile runs before queue"
+        " provisioning)."
+    ) in out
+    assert (
+        "Place 'django_absurd.pg_cron' after 'django_absurd' in INSTALLED_APPS." in out
+    )

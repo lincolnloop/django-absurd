@@ -106,9 +106,12 @@ job-name split gives `pg_cron`'s prune the same scoping guarantee.
 
 `manage.py check` stays DB-free. Grammar, privilege, and extension facts are validated
 by the real `cron.schedule` at sync time — loud in the command, skip-with-log at
-migrate. Removing the DB-probe system check (E008) removes a whole failure surface: a
-connectivity error at `check` time is not a scheduling problem and should not block
-deployments.
+migrate. A DB-probe variant of `absurd.E008` (verifying the extension is present at
+check time) was considered and dropped: a connectivity error at `check` time is not a
+scheduling problem and should not block deployments. The shipped `absurd.E008` is a
+static configuration check — it fires when `SCHEDULER="pg_cron"` but
+`django_absurd.pg_cron` is absent from `INSTALLED_APPS`, which is knowable without any
+DB connection.
 
 ### No sub-minute on `pg_cron`
 

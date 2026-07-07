@@ -4,10 +4,7 @@ from django_absurd.backends import get_absurd_backends
 from django_absurd.pg_cron.models import ScheduledTask
 from django_absurd.pg_cron.reconcile import sync_crons
 
-pytestmark = [
-    pytest.mark.django_db(transaction=True),
-    pytest.mark.usefixtures("ensure_pg_cron", "_clear_owned_pg_cron_jobs"),
-]
+pytestmark = pytest.mark.django_db(transaction=True)
 
 ABSURD = "django_absurd.backends.AbsurdBackend"
 

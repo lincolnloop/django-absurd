@@ -8,10 +8,7 @@ from django_absurd.backends import get_absurd_backends
 from django_absurd.pg_cron.models import ScheduledTask
 from django_absurd.pg_cron.reconcile import sync_crons
 
-pytestmark = [
-    pytest.mark.django_db(transaction=True),
-    pytest.mark.usefixtures("ensure_pg_cron", "_clear_owned_pg_cron_jobs"),
-]
+pytestmark = pytest.mark.django_db(transaction=True)
 
 ABSURD = "django_absurd.backends.AbsurdBackend"
 
@@ -42,7 +39,7 @@ def beat_tasks(schedule: dict[str, t.Any]) -> dict[str, t.Any]:
     }
 
 
-def test_sync_crons_command_creates_cron_jobs(settings, capsys, owned_cron_jobs):
+def test_sync_crons_command_creates_cron_jobs(settings, capsys, get_managed_cron_jobs):
     settings.TASKS = pg_cron_tasks(
         {
             "a": {"task": "tests.tasks.add", "cron": "0 2 * * *"},
@@ -51,7 +48,7 @@ def test_sync_crons_command_creates_cron_jobs(settings, capsys, owned_cron_jobs)
     )
     call_command("absurd_sync_crons")
 
-    jobs = owned_cron_jobs()
+    jobs = [r[0] for r in get_managed_cron_jobs()]
     assert "absurd:settings:default:a" in jobs
     assert "absurd:settings:default:b" in jobs
     assert len(jobs) == 2
@@ -76,17 +73,17 @@ def test_sync_crons_command_refuses_when_scheduler_is_beat(settings):
         call_command("absurd_sync_crons")
 
 
-def test_sync_crons_command_is_idempotent(settings, capsys, owned_cron_jobs):
+def test_sync_crons_command_is_idempotent(settings, capsys, get_managed_cron_jobs):
     settings.TASKS = pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     call_command("absurd_sync_crons")
     call_command("absurd_sync_crons")
 
-    assert len(owned_cron_jobs()) == 1
+    assert len(get_managed_cron_jobs()) == 1
 
 
-def test_teardown_removes_owned_cron_jobs(settings, capsys, owned_cron_jobs):
+def test_teardown_removes_owned_cron_jobs(settings, capsys, get_managed_cron_jobs):
     settings.TASKS = pg_cron_tasks(
         {
             "a": {"task": "tests.tasks.add", "cron": "0 2 * * *"},
@@ -95,11 +92,11 @@ def test_teardown_removes_owned_cron_jobs(settings, capsys, owned_cron_jobs):
     )
     be = get_absurd_backends()["default"]
     sync_crons(be)
-    assert len(owned_cron_jobs()) == 2
+    assert len(get_managed_cron_jobs()) == 2
 
     call_command("absurd_sync_crons", teardown=True)
 
-    assert owned_cron_jobs() == []
+    assert get_managed_cron_jobs() == []
     assert not ScheduledTask.objects.filter(source="settings", alias="default").exists()
 
     out = capsys.readouterr().out

@@ -4,10 +4,7 @@ from django_absurd.backends import get_absurd_backends
 from django_absurd.pg_cron.models import ScheduledTask
 from django_absurd.pg_cron.reconcile import sync_crons, teardown_crons
 
-pytestmark = [
-    pytest.mark.django_db(transaction=True),
-    pytest.mark.usefixtures("ensure_pg_cron", "_clear_owned_pg_cron_jobs"),
-]
+pytestmark = pytest.mark.django_db(transaction=True)
 
 ABSURD = "django_absurd.backends.AbsurdBackend"
 
@@ -26,7 +23,7 @@ def tasks(schedule):
 
 
 def test_teardown_removes_all_owned_cron_jobs_and_settings_rows(
-    settings, owned_cron_jobs
+    settings, get_managed_cron_jobs
 ):
     settings.TASKS = tasks(
         {
@@ -37,12 +34,12 @@ def test_teardown_removes_all_owned_cron_jobs_and_settings_rows(
     be = get_absurd_backends()["default"]
     sync_crons(be)
 
-    assert len(owned_cron_jobs()) == 2
+    assert len(get_managed_cron_jobs()) == 2
     assert ScheduledTask.objects.filter(source="settings", alias="default").count() == 2
 
     teardown_crons(be)
 
-    assert owned_cron_jobs() == []
+    assert get_managed_cron_jobs() == []
     assert not ScheduledTask.objects.filter(source="settings", alias="default").exists()
 
 
@@ -63,12 +60,12 @@ def test_teardown_leaves_admin_rows_intact(settings):
     assert ScheduledTask.objects.filter(source="admin", name="admin-job").exists()
 
 
-def test_teardown_is_idempotent(settings, owned_cron_jobs):
+def test_teardown_is_idempotent(settings, get_managed_cron_jobs):
     settings.TASKS = tasks({"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}})
     be = get_absurd_backends()["default"]
     sync_crons(be)
     teardown_crons(be)
     teardown_crons(be)  # must not raise
 
-    assert owned_cron_jobs() == []
+    assert get_managed_cron_jobs() == []
     assert not ScheduledTask.objects.filter(source="settings", alias="default").exists()

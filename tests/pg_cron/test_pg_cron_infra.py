@@ -1,10 +1,7 @@
 import pytest
 from django.db import connection
 
-pytestmark = [
-    pytest.mark.django_db(transaction=True),
-    pytest.mark.usefixtures("ensure_pg_cron"),
-]
+pytestmark = pytest.mark.django_db(transaction=True)
 
 
 def test_pg_cron_extension_available():

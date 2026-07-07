@@ -199,8 +199,9 @@ changed):
 python manage.py absurd_sync_crons
 ```
 
-The command is loud: it reports upserted/pruned counts and raises `CommandError` on any
-failure (missing extension, bad privilege, etc.).
+The command is loud: it reports upserted/pruned counts, and fails with a non-zero exit
+on error — a wrong `SCHEDULER` raises `CommandError`, while a missing extension or
+insufficient privilege surfaces as the underlying database error.
 
 **Projection table and wrapper function.** The `ScheduledTask` projection table
 (`django_absurd_scheduledtask`) and the `public.django_absurd_run_scheduled` wrapper

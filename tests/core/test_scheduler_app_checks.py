@@ -4,8 +4,6 @@ import pytest
 from django.core.management import call_command
 from django.core.management.base import SystemCheckError
 
-from django_absurd.checks import E008_HINT, E008_MSG
-
 pytestmark = pytest.mark.django_db(transaction=True)
 
 ABSURD = "django_absurd.backends.AbsurdBackend"
@@ -31,8 +29,13 @@ def run_check(capsys, settings, scheduler):
 def test_pg_cron_scheduler_without_app_errors(capsys, settings):
     out = run_check(capsys, settings, "pg_cron")
     assert "absurd.E008" in out
-    assert E008_MSG in out
-    assert E008_HINT in out
+    assert (
+        "django-absurd: SCHEDULER is 'pg_cron' but 'django_absurd.pg_cron'"
+        " is not in INSTALLED_APPS."
+    ) in out
+    assert (
+        "Add 'django_absurd.pg_cron' to INSTALLED_APPS, after 'django_absurd'." in out
+    )
 
 
 def test_beat_scheduler_without_app_clean(capsys, settings):
