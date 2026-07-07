@@ -95,12 +95,23 @@ object it touches. `pg_cron` fires each job as the stored role with that role's 
 search path, not the reconcile session's — an unqualified reference would fail silently
 into `cron.job_run_details`. The search-path-safe definition is load-bearing.
 
-### Settings as source of truth; admin seam reserved
+### Settings as source of truth; admin lane reserved
 
-Settings is the single declaration source. A future admin lane (SP3) would write
-`source="admin"` rows; `sync_crons` is scoped to `source="settings"` and never touches
-admin rows. The `absurd:settings:<alias>:<name>` / `absurd:admin:<alias>:<name>`
-job-name split gives `pg_cron`'s prune the same scoping guarantee.
+Settings is the single declaration source for both schedulers. The schedule admin is
+**read-only and `pg_cron`-only**: it surfaces the projection-table rows, and only
+`pg_cron` keeps a row per schedule — the beat declares nothing in the database, so there
+is nothing for an admin to show. It is read-only because settings, not the admin, is the
+source of truth; a writable lane is a separate, deliberately deferred step.
+
+A future writable lane would author `source="admin"` rows, and the shape already
+anticipates it: `sync_crons` is scoped to `source="settings"` and never touches admin
+rows, the `absurd:settings:<alias>:<name>` / `absurd:admin:<alias>:<name>` job-name
+split gives `pg_cron`'s prune the same scoping, and the fire wrapper takes `source` as a
+parameter — so admin-authored schedules fire through the same path with no fire-path
+change. It was deferred, not free: authoring is validation-heavy (the schedule rules
+that run at `check` time against settings must also run at row-save time), and a saved
+row must (un)schedule its `pg_cron` job immediately rather than at the next migrate/sync
+— runtime job emission the settings lane never needed.
 
 ### Static checks, validate at sync
 
@@ -134,6 +145,19 @@ app: adding it to `INSTALLED_APPS` on a DB that isn't pg_cron-ready breaks visib
 `shared_preload_libraries = pg_cron` (a server restart GUC) and `cron.database_name` are
 still operator-side prerequisites that a migration can't deliver. Those stay documented
 as manual setup steps.
+
+## Admin & ORM introspection
+
+Queue state is exposed read-only, in two forms — a Django admin and plain ORM models —
+because Absurd owns every write to its tables; an editable view would invite writes that
+corrupt its bookkeeping. So the models refuse `save`/`delete` and the admin grants no
+add/change/delete. Each entity (tasks, runs, checkpoints, events, waits) spans every
+queue through a single `UNION ALL` view carrying a synthesized queue column, so one
+changelist or queryset covers all queues instead of one per queue; the cost is no
+cross-queue index, so filtering by queue is the fast path. The views are (re)built at
+migrate / worker-start / sync, so a queue reached only by a bare enqueue before the next
+sync is briefly absent from them — the admin surfaces that gap rather than pretending
+the list is complete.
 
 ## Routing & multiple databases
 
