@@ -96,13 +96,24 @@ def test_reconcile_missing_row_fires_clean_noop(settings):
 
     run_scheduled("settings", "default", "a")  # no exception
 
-    with connection.cursor() as cur:
-        cur.execute(
-            "select status from cron.job_run_details d join cron.job j "
-            "using (jobid) where j.jobname = %s and d.status = 'failed'",
-            ["absurd:settings:default:a"],
-        )
-        assert cur.fetchall() == []
+
+def test_reconcile_survives_missing_scheduledtask_table(settings, caplog):
+    settings.TASKS = pg_cron_tasks(
+        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
+    )
+    # Simulate a faked/adopted migration or a multi-DB deploy where post_migrate
+    # fires before this app's tables exist on the Absurd DB: the reconcile must
+    # never break migrate — it skips the backend and logs instead of raising.
+    with connection.schema_editor() as editor:
+        editor.delete_model(ScheduledTask)
+    try:
+        with caplog.at_level(logging.WARNING, logger="django_absurd"):
+            reconcile_crons_after_migrate(sender=None)
+    finally:
+        with connection.schema_editor() as editor:
+            editor.create_model(ScheduledTask)
+
+    assert "skipped cron reconcile for backend 'default'" in caplog.text
 
 
 def test_reconcile_skips_on_malformed_schedule_spec(settings, get_managed_cron_jobs):

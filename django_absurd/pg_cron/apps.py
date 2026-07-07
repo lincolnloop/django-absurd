@@ -5,7 +5,7 @@ from django.apps import AppConfig
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management.color import color_style
 from django.db.models.signals import post_migrate
-from django.db.utils import InternalError, OperationalError
+from django.db.utils import InternalError, OperationalError, ProgrammingError
 
 from django_absurd.backends import get_absurd_backends
 
@@ -66,6 +66,7 @@ def reconcile_crons_after_migrate(
         except (
             ImproperlyConfigured,
             OperationalError,
+            ProgrammingError,
             InternalError,
             ImportError,
             TypeError,
@@ -74,8 +75,10 @@ def reconcile_crons_after_migrate(
             ValueError,
         ):
             # Best-effort: migrate must never break. Skip this backend on an
-            # unreachable DB, a bad dotted path in a schedule, a malformed
-            # SCHEDULE spec, or an unserializable arg.
+            # unreachable DB, tables not yet present (faked/adopted migration, or
+            # a multi-DB migrate firing post_migrate before the Absurd DB is
+            # migrated), a bad dotted path in a schedule, a malformed SCHEDULE
+            # spec, or an unserializable arg.
             logger.warning(
                 "django-absurd: skipped cron reconcile for backend %r",
                 alias,
