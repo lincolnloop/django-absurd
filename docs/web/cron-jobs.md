@@ -106,6 +106,12 @@ Before enabling the pg_cron backend you need:
 On managed Postgres where the migrate role is not a superuser, pre-create the extension
 as a superuser before running `migrate`, then the migration no-ops cleanly.
 
+!!! warning "Reversing the migration drops the extension"
+
+    Rolling this migration back runs `DROP EXTENSION pg_cron` — a destructive,
+    superuser-only operation that removes pg_cron for **every** user of that database.
+    Reverse only deliberately, in a controlled environment.
+
 ### Enable the pg_cron backend
 
 Add `"django_absurd.pg_cron"` to `INSTALLED_APPS` **after** `"django_absurd"` — the

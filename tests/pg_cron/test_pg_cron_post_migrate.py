@@ -155,7 +155,7 @@ def test_reconcile_emits_migrate_stdout_on_sync(settings):
     assert "Scheduled 1" in out
 
 
-def test_reconcile_emits_prune_line_on_sync(settings, get_managed_cron_jobs):
+def test_reconcile_emits_prune_line_on_sync(settings):
     settings.TASKS = pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
