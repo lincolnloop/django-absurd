@@ -13,7 +13,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 ABSURD = "django_absurd.backends.AbsurdBackend"
 
 
-def pg_cron_tasks(schedule: dict[str, t.Any]) -> dict[str, t.Any]:
+def build_pg_cron_tasks(schedule: dict[str, t.Any]) -> dict[str, t.Any]:
     return {
         "default": {
             "BACKEND": ABSURD,
@@ -26,7 +26,7 @@ def pg_cron_tasks(schedule: dict[str, t.Any]) -> dict[str, t.Any]:
     }
 
 
-def beat_tasks(schedule: dict[str, t.Any]) -> dict[str, t.Any]:
+def build_beat_tasks(schedule: dict[str, t.Any]) -> dict[str, t.Any]:
     return {
         "default": {
             "BACKEND": ABSURD,
@@ -42,13 +42,13 @@ def beat_tasks(schedule: dict[str, t.Any]) -> dict[str, t.Any]:
 def test_sync_crons_command_malformed_schedule_raises_commanderror(settings):
     """A SCHEDULE entry missing task/cron must surface as a clean CommandError,
     not a raw KeyError traceback."""
-    settings.TASKS = pg_cron_tasks({"broken": {}})
+    settings.TASKS = build_pg_cron_tasks({"broken": {}})
     with pytest.raises(CommandError):
         call_command("absurd_sync_crons")
 
 
 def test_sync_crons_command_creates_cron_jobs(settings, capsys, get_managed_cron_jobs):
-    settings.TASKS = pg_cron_tasks(
+    settings.TASKS = build_pg_cron_tasks(
         {
             "a": {"task": "tests.tasks.add", "cron": "0 2 * * *"},
             "b": {"task": "tests.tasks.add", "cron": "0 3 * * *"},
@@ -66,7 +66,7 @@ def test_sync_crons_command_creates_cron_jobs(settings, capsys, get_managed_cron
 
 
 def test_sync_crons_command_writes_summary_to_stdout(settings, capsys):
-    settings.TASKS = pg_cron_tasks(
+    settings.TASKS = build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     call_command("absurd_sync_crons")
@@ -76,13 +76,15 @@ def test_sync_crons_command_writes_summary_to_stdout(settings, capsys):
 
 
 def test_sync_crons_command_refuses_when_scheduler_is_beat(settings):
-    settings.TASKS = beat_tasks({"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}})
+    settings.TASKS = build_beat_tasks(
+        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
+    )
     with pytest.raises(CommandError, match="pg_cron"):
         call_command("absurd_sync_crons")
 
 
 def test_sync_crons_command_is_idempotent(settings, capsys, get_managed_cron_jobs):
-    settings.TASKS = pg_cron_tasks(
+    settings.TASKS = build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     call_command("absurd_sync_crons")
@@ -92,7 +94,7 @@ def test_sync_crons_command_is_idempotent(settings, capsys, get_managed_cron_job
 
 
 def test_teardown_removes_owned_cron_jobs(settings, capsys, get_managed_cron_jobs):
-    settings.TASKS = pg_cron_tasks(
+    settings.TASKS = build_pg_cron_tasks(
         {
             "a": {"task": "tests.tasks.add", "cron": "0 2 * * *"},
             "b": {"task": "tests.tasks.add", "cron": "0 3 * * *"},
@@ -112,7 +114,9 @@ def test_teardown_removes_owned_cron_jobs(settings, capsys, get_managed_cron_job
 
 
 def test_teardown_allowed_when_scheduler_is_beat(settings, capsys):
-    settings.TASKS = beat_tasks({"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}})
+    settings.TASKS = build_beat_tasks(
+        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
+    )
     call_command("absurd_sync_crons", teardown=True)
 
     out = capsys.readouterr().out

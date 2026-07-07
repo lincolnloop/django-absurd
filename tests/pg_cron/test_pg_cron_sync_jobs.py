@@ -17,7 +17,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 ABSURD = "django_absurd.backends.AbsurdBackend"
 
 
-def tasks(schedule):
+def build_tasks(schedule):
     return {
         "default": {
             "BACKEND": ABSURD,
@@ -33,7 +33,9 @@ def tasks(schedule):
 def test_creates_job_with_schedule_and_constant_command(
     settings, get_managed_cron_jobs
 ):
-    settings.TASKS = tasks({"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}})
+    settings.TASKS = build_tasks(
+        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
+    )
     sync_crons(get_absurd_backends()["default"])
 
     rows = get_managed_cron_jobs()
@@ -49,7 +51,9 @@ def test_creates_job_with_schedule_and_constant_command(
 
 
 def test_sync_is_idempotent(settings, get_managed_cron_jobs):
-    settings.TASKS = tasks({"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}})
+    settings.TASKS = build_tasks(
+        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
+    )
     sync_crons(get_absurd_backends()["default"])
     sync_crons(get_absurd_backends()["default"])
 
@@ -66,7 +70,7 @@ def test_prune_removes_undeclared_job_but_keeps_foreign(
             "select cron.schedule(%s, %s, %s)", ["keepme", "* * * * *", "select 1"]
         )
 
-    settings.TASKS = tasks(
+    settings.TASKS = build_tasks(
         {
             "a": {"task": "tests.tasks.add", "cron": "0 2 * * *"},
             "b": {"task": "tests.tasks.add", "cron": "0 3 * * *"},
@@ -78,7 +82,9 @@ def test_prune_removes_undeclared_job_but_keeps_foreign(
         "absurd:settings:default:b",
     }
 
-    settings.TASKS = tasks({"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}})
+    settings.TASKS = build_tasks(
+        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
+    )
     sync_crons(get_absurd_backends()["default"])
     assert {r[0] for r in get_managed_cron_jobs()} == {"absurd:settings:default:a"}
 
@@ -89,7 +95,7 @@ def test_prune_removes_undeclared_job_but_keeps_foreign(
 
 
 def test_prune_tolerates_already_unscheduled_job(settings, get_managed_cron_jobs):
-    settings.TASKS = tasks(
+    settings.TASKS = build_tasks(
         {
             "a": {"task": "tests.tasks.add", "cron": "0 2 * * *"},
             "b": {"task": "tests.tasks.add", "cron": "0 3 * * *"},
@@ -107,7 +113,9 @@ def test_prune_tolerates_already_unscheduled_job(settings, get_managed_cron_jobs
         jobid = cur.fetchone()[0]
         cur.execute("select cron.unschedule(%s)", [jobid])
 
-    settings.TASKS = tasks({"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}})
+    settings.TASKS = build_tasks(
+        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
+    )
     sync_crons(get_absurd_backends()["default"])  # no exception
 
     assert {r[0] for r in get_managed_cron_jobs()} == {"absurd:settings:default:a"}
@@ -117,7 +125,9 @@ def test_prune_swallows_job_vanished_after_stale_scan(settings, get_managed_cron
     # The stale-id scan and the unschedule are separate steps; a concurrent actor
     # can remove a job's cron.job row in between. prune_pg_cron_jobs must swallow
     # the resulting "could not find" error and finish the reconcile.
-    settings.TASKS = tasks({"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}})
+    settings.TASKS = build_tasks(
+        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
+    )
     sync_crons(get_absurd_backends()["default"])
 
     with connection.cursor() as cur:
@@ -153,7 +163,9 @@ def test_prune_reraises_unexpected_error(settings):
 
 
 def test_rearm_reenables_disabled_job(settings, get_managed_cron_jobs):
-    settings.TASKS = tasks({"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}})
+    settings.TASKS = build_tasks(
+        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
+    )
     sync_crons(get_absurd_backends()["default"])
 
     with connection.cursor() as cur:
@@ -189,7 +201,7 @@ def test_injection_args_are_quoted_and_schema_survives(settings, get_managed_cro
         cur.execute("select to_regnamespace('absurd')")
         assert cur.fetchone()[0] is not None
 
-    settings.TASKS = tasks(
+    settings.TASKS = build_tasks(
         {
             "evil": {
                 "task": "tests.tasks.add",

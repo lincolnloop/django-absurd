@@ -9,7 +9,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 ABSURD = "django_absurd.backends.AbsurdBackend"
 
 
-def tasks(schedule):
+def build_tasks(schedule):
     return {
         "default": {
             "BACKEND": ABSURD,
@@ -25,7 +25,7 @@ def tasks(schedule):
 def test_teardown_removes_all_owned_cron_jobs_and_settings_rows(
     settings, get_managed_cron_jobs
 ):
-    settings.TASKS = tasks(
+    settings.TASKS = build_tasks(
         {
             "a": {"task": "tests.tasks.add", "cron": "0 2 * * *"},
             "b": {"task": "tests.tasks.add", "cron": "0 3 * * *"},
@@ -51,7 +51,9 @@ def test_teardown_leaves_admin_rows_intact(settings):
         task="tests.tasks.add",
         cron="0 4 * * *",
     )
-    settings.TASKS = tasks({"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}})
+    settings.TASKS = build_tasks(
+        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
+    )
     be = get_absurd_backends()["default"]
     sync_crons(be)
     teardown_crons(be)
@@ -61,7 +63,9 @@ def test_teardown_leaves_admin_rows_intact(settings):
 
 
 def test_teardown_is_idempotent(settings, get_managed_cron_jobs):
-    settings.TASKS = tasks({"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}})
+    settings.TASKS = build_tasks(
+        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
+    )
     be = get_absurd_backends()["default"]
     sync_crons(be)
     teardown_crons(be)

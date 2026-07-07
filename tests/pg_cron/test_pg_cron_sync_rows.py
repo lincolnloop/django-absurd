@@ -9,7 +9,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 ABSURD = "django_absurd.backends.AbsurdBackend"
 
 
-def tasks(schedule):
+def build_tasks(schedule):
     return {
         "default": {
             "BACKEND": ABSURD,
@@ -23,7 +23,7 @@ def tasks(schedule):
 
 
 def test_upsert_and_prune_settings_rows(settings):
-    settings.TASKS = tasks(
+    settings.TASKS = build_tasks(
         {
             "a": {"task": "tests.tasks.add", "cron": "0 2 * * *"},
             "b": {"task": "tests.tasks.add", "cron": "0 3 * * *"},
@@ -32,7 +32,9 @@ def test_upsert_and_prune_settings_rows(settings):
     be = get_absurd_backends()["default"]
     sync_crons(be)
     assert set(ScheduledTask.objects.values_list("name", flat=True)) == {"a", "b"}
-    settings.TASKS = tasks({"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}})
+    settings.TASKS = build_tasks(
+        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
+    )
     sync_crons(get_absurd_backends()["default"])
     assert set(ScheduledTask.objects.values_list("name", flat=True)) == {"a"}
 
@@ -45,13 +47,13 @@ def test_admin_rows_untouched(settings):
         task="tests.tasks.add",
         cron="0 2 * * *",
     )
-    settings.TASKS = tasks({})
+    settings.TASKS = build_tasks({})
     sync_crons(get_absurd_backends()["default"])
     assert ScheduledTask.objects.filter(source="admin", name="a").exists()
 
 
 def test_sync_writes_named_option_columns(settings):
-    settings.TASKS = tasks(
+    settings.TASKS = build_tasks(
         {
             "nightly": {
                 "task": "tests.tasks.capped",  # decorated max_attempts=3

@@ -12,7 +12,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 ABSURD = "django_absurd.backends.AbsurdBackend"
 
 
-def pg_cron_tasks(schedule=None):
+def build_pg_cron_tasks(schedule=None):
     return {
         "default": {
             "BACKEND": ABSURD,
@@ -31,12 +31,12 @@ def test_scheduler_defaults_to_beat(settings):
 
 
 def test_beat_command_refuses_under_pg_cron(settings):
-    settings.TASKS = pg_cron_tasks()
+    settings.TASKS = build_pg_cron_tasks()
     with pytest.raises(CommandError, match=re.escape(BEAT_DISABLED_UNDER_PG_CRON)):
         call_command("absurd_beat")
 
 
 def test_worker_beat_flag_refuses_under_pg_cron(settings):
-    settings.TASKS = pg_cron_tasks()
+    settings.TASKS = build_pg_cron_tasks()
     with pytest.raises(CommandError, match=re.escape(BEAT_DISABLED_UNDER_PG_CRON)):
         call_command("absurd_worker", queue="default", beat=True)

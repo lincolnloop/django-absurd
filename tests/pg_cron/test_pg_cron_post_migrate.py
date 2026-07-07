@@ -16,7 +16,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 ABSURD = "django_absurd.backends.AbsurdBackend"
 
 
-def pg_cron_tasks(schedule: dict[str, t.Any]) -> dict[str, t.Any]:
+def build_pg_cron_tasks(schedule: dict[str, t.Any]) -> dict[str, t.Any]:
     return {
         "default": {
             "BACKEND": ABSURD,
@@ -29,7 +29,7 @@ def pg_cron_tasks(schedule: dict[str, t.Any]) -> dict[str, t.Any]:
     }
 
 
-def beat_tasks(schedule: dict[str, t.Any]) -> dict[str, t.Any]:
+def build_beat_tasks(schedule: dict[str, t.Any]) -> dict[str, t.Any]:
     return {
         "default": {
             "BACKEND": ABSURD,
@@ -53,7 +53,7 @@ def run_scheduled(source: str, alias: str, name: str) -> None:
 def test_reconcile_creates_owned_cron_jobs_under_pg_cron(
     settings, get_managed_cron_jobs
 ):
-    settings.TASKS = pg_cron_tasks(
+    settings.TASKS = build_pg_cron_tasks(
         {
             "a": {"task": "tests.tasks.add", "cron": "0 2 * * *"},
             "b": {"task": "tests.tasks.add", "cron": "0 3 * * *"},
@@ -71,13 +71,15 @@ def test_reconcile_creates_owned_cron_jobs_under_pg_cron(
 def test_reconcile_tears_down_when_scheduler_switches_to_beat(
     settings, get_managed_cron_jobs
 ):
-    settings.TASKS = pg_cron_tasks(
+    settings.TASKS = build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     reconcile_crons_after_migrate(sender=None)
     assert [r[0] for r in get_managed_cron_jobs()] == ["absurd:settings:default:a"]
 
-    settings.TASKS = beat_tasks({"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}})
+    settings.TASKS = build_beat_tasks(
+        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
+    )
     reconcile_crons_after_migrate(sender=None)
 
     assert get_managed_cron_jobs() == []
@@ -85,7 +87,7 @@ def test_reconcile_tears_down_when_scheduler_switches_to_beat(
 
 
 def test_reconcile_missing_row_fires_clean_noop(settings):
-    settings.TASKS = pg_cron_tasks(
+    settings.TASKS = build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     reconcile_crons_after_migrate(sender=None)
@@ -98,7 +100,7 @@ def test_reconcile_missing_row_fires_clean_noop(settings):
 
 
 def test_reconcile_survives_missing_scheduledtask_table(settings, caplog):
-    settings.TASKS = pg_cron_tasks(
+    settings.TASKS = build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     # Simulate a faked/adopted migration or a multi-DB deploy where post_migrate
@@ -117,7 +119,7 @@ def test_reconcile_survives_missing_scheduledtask_table(settings, caplog):
 
 
 def test_reconcile_skips_on_malformed_schedule_spec(settings, get_managed_cron_jobs):
-    settings.TASKS = pg_cron_tasks({"broken": {}})  # no task/cron keys
+    settings.TASKS = build_pg_cron_tasks({"broken": {}})  # no task/cron keys
 
     reconcile_crons_after_migrate(sender=None)  # must NOT raise
 
@@ -125,7 +127,7 @@ def test_reconcile_skips_on_malformed_schedule_spec(settings, get_managed_cron_j
 
 
 def test_reconcile_skips_on_bad_dotted_path(settings, get_managed_cron_jobs):
-    settings.TASKS = pg_cron_tasks(
+    settings.TASKS = build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.does_not_exist", "cron": "0 2 * * *"}}
     )
 
@@ -144,7 +146,7 @@ def test_pg_cron_app_registered_after_core():
 def test_migrate_provisions_queues_and_reconciles_crons(
     settings, get_managed_cron_jobs
 ):
-    settings.TASKS = pg_cron_tasks(
+    settings.TASKS = build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
 
@@ -156,7 +158,7 @@ def test_migrate_provisions_queues_and_reconciles_crons(
 
 
 def test_reconcile_emits_migrate_stdout_on_sync(settings):
-    settings.TASKS = pg_cron_tasks(
+    settings.TASKS = build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     buf = StringIO()
@@ -167,11 +169,11 @@ def test_reconcile_emits_migrate_stdout_on_sync(settings):
 
 
 def test_reconcile_emits_prune_line_on_sync(settings):
-    settings.TASKS = pg_cron_tasks(
+    settings.TASKS = build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     reconcile_crons_after_migrate(sender=None)
-    settings.TASKS = pg_cron_tasks({})
+    settings.TASKS = build_pg_cron_tasks({})
     buf = StringIO()
     reconcile_crons_after_migrate(sender=None, verbosity=1, stdout=buf)
     out = buf.getvalue()
@@ -182,11 +184,13 @@ def test_reconcile_emits_prune_line_on_sync(settings):
 def test_reconcile_emits_teardown_notice_when_backend_switches(
     settings, get_managed_cron_jobs
 ):
-    settings.TASKS = pg_cron_tasks(
+    settings.TASKS = build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     reconcile_crons_after_migrate(sender=None)
-    settings.TASKS = beat_tasks({"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}})
+    settings.TASKS = build_beat_tasks(
+        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
+    )
     buf = StringIO()
     reconcile_crons_after_migrate(sender=None, verbosity=1, stdout=buf)
     out = buf.getvalue()
@@ -195,7 +199,7 @@ def test_reconcile_emits_teardown_notice_when_backend_switches(
 
 
 def test_reconcile_warns_on_none_task_path(settings, caplog):
-    settings.TASKS = pg_cron_tasks({"x": {"task": None, "cron": "0 2 * * *"}})
+    settings.TASKS = build_pg_cron_tasks({"x": {"task": None, "cron": "0 2 * * *"}})
     with caplog.at_level(logging.WARNING, logger="django_absurd"):
         reconcile_crons_after_migrate(sender=None)
     warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
@@ -204,7 +208,7 @@ def test_reconcile_warns_on_none_task_path(settings, caplog):
 
 
 def test_reconcile_warns_on_string_kwargs(settings, caplog):
-    settings.TASKS = pg_cron_tasks(
+    settings.TASKS = build_pg_cron_tasks(
         {"x": {"task": "tests.tasks.add", "cron": "0 2 * * *", "kwargs": "abc"}}
     )
     with caplog.at_level(logging.WARNING, logger="django_absurd"):
