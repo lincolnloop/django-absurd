@@ -24,10 +24,16 @@ Docker Compose, Postgres 18 (+ pg_cron on the pg_cron app), absurd_sdk.
   `Django(ADMIN_URL="admin/", EXTRA_APPS=[...], DATABASES=..., TASKS=..., LOGGING=...)`.
 - **psycopg3 required** — nanodjango defaults to sqlite, so `DATABASES` is overridden to
   `django.db.backends.postgresql`.
-- Superuser **admin / admin**, created non-interactively in the server service's start
-  script (`createsuperuser --noinput` + `DJANGO_SUPERUSER_USERNAME/PASSWORD/EMAIL` env).
+- **nanodjango does migrate + superuser itself** — the `app` service's Dockerfile CMD is
+  `["nanodjango","run","app.py","0.0.0.0:8000","--user=admin","--pass=admin"]`, which
+  makes+applies migrations and creates the **admin/admin** superuser (idempotent) before
+  serving. So NO migrate one-shot, NO `start.sh`, NO `createsuperuser` step, NO
+  healthchecks. `restart: on-failure` on `app`+`worker` rides out Postgres warmup and
+  the worker-before-migrate race. (This is `origin/main:examples/`'s solved pattern —
+  `examples/web/` @ a45b298 is the built, verified template; Tasks 2–3 mirror it.)
 - Server on host **8000** (reachable); each app's compose is independent → all reuse
-  8000 (run one at a time).
+  8000 (run one at a time). db = `postgres:18.4-alpine`, volume
+  `pgdata:/var/lib/postgresql`.
 - pg_cron app: extension created by the **`django_absurd.pg_cron` app migration** (no
   demo migration); its Postgres needs `shared_preload_libraries=pg_cron` +
   `cron.database_name=<db>` (server GUCs, in compose `command`).
