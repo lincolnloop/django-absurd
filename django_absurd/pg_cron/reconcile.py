@@ -209,13 +209,14 @@ def prune_pg_cron_jobs(cur: t.Any, stale_jobids: list[int]) -> None:
     removed out-of-band between the stale-id scan and this call, cron.unschedule
     raises InternalError (SQLSTATE XX000, "could not find valid entry"); we roll
     back to the savepoint and continue rather than abort the whole reconcile.
+    Matched on SQLSTATE (not the message text) so it holds under any lc_messages.
     """
     for jobid in stale_jobids:
         cur.execute("savepoint prune_sp")
         try:
             cur.execute("select cron.unschedule(%s)", [jobid])
         except (InternalError, DatabaseError) as exc:
-            if "could not find" not in str(exc):
+            if getattr(exc.__cause__, "sqlstate", None) != "XX000":
                 raise
             cur.execute("rollback to savepoint prune_sp")
         else:

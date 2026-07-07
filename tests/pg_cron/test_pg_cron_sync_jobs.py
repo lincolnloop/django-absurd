@@ -85,6 +85,7 @@ def test_prune_removes_undeclared_job_but_keeps_foreign(
     with connection.cursor() as cur:
         cur.execute("select count(*) from cron.job where jobname = 'keepme'")
         assert cur.fetchone()[0] == 1
+        cur.execute("select cron.unschedule('keepme')")  # don't leak the foreign job
 
 
 def test_prune_tolerates_already_unscheduled_job(settings, get_managed_cron_jobs):
