@@ -60,13 +60,12 @@ class AbsurdQueueListFilter(admin.SimpleListFilter):
         return queryset
 
 
-class ReadOnlyAbsurdAdmin(admin.ModelAdmin):
-    spec: EntitySpec | None  # None on the Queue admin (the catalog, not an entity view)
-    using: str
+class ReadOnlyAdminBase(admin.ModelAdmin):
+    """View-only admin: no add/change/delete, every model field read-only.
 
-    ordering = ("natural_key",)
-    show_full_result_count = False
-    paginator = BoundedCountPaginator
+    Carries no queryset/ordering assumptions, so it suits both the UNION-view
+    entity admins and plain-table admins (e.g. pg_cron's ScheduledTask).
+    """
 
     def has_add_permission(self, request: t.Any) -> bool:
         return False
@@ -86,6 +85,15 @@ class ReadOnlyAbsurdAdmin(admin.ModelAdmin):
     def get_readonly_fields(self, request: t.Any, obj: t.Any = None) -> tuple[str, ...]:
         model_fields = tuple(f.name for f in self.model._meta.get_fields())  # noqa: SLF001
         return tuple(self.readonly_fields) + model_fields
+
+
+class ReadOnlyAbsurdAdmin(ReadOnlyAdminBase):
+    spec: EntitySpec | None  # None on the Queue admin (the catalog, not an entity view)
+    using: str
+
+    ordering = ("natural_key",)
+    show_full_result_count = False
+    paginator = BoundedCountPaginator
 
     def get_queryset(self, request: t.Any) -> t.Any:
         if self.spec is not None and not view_exists(self.spec.view_name, self.using):

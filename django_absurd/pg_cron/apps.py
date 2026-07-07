@@ -15,7 +15,7 @@ logger = logging.getLogger("django_absurd")
 class PgCronConfig(AppConfig):
     name = "django_absurd.pg_cron"
     label = "django_absurd_pg_cron"
-    verbose_name = "Absurd pg_cron"
+    verbose_name = "Absurd Cron"
 
     def ready(self) -> None:
         import django_absurd.pg_cron.checks  # noqa: F401, PLC0415
