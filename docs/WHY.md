@@ -124,13 +124,19 @@ static configuration check — it fires when `SCHEDULER="pg_cron"` but
 `django_absurd.pg_cron` is absent from `INSTALLED_APPS`, which is knowable without any
 DB connection.
 
-### No sub-minute on `pg_cron`
+### pg_cron cron grammar is DB-authoritative (croniter is beat-only)
 
-`pg_cron` fires at minute granularity. Rather than implement a `"N seconds"` shim (which
-would impose a `pg_cron` ≥ 1.5 floor and produce a `1 seconds` runaway that generates
-~86k `cron.job_run_details` rows per day), sub-minute schedules are beat-only. The
-static check rejects a 6-field expression under `SCHEDULER="pg_cron"` at configuration
-time, not at fire time.
+The two schedulers have different cron grammars, each with its own authority. Beat uses
+croniter (which supports a 6-field leading-seconds form). `pg_cron` has its own grammar
+— a 5-field cron OR the interval form `"[1-59] seconds"` — and `pg_cron` itself is the
+authority. croniter can't parse `"30 seconds"` and would false-reject it, so croniter is
+scoped to beat only: the DB-free `manage.py check` no longer croniter-validates
+`pg_cron` crons. Their grammar is verified by the real `cron.schedule` at sync (and, for
+admin-authored rows, a save-time savepoint trial). Consequently `pg_cron` sub-minute
+(down to `1 seconds`) is allowed — an admin authoring one accepts the high
+`cron.job_run_details` growth. (An earlier design rejected a _croniter 6-field_ "N
+seconds" shim; that is different — the shim faked seconds on top of croniter's grammar,
+whereas this is `pg_cron`'s own native interval syntax.)
 
 ### Extension in the app migration (fail-fast)
 

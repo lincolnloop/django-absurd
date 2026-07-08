@@ -9,6 +9,7 @@ from django.utils.module_loading import import_string
 
 from django_absurd.backends import AbsurdBackend, build_merged_spawn_options
 from django_absurd.pg_cron.models import ScheduledTask
+from django_absurd.pg_cron.validators import build_jobname, build_jobname_prefix
 from django_absurd.scheduler import Schedule, get_settings_schedules
 
 # Stable advisory lock key that serializes concurrent sync_crons reconcilers.
@@ -45,16 +46,6 @@ def get_effective_queue(schedule: Schedule) -> str:
     task's own queue_name.
     """
     return schedule.queue or import_string(schedule.task).queue_name
-
-
-def build_jobname(alias: str, name: str, source: str = "settings") -> str:
-    """Return the pg_cron job name for a scheduled task."""
-    return f"absurd:{source}:{alias}:{name}"
-
-
-def build_jobname_prefix(alias: str, source: str = "settings") -> str:
-    """Return the LIKE prefix used to prune pg_cron jobs for an alias."""
-    return f"absurd:{source}:{alias}:"
 
 
 def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:

@@ -76,10 +76,16 @@ def test_pg_cron_schedule_error_reported(capsys, settings):
     out = run_check(
         capsys,
         settings,
-        schedule={"half-minute": {"task": "tests.tasks.add", "cron": "*/30 * * * * *"}},
+        schedule={
+            "nightly": {
+                "task": "tests.tasks.add",
+                "cron": "0 2 * * *",
+                "queue": "ghost",
+            }
+        },
     )
     assert "absurd.E007" in out
-    assert "6-field cron expressions are not supported by pg_cron." in out
+    assert "queue 'ghost' is not declared." in out
 
 
 def test_pg_cron_app_config_path_before_core_warns(capsys, settings):
