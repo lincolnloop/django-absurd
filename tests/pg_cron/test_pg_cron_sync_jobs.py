@@ -5,12 +5,11 @@ from django.db import DatabaseError, connection, connections, transaction
 
 from django_absurd.backends import get_absurd_backends
 from django_absurd.pg_cron.reconcile import (
-    build_jobname,
-    build_jobname_prefix,
     find_stale_pg_cron_jobids,
     prune_pg_cron_jobs,
     sync_crons,
 )
+from django_absurd.pg_cron.validators import build_jobname, build_jobname_prefix
 
 pytestmark = pytest.mark.django_db(transaction=True)
 

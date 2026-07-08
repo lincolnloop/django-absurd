@@ -1,6 +1,3 @@
-import json
-import logging
-import sys
 import typing as t
 from collections.abc import Mapping, Sequence
 
@@ -11,9 +8,8 @@ from django.conf import settings
 from django.contrib.admin.sites import AdminSite
 from django.core.checks import CheckMessage, Error, Tags, register
 from django.core.checks import Warning as DjangoWarning
-from django.core.exceptions import ImproperlyConfigured
+from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.db.utils import OperationalError, ProgrammingError
-from django.tasks import Task
 from django.utils.connection import ConnectionDoesNotExist
 from django.utils.module_loading import import_string
 
@@ -22,8 +18,11 @@ from django_absurd.connection import BACKEND_ERROR_MESSAGE, validate_backend
 from django_absurd.models import Queue
 from django_absurd.queues import get_absurd_backend, get_absurd_database
 from django_absurd.routers import AbsurdRouter
-
-logger = logging.getLogger(__name__)
+from django_absurd.validators import (
+    validate_args_serializable,
+    validate_kwargs_serializable,
+    validate_task_path,
+)
 
 W002_MSG = (
     "django-absurd: a queue's declared storage_mode differs from the database"
@@ -71,7 +70,11 @@ E007_HINT_IMPORT = (
     "Ensure the task path is importable and points to a @task-decorated function."
 )
 E007_HINT_NOT_TASK = "The path must point to a Django @task-decorated callable."
-E007_HINT_CRON = "Provide a valid 5-field cron expression (e.g. '0 2 * * *')."
+E007_HINT_CRON = "Provide a valid cron expression (e.g. '0 2 * * *')."
+E007_HINT_PG_CRON_CRON = (
+    "Set cron to a non-empty schedule string (a 5-field cron or '<n> seconds');"
+    " pg_cron validates the grammar at sync time."
+)
 E007_HINT_UNKNOWN_KEY = (
     "Remove unknown keys; valid keys are: task, cron, queue, args, kwargs."
 )
@@ -194,7 +197,7 @@ def check_absurd_schedule_config(
             )
             continue
         for name, spec in raw_schedule.items():
-            errors.extend(validate_schedule(name, spec, declared_queues))
+            errors.extend(validate_schedule(name, spec, declared_queues, scheduler))
     return errors
 
 
@@ -202,6 +205,7 @@ def validate_schedule(
     name: str,
     spec: t.Any,
     declared_queues: set[str],
+    scheduler: str,
 ) -> list[CheckMessage]:
     if not isinstance(spec, Mapping):
         return [
@@ -225,10 +229,26 @@ def validate_schedule(
         if key not in VALID_SCHEDULE_KEYS
     ]
 
-    errors.extend(validate_schedule_task(name, spec.get("task", "")))
+    try:
+        validate_task_path(spec.get("task", ""))
+    except ValidationError as exc:
+        hint = E007_HINT_NOT_TASK if exc.code == "not_a_task" else E007_HINT_IMPORT
+        errors.append(
+            Error(
+                f"{E007_MSG} Schedule {name!r}: {exc.message}",
+                hint=hint,
+                id="absurd.E007",
+            )
+        )
 
+    # croniter validates the beat grammar only. pg_cron has its own grammar
+    # (5-field cron or "[1-59] seconds"), validated by the DB at sync — so for
+    # pg_cron the check only enforces structural presence (a non-empty string),
+    # leaving the grammar to cron.schedule.
     cron = spec.get("cron", "")
-    if not isinstance(cron, str) or not croniter.croniter.is_valid(cron):
+    if scheduler == "beat" and (
+        not isinstance(cron, str) or not croniter.croniter.is_valid(cron)
+    ):
         errors.append(
             Error(
                 f"{E007_MSG} Schedule {name!r}: invalid cron expression {cron!r}.",
@@ -236,17 +256,27 @@ def validate_schedule(
                 id="absurd.E007",
             )
         )
+    elif scheduler == "pg_cron" and (not isinstance(cron, str) or not cron.strip()):
+        errors.append(
+            Error(
+                f"{E007_MSG} Schedule {name!r}: cron must be a non-empty string.",
+                hint=E007_HINT_PG_CRON_CRON,
+                id="absurd.E007",
+            )
+        )
 
-    for field in ("args", "kwargs"):
+    for field, validate in (
+        ("args", validate_args_serializable),
+        ("kwargs", validate_kwargs_serializable),
+    ):
         value = spec.get(field)
         if value is not None:
             try:
-                json.dumps(value)
-            except (TypeError, ValueError):
+                validate(value)
+            except ValidationError as exc:
                 errors.append(
                     Error(
-                        f"{E007_MSG} Schedule {name!r}:"
-                        f" {field} is not JSON-serializable.",
+                        f"{E007_MSG} Schedule {name!r}: {exc.message}",
                         hint=E007_HINT_SERIALIZE,
                         id="absurd.E007",
                     )
@@ -265,31 +295,6 @@ def validate_schedule(
         )
 
     return errors
-
-
-def validate_schedule_task(name: str, task_path: str) -> list[CheckMessage]:
-    try:
-        task_obj = import_string(task_path)
-    except Exception:
-        logger.exception("absurd.E007: task %r could not be imported", task_path)
-        exc = sys.exc_info()[1]
-        return [
-            Error(
-                f"{E007_MSG} Schedule {name!r}: task {task_path!r}"
-                f" could not be imported: {exc!r}",
-                hint=E007_HINT_IMPORT,
-                id="absurd.E007",
-            )
-        ]
-    if not isinstance(task_obj, Task):
-        return [
-            Error(
-                f"{E007_MSG} Schedule {name!r}: {task_path!r} is not a Django task.",
-                hint=E007_HINT_NOT_TASK,
-                id="absurd.E007",
-            )
-        ]
-    return []
 
 
 @register("absurd")

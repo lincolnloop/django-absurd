@@ -71,6 +71,15 @@ duplicate that material here.
 - **Comment hygiene:** don't write comments that restate code or justify
   obviously-needed lines — let tests validate necessity. Remove noisy/distracting test
   comments.
+- **Multi-entrypoint rule tests (validators):** one case table per rule, **parametrized
+  over the real enforcing entrypoints** (`validate_<source>` subjects, e.g. the system
+  check + `full_clean`), integration-style — never re-assert the same rule per
+  entrypoint. Validators are pure functions raising `ValidationError`, enforced
+  **model-first** (on the model + reused by the checks); a plain `VALID` baseline dict
+  so a single override isolates one rule.
+- **Assert the COMPLETE error message, never a fragment** (fragments are unreadable and
+  brittle); assert the full stable portion up to any volatile tail.
+- **Always alphabetize** `@pytest.mark.parametrize` values and fixture `params`.
 
 ## Runtime
 

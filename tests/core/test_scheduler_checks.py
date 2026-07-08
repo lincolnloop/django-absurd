@@ -91,6 +91,13 @@ def test_non_string_cron(run_check):
     assert "absurd.E007" in out
 
 
+def test_beat_rejects_pg_cron_interval_syntax(run_check):
+    # "[1-59] seconds" is pg_cron's grammar; under beat, croniter rejects it.
+    out = run_check({"x": {"task": "tests.tasks.add", "cron": "30 seconds"}})
+    assert (f"{E007_MSG} Schedule 'x': invalid cron expression '30 seconds'.") in out
+    assert "absurd.E007" in out
+
+
 def test_unknown_key(run_check):
     out = run_check({"x": {"task": "tests.tasks.add", "cron": "0 2 * * *", "bogus": 1}})
     assert (f"{E007_MSG} Schedule 'x': unknown key 'bogus'.") in out

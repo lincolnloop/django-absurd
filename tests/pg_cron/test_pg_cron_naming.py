@@ -1,4 +1,4 @@
-from django_absurd.pg_cron.reconcile import build_jobname, build_jobname_prefix
+from django_absurd.pg_cron.validators import build_jobname, build_jobname_prefix
 
 
 def test_jobname_format():

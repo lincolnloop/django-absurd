@@ -62,28 +62,21 @@ def test_pg_cron_task_import_raise_reports_e007_not_crash(settings, capsys):
     assert "could not be imported" in out
 
 
-def test_pg_cron_six_field_cron_rejected(settings, capsys):
-    """6-field cron (leading seconds) must be rejected under pg_cron."""
+@pytest.mark.parametrize("cron", ["*/30 * * * * *", "30 seconds"])
+def test_pg_cron_cron_grammar_not_checked(settings, capsys, cron):
+    """pg_cron cron grammar is DB-authoritative: neither a '[1-59] seconds' interval
+    nor a 6-field expression is rejected at check time — cron.schedule validates it
+    at sync (croniter is the beat-only validator)."""
     out = run_pg_cron_check(
         settings,
         capsys,
         {
             "scheduler": "pg_cron",
             "queues": BASE_QUEUES,
-            "schedule": {
-                "half-minute": {
-                    "task": "tests.tasks.add",
-                    "cron": "*/30 * * * * *",
-                }
-            },
+            "schedule": {"s": {"task": "tests.tasks.add", "cron": cron}},
         },
     )
-    assert "absurd.E007" in out
-    assert "6-field cron expressions are not supported by pg_cron." in out
-    assert (
-        "pg_cron fires at minute granularity; use a 5-field cron expression"
-        " (no leading seconds column)."
-    ) in out
+    assert "absurd.E007" not in out
 
 
 def test_pg_cron_bad_name_charset_rejected(settings, capsys):
@@ -103,7 +96,7 @@ def test_pg_cron_bad_name_charset_rejected(settings, capsys):
         },
     )
     assert "absurd.E007" in out
-    assert "invalid schedule name" in out
+    assert "Schedule name contains characters other than [A-Za-z0-9_-]." in out
 
 
 def test_pg_cron_jobname_too_long_rejected(settings, capsys):
@@ -220,7 +213,7 @@ def test_pg_cron_bad_alias_charset_rejected(settings, capsys):
         },
     )
     assert "absurd.E007" in out
-    assert "backend alias 'bad.alias' contains characters not allowed" in out
+    assert "Backend alias contains characters other than [A-Za-z0-9_-]." in out
 
 
 def test_pg_cron_missing_task_no_queue_error(settings, capsys):
@@ -270,19 +263,22 @@ def test_pg_cron_non_task_no_queue_error(settings, capsys):
     assert "is not declared" not in out
 
 
-def test_pg_cron_non_string_cron_rejected_cleanly(settings, capsys):
-    """A non-string cron under pg_cron yields core's E007, not a TypeError."""
+@pytest.mark.parametrize("cron", ["", 300])
+def test_pg_cron_structurally_absent_cron_rejected(settings, capsys, cron):
+    """pg_cron cron grammar is DB-authoritative, but structural presence is not: an
+    empty or non-string cron is rejected at check time (cron.schedule can't run
+    without a schedule string)."""
     out = run_pg_cron_check(
         settings,
         capsys,
         {
             "scheduler": "pg_cron",
             "queues": BASE_QUEUES,
-            "schedule": {"nightly": {"task": "tests.tasks.add", "cron": 300}},
+            "schedule": {"nightly": {"task": "tests.tasks.add", "cron": cron}},
         },
     )
-    assert "invalid cron expression 300." in out
-    assert "is not declared" not in out
+    assert "absurd.E007" in out
+    assert "cron must be a non-empty string." in out
 
 
 def test_unknown_scheduler_value_rejected(settings, capsys):
@@ -323,7 +319,7 @@ def test_pg_cron_trailing_newline_name_rejected(settings, capsys):
         },
     )
     assert "absurd.E007" in out
-    assert "invalid schedule name" in out
+    assert "Schedule name contains characters other than [A-Za-z0-9_-]." in out
 
 
 def test_pg_cron_empty_string_queue_resolves_via_effective_queue(settings, capsys):
