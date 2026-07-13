@@ -22,12 +22,20 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name="scheduledtask",
             name="args",
-            field=models.JSONField(blank=True, default=list),
+            field=models.JSONField(
+                blank=True,
+                default=list,
+                error_messages={"invalid": "args is not JSON-serializable."},
+            ),
         ),
         migrations.AlterField(
             model_name="scheduledtask",
             name="kwargs",
-            field=models.JSONField(blank=True, default=dict),
+            field=models.JSONField(
+                blank=True,
+                default=dict,
+                error_messages={"invalid": "kwargs is not JSON-serializable."},
+            ),
         ),
         migrations.AlterField(
             model_name="scheduledtask",

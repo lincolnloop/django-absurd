@@ -10,7 +10,7 @@ import pytest
         ("kwargs", "kwargs is not JSON-serializable.", {"a": {1, 2}}),
     ],
 )
-def test_non_json_rejected(validate, field, message, value):
-    result = validate(**{field: value})
+def test_non_json_rejected(validate_check_and_model, field, message, value):
+    result = validate_check_and_model(**{field: value})
     assert result
     assert message in result

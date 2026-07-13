@@ -61,7 +61,8 @@ def test_scheduledtask_unique_per_source_alias_name():
             task="demo.tasks.ping",
             cron="* * * * *",
         )
-    # cross-source with the same alias/name is allowed
+    # but a different source with the same alias/name is allowed — settings and admin
+    # schedules are distinct, source-namespaced jobs
     ScheduledTask.objects.create(
         name="dup",
         source="admin",

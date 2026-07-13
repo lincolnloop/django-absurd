@@ -339,8 +339,11 @@ OPTIONS = {
 }
 ```
 
-Sub-minute (6-field) cron expressions are **beat-only** — `pg_cron` fires at minute
-granularity and `absurd.E007` rejects a 6-field entry when `SCHEDULER="pg_cron"`.
+`pg_cron` validates its own schedule grammar: a 5-field cron **or** the interval form
+`<n> seconds` (1-59). Sub-minute cadence therefore works under `pg_cron` via
+`30 seconds` — distinct from beat's 6-field croniter syntax, which `pg_cron` does not
+accept. This grammar is validated by the database (at sync for settings schedules, at
+save time for admin ones), not by `check`.
 
 Beat and pg_cron are **mutually exclusive** per backend: running `absurd_beat` or
 `absurd_worker --beat` against a backend with `SCHEDULER="pg_cron"` raises
@@ -351,12 +354,20 @@ Beat and pg_cron are **mutually exclusive** per backend: running `absurd_beat` o
 ```bash
 python manage.py migrate              # reconciles on every deploy (recommended)
 python manage.py absurd_sync_crons    # explicit reconcile / backstop
-python manage.py absurd_sync_crons --teardown  # remove all jobs + rows (before uninstall)
+python manage.py absurd_sync_crons --teardown  # unschedule all jobs (prompts; --no-input)
 ```
 
 `migrate` fires `post_migrate`, which reconciles the declared `SCHEDULE` into `pg_cron`
 jobs automatically — a settings-only change needs no new migration file.
 `absurd_sync_crons` is the backstop for pipelines that skip `migrate`.
+
+`--teardown` unschedules every owned `pg_cron` job for the backend — **including
+admin-authored ones** — and deletes their `ScheduledTask` rows (settings **and** admin).
+Deleting the admin rows is deliberate: the next `migrate` re-emits a job for every
+surviving admin row, so keeping the rows would silently resurrect the jobs teardown just
+killed. Because it destroys admin-authored schedules, it prompts for confirmation unless
+`--no-input` is passed. Migrate-time teardown (switching a backend off `pg_cron`) is
+narrower — it only clears settings jobs and rows, never admin ones.
 
 **Wrapper model:** each schedule is materialised as a `ScheduledTask` row (the
 projection table, `django_absurd_scheduledtask`). The row stores explicit option columns
@@ -385,9 +396,27 @@ schedule on a non-default backend (mirrors `task.using(backend=...)` semantics).
 beat scheduler only an explicit `queue` key is checked, so setting `queue` explicitly
 matters most there.
 
-**No admin UI.** `ScheduledTask` is not registered in the admin. Settings is the only
-source of truth for schedules; edit `SCHEDULE` in settings rather than editing rows
-directly (the projection table is managed by reconcile).
+**Admin.** `ScheduledTask` rows appear in Django admin. Settings-declared rows
+(`source="settings"`) are **read-only** — `SCHEDULE` in settings is their source of
+truth. Admins can additionally author `source="admin"` schedules directly in the admin
+(create/edit/delete): choose the **Backend** (a configured `pg_cron` backend), a name,
+task, optional queue, and a cron expression. `alias` and `name` are immutable once
+created (they form the job identity); the cron expression is validated by `pg_cron`
+itself at save time (so `<n> seconds` is accepted and an invalid expression is rejected
+with `pg_cron`'s own message). Saving or deleting an admin row immediately (un)schedules
+its `pg_cron` job — the row is the source of truth, so any write that persists it
+(admin, ORM, or `loaddata`) keeps `pg_cron` in step (`cron.schedule` is an idempotent
+upsert). A write forced onto a **different** database (`loaddata --database=…`,
+`.using(…)`) raises `NotImplementedError` — schedules live only on the absurd DB, so a
+misplaced row is rejected before it's inserted rather than paired with a phantom job.
+(When Absurd is on a **non-default** database, `loaddata` bypasses the router and
+targets `default`, so pass `--database=<alias>` to load schedules onto the absurd DB.)
+Writes that bypass `.save()` — a **data migration** (the historical model isn't the
+signal's sender), `bulk_create`, `QuerySet.update`, raw SQL — don't emit directly, but
+`migrate` (and `absurd_sync_crons`) reconciles `source="admin"` rows, so their jobs
+materialize then. A settings schedule and an admin schedule **may** share a name: they
+are distinct, source-namespaced jobs (`absurd:settings:…` vs `absurd:admin:…`). Removing
+admin-authored jobs at teardown is a guarded action (see Reconcile).
 
 ### Validate
 
@@ -395,8 +424,8 @@ directly (the projection table is managed by reconcile).
 `absurd.E007` for:
 
 - an unimportable or non-`@task` `task` path
-- an invalid cron expression
-- 6-field (sub-minute) cron under `SCHEDULER="pg_cron"`
+- an invalid cron expression (beat only; `pg_cron` grammar is validated by the database,
+  not by `check`)
 - unknown keys in the spec
 - `args`/`kwargs` values that are not JSON-serializable
 - a `queue` that is not declared in `OPTIONS["QUEUES"]`

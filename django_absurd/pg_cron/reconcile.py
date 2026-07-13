@@ -1,19 +1,18 @@
 """pg_cron reconcile engine: materialize declared SCHEDULE entries into
-ScheduledTask rows and pg_cron jobs, prune undeclared ones, and tear down on
-scheduler switch — plus the option/effective-queue resolution they depend on."""
+ScheduledTask rows (the rows' post_save signal emits the pg_cron jobs), prune
+undeclared ones, and tear down on scheduler switch — plus the option/effective-queue
+resolution they depend on. Per-row pg_cron job emission lives on the ScheduledTask
+model."""
 
 import typing as t
 
-from django.db import DatabaseError, InternalError, connections, transaction
 from django.utils.module_loading import import_string
 
 from django_absurd.backends import AbsurdBackend, build_merged_spawn_options
-from django_absurd.pg_cron.models import ScheduledTask
-from django_absurd.pg_cron.validators import build_jobname, build_jobname_prefix
+from django_absurd.pg_cron.models import ScheduledTask, open_locked_cursor
+from django_absurd.pg_cron.validators import build_jobname_prefix
+from django_absurd.queues import resolve_absurd_database
 from django_absurd.scheduler import Schedule, get_settings_schedules
-
-# Stable advisory lock key that serializes concurrent sync_crons reconcilers.
-SYNC_CRONS_ADVISORY_LOCK = 0x616273_75726421  # "absurd!" as hex
 
 
 def resolve_spawn_options(
@@ -51,33 +50,26 @@ def get_effective_queue(schedule: Schedule) -> str:
 def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:
     """Reconcile ScheduledTask rows for this backend's declared SCHEDULE entries.
 
-    Opens a transaction on backend.database and acquires an advisory lock to
+    Opens a transaction on the absurd database and acquires an advisory lock to
     serialise concurrent reconcilers. Upserts one row per declared schedule
-    (source="settings"), then prunes undeclared settings rows for this alias.
-    The source="admin" scope is never touched.
+    (source="settings"), then prunes undeclared settings rows for this alias. The
+    source="admin" scope is never touched. The pg_cron jobs follow: each row upsert
+    fires post_save → schedule; each pruned row fires post_delete → unschedule. Finally
+    it prunes any owned settings job whose row was removed out-of-band (signal-less
+    delete), so cron.job reconverges to the declared state.
 
-    After the table phase, materializes one pg_cron job per declared entry
-    (upsert + active re-arm) and prunes owned-but-undeclared pg_cron jobs.
-
-    Returns (created, pruned): count of ScheduledTask rows newly created and
-    count deleted. A no-op reconcile (every row already present, nothing stale)
-    returns (0, 0) so callers can stay quiet — matching queue provisioning,
-    which reports only deltas.
+    Returns (created, pruned): count of ScheduledTask rows newly created and count
+    deleted. A no-op reconcile returns (0, 0) so callers can stay quiet.
     """
     schedules = get_settings_schedules(backend)
     declared_names = [s.name for s in schedules]
+    database = resolve_absurd_database()
 
     created = 0
-    with transaction.atomic(using=backend.database):
-        conn = connections[backend.database]
-        with conn.cursor() as cur:
-            cur.execute("select pg_advisory_xact_lock(%s)", [SYNC_CRONS_ADVISORY_LOCK])
-
+    with open_locked_cursor(database):
         for schedule in schedules:
             opts = resolve_spawn_options(backend, schedule)
-            _, was_created = ScheduledTask.objects.using(
-                backend.database
-            ).update_or_create(
+            _, was_created = ScheduledTask.objects.using(database).update_or_create(
                 source="settings",
                 alias=backend.alias,
                 name=schedule.name,
@@ -98,125 +90,66 @@ def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:
             created += was_created
 
         pruned, _ = (
-            ScheduledTask.objects.using(backend.database)
+            ScheduledTask.objects.using(database)
             .filter(source="settings", alias=backend.alias)
             .exclude(name__in=declared_names)
             .delete()
         )
-
-        sync_pg_cron_jobs(backend, schedules)
+        ScheduledTask.pg_cron.prune_jobs_without_rows(
+            database, backend.alias, "settings", declared_names
+        )
 
     return created, pruned
 
 
-# cron.schedule / cron.unschedule / cron.alter_job are pg_cron catalog functions,
-# not part of the Absurd SDK (which covers spawn/queues/claim only). Raw SQL here
-# is inherent to this DB-side scheduler backend.
-#
-# psycopg scans the whole query for %, so SQL format()'s %L placeholders must be
-# doubled to %%L; the bound params carry an explicit ::text cast. Without both,
-# psycopg raises "only '%s','%b','%t' are allowed". Building the command
-# server-side means runtime arg values can never inject into the scheduled SQL.
-SCHEDULE_JOB_SQL = (
-    "select cron.schedule(%s, %s, "
-    "format('select public.django_absurd_run_scheduled(%%L, %%L, %%L)', "
-    "%s::text, %s::text, %s::text))"
-)
+def sync_admin_crons(backend: AbsurdBackend) -> None:
+    """Re-emit the pg_cron jobs for this backend's source="admin" rows (idempotent).
 
-
-def sync_pg_cron_jobs(backend: AbsurdBackend, schedules: list[Schedule]) -> None:
-    """Upsert one pg_cron job per declared schedule and prune stale ones.
-
-    Runs inside sync_crons' transaction on backend.database. Each declared entry
-    is (re)scheduled with a constant wrapper command and re-armed to active;
-    pg_cron jobs owned by this alias but no longer declared are unscheduled.
+    Admin schedules are authored through the ORM/admin, whose post_save signal emits
+    the job. But a row created by a data migration goes through the historical model
+    and never fires that signal — so its job is missing. This reconciles every admin
+    row at migrate, restoring the row⇔job invariant regardless of how the row arrived.
+    cron.schedule is an upsert, so re-emitting an already-scheduled job is harmless.
+    It then prunes any admin job whose row is gone (a backend flipped off pg_cron then
+    the row deleted, or a signal-less row delete), symmetric with the settings lane.
     """
-    conn = connections[backend.database]
-    prefix = build_jobname_prefix(backend.alias)
-    declared_jobnames = [build_jobname(backend.alias, s.name) for s in schedules]
-
-    with conn.cursor() as cur:
-        for schedule in schedules:
-            jobname = build_jobname(backend.alias, schedule.name)
-            cur.execute(
-                SCHEDULE_JOB_SQL,
-                [jobname, schedule.cron, "settings", backend.alias, schedule.name],
-            )
-            jobid = cur.fetchone()[0]
-            cur.execute("select cron.alter_job(%s, active := true)", [jobid])
-
-        stale_jobids = find_stale_pg_cron_jobids(cur, prefix, declared_jobnames)
-        prune_pg_cron_jobs(cur, stale_jobids)
-
-
-def teardown_crons(backend: AbsurdBackend) -> int:
-    """Remove every pg_cron job and ScheduledTask row owned by this backend alias.
-
-    Opens a transaction on backend.database and acquires the same advisory lock
-    used by sync_crons to serialise concurrent reconcilers. All jobs matching the
-    absurd:settings:<alias>:% prefix are unscheduled via the savepoint-swallow
-    helper (tolerating already-gone rows). All source="settings" ScheduledTask rows
-    for this alias are deleted; source="admin" rows are left untouched.
-
-    Idempotent: a second call with no owned jobs or rows is a clean no-op.
-
-    Returns removed: count of ScheduledTask rows deleted.
-    """
-    with transaction.atomic(using=backend.database):
-        conn = connections[backend.database]
-        with conn.cursor() as cur:
-            cur.execute("select pg_advisory_xact_lock(%s)", [SYNC_CRONS_ADVISORY_LOCK])
-
-            prefix = build_jobname_prefix(backend.alias)
-            owned_jobids = find_owned_pg_cron_jobids(cur, prefix)
-            prune_pg_cron_jobs(cur, owned_jobids)
-
-        removed, _ = (
-            ScheduledTask.objects.using(backend.database)
-            .filter(source="settings", alias=backend.alias)
-            .delete()
+    database = resolve_absurd_database()
+    with open_locked_cursor(database):
+        names = []
+        for scheduled_task in ScheduledTask.objects.using(database).filter(
+            source="admin", alias=backend.alias
+        ):
+            scheduled_task.schedule_pg_cron_job()
+            names.append(scheduled_task.name)
+        ScheduledTask.pg_cron.prune_jobs_without_rows(
+            database, backend.alias, "admin", names
         )
 
-    return removed
 
+def teardown_crons(backend: AbsurdBackend, include_admin: bool = False) -> int:
+    """Remove pg_cron jobs and ScheduledTask rows owned by this backend alias.
 
-def find_stale_pg_cron_jobids(
-    cur: t.Any, prefix: str, declared_jobnames: list[str]
-) -> list[int]:
-    """Return jobids of pg_cron jobs matching prefix that are no longer declared."""
-    cur.execute(
-        "select jobid from cron.job"
-        " where starts_with(jobname, %s) and not (jobname = any(%s))",
-        [prefix, declared_jobnames],
-    )
-    return [row[0] for row in cur.fetchall()]
+    The migrate-time path (include_admin=False, a scheduler switch away from pg_cron)
+    unschedules absurd:settings:<alias>:% jobs and deletes source="settings" rows,
+    leaving admin schedules (user data) untouched. The guarded absurd_sync_crons
+    --teardown command (include_admin=True) additionally clears absurd:admin:<alias>:%
+    jobs AND deletes their rows — so the teardown is terminal, not undone by the next
+    migrate's admin re-emit (that is why the command confirms first).
 
-
-def find_owned_pg_cron_jobids(cur: t.Any, prefix: str) -> list[int]:
-    """Return all jobids of pg_cron jobs matching the given prefix."""
-    cur.execute(
-        "select jobid from cron.job where starts_with(jobname, %s)",
-        [prefix],
-    )
-    return [row[0] for row in cur.fetchall()]
-
-
-def prune_pg_cron_jobs(cur: t.Any, stale_jobids: list[int]) -> None:
-    """Unschedule each stale pg_cron jobid, tolerating already-removed rows.
-
-    Each unschedule runs inside its own savepoint: if the job's cron.job row was
-    removed out-of-band between the stale-id scan and this call, cron.unschedule
-    raises InternalError (SQLSTATE XX000, "could not find valid entry"); we roll
-    back to the savepoint and continue rather than abort the whole reconcile.
-    Matched on SQLSTATE (not the message text) so it holds under any lc_messages.
+    Idempotent. Returns removed: count of ScheduledTask rows deleted.
     """
-    for jobid in stale_jobids:
-        cur.execute("savepoint prune_sp")
-        try:
-            cur.execute("select cron.unschedule(%s)", [jobid])
-        except (InternalError, DatabaseError) as exc:
-            if getattr(exc.__cause__, "sqlstate", None) != "XX000":
-                raise
-            cur.execute("rollback to savepoint prune_sp")
-        else:
-            cur.execute("release savepoint prune_sp")
+    database = resolve_absurd_database()
+    sources = ["settings"]
+    prefixes = [build_jobname_prefix(backend.alias)]
+    if include_admin:
+        sources.append("admin")
+        prefixes.append(build_jobname_prefix(backend.alias, source="admin"))
+    for prefix in prefixes:
+        ScheduledTask.pg_cron.unschedule_matching(database, prefix)
+
+    removed, _ = (
+        ScheduledTask.objects.using(database)
+        .filter(source__in=sources, alias=backend.alias)
+        .delete()
+    )
+    return removed

@@ -42,12 +42,12 @@ TASKS = {
 }
 ```
 
-| Key               | Required | Description                                                                                                                                                                                   |
-| ----------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `task`            | yes      | Dotted import path to a [`@task`](tasks.md#define-a-task) function.                                                                                                                           |
-| `cron`            | yes      | Cron expression ([croniter](https://pypi.org/project/croniter/)): 5-field `min hour dom mon dow`, or 6-field with a leading **seconds** column for sub-minute schedules (`"*/30 * * * * *"`). |
-| `queue`           | no       | Queue to enqueue on; defaults to the backend's default. Must be a [declared queue](configuration.md#declaring-queues).                                                                        |
-| `args` / `kwargs` | no       | Positional / keyword arguments passed to the task each firing.                                                                                                                                |
+| Key               | Required | Description                                                                                                                                                                                                                                                                        |
+| ----------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `task`            | yes      | Dotted import path to a [`@task`](tasks.md#define-a-task) function.                                                                                                                                                                                                                |
+| `cron`            | yes      | Cron expression. **Beat**: [croniter](https://pypi.org/project/croniter/) — 5-field `min hour dom mon dow`, or 6-field with a leading **seconds** column (`"*/30 * * * * *"`). **pg_cron**: a 5-field cron or `"<n> seconds"` (see [Schedule constraints](#schedule-constraints)). |
+| `queue`           | no       | Queue to enqueue on; defaults to the backend's default. Must be a [declared queue](configuration.md#declaring-queues).                                                                                                                                                             |
+| `args` / `kwargs` | no       | Positional / keyword arguments passed to the task each firing.                                                                                                                                                                                                                     |
 
 Cron is interpreted in Django's
 [`TIME_ZONE`](https://docs.djangoproject.com/en/6.0/ref/settings/#time-zone), so
@@ -154,9 +154,12 @@ demos the beat scheduler).
 
 ### Schedule constraints
 
-**Sub-minute schedules are beat-only.** `pg_cron` fires at minute granularity. A 6-field
-(leading-seconds) cron expression under `SCHEDULER="pg_cron"` is rejected by
-`manage.py check` (`absurd.E007`). Use the beat for sub-minute cadences.
+**Cron grammar is pg_cron's own.** Under `SCHEDULER="pg_cron"` an expression is either a
+5-field cron **or** the interval form `<n> seconds` (1-59) — so sub-minute cadence works
+via `"30 seconds"`. This differs from beat's 6-field leading-seconds croniter syntax,
+which `pg_cron` does not accept. `pg_cron` (the database) validates the grammar — at
+sync for settings schedules, at save time for admin ones — so `manage.py check` does
+**not** grammar-check pg_cron entries.
 
 **Naming.** `manage.py check` also reports `absurd.E007` for:
 
@@ -184,9 +187,27 @@ error — a wrong `SCHEDULER` or a malformed `SCHEDULE` entry (missing `task`/`c
 raises `CommandError`, while a missing extension or insufficient privilege surfaces as
 the underlying database error.
 
-`ScheduledTask` (the projection table backing each job) has no admin UI. Settings is the
-source of truth; drive schedules through `SCHEDULE`, not by editing rows (see
-[the kill switch warning](#before-you-go-to-production)).
+### Authoring schedules in the admin
+
+`ScheduledTask` rows appear in Django admin. Rows declared in settings
+(`source="settings"`) are **read-only** — `SCHEDULE` is their source of truth. Admins
+can additionally author `source="admin"` schedules directly (create / edit / delete):
+pick the **Backend** (a configured `pg_cron` backend), a name, task, optional queue, and
+a cron expression. `alias` and `name` are fixed once created (they form the job's
+identity); the cron expression is validated by `pg_cron` itself on save, so
+`"30 seconds"` is accepted and an invalid expression comes back with `pg_cron`'s own
+message. Saving or deleting an admin schedule **immediately** (un)schedules its
+`pg_cron` job — the row is the source of truth, so any write that persists it (admin,
+ORM, or `loaddata`) keeps `pg_cron` in step (`cron.schedule` is an idempotent upsert). A
+write forced onto a **different** database (`loaddata --database=…`, `.using(…)`) raises
+`NotImplementedError` — schedules live only on the absurd DB. (When Absurd is on a
+**non-default** database, `loaddata` bypasses the router and targets `default`, so pass
+`--database=<alias>` to load schedules onto the absurd DB.) Writes that bypass `.save()`
+— a **data migration** (the historical model isn't the signal's sender), `bulk_create`,
+`QuerySet.update`, raw SQL — don't emit directly, but `migrate` (and
+`absurd_sync_crons`) reconciles `source="admin"` rows, so their jobs materialize then. A
+settings schedule and an admin schedule **may** share the same name — they are distinct,
+source-namespaced jobs (`absurd:settings:…` vs `absurd:admin:…`).
 
 ### Timezone
 
@@ -223,12 +244,20 @@ key is `(jobname, username)`) and breaks pruning (each role sees only its own jo
 !!! warning "Uninstalling is not self-cleaning"
 
     Removing django-absurd or switching back to the beat scheduler without running
-    `migrate` (which calls `post_migrate` and tears down pg_cron jobs) leaves orphan jobs
-    firing. Before uninstalling or switching, run:
+    `migrate` (whose `post_migrate` tears down **settings** pg_cron jobs) leaves orphan
+    jobs firing — and migrate never touches admin-authored jobs. Before uninstalling or
+    switching, run:
 
     ```bash
     python manage.py absurd_sync_crons --teardown
     ```
+
+    `--teardown` unschedules **all** owned jobs for the backend, including
+    admin-authored ones, and deletes their rows (settings **and** admin). The admin rows
+    are deleted deliberately — otherwise the next `migrate` would re-emit a job for each
+    surviving admin row and resurrect what teardown just killed. Because it destroys
+    admin-authored schedules it prompts for confirmation — pass `--no-input` in
+    automation.
 
     Also consider setting up a
     [`cron.job_run_details`](https://github.com/citusdata/pg_cron#viewing-job-run-details)

@@ -4,15 +4,16 @@ Each raises `django.core.exceptions.ValidationError`. `ScheduledTask.clean()` +
 field `validators=[...]` enforce them model-first; the system checks call the
 same callables and wrap failures into `absurd.E007`. The field-level validators
 (name/alias charset, jobname length) are pure; the contextual ones
-(`validate_alias_is_pg_cron_backend`, `validate_no_cross_source_clash`) read
-settings / the database.
+(`validate_alias_is_pg_cron_backend`, `validate_pg_cron_cron`) read settings /
+the database.
 """
 
 import typing as t
+import uuid
 
-from django.apps import apps
 from django.core.exceptions import ValidationError
 from django.core.validators import RegexValidator
+from django.db import DatabaseError, connections, transaction
 from django.utils.module_loading import import_string
 
 from django_absurd.backends import get_absurd_backends
@@ -89,22 +90,27 @@ def validate_alias_is_pg_cron_backend(alias: str) -> None:
         raise ValidationError(msg)
 
 
-def validate_no_cross_source_clash(source: str, alias: str, name: str) -> None:
-    """Reject a schedule whose (alias, name) already exists under the OTHER source.
+def validate_pg_cron_cron(cron: str, database: str) -> None:
+    """Validate a pg_cron schedule expression by asking pg_cron itself.
 
-    One name = one schedule per backend: a settings and an admin row sharing
-    (alias, name) would produce two pg_cron jobs that both fire.
-
-    No self/pk exclusion: source is immutable in Phase A, so a row can never
-    clash with itself. Phase A's writable-admin follow-up must add pk exclusion
-    before it allows editing an existing row.
+    pg_cron owns its grammar (a 5-field cron or the interval form ``<n> seconds``),
+    so rather than a hand-rolled matcher we schedule a throwaway job inside an atomic
+    block that is always rolled back — nothing persists. If cron.schedule rejects the
+    expression, surface pg_cron's own error message on the cron field. The atomic is a
+    savepoint when an enclosing transaction exists (the admin wraps the whole request;
+    a model's save-time full_clean may run inside one) and a real transaction otherwise;
+    set_rollback rolls it back either way, so the probe never leaves a row.
     """
-    scheduled_task = apps.get_model("django_absurd_pg_cron", "ScheduledTask")
-    clash = (
-        scheduled_task.objects.filter(alias=alias, name=name)
-        .exclude(source=source)
-        .first()
-    )
-    if clash is not None:
-        msg = f"a {clash.source} schedule {name!r} already exists on backend {alias!r}."
-        raise ValidationError(msg)
+    # Unique per call so concurrent probes never collide on the pg_cron job name
+    # (each is rolled back, but a shared name would still contend on the same row).
+    probe_jobname = f"absurd:__probe__:{uuid.uuid4()}"
+    try:
+        with transaction.atomic(using=database):
+            with connections[database].cursor() as cur:
+                cur.execute(
+                    "select cron.schedule(%s, %s, %s)",
+                    [probe_jobname, cron, "select 1"],
+                )
+            transaction.set_rollback(True, using=database)
+    except DatabaseError as exc:
+        raise ValidationError(str(exc).strip()) from exc

@@ -1,13 +1,19 @@
 import logging
 import typing as t
 
-from django.apps import AppConfig
+from django.apps import AppConfig, apps
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management.color import color_style
-from django.db.models.signals import post_migrate
+from django.db.models.signals import (
+    post_delete,
+    post_migrate,
+    post_save,
+    pre_save,
+)
 from django.db.utils import InternalError, OperationalError, ProgrammingError
 
 from django_absurd.backends import get_absurd_backends
+from django_absurd.pg_cron import signals
 
 logger = logging.getLogger("django_absurd")
 
@@ -18,12 +24,35 @@ class PgCronConfig(AppConfig):
     verbose_name = "Absurd Cron"
 
     def ready(self) -> None:
+        # Side-effect import: running the module registers its @register'd E007 checks.
         import django_absurd.pg_cron.checks  # noqa: F401, PLC0415
+
+        scheduled_task = apps.get_model("django_absurd_pg_cron", "ScheduledTask")
 
         # Reconcile pg_cron jobs as part of `migrate`. This app's post_migrate
         # signal fires after core django_absurd's (INSTALLED_APPS order), so the
         # queue tables the scheduled jobs target already exist when this runs.
         post_migrate.connect(reconcile_crons_after_migrate, sender=self)
+
+        # Reject a write forced onto a non-absurd database before the row is inserted.
+        pre_save.connect(
+            signals.reject_cross_database_save,
+            sender=scheduled_task,
+            dispatch_uid="django_absurd_pg_cron.reject_cross_database_save",
+        )
+
+        # Every ScheduledTask write (settings reconcile, admin authoring, direct ORM)
+        # (un)schedules its pg_cron job through one central path.
+        post_save.connect(
+            signals.schedule_job_on_save,
+            sender=scheduled_task,
+            dispatch_uid="django_absurd_pg_cron.schedule_job_on_save",
+        )
+        post_delete.connect(
+            signals.unschedule_job_on_delete,
+            sender=scheduled_task,
+            dispatch_uid="django_absurd_pg_cron.unschedule_job_on_delete",
+        )
 
 
 def reconcile_crons_after_migrate(
@@ -34,6 +63,7 @@ def reconcile_crons_after_migrate(
     **kwargs: object,
 ) -> None:
     from django_absurd.pg_cron.reconcile import (  # noqa: PLC0415
+        sync_admin_crons,
         sync_crons,
         teardown_crons,
     )
@@ -43,6 +73,7 @@ def reconcile_crons_after_migrate(
         try:
             if backend.scheduler == "pg_cron":
                 created, pruned = sync_crons(backend)
+                sync_admin_crons(backend)
                 lines = []
                 if created:
                     lines.append(f"  Scheduled {created}")

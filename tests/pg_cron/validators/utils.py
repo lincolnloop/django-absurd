@@ -1,11 +1,16 @@
 """Subject adapters for the validator tests: run a case through a real enforcing
 entrypoint and return the emitted error text (or None)."""
 
+import json
+
 from django.core.exceptions import ValidationError
 from django.core.management import call_command
 from django.core.management.base import SystemCheckError
+from django.urls import reverse_lazy
 
 from django_absurd.pg_cron.models import ScheduledTask
+
+ADD_URL = reverse_lazy("admin:django_absurd_pg_cron_scheduledtask_add")
 
 BACKEND = "django_absurd.backends.AbsurdBackend"
 QUEUES: dict = {"default": {}, "other": {}, "reports": {}}
@@ -74,3 +79,30 @@ def validate_from_system_check(settings, capsys, **kwargs):
     cap = capsys.readouterr()
     out = cap.out + cap.err
     return out if "absurd.E007" in out else None
+
+
+def validate_from_admin_post(client, admin_user, settings, **kwargs):
+    """Subject: the admin add-form POST. Return the joined form-error text, or None
+    when the form validates (the POST redirects)."""
+    configure_pg_cron_backend(settings)
+    client.force_login(admin_user)
+    fields = {**VALID, **kwargs}
+    payload = {
+        "alias": fields["alias"],
+        "name": fields["name"],
+        "task": fields["task"],
+        "queue": fields["queue"],
+        "cron": fields["cron"],
+        "args": json.dumps(fields["args"]),
+        "kwargs": json.dumps(fields["kwargs"]),
+        "max_attempts": "",
+        "retry_strategy": "",
+        "headers": "",
+        "cancellation": "",
+        "idempotency_key": "",
+    }
+    response = client.post(ADD_URL, payload)
+    if response.status_code == 302:
+        return None
+    form = response.context["adminform"].form
+    return " ".join(m for messages in form.errors.values() for m in messages)

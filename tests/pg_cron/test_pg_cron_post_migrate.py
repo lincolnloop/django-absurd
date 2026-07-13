@@ -1,5 +1,4 @@
 import logging
-import typing as t
 from io import StringIO
 
 import pytest
@@ -10,36 +9,9 @@ from django.db import connection
 from django_absurd.pg_cron.apps import reconcile_crons_after_migrate
 from django_absurd.pg_cron.models import ScheduledTask
 from django_absurd.queues import get_absurd_client
+from tests.pg_cron.utils import build_beat_tasks, build_pg_cron_tasks
 
 pytestmark = pytest.mark.django_db(transaction=True)
-
-ABSURD = "django_absurd.backends.AbsurdBackend"
-
-
-def build_pg_cron_tasks(schedule: dict[str, t.Any]) -> dict[str, t.Any]:
-    return {
-        "default": {
-            "BACKEND": ABSURD,
-            "OPTIONS": {
-                "QUEUES": {"default": {}, "other": {}, "reports": {}},
-                "SCHEDULER": "pg_cron",
-                "SCHEDULE": schedule,
-            },
-        }
-    }
-
-
-def build_beat_tasks(schedule: dict[str, t.Any]) -> dict[str, t.Any]:
-    return {
-        "default": {
-            "BACKEND": ABSURD,
-            "OPTIONS": {
-                "QUEUES": {"default": {}, "other": {}, "reports": {}},
-                "SCHEDULER": "beat",
-                "SCHEDULE": schedule,
-            },
-        }
-    }
 
 
 def run_scheduled(source: str, alias: str, name: str) -> None:
@@ -50,9 +22,7 @@ def run_scheduled(source: str, alias: str, name: str) -> None:
         )
 
 
-def test_reconcile_creates_owned_cron_jobs_under_pg_cron(
-    settings, get_managed_cron_jobs
-):
+def test_reconcile_creates_owned_cron_jobs_under_pg_cron(settings):
     settings.TASKS = build_pg_cron_tasks(
         {
             "a": {"task": "tests.tasks.add", "cron": "0 2 * * *"},
@@ -61,28 +31,116 @@ def test_reconcile_creates_owned_cron_jobs_under_pg_cron(
     )
     reconcile_crons_after_migrate(sender=None)
 
-    assert [r[0] for r in get_managed_cron_jobs()] == [
+    assert [r[0] for r in ScheduledTask.pg_cron.get_managed_jobs("default")] == [
         "absurd:settings:default:a",
         "absurd:settings:default:b",
     ]
     assert ScheduledTask.objects.filter(source="settings", alias="default").count() == 2
 
 
-def test_reconcile_tears_down_when_scheduler_switches_to_beat(
-    settings, get_managed_cron_jobs
-):
+def test_reconcile_emits_jobs_for_admin_rows_created_without_signal(settings):
+    """A source="admin" row created without firing post_save (a data migration's
+    historical model, or bulk_create) has no pg_cron job; the migrate reconcile
+    re-emits it so pg_cron matches the rows."""
+    settings.TASKS = build_pg_cron_tasks({})
+    ScheduledTask.objects.bulk_create(
+        [
+            ScheduledTask(
+                source="admin",
+                alias="default",
+                name="seeded",
+                task="tests.tasks.add",
+                cron="0 3 * * *",
+                enabled=True,
+            )
+        ]
+    )
+    assert ScheduledTask.pg_cron.get_job("default", "seeded", "admin") is None
+
+    reconcile_crons_after_migrate(sender=None)
+
+    _, schedule, _, active = ScheduledTask.pg_cron.get_job("default", "seeded", "admin")
+    assert schedule == "0 3 * * *"
+    assert active is True
+
+
+def test_reconcile_admin_rows_is_idempotent(settings):
+    """Re-running the reconcile re-emits admin jobs harmlessly (cron.schedule is an
+    upsert) — one row still maps to exactly one job."""
+    settings.TASKS = build_pg_cron_tasks({})
+    ScheduledTask.objects.bulk_create(
+        [
+            ScheduledTask(
+                source="admin",
+                alias="default",
+                name="seeded",
+                task="tests.tasks.add",
+                cron="0 3 * * *",
+                enabled=True,
+            )
+        ]
+    )
+    reconcile_crons_after_migrate(sender=None)
+    reconcile_crons_after_migrate(sender=None)
+
+    assert [
+        r[0] for r in ScheduledTask.pg_cron.get_managed_jobs("default", source="admin")
+    ] == ["absurd:admin:default:seeded"]
+
+
+def test_reconcile_prunes_owned_settings_job_whose_row_vanished(settings):
+    """A settings job with no backing row — its row was removed out-of-band (a
+    signal-less delete), so no post_delete unscheduled it — is orphaned; the reconcile
+    prunes it so cron.job reconverges to the declared state. Set up by scheduling from an
+    unsaved instance: a job with no row behind it."""
+    settings.TASKS = build_pg_cron_tasks({})  # nothing declared
+    ScheduledTask(
+        source="settings",
+        alias="default",
+        name="orphan",
+        task="tests.tasks.add",
+        cron="0 2 * * *",
+    ).schedule_pg_cron_job()
+    assert ScheduledTask.pg_cron.get_job("default", "orphan", "settings") is not None
+
+    reconcile_crons_after_migrate(sender=None)
+
+    assert ScheduledTask.pg_cron.get_job("default", "orphan", "settings") is None
+
+
+def test_reconcile_prunes_admin_job_whose_row_vanished(settings):
+    """An admin job with no backing row is orphaned; the reconcile prunes it (symmetric
+    with the settings lane). Set up by scheduling from an unsaved instance."""
+    settings.TASKS = build_pg_cron_tasks({})
+    ScheduledTask(
+        source="admin",
+        alias="default",
+        name="orphan",
+        task="tests.tasks.add",
+        cron="0 3 * * *",
+    ).schedule_pg_cron_job()
+    assert ScheduledTask.pg_cron.get_job("default", "orphan", "admin") is not None
+
+    reconcile_crons_after_migrate(sender=None)
+
+    assert ScheduledTask.pg_cron.get_job("default", "orphan", "admin") is None
+
+
+def test_reconcile_tears_down_when_scheduler_switches_to_beat(settings):
     settings.TASKS = build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     reconcile_crons_after_migrate(sender=None)
-    assert [r[0] for r in get_managed_cron_jobs()] == ["absurd:settings:default:a"]
+    assert [r[0] for r in ScheduledTask.pg_cron.get_managed_jobs("default")] == [
+        "absurd:settings:default:a"
+    ]
 
     settings.TASKS = build_beat_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     reconcile_crons_after_migrate(sender=None)
 
-    assert get_managed_cron_jobs() == []
+    assert ScheduledTask.pg_cron.get_managed_jobs("default") == []
     assert not ScheduledTask.objects.filter(source="settings", alias="default").exists()
 
 
@@ -118,22 +176,22 @@ def test_reconcile_survives_missing_scheduledtask_table(settings, caplog):
     assert "skipped cron reconcile for backend 'default'" in caplog.text
 
 
-def test_reconcile_skips_on_malformed_schedule_spec(settings, get_managed_cron_jobs):
+def test_reconcile_skips_on_malformed_schedule_spec(settings):
     settings.TASKS = build_pg_cron_tasks({"broken": {}})  # no task/cron keys
 
     reconcile_crons_after_migrate(sender=None)  # must NOT raise
 
-    assert get_managed_cron_jobs() == []
+    assert ScheduledTask.pg_cron.get_managed_jobs("default") == []
 
 
-def test_reconcile_skips_on_bad_dotted_path(settings, get_managed_cron_jobs):
+def test_reconcile_skips_on_bad_dotted_path(settings):
     settings.TASKS = build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.does_not_exist", "cron": "0 2 * * *"}}
     )
 
     reconcile_crons_after_migrate(sender=None)  # must NOT raise
 
-    assert get_managed_cron_jobs() == []
+    assert ScheduledTask.pg_cron.get_managed_jobs("default") == []
 
 
 def test_pg_cron_app_registered_after_core():
@@ -143,9 +201,7 @@ def test_pg_cron_app_registered_after_core():
     assert labels.index("django_absurd") < labels.index("django_absurd_pg_cron")
 
 
-def test_migrate_provisions_queues_and_reconciles_crons(
-    settings, get_managed_cron_jobs
-):
+def test_migrate_provisions_queues_and_reconciles_crons(settings):
     settings.TASKS = build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
@@ -153,7 +209,9 @@ def test_migrate_provisions_queues_and_reconciles_crons(
     call_command("migrate", verbosity=0)
 
     assert set(get_absurd_client().list_queues()) == {"default", "other", "reports"}
-    assert [r[0] for r in get_managed_cron_jobs()] == ["absurd:settings:default:a"]
+    assert [r[0] for r in ScheduledTask.pg_cron.get_managed_jobs("default")] == [
+        "absurd:settings:default:a"
+    ]
     assert ScheduledTask.objects.filter(source="settings", alias="default").count() == 1
 
 
@@ -193,9 +251,7 @@ def test_reconcile_emits_prune_line_on_sync(settings):
     assert "Pruned 1" in out
 
 
-def test_reconcile_emits_teardown_notice_when_backend_switches(
-    settings, get_managed_cron_jobs
-):
+def test_reconcile_emits_teardown_notice_when_backend_switches(settings):
     settings.TASKS = build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
