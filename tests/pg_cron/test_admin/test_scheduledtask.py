@@ -42,7 +42,10 @@ ADD_PAYLOAD = {
     "args": "[]",
     "kwargs": "{}",
     "max_attempts": "",
-    "retry_strategy": "",
+    "retry_kind": "",
+    "retry_base_seconds": "",
+    "retry_factor": "",
+    "retry_max_seconds": "",
     "headers": "",
     "cancellation": "",
     "idempotency_key": "",
@@ -283,7 +286,10 @@ def test_editing_admin_schedule_after_backend_flip_is_form_error_not_500(
             "args": "[]",
             "kwargs": "{}",
             "max_attempts": "",
-            "retry_strategy": "",
+            "retry_kind": "",
+            "retry_base_seconds": "",
+            "retry_factor": "",
+            "retry_max_seconds": "",
             "headers": "",
             "cancellation": "",
             "idempotency_key": "",
@@ -293,6 +299,14 @@ def test_editing_admin_schedule_after_backend_flip_is_form_error_not_500(
     assert "backend 'default' is not a configured pg_cron backend." in unescape(
         response.content.decode()
     )
+
+
+def test_add_view_retry_kind_is_a_dropdown(settings, client, admin_user):
+    seed(settings)
+    client.force_login(admin_user)
+    soup = BeautifulSoup(client.get(ADD).content, "html.parser")
+    values = [o.get("value") for o in soup.select('select[name="retry_kind"] option')]
+    assert values == ["", "exponential", "fixed", "none"]
 
 
 def test_add_forbidden_for_staff_without_permission(settings, client, staff_user):

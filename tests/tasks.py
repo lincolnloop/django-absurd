@@ -1,3 +1,4 @@
+from absurd_sdk import RetryStrategy
 from django.contrib.auth.models import Group
 from django.tasks import task
 
@@ -63,3 +64,9 @@ def capped(a, b):
 @task(queue_name="reports")
 def on_reports():
     return "on_reports"
+
+
+@task
+@absurd_default_params(retry_strategy=RetryStrategy(kind="exponential", base_seconds=2))
+def retrying():
+    return "retrying"

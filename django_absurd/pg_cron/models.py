@@ -35,6 +35,12 @@ def get_default_max_attempts() -> int:
     return backend.default_max_attempts if backend is not None else 5
 
 
+class RetryKind(models.TextChoices):
+    EXPONENTIAL = "exponential", "Exponential"
+    FIXED = "fixed", "Fixed"
+    NONE = "none", "None"
+
+
 class PgCronManager(models.Manager):
     """The pg_cron catalog (``cron.job``) operations for these schedules, kept off
     ``objects`` (which queries the ScheduledTask table). Every method defaults to the
@@ -133,7 +139,10 @@ class ScheduledTask(models.Model):
         blank=True,
         validators=[MinValueValidator(1)],
     )
-    retry_strategy = models.JSONField(null=True, blank=True)
+    retry_kind = models.TextField(choices=RetryKind.choices, blank=True, default="")
+    retry_base_seconds = models.FloatField(null=True, blank=True)
+    retry_factor = models.FloatField(null=True, blank=True)
+    retry_max_seconds = models.FloatField(null=True, blank=True)
     headers = models.JSONField(null=True, blank=True)
     cancellation = models.JSONField(null=True, blank=True)
     idempotency_key = models.TextField(blank=True, default="")
@@ -178,6 +187,17 @@ class ScheduledTask(models.Model):
                 validate_pg_cron_cron(self.cron, backend.database)
             except ValidationError as exc:
                 errors["cron"] = exc.messages
+
+        if (
+            any(
+                getattr(self, f) is not None
+                for f in ("retry_base_seconds", "retry_factor", "retry_max_seconds")
+            )
+            and not self.retry_kind
+        ):
+            errors.setdefault("retry_kind", []).append(
+                "Set a retry kind to configure retry timing."
+            )
 
         if errors:
             raise ValidationError(errors)

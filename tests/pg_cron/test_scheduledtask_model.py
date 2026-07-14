@@ -14,7 +14,7 @@ def test_scheduledtask_has_explicit_option_columns():
         args=[1, 2],
         kwargs={"k": "v"},
         max_attempts=3,
-        retry_strategy={"kind": "fixed"},
+        retry_kind="fixed",
         headers={"x": "y"},
         cancellation={"policy": "none"},
         idempotency_key="abc",
@@ -23,7 +23,7 @@ def test_scheduledtask_has_explicit_option_columns():
     assert task.args == [1, 2]
     assert task.kwargs == {"k": "v"}
     assert task.max_attempts == 3
-    assert task.retry_strategy == {"kind": "fixed"}
+    assert task.retry_kind == "fixed"
     assert task.headers == {"x": "y"}
     assert task.cancellation == {"policy": "none"}
     assert task.idempotency_key == "abc"
@@ -38,7 +38,7 @@ def test_scheduledtask_option_columns_default_empty():
     assert task.args == []
     assert task.kwargs == {}
     assert task.max_attempts == 5  # unset → Absurd's default retry ceiling
-    assert task.retry_strategy is None
+    assert task.retry_kind == ""
     assert task.headers is None
     assert task.cancellation is None
     assert task.idempotency_key == ""

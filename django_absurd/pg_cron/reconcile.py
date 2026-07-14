@@ -79,7 +79,14 @@ def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:
                     "args": schedule.args,
                     "kwargs": schedule.kwargs,
                     "max_attempts": opts.get("max_attempts"),
-                    "retry_strategy": opts.get("retry_strategy"),
+                    "retry_kind": (opts.get("retry_strategy") or {}).get("kind") or "",
+                    "retry_base_seconds": (opts.get("retry_strategy") or {}).get(
+                        "base_seconds"
+                    ),
+                    "retry_factor": (opts.get("retry_strategy") or {}).get("factor"),
+                    "retry_max_seconds": (opts.get("retry_strategy") or {}).get(
+                        "max_seconds"
+                    ),
                     "headers": opts.get("headers"),
                     "cancellation": opts.get("cancellation"),
                     "idempotency_key": opts.get("idempotency_key") or "",

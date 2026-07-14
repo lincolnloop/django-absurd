@@ -94,6 +94,31 @@ def test_disambiguation_by_alias() -> None:
     assert payloads == ["from-default"]
 
 
+def test_wrapper_rebuilds_retry_strategy_from_columns() -> None:
+    call_command("absurd_sync_queues")
+    ScheduledTask.objects.create(
+        source="s",
+        name="retry_opts",
+        alias="default",
+        task="tests.tasks.capped",
+        queue="default",
+        args=[1, 2],
+        kwargs={},
+        retry_kind="fixed",
+        retry_base_seconds=1.5,
+        cron="* * * * *",
+    )
+    fire_wrapper("s", "default", "retry_opts")
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT retry_strategy::text FROM absurd.tasks_view WHERE queue = %s",
+            ["default"],
+        )
+        row = cur.fetchone()
+    assert row is not None
+    assert json.loads(row[0]) == {"kind": "fixed", "base_seconds": 1.5}
+
+
 def test_wrapper_reassembles_options_from_columns() -> None:
     """Wrapper fn builds params/options jsonb from named columns server-side.
 
