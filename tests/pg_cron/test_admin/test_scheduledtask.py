@@ -87,8 +87,8 @@ def test_queue_filter_renders_and_narrows(settings, client, admin_user):
     seed(settings)
     client.force_login(admin_user)
     soup = BeautifulSoup(client.get(CHANGELIST).content, "html.parser")
-    assert soup.select_one('#changelist-filter a[href*="queue=reports"]') is not None
-    narrowed = rows(client.get(CHANGELIST, {"queue": "reports"}))
+    assert soup.select_one('#changelist-filter a[href*="reports"]') is not None
+    narrowed = rows(client.get(CHANGELIST, {"queue__exact": "reports"}))
     assert len(narrowed) == 1
     assert "hourly" in narrowed[0].get_text()
 
@@ -301,6 +301,14 @@ def test_editing_admin_schedule_after_backend_flip_is_form_error_not_500(
     assert "backend 'default' is not a configured pg_cron backend." in unescape(
         response.content.decode()
     )
+
+
+def test_add_view_queue_is_a_dropdown_of_declared_queues(settings, client, admin_user):
+    seed(settings)  # QUEUES: default, other, reports
+    client.force_login(admin_user)
+    soup = BeautifulSoup(client.get(ADD).content, "html.parser")
+    values = [o.get("value") for o in soup.select('select[name="queue"] option')]
+    assert values == ["", "default", "other", "reports"]
 
 
 def test_add_view_retry_kind_is_a_dropdown(settings, client, admin_user):

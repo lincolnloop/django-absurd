@@ -51,7 +51,7 @@ class ScheduledTaskForm(forms.ModelForm):
         # <textarea> by default. Use TextInput so a name/cron/path isn't a big box.
         # (JSONFields — args/kwargs/… — keep their textarea, which suits JSON.)
         widgets = dict.fromkeys(
-            ("name", "task", "queue", "cron", "idempotency_key"), forms.TextInput
+            ("name", "task", "cron", "idempotency_key"), forms.TextInput
         )
 
     def __init__(self, *args: t.Any, **kwargs: t.Any) -> None:

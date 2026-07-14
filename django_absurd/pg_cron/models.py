@@ -41,6 +41,19 @@ class RetryKind(models.TextChoices):
     NONE = "none", "None"
 
 
+def get_declared_queue_choices() -> list[tuple[str, str]]:
+    """Declared queues across configured pg_cron backends, sorted, for use as field
+    choices. Falls back to [("default", "default")] when no queues are declared.
+    Called at form-render / validation / migration-state time — import-safe."""
+    queues: set[str] = set()
+    for backend in get_absurd_backends().values():
+        if backend.scheduler == "pg_cron":
+            queues.update(get_declared_queues(backend))
+    if not queues:
+        return [("default", "default")]
+    return [(q, q) for q in sorted(queues)]
+
+
 class PgCronManager(models.Manager):
     """The pg_cron catalog (``cron.job``) operations for these schedules, kept off
     ``objects`` (which queries the ScheduledTask table). Every method defaults to the
@@ -116,7 +129,7 @@ class ScheduledTask(models.Model):
     source = models.TextField(choices=Source.choices, default=Source.SETTINGS)
     alias = models.TextField(validators=[validate_alias_charset])
     task = models.TextField(validators=[validate_task_path])
-    queue = models.TextField(blank=True, default="")
+    queue = models.TextField(choices=get_declared_queue_choices, blank=True, default="")
     # JSONField.validate raises "invalid" before run_validators, so the shared
     # serializability message is set via error_messages (matching the check path).
     args = models.JSONField(
@@ -178,12 +191,13 @@ class ScheduledTask(models.Model):
             errors[NON_FIELD_ERRORS] = exc.messages
         else:
             backend = get_absurd_backends()[self.alias]
-            try:
-                validate_declared_queue(
-                    self.queue, self.task, set(get_declared_queues(backend))
-                )
-            except ValidationError as exc:
-                errors["queue"] = exc.messages
+            if not self.queue:
+                try:
+                    validate_declared_queue(
+                        self.queue, self.task, set(get_declared_queues(backend))
+                    )
+                except ValidationError as exc:
+                    errors["queue"] = exc.messages
             try:
                 validate_pg_cron_cron(self.cron, backend.database)
             except ValidationError as exc:
