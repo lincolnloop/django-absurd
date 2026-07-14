@@ -193,13 +193,16 @@ the underlying database error.
 (`ScheduledTask.Source.SETTINGS`) are **read-only** — `SCHEDULE` is their source of
 truth. Admins can additionally author `ScheduledTask.Source.ADMIN` schedules directly
 (create / edit / delete): pick the **Backend** (a configured `pg_cron` backend), a name,
-task, optional queue, and a cron expression. `alias` and `name` are fixed once created
-(they form the job's identity); the cron expression is validated by `pg_cron` itself on
-save, so `"30 seconds"` is accepted and an invalid expression comes back with
-`pg_cron`'s own message. **`max_attempts`** defaults to `5` (Absurd's default retry
-ceiling) and must be `≥ 1`; clearing it stores `NULL`, which Absurd treats as **retry
-forever** — a deliberate opt-in, so a mistyped schedule can't loop unbounded by
-accident. Saving or deleting an admin schedule **immediately** (un)schedules its
+task, an optional **queue** (a dropdown of the backend's declared queues; blank runs the
+task on its own `queue_name`), a cron expression, and the spawn options grouped into
+**Retry** / **Cancellation** / **Spawn options** sections (typed fields — a bad retry
+kind or non-numeric timing is rejected on save, not at fire time). `alias` and `name`
+are fixed once created (they form the job's identity); the cron expression is validated
+by `pg_cron` itself on save, so `"30 seconds"` is accepted and an invalid expression
+comes back with `pg_cron`'s own message. **`max_attempts`** defaults to `5` (Absurd's
+default retry ceiling) and must be `≥ 1`; clearing it stores `NULL`, which Absurd treats
+as **retry forever** — a deliberate opt-in, so a mistyped schedule can't loop unbounded
+by accident. Saving or deleting an admin schedule **immediately** (un)schedules its
 `pg_cron` job — the row is the source of truth, so any write that persists it (admin,
 ORM, or `loaddata`) keeps `pg_cron` in step (`cron.schedule` is an idempotent upsert). A
 write forced onto a **different** database (`loaddata --database=…`, `.using(…)`) raises

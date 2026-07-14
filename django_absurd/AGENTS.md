@@ -370,18 +370,23 @@ killed. Because it destroys admin-authored schedules, it prompts for confirmatio
 narrower — it only clears settings jobs and rows, never admin ones.
 
 **Wrapper model:** each schedule is materialised as a `ScheduledTask` row (the
-projection table, `django_absurd_scheduledtask`). The row stores explicit option columns
-— `args`, `kwargs`, `max_attempts`, `retry_strategy`, `headers`, `cancellation`,
-`idempotency_key` — one typed column per spawn option. The `pg_cron` job command is a
-constant call to `public.django_absurd_run_scheduled(source, alias, name)`; the wrapper
-reads the row at fire time, reassembles `params`/`options` jsonb from those named
-columns server-side, then calls `absurd.spawn_task`. Editing args/kwargs/options takes
-effect on the next fire without touching `cron.job`. Both the projection table and the
-wrapper function live in the `public` schema (Django app tables live there); the
-`absurd` schema is owned by the Absurd SDK's migration and is dropped wholesale on
-reverse, which would remove a wrapper placed there while the `ScheduledTask` table
-survived — keeping both in `public` avoids that hazard. They are created and managed by
-the `django_absurd_pg_cron` app migration, applied by `manage.py migrate`.
+projection table, `django_absurd_scheduledtask`). The row stores explicit, typed option
+columns — `args`, `kwargs`, `max_attempts`, the retry strategy split into `retry_kind`
+(a choice of `fixed`/`exponential`/`none`) + `retry_base_seconds`/`retry_factor`/
+`retry_max_seconds`, the cancellation policy as `cancellation_max_duration`/
+`cancellation_max_delay`, `headers` (free-form JSON), and `idempotency_key`. Typed
+columns validate at save time (a bad retry kind or non-numeric timing is rejected in the
+admin, not at fire time). The `pg_cron` job command is a constant call to
+`public.django_absurd_run_scheduled(source, alias, name)`; the wrapper reads the row at
+fire time, reassembles `params`/`options` jsonb from those named columns server-side
+(rebuilding the `retry_strategy`/`cancellation` objects, omitting null keys), then calls
+`absurd.spawn_task`. Editing args/kwargs/options takes effect on the next fire without
+touching `cron.job`. Both the projection table and the wrapper function live in the
+`public` schema (Django app tables live there); the `absurd` schema is owned by the
+Absurd SDK's migration and is dropped wholesale on reverse, which would remove a wrapper
+placed there while the `ScheduledTask` table survived — keeping both in `public` avoids
+that hazard. They are created and managed by the `django_absurd_pg_cron` app migration,
+applied by `manage.py migrate`.
 
 The reconcile path never stores `{}` in `retry_strategy` or `cancellation` — it stores
 `None` (SQL `NULL`) when those options are absent. A row inserted directly (not via
@@ -400,27 +405,29 @@ matters most there.
 (`ScheduledTask.Source.SETTINGS`) are **read-only** — `SCHEDULE` in settings is their
 source of truth. Admins can additionally author `ScheduledTask.Source.ADMIN` schedules
 directly in the admin (create/edit/delete): choose the **Backend** (a configured
-`pg_cron` backend), a name, task, optional queue, and a cron expression. `alias` and
-`name` are immutable once created (they form the job identity); the cron expression is
-validated by `pg_cron` itself at save time (so `<n> seconds` is accepted and an invalid
-expression is rejected with `pg_cron`'s own message). **`max_attempts`** defaults to `5`
-(Absurd's default retry ceiling) and must be `≥ 1`; clearing it stores `NULL`, which
-Absurd treats as **retry forever** — a deliberate opt-in, so a mistyped schedule can't
-loop unbounded by accident. Saving or deleting an admin row immediately (un)schedules
-its `pg_cron` job — the row is the source of truth, so any write that persists it
-(admin, ORM, or `loaddata`) keeps `pg_cron` in step (`cron.schedule` is an idempotent
-upsert). A write forced onto a **different** database (`loaddata --database=…`,
-`.using(…)`) raises `NotImplementedError` — schedules live only on the absurd DB, so a
-misplaced row is rejected before it's inserted rather than paired with a phantom job.
-(When Absurd is on a **non-default** database, `loaddata` bypasses the router and
-targets `default`, so pass `--database=<alias>` to load schedules onto the absurd DB.)
-Writes that bypass `.save()` — a **data migration** (the historical model isn't the
-signal's sender), `bulk_create`, `QuerySet.update`, raw SQL — don't emit directly, but
-`migrate` (and `absurd_sync_crons`) reconciles admin rows, so their jobs materialize
-then. A settings schedule and an admin schedule **may** share a name: they are distinct,
-source-namespaced jobs (`absurd:s:…` vs `absurd:a:…`, the source abbreviated to keep the
-job name short). Removing admin-authored jobs at teardown is a guarded action (see
-Reconcile).
+`pg_cron` backend), a name, task, an optional **queue** (a dropdown of the backend's
+declared queues; blank runs the task on its own `queue_name`), a cron expression, and
+the spawn options grouped into **Retry** / **Cancellation** / **Spawn options**
+sections. `alias` and `name` are immutable once created (they form the job identity);
+the cron expression is validated by `pg_cron` itself at save time (so `<n> seconds` is
+accepted and an invalid expression is rejected with `pg_cron`'s own message).
+**`max_attempts`** defaults to `5` (Absurd's default retry ceiling) and must be `≥ 1`;
+clearing it stores `NULL`, which Absurd treats as **retry forever** — a deliberate
+opt-in, so a mistyped schedule can't loop unbounded by accident. Saving or deleting an
+admin row immediately (un)schedules its `pg_cron` job — the row is the source of truth,
+so any write that persists it (admin, ORM, or `loaddata`) keeps `pg_cron` in step
+(`cron.schedule` is an idempotent upsert). A write forced onto a **different** database
+(`loaddata --database=…`, `.using(…)`) raises `NotImplementedError` — schedules live
+only on the absurd DB, so a misplaced row is rejected before it's inserted rather than
+paired with a phantom job. (When Absurd is on a **non-default** database, `loaddata`
+bypasses the router and targets `default`, so pass `--database=<alias>` to load
+schedules onto the absurd DB.) Writes that bypass `.save()` — a **data migration** (the
+historical model isn't the signal's sender), `bulk_create`, `QuerySet.update`, raw SQL —
+don't emit directly, but `migrate` (and `absurd_sync_crons`) reconciles admin rows, so
+their jobs materialize then. A settings schedule and an admin schedule **may** share a
+name: they are distinct, source-namespaced jobs (`absurd:s:…` vs `absurd:a:…`, the
+source abbreviated to keep the job name short). Removing admin-authored jobs at teardown
+is a guarded action (see Reconcile).
 
 ### Validate
 
