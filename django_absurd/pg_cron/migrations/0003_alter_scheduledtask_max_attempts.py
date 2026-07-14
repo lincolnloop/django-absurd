@@ -3,6 +3,8 @@
 import django.core.validators
 from django.db import migrations, models
 
+import django_absurd.pg_cron.models
+
 
 class Migration(migrations.Migration):
     dependencies = [
@@ -18,7 +20,7 @@ class Migration(migrations.Migration):
             name="max_attempts",
             field=models.IntegerField(
                 blank=True,
-                default=5,
+                default=django_absurd.pg_cron.models.get_default_max_attempts,
                 null=True,
                 validators=[django.core.validators.MinValueValidator(1)],
             ),

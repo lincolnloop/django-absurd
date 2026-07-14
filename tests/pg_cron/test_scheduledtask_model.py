@@ -44,6 +44,28 @@ def test_scheduledtask_option_columns_default_empty():
     assert task.idempotency_key == ""
 
 
+def test_scheduledtask_max_attempts_default_bubbles_from_backend(settings):
+    # the field default is the backend's DEFAULT_MAX_ATTEMPTS, not a hardcoded 5
+    settings.TASKS = {
+        "default": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {
+                "QUEUES": {"default": {}},
+                "SCHEDULER": "pg_cron",
+                "DEFAULT_MAX_ATTEMPTS": 3,
+            },
+        }
+    }
+    task = ScheduledTask.objects.create(
+        source="a",
+        alias="default",
+        name="bubble",
+        task="demo.tasks.ping",
+        cron="* * * * *",
+    )
+    assert task.max_attempts == 3
+
+
 def test_scheduledtask_max_attempts_none_means_infinite():
     # explicit None is allowed and kept — Absurd treats NULL max_attempts as unbounded
     # retries (a deliberate opt-in, distinct from "unset", which defaults to 5).

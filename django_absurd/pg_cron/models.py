@@ -17,13 +17,22 @@ from django_absurd.pg_cron.validators import (
     validate_name_charset,
     validate_pg_cron_cron,
 )
-from django_absurd.queues import resolve_absurd_database
+from django_absurd.queues import get_absurd_backend, resolve_absurd_database
 from django_absurd.validators import validate_task_path
 
 __all__ = ["ScheduledTask"]
 
 # Advisory lock key serializing concurrent pg_cron job writers.
 SYNC_CRONS_ADVISORY_LOCK = 0x616273_75726421  # "absurd!" as hex
+
+
+def get_default_max_attempts() -> int:
+    """The default retry ceiling for a new schedule — the configured backend's
+    DEFAULT_MAX_ATTEMPTS (so it bubbles up), or Absurd's 5 when no backend resolves. The
+    max_attempts field default, so an omitted value is bounded; an explicit NULL still
+    means "retry forever"."""
+    backend = get_absurd_backend()
+    return backend.default_max_attempts if backend is not None else 5
 
 
 class PgCronManager(models.Manager):
@@ -114,11 +123,15 @@ class ScheduledTask(models.Model):
         blank=True,
         error_messages={"invalid": "kwargs is not JSON-serializable."},
     )
-    # Not set → 5 (mirrors Absurd's default retry ceiling). Explicit NULL is allowed and
-    # means "retry forever" (Absurd's fail_run treats NULL max_attempts as unbounded) —
-    # a deliberate opt-in, not the default. Must be >= 1 when set (Absurd rejects < 1).
+    # Unset defaults to the backend's DEFAULT_MAX_ATTEMPTS (bubbles up via
+    # get_default_max_attempts). Explicit NULL is allowed and means "retry forever"
+    # (fail_run treats NULL as unbounded) -- a deliberate opt-in, not the default.
+    # Must be >= 1 when set (Absurd rejects < 1).
     max_attempts = models.IntegerField(
-        default=5, null=True, blank=True, validators=[MinValueValidator(1)]
+        default=get_default_max_attempts,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(1)],
     )
     retry_strategy = models.JSONField(null=True, blank=True)
     headers = models.JSONField(null=True, blank=True)
