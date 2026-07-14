@@ -41,6 +41,10 @@ class RetryKind(models.TextChoices):
     NONE = "none", "None"
 
 
+# The retry_strategy timing columns — each requires a retry_kind to anchor it.
+RETRY_TIMING_FIELDS = ("retry_base_seconds", "retry_factor", "retry_max_seconds")
+
+
 class PgCronManager(models.Manager):
     """The pg_cron catalog (``cron.job``) operations for these schedules, kept off
     ``objects`` (which queries the ScheduledTask table). Every method defaults to the
@@ -188,12 +192,8 @@ class ScheduledTask(models.Model):
             except ValidationError as exc:
                 errors["cron"] = exc.messages
 
-        if (
-            any(
-                getattr(self, f) is not None
-                for f in ("retry_base_seconds", "retry_factor", "retry_max_seconds")
-            )
-            and not self.retry_kind
+        if not self.retry_kind and any(
+            getattr(self, field) is not None for field in RETRY_TIMING_FIELDS
         ):
             errors.setdefault("retry_kind", []).append(
                 "Set a retry kind to configure retry timing."
