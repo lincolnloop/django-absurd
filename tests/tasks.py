@@ -1,4 +1,4 @@
-from absurd_sdk import RetryStrategy
+from absurd_sdk import CancellationPolicy, RetryStrategy
 from django.contrib.auth.models import Group
 from django.tasks import task
 
@@ -70,3 +70,9 @@ def on_reports():
 @absurd_default_params(retry_strategy=RetryStrategy(kind="exponential", base_seconds=2))
 def retrying():
     return "retrying"
+
+
+@task
+@absurd_default_params(cancellation=CancellationPolicy(max_duration=30))
+def cancellable():
+    return "cancellable"

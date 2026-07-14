@@ -47,7 +47,8 @@ ADD_PAYLOAD = {
     "retry_factor": "",
     "retry_max_seconds": "",
     "headers": "",
-    "cancellation": "",
+    "cancellation_max_duration": "",
+    "cancellation_max_delay": "",
     "idempotency_key": "",
 }
 
@@ -291,7 +292,8 @@ def test_editing_admin_schedule_after_backend_flip_is_form_error_not_500(
             "retry_factor": "",
             "retry_max_seconds": "",
             "headers": "",
-            "cancellation": "",
+            "cancellation_max_duration": "",
+            "cancellation_max_delay": "",
             "idempotency_key": "",
         },
     )
@@ -307,6 +309,14 @@ def test_add_view_retry_kind_is_a_dropdown(settings, client, admin_user):
     soup = BeautifulSoup(client.get(ADD).content, "html.parser")
     values = [o.get("value") for o in soup.select('select[name="retry_kind"] option')]
     assert values == ["", "exponential", "fixed", "none"]
+
+
+def test_add_view_cancellation_fields_are_number_inputs(settings, client, admin_user):
+    seed(settings)
+    client.force_login(admin_user)
+    soup = BeautifulSoup(client.get(ADD).content, "html.parser")
+    assert soup.select_one('input[name="cancellation_max_duration"]') is not None
+    assert soup.select_one('input[name="cancellation_max_delay"]') is not None
 
 
 def test_add_forbidden_for_staff_without_permission(settings, client, staff_user):

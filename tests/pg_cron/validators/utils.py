@@ -101,7 +101,8 @@ def validate_from_admin_post(client, admin_user, settings, **kwargs):
         "retry_factor": "",
         "retry_max_seconds": "",
         "headers": "",
-        "cancellation": "",
+        "cancellation_max_duration": "",
+        "cancellation_max_delay": "",
         "idempotency_key": "",
     }
     response = client.post(ADD_URL, payload)

@@ -19,7 +19,8 @@
       "retry_factor": null,
       "retry_max_seconds": null,
       "headers": null,
-      "cancellation": null,
+      "cancellation_max_duration": null,
+      "cancellation_max_delay": null,
       "created_at": "2026-01-01T00:00:00Z",
       "updated_at": "2026-01-01T00:00:00Z"
     }

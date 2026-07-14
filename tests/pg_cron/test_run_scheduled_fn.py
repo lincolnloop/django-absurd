@@ -119,6 +119,30 @@ def test_wrapper_rebuilds_retry_strategy_from_columns() -> None:
     assert json.loads(row[0]) == {"kind": "fixed", "base_seconds": 1.5}
 
 
+def test_wrapper_rebuilds_cancellation_from_columns() -> None:
+    call_command("absurd_sync_queues")
+    ScheduledTask.objects.create(
+        source="s",
+        name="cancel_opts",
+        alias="default",
+        task="tests.tasks.capped",
+        queue="default",
+        args=[1, 2],
+        kwargs={},
+        cancellation_max_duration=30,
+        cron="* * * * *",
+    )
+    fire_wrapper("s", "default", "cancel_opts")
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT cancellation::text FROM absurd.tasks_view WHERE queue = %s",
+            ["default"],
+        )
+        row = cur.fetchone()
+    assert row is not None
+    assert json.loads(row[0]) == {"max_duration": 30}
+
+
 def test_wrapper_reassembles_options_from_columns() -> None:
     """Wrapper fn builds params/options jsonb from named columns server-side.
 

@@ -71,6 +71,17 @@ def test_sync_writes_named_option_columns(settings):
     assert row.max_attempts == 3
 
 
+def test_reconcile_splits_cancellation_into_columns(settings):
+    settings.TASKS = build_tasks(
+        {"c": {"task": "tests.tasks.cancellable", "cron": "0 2 * * *"}}
+    )
+    backend = get_absurd_backends()["default"]
+    sync_crons(backend)
+    row = ScheduledTask.objects.get(source="s", alias="default", name="c")
+    assert row.cancellation_max_duration == 30
+    assert row.cancellation_max_delay is None
+
+
 def test_reconcile_splits_retry_strategy_into_columns(settings):
     settings.TASKS = build_tasks(
         {"r": {"task": "tests.tasks.retrying", "cron": "0 2 * * *"}}

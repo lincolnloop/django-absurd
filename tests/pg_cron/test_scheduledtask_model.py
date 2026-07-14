@@ -16,7 +16,8 @@ def test_scheduledtask_has_explicit_option_columns():
         max_attempts=3,
         retry_kind="fixed",
         headers={"x": "y"},
-        cancellation={"policy": "none"},
+        cancellation_max_duration=30,
+        cancellation_max_delay=5,
         idempotency_key="abc",
     )
     task.refresh_from_db()
@@ -25,7 +26,8 @@ def test_scheduledtask_has_explicit_option_columns():
     assert task.max_attempts == 3
     assert task.retry_kind == "fixed"
     assert task.headers == {"x": "y"}
-    assert task.cancellation == {"policy": "none"}
+    assert task.cancellation_max_duration == 30
+    assert task.cancellation_max_delay == 5
     assert task.idempotency_key == "abc"
     assert str(task) == "s:default:nightly"
 
@@ -40,7 +42,8 @@ def test_scheduledtask_option_columns_default_empty():
     assert task.max_attempts == 5  # unset → Absurd's default retry ceiling
     assert task.retry_kind == ""
     assert task.headers is None
-    assert task.cancellation is None
+    assert task.cancellation_max_duration is None
+    assert task.cancellation_max_delay is None
     assert task.idempotency_key == ""
 
 

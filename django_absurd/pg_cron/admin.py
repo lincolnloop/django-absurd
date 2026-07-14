@@ -43,7 +43,8 @@ class ScheduledTaskForm(forms.ModelForm):
             "retry_factor",
             "retry_max_seconds",
             "headers",
-            "cancellation",
+            "cancellation_max_duration",
+            "cancellation_max_delay",
             "idempotency_key",
         )
         # These are single-line TextFields; Django's admin renders a TextField as a
@@ -111,7 +112,8 @@ class ScheduledTaskAdmin(admin.ModelAdmin):
                     "retry_factor",
                     "retry_max_seconds",
                     "headers",
-                    "cancellation",
+                    "cancellation_max_duration",
+                    "cancellation_max_delay",
                     "idempotency_key",
                 )
             },

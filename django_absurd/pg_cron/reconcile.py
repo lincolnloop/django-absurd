@@ -88,7 +88,12 @@ def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:
                         "max_seconds"
                     ),
                     "headers": opts.get("headers"),
-                    "cancellation": opts.get("cancellation"),
+                    "cancellation_max_duration": (opts.get("cancellation") or {}).get(
+                        "max_duration"
+                    ),
+                    "cancellation_max_delay": (opts.get("cancellation") or {}).get(
+                        "max_delay"
+                    ),
                     "idempotency_key": opts.get("idempotency_key") or "",
                     "cron": schedule.cron,
                     "enabled": True,
