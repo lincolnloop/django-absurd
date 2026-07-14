@@ -43,6 +43,12 @@ class ScheduledTaskForm(forms.ModelForm):
             "cancellation",
             "idempotency_key",
         )
+        # These are single-line TextFields; Django's admin renders a TextField as a
+        # <textarea> by default. Use TextInput so a name/cron/path isn't a big box.
+        # (JSONFields — args/kwargs/… — keep their textarea, which suits JSON.)
+        widgets = dict.fromkeys(
+            ("name", "task", "queue", "cron", "idempotency_key"), forms.TextInput
+        )
 
     def __init__(self, *args: t.Any, **kwargs: t.Any) -> None:
         super().__init__(*args, **kwargs)

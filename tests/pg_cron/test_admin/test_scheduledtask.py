@@ -182,7 +182,7 @@ def test_settings_schedule_detail_is_readonly(settings, client, admin_user):
     response = client.get(change_url(pk))
     assert response.status_code == 200
     soup = BeautifulSoup(response.content, "html.parser")
-    assert soup.select_one('textarea[name="cron"]') is None  # read-only, not editable
+    assert soup.select_one('input[name="cron"]') is None  # read-only, not editable
     assert "reports" in response.content.decode()  # queue option column rendered
 
 
@@ -196,8 +196,10 @@ def test_admin_schedule_edit_form_cron_editable_name_immutable(
     response = client.get(change_url(pk))
     assert response.status_code == 200
     soup = BeautifulSoup(response.content, "html.parser")
-    assert soup.select_one('textarea[name="cron"]') is not None  # editable
-    assert soup.select_one('textarea[name="name"]') is None  # immutable on edit
+    assert (
+        soup.select_one('input[name="cron"]') is not None
+    )  # editable single-line input
+    assert soup.select_one('[name="name"]') is None  # immutable on edit (not a field)
 
 
 def test_posting_edit_reschedules_the_job_with_the_new_cron(
