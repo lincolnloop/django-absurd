@@ -9,6 +9,7 @@ import typing as t
 from django.utils.module_loading import import_string
 
 from django_absurd.backends import AbsurdBackend, build_merged_spawn_options
+from django_absurd.pg_cron.choices import Source
 from django_absurd.pg_cron.models import ScheduledTask, open_locked_cursor
 from django_absurd.queues import resolve_absurd_database
 from django_absurd.scheduler import Schedule, get_settings_schedules
@@ -69,7 +70,7 @@ def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:
         for schedule in schedules:
             opts = resolve_spawn_options(backend, schedule)
             _, was_created = ScheduledTask.objects.using(database).update_or_create(
-                source="settings",
+                source=Source.SETTINGS,
                 alias=backend.alias,
                 name=schedule.name,
                 defaults={
@@ -90,12 +91,12 @@ def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:
 
         pruned, _ = (
             ScheduledTask.objects.using(database)
-            .filter(source="settings", alias=backend.alias)
+            .filter(source=Source.SETTINGS, alias=backend.alias)
             .exclude(name__in=declared_names)
             .delete()
         )
         ScheduledTask.pg_cron.prune_jobs_without_rows(
-            backend.alias, "settings", declared_names
+            backend.alias, Source.SETTINGS, declared_names
         )
 
     return created, pruned
@@ -116,27 +117,29 @@ def sync_admin_crons(backend: AbsurdBackend) -> None:
     with open_locked_cursor(database):
         names = []
         for scheduled_task in ScheduledTask.objects.using(database).filter(
-            source="admin", alias=backend.alias
+            source=Source.ADMIN, alias=backend.alias
         ):
             scheduled_task.schedule_pg_cron_job()
             names.append(scheduled_task.name)
-        ScheduledTask.pg_cron.prune_jobs_without_rows(backend.alias, "admin", names)
+        ScheduledTask.pg_cron.prune_jobs_without_rows(
+            backend.alias, Source.ADMIN, names
+        )
 
 
 def teardown_crons(backend: AbsurdBackend, include_admin: bool = False) -> int:
     """Remove pg_cron jobs and ScheduledTask rows owned by this backend alias.
 
     The migrate-time path (include_admin=False, a scheduler switch away from pg_cron)
-    unschedules absurd:settings:<alias>:% jobs and deletes source="settings" rows,
-    leaving admin schedules (user data) untouched. The guarded absurd_sync_crons
-    --teardown command (include_admin=True) additionally clears absurd:admin:<alias>:%
-    jobs AND deletes their rows — so the teardown is terminal, not undone by the next
+    unschedules absurd:s:<alias>:% jobs and deletes settings rows, leaving admin
+    schedules (user data) untouched. The guarded absurd_sync_crons --teardown command
+    (include_admin=True) additionally clears absurd:a:<alias>:% jobs AND deletes their
+    rows — so the teardown is terminal, not undone by the next
     migrate's admin re-emit (that is why the command confirms first).
 
     Idempotent. Returns removed: count of ScheduledTask rows deleted.
     """
     database = resolve_absurd_database()
-    sources = ["settings", "admin"] if include_admin else ["settings"]
+    sources = [Source.SETTINGS, Source.ADMIN] if include_admin else [Source.SETTINGS]
     for source in sources:
         ScheduledTask.pg_cron.unschedule_matching(backend.alias, source)
 

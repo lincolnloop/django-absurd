@@ -35,12 +35,9 @@ def test_creates_job_with_schedule_and_constant_command(settings):
     rows = ScheduledTask.pg_cron.get_managed_jobs()
     assert len(rows) == 1
     jobname, schedule, command, active = rows[0]
-    assert jobname == "absurd:settings:default:a"
+    assert jobname == "absurd:s:default:a"
     assert schedule == "0 2 * * *"
-    assert (
-        command
-        == "select public.django_absurd_run_scheduled('settings', 'default', 'a')"
-    )
+    assert command == "select public.django_absurd_run_scheduled('s', 'default', 'a')"
     assert active is True
 
 
@@ -53,7 +50,7 @@ def test_sync_is_idempotent(settings):
 
     rows = ScheduledTask.pg_cron.get_managed_jobs()
     assert len(rows) == 1
-    assert rows[0][0] == "absurd:settings:default:a"
+    assert rows[0][0] == "absurd:s:default:a"
 
 
 def test_prune_removes_undeclared_job_but_keeps_foreign(settings):
@@ -70,8 +67,8 @@ def test_prune_removes_undeclared_job_but_keeps_foreign(settings):
     )
     sync_crons(get_absurd_backends()["default"])
     assert {r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()} == {
-        "absurd:settings:default:a",
-        "absurd:settings:default:b",
+        "absurd:s:default:a",
+        "absurd:s:default:b",
     }
 
     settings.TASKS = build_tasks(
@@ -79,7 +76,7 @@ def test_prune_removes_undeclared_job_but_keeps_foreign(settings):
     )
     sync_crons(get_absurd_backends()["default"])
     assert {r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()} == {
-        "absurd:settings:default:a"
+        "absurd:s:default:a"
     }
 
     with connection.cursor() as cur:
@@ -113,7 +110,7 @@ def test_prune_tolerates_already_unscheduled_job(settings):
     sync_crons(get_absurd_backends()["default"])  # no exception
 
     assert {r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()} == {
-        "absurd:settings:default:a"
+        "absurd:s:default:a"
     }
 
 
@@ -200,7 +197,7 @@ def test_injection_args_are_quoted_and_schema_survives(settings):
     assert len(rows) == 1
     assert (
         rows[0][2]
-        == "select public.django_absurd_run_scheduled('settings', 'default', 'evil')"
+        == "select public.django_absurd_run_scheduled('s', 'default', 'evil')"
     )
 
     with connection.cursor() as cur:

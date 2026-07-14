@@ -166,8 +166,8 @@ sync for settings schedules, at save time for admin ones — so `manage.py check
 - schedule name containing characters outside `[A-Za-z0-9_-]`
 - backend alias containing characters outside `[A-Za-z0-9_-]` (pg_cron job names share
   the same charset restriction)
-- composed job name (`absurd:settings:<alias>:<name>`) exceeding 63 bytes (Postgres
-  silently truncates longer names)
+- composed job name (`absurd:s:<alias>:<name>`) exceeding 63 bytes (Postgres silently
+  truncates longer names)
 
 **Beat and pg_cron are mutually exclusive per backend.** Setting `SCHEDULER="pg_cron"`
 and running `absurd_beat` (or `absurd_worker --beat`) against the same backend raises a
@@ -190,24 +190,25 @@ the underlying database error.
 ### Authoring schedules in the admin
 
 `ScheduledTask` rows appear in Django admin. Rows declared in settings
-(`source="settings"`) are **read-only** — `SCHEDULE` is their source of truth. Admins
-can additionally author `source="admin"` schedules directly (create / edit / delete):
-pick the **Backend** (a configured `pg_cron` backend), a name, task, optional queue, and
-a cron expression. `alias` and `name` are fixed once created (they form the job's
-identity); the cron expression is validated by `pg_cron` itself on save, so
-`"30 seconds"` is accepted and an invalid expression comes back with `pg_cron`'s own
-message. Saving or deleting an admin schedule **immediately** (un)schedules its
-`pg_cron` job — the row is the source of truth, so any write that persists it (admin,
-ORM, or `loaddata`) keeps `pg_cron` in step (`cron.schedule` is an idempotent upsert). A
-write forced onto a **different** database (`loaddata --database=…`, `.using(…)`) raises
-`NotImplementedError` — schedules live only on the absurd DB. (When Absurd is on a
-**non-default** database, `loaddata` bypasses the router and targets `default`, so pass
-`--database=<alias>` to load schedules onto the absurd DB.) Writes that bypass `.save()`
-— a **data migration** (the historical model isn't the signal's sender), `bulk_create`,
-`QuerySet.update`, raw SQL — don't emit directly, but `migrate` (and
-`absurd_sync_crons`) reconciles `source="admin"` rows, so their jobs materialize then. A
-settings schedule and an admin schedule **may** share the same name — they are distinct,
-source-namespaced jobs (`absurd:settings:…` vs `absurd:admin:…`).
+(`ScheduledTask.Source.SETTINGS`) are **read-only** — `SCHEDULE` is their source of
+truth. Admins can additionally author `ScheduledTask.Source.ADMIN` schedules directly
+(create / edit / delete): pick the **Backend** (a configured `pg_cron` backend), a name,
+task, optional queue, and a cron expression. `alias` and `name` are fixed once created
+(they form the job's identity); the cron expression is validated by `pg_cron` itself on
+save, so `"30 seconds"` is accepted and an invalid expression comes back with
+`pg_cron`'s own message. Saving or deleting an admin schedule **immediately**
+(un)schedules its `pg_cron` job — the row is the source of truth, so any write that
+persists it (admin, ORM, or `loaddata`) keeps `pg_cron` in step (`cron.schedule` is an
+idempotent upsert). A write forced onto a **different** database
+(`loaddata --database=…`, `.using(…)`) raises `NotImplementedError` — schedules live
+only on the absurd DB. (When Absurd is on a **non-default** database, `loaddata`
+bypasses the router and targets `default`, so pass `--database=<alias>` to load
+schedules onto the absurd DB.) Writes that bypass `.save()` — a **data migration** (the
+historical model isn't the signal's sender), `bulk_create`, `QuerySet.update`, raw SQL —
+don't emit directly, but `migrate` (and `absurd_sync_crons`) reconciles admin rows, so
+their jobs materialize then. A settings schedule and an admin schedule **may** share the
+same name — they are distinct, source-namespaced jobs (`absurd:s:…` vs `absurd:a:…`, the
+source abbreviated to keep the job name short).
 
 ### Timezone
 

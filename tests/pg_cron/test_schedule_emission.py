@@ -16,7 +16,7 @@ LOADED_SCHEDULE_FIXTURE = str(
 def test_saving_admin_schedule_schedules_the_job(settings):
     settings.TASKS = build_pg_cron_tasks({})
     scheduled_task = ScheduledTask.objects.create(
-        source="admin",
+        source="a",
         alias="default",
         name="nightly",
         task="tests.tasks.add",
@@ -31,14 +31,14 @@ def test_saving_admin_schedule_schedules_the_job(settings):
 def test_saving_disabled_admin_schedule_is_inactive(settings):
     settings.TASKS = build_pg_cron_tasks({})
     ScheduledTask.objects.create(
-        source="admin",
+        source="a",
         alias="default",
         name="paused",
         task="tests.tasks.add",
         cron="0 2 * * *",
         enabled=False,
     )
-    assert ScheduledTask.pg_cron.get_job("default", "paused", "admin")[3] is False
+    assert ScheduledTask.pg_cron.get_job("default", "paused", "a")[3] is False
 
 
 def test_saving_settings_schedule_also_schedules_the_job(settings):
@@ -46,30 +46,27 @@ def test_saving_settings_schedule_also_schedules_the_job(settings):
     rows; the signal schedules the jobs)."""
     settings.TASKS = build_pg_cron_tasks({})
     ScheduledTask.objects.create(
-        source="settings",
+        source="s",
         alias="default",
         name="via_reconcile",
         task="tests.tasks.add",
         cron="0 2 * * *",
     )
-    assert (
-        ScheduledTask.pg_cron.get_job("default", "via_reconcile", "settings")
-        is not None
-    )
+    assert ScheduledTask.pg_cron.get_job("default", "via_reconcile", "s") is not None
 
 
 def test_deleting_admin_schedule_unschedules_the_job(settings):
     settings.TASKS = build_pg_cron_tasks({})
     scheduled_task = ScheduledTask.objects.create(
-        source="admin",
+        source="a",
         alias="default",
         name="gone",
         task="tests.tasks.add",
         cron="0 2 * * *",
     )
-    assert ScheduledTask.pg_cron.get_job("default", "gone", "admin") is not None
+    assert ScheduledTask.pg_cron.get_job("default", "gone", "a") is not None
     scheduled_task.delete()
-    assert ScheduledTask.pg_cron.get_job("default", "gone", "admin") is None
+    assert ScheduledTask.pg_cron.get_job("default", "gone", "a") is None
 
 
 def test_saving_non_pg_cron_backend_schedule_is_a_noop(settings):
@@ -77,13 +74,13 @@ def test_saving_non_pg_cron_backend_schedule_is_a_noop(settings):
     are clean no-ops (the signal skips it)."""
     settings.TASKS = build_beat_tasks({})
     scheduled_task = ScheduledTask.objects.create(
-        source="settings",
+        source="s",
         alias="default",
         name="beat_row",
         task="tests.tasks.add",
         cron="0 2 * * *",
     )
-    assert ScheduledTask.pg_cron.get_job("default", "beat_row", "settings") is None
+    assert ScheduledTask.pg_cron.get_job("default", "beat_row", "s") is None
     scheduled_task.delete()  # unschedule no-op, no error
 
 
@@ -92,14 +89,14 @@ def test_saving_unconfigured_alias_is_a_noop(settings):
     save nor delete errors."""
     settings.TASKS = build_pg_cron_tasks({})
     scheduled_task = ScheduledTask.objects.create(
-        source="admin",
+        source="a",
         alias="ghost",
         name="x",
         task="tests.tasks.add",
         cron="0 2 * * *",
     )
-    assert ScheduledTask.pg_cron.get_job("ghost", "x", "admin") is None
-    assert ScheduledTask.pg_cron.get_managed_jobs(source="admin") == []
+    assert ScheduledTask.pg_cron.get_job("ghost", "x", "a") is None
+    assert ScheduledTask.pg_cron.get_managed_jobs(source="a") == []
     scheduled_task.delete()  # no error
 
 
@@ -111,7 +108,7 @@ def test_cross_database_write_is_rejected(settings):
     settings.TASKS = build_pg_cron_tasks({})
     with pytest.raises(NotImplementedError) as exc:
         ScheduledTask.objects.using("replica").create(
-            source="admin",
+            source="a",
             alias="default",
             name="wrongdb",
             task="tests.tasks.add",
@@ -135,7 +132,7 @@ def test_cross_database_row_stays_deletable(settings):
     ScheduledTask.objects.using("replica").bulk_create(
         [
             ScheduledTask(
-                source="admin",
+                source="a",
                 alias="default",
                 name="stray",
                 task="tests.tasks.add",
@@ -152,7 +149,7 @@ def test_loaddata_schedules_the_job(settings):
     of truth, so a loaded/restored schedule is a live schedule."""
     settings.TASKS = build_pg_cron_tasks({})
     call_command("loaddata", LOADED_SCHEDULE_FIXTURE)
-    assert ScheduledTask.objects.filter(source="admin", name="loaded").exists()
-    _, schedule, _, active = ScheduledTask.pg_cron.get_job("default", "loaded", "admin")
+    assert ScheduledTask.objects.filter(source="a", name="loaded").exists()
+    _, schedule, _, active = ScheduledTask.pg_cron.get_job("default", "loaded", "a")
     assert schedule == "0 5 * * *"
     assert active is True

@@ -144,8 +144,8 @@ def test_posting_add_creates_admin_schedule_and_schedules_job(
     client.force_login(admin_user)
     response = client.post(ADD, {**ADD_PAYLOAD, "name": "fromadmin"})
     assert response.status_code == 302
-    assert ScheduledTask.objects.get(name="fromadmin").source == "admin"
-    assert ScheduledTask.pg_cron.get_job("default", "fromadmin", "admin") is not None
+    assert ScheduledTask.objects.get(name="fromadmin").source == "a"
+    assert ScheduledTask.pg_cron.get_job("default", "fromadmin", "a") is not None
 
 
 def test_posting_duplicate_admin_name_is_form_error_not_500(
@@ -156,7 +156,7 @@ def test_posting_duplicate_admin_name_is_form_error_not_500(
     client.post(ADD, {**ADD_PAYLOAD, "name": "dup"})
     response = client.post(ADD, {**ADD_PAYLOAD, "name": "dup"})
     assert response.status_code == 200  # re-rendered with a form error, not HTTP 500
-    assert ScheduledTask.objects.filter(source="admin", name="dup").count() == 1
+    assert ScheduledTask.objects.filter(source="a", name="dup").count() == 1
     assert (
         "Scheduled task with this Source, Alias and Name already exists."
         in response.content.decode()
@@ -214,7 +214,7 @@ def test_posting_edit_reschedules_the_job_with_the_new_cron(
         change_url(pk), {**ADD_PAYLOAD, "task": "tests.tasks.add", "cron": "30 6 * * *"}
     )
     assert response.status_code == 302
-    _, schedule, _, _ = ScheduledTask.pg_cron.get_job("default", "reschedule", "admin")
+    _, schedule, _, _ = ScheduledTask.pg_cron.get_job("default", "reschedule", "a")
     assert schedule == "30 6 * * *"
 
 
@@ -225,13 +225,13 @@ def test_deleting_admin_schedule_via_admin_unschedules_the_job(
     client.force_login(admin_user)
     client.post(ADD, {**ADD_PAYLOAD, "name": "deleteme"})
     pk = ScheduledTask.objects.get(name="deleteme").pk
-    assert ScheduledTask.pg_cron.get_job("default", "deleteme", "admin") is not None
+    assert ScheduledTask.pg_cron.get_job("default", "deleteme", "a") is not None
 
     delete_url = reverse("admin:django_absurd_pg_cron_scheduledtask_delete", args=[pk])
     response = client.post(delete_url, {"post": "yes"})
     assert response.status_code == 302
     assert not ScheduledTask.objects.filter(name="deleteme").exists()
-    assert ScheduledTask.pg_cron.get_job("default", "deleteme", "admin") is None
+    assert ScheduledTask.pg_cron.get_job("default", "deleteme", "a") is None
 
 
 def test_deleting_settings_schedule_via_admin_is_forbidden(

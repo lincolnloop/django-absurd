@@ -27,7 +27,7 @@ def test_scheduledtask_has_explicit_option_columns():
     assert task.headers == {"x": "y"}
     assert task.cancellation == {"policy": "none"}
     assert task.idempotency_key == "abc"
-    assert str(task) == "settings:default:nightly"
+    assert str(task) == "s:default:nightly"
 
 
 def test_scheduledtask_option_columns_default_empty():
@@ -48,7 +48,7 @@ def test_scheduledtask_option_columns_default_empty():
 def test_scheduledtask_unique_per_source_alias_name():
     ScheduledTask.objects.create(
         name="dup",
-        source="settings",
+        source="s",
         alias="default",
         task="demo.tasks.ping",
         cron="* * * * *",
@@ -56,7 +56,7 @@ def test_scheduledtask_unique_per_source_alias_name():
     with transaction.atomic(), pytest.raises(IntegrityError):
         ScheduledTask.objects.create(
             name="dup",
-            source="settings",
+            source="s",
             alias="default",
             task="demo.tasks.ping",
             cron="* * * * *",
@@ -65,7 +65,7 @@ def test_scheduledtask_unique_per_source_alias_name():
     # schedules are distinct, source-namespaced jobs
     ScheduledTask.objects.create(
         name="dup",
-        source="admin",
+        source="a",
         alias="default",
         task="demo.tasks.ping",
         cron="* * * * *",

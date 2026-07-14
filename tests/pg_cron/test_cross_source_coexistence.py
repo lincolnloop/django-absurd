@@ -11,21 +11,21 @@ def test_settings_and_admin_schedule_may_share_a_name(settings):
     (alias, name) coexist as two distinct pg_cron jobs — no clash, no double-fire."""
     settings.TASKS = build_pg_cron_tasks({})
     ScheduledTask.objects.create(
-        source="settings",
+        source="s",
         alias="default",
         name="nightly",
         task="tests.tasks.add",
         cron="0 2 * * *",
     )
     ScheduledTask.objects.create(
-        source="admin",
+        source="a",
         alias="default",
         name="nightly",
         task="tests.tasks.add",
         cron="0 3 * * *",
     )
-    assert ScheduledTask.pg_cron.get_job("default", "nightly", "settings") is not None
-    assert ScheduledTask.pg_cron.get_job("default", "nightly", "admin") is not None
+    assert ScheduledTask.pg_cron.get_job("default", "nightly", "s") is not None
+    assert ScheduledTask.pg_cron.get_job("default", "nightly", "a") is not None
 
 
 def test_revalidating_a_saved_admin_schedule_does_not_self_clash(settings):
@@ -33,7 +33,7 @@ def test_revalidating_a_saved_admin_schedule_does_not_self_clash(settings):
     existing admin schedule (e.g. after editing a field) does not clash with itself."""
     settings.TASKS = build_pg_cron_tasks({})
     scheduled_task = ScheduledTask.objects.create(
-        source="admin",
+        source="a",
         alias="default",
         name="nightly",
         task="tests.tasks.add",

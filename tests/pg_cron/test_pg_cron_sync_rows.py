@@ -42,14 +42,14 @@ def test_upsert_and_prune_settings_rows(settings):
 def test_admin_rows_untouched(settings):
     ScheduledTask.objects.create(
         name="a",
-        source="admin",
+        source="a",
         alias="default",
         task="tests.tasks.add",
         cron="0 2 * * *",
     )
     settings.TASKS = build_tasks({})
     sync_crons(get_absurd_backends()["default"])
-    assert ScheduledTask.objects.filter(source="admin", name="a").exists()
+    assert ScheduledTask.objects.filter(source="a", name="a").exists()
 
 
 def test_sync_writes_named_option_columns(settings):
@@ -65,7 +65,7 @@ def test_sync_writes_named_option_columns(settings):
     )
     backend = get_absurd_backends()["default"]
     sync_crons(backend)
-    row = ScheduledTask.objects.get(source="settings", alias="default", name="nightly")
+    row = ScheduledTask.objects.get(source="s", alias="default", name="nightly")
     assert row.args == [1, 2]
     assert row.kwargs == {"k": "v"}
     assert row.max_attempts == 3

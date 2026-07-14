@@ -47,23 +47,23 @@ def test_reconcile_creates_owned_cron_jobs_under_pg_cron(settings, run_cron_sync
     run_cron_sync()
 
     assert [r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()] == [
-        "absurd:settings:default:a",
-        "absurd:settings:default:b",
+        "absurd:s:default:a",
+        "absurd:s:default:b",
     ]
-    assert ScheduledTask.objects.filter(source="settings", alias="default").count() == 2
+    assert ScheduledTask.objects.filter(source="s", alias="default").count() == 2
 
 
 def test_reconcile_emits_jobs_for_admin_rows_created_without_signal(
     settings, run_cron_sync
 ):
-    """A source="admin" row created without firing post_save (a data migration's
+    """A source="a" row created without firing post_save (a data migration's
     historical model, or bulk_create) has no pg_cron job; the reconcile re-emits it so
     pg_cron matches the rows."""
     settings.TASKS = build_pg_cron_tasks({})
     ScheduledTask.objects.bulk_create(
         [
             ScheduledTask(
-                source="admin",
+                source="a",
                 alias="default",
                 name="seeded",
                 task="tests.tasks.add",
@@ -72,11 +72,11 @@ def test_reconcile_emits_jobs_for_admin_rows_created_without_signal(
             )
         ]
     )
-    assert ScheduledTask.pg_cron.get_job("default", "seeded", "admin") is None
+    assert ScheduledTask.pg_cron.get_job("default", "seeded", "a") is None
 
     run_cron_sync()
 
-    _, schedule, _, active = ScheduledTask.pg_cron.get_job("default", "seeded", "admin")
+    _, schedule, _, active = ScheduledTask.pg_cron.get_job("default", "seeded", "a")
     assert schedule == "0 3 * * *"
     assert active is True
 
@@ -88,7 +88,7 @@ def test_reconcile_admin_rows_is_idempotent(settings, run_cron_sync):
     ScheduledTask.objects.bulk_create(
         [
             ScheduledTask(
-                source="admin",
+                source="a",
                 alias="default",
                 name="seeded",
                 task="tests.tasks.add",
@@ -100,10 +100,10 @@ def test_reconcile_admin_rows_is_idempotent(settings, run_cron_sync):
     run_cron_sync()
     run_cron_sync()
 
-    jobs = ScheduledTask.pg_cron.get_managed_jobs(source="admin")
+    jobs = ScheduledTask.pg_cron.get_managed_jobs(source="a")
     assert len(jobs) == 1
     jobname, schedule, _, active = jobs[0]
-    assert jobname == "absurd:admin:default:seeded"
+    assert jobname == "absurd:a:default:seeded"
     assert schedule == "0 3 * * *"
     assert active is True
 
@@ -117,17 +117,17 @@ def test_reconcile_prunes_owned_settings_job_whose_row_vanished(
     unsaved instance: a job with no row behind it."""
     settings.TASKS = build_pg_cron_tasks({})  # nothing declared
     ScheduledTask(
-        source="settings",
+        source="s",
         alias="default",
         name="orphan",
         task="tests.tasks.add",
         cron="0 2 * * *",
     ).schedule_pg_cron_job()
-    assert ScheduledTask.pg_cron.get_job("default", "orphan", "settings") is not None
+    assert ScheduledTask.pg_cron.get_job("default", "orphan", "s") is not None
 
     run_cron_sync()
 
-    assert ScheduledTask.pg_cron.get_job("default", "orphan", "settings") is None
+    assert ScheduledTask.pg_cron.get_job("default", "orphan", "s") is None
 
 
 def test_reconcile_prunes_admin_job_whose_row_vanished(settings, run_cron_sync):
@@ -135,17 +135,17 @@ def test_reconcile_prunes_admin_job_whose_row_vanished(settings, run_cron_sync):
     with the settings lane). Set up by scheduling from an unsaved instance."""
     settings.TASKS = build_pg_cron_tasks({})
     ScheduledTask(
-        source="admin",
+        source="a",
         alias="default",
         name="orphan",
         task="tests.tasks.add",
         cron="0 3 * * *",
     ).schedule_pg_cron_job()
-    assert ScheduledTask.pg_cron.get_job("default", "orphan", "admin") is not None
+    assert ScheduledTask.pg_cron.get_job("default", "orphan", "a") is not None
 
     run_cron_sync()
 
-    assert ScheduledTask.pg_cron.get_job("default", "orphan", "admin") is None
+    assert ScheduledTask.pg_cron.get_job("default", "orphan", "a") is None
 
 
 def test_reconcile_tears_down_when_scheduler_switches_to_beat(settings):
@@ -154,7 +154,7 @@ def test_reconcile_tears_down_when_scheduler_switches_to_beat(settings):
     )
     reconcile_crons_after_migrate(sender=None)
     assert [r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()] == [
-        "absurd:settings:default:a"
+        "absurd:s:default:a"
     ]
 
     settings.TASKS = build_beat_tasks(
@@ -163,7 +163,7 @@ def test_reconcile_tears_down_when_scheduler_switches_to_beat(settings):
     reconcile_crons_after_migrate(sender=None)
 
     assert ScheduledTask.pg_cron.get_managed_jobs() == []
-    assert not ScheduledTask.objects.filter(source="settings", alias="default").exists()
+    assert not ScheduledTask.objects.filter(source="s", alias="default").exists()
 
 
 def test_reconcile_missing_row_fires_clean_noop(settings):
@@ -174,9 +174,9 @@ def test_reconcile_missing_row_fires_clean_noop(settings):
 
     # Drop the backing row out-of-band; the committed cron.job wrapper must fire
     # as a clean no-op (the reconcile does not leave a firing job that errors).
-    ScheduledTask.objects.filter(source="settings", alias="default", name="a").delete()
+    ScheduledTask.objects.filter(source="s", alias="default", name="a").delete()
 
-    run_scheduled("settings", "default", "a")  # no exception
+    run_scheduled("s", "default", "a")  # no exception
 
 
 def test_reconcile_survives_missing_scheduledtask_table(settings, caplog):
@@ -232,9 +232,9 @@ def test_migrate_provisions_queues_and_reconciles_crons(settings):
 
     assert set(get_absurd_client().list_queues()) == {"default", "other", "reports"}
     assert [r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()] == [
-        "absurd:settings:default:a"
+        "absurd:s:default:a"
     ]
-    assert ScheduledTask.objects.filter(source="settings", alias="default").count() == 1
+    assert ScheduledTask.objects.filter(source="s", alias="default").count() == 1
 
 
 def test_reconcile_emits_migrate_stdout_on_sync(settings):

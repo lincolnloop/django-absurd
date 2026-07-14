@@ -17,7 +17,7 @@ QUEUES: dict = {"default": {}, "other": {}, "reports": {}}
 
 # Valid baseline: every field passes, so a single override isolates one rule.
 VALID = {
-    "source": "admin",
+    "source": "a",
     "alias": "default",
     "name": "ok",
     "task": "tests.tasks.add",

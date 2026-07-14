@@ -17,6 +17,7 @@ from django.db import DatabaseError, connections, transaction
 from django.utils.module_loading import import_string
 
 from django_absurd.backends import get_absurd_backends
+from django_absurd.pg_cron.choices import Source
 from django_absurd.validators import validate_task_path
 
 NAME_CHARSET_MESSAGE = "Schedule name contains characters other than [A-Za-z0-9_-]."
@@ -41,13 +42,13 @@ def validate_name_charset(value: t.Any) -> None:
     NAME_CHARSET_VALIDATOR(value)
 
 
-def build_jobname(alias: str, name: str, source: str = "settings") -> str:
+def build_jobname(alias: str, name: str, source: str = Source.SETTINGS) -> str:
     """Return the pg_cron job name for a scheduled task."""
     return f"absurd:{source}:{alias}:{name}"
 
 
-def build_jobname_prefix(alias: str, source: str = "settings") -> str:
-    """Return the LIKE prefix used to prune pg_cron jobs for an alias."""
+def build_jobname_prefix(alias: str, source: str = Source.SETTINGS) -> str:
+    """Return the LIKE prefix used to prune pg_cron jobs for an alias + source."""
     return f"absurd:{source}:{alias}:"
 
 

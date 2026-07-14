@@ -101,9 +101,9 @@ def test_pg_cron_bad_name_charset_rejected(settings, capsys):
 
 def test_pg_cron_jobname_too_long_rejected(settings, capsys):
     """Composed jobname exceeding 63 bytes must be rejected under pg_cron."""
-    # alias "default" + name long enough to push absurd:settings:default:<name> > 63 bytes
-    # "absurd:settings:default:" = 24 chars, so name needs > 39 chars
-    long_name = "a" * 40
+    # alias "default" + name long enough to push absurd:s:default:<name> > 63 bytes
+    # "absurd:s:default:" = 17 chars, so name needs > 46 chars
+    long_name = "a" * 47
     out = run_pg_cron_check(
         settings,
         capsys,

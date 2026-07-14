@@ -33,18 +33,18 @@ def test_teardown_removes_all_owned_cron_jobs_and_settings_rows(settings):
     sync_crons(be)
 
     assert len(ScheduledTask.pg_cron.get_managed_jobs()) == 2
-    assert ScheduledTask.objects.filter(source="settings", alias="default").count() == 2
+    assert ScheduledTask.objects.filter(source="s", alias="default").count() == 2
 
     teardown_crons(be)
 
     assert ScheduledTask.pg_cron.get_managed_jobs() == []
-    assert not ScheduledTask.objects.filter(source="settings", alias="default").exists()
+    assert not ScheduledTask.objects.filter(source="s", alias="default").exists()
 
 
 def test_teardown_leaves_admin_rows_intact(settings):
     ScheduledTask.objects.create(
         name="admin-job",
-        source="admin",
+        source="a",
         alias="default",
         task="tests.tasks.add",
         cron="0 4 * * *",
@@ -56,8 +56,8 @@ def test_teardown_leaves_admin_rows_intact(settings):
     sync_crons(be)
     teardown_crons(be)
 
-    assert not ScheduledTask.objects.filter(source="settings", alias="default").exists()
-    assert ScheduledTask.objects.filter(source="admin", name="admin-job").exists()
+    assert not ScheduledTask.objects.filter(source="s", alias="default").exists()
+    assert ScheduledTask.objects.filter(source="a", name="admin-job").exists()
 
 
 def test_teardown_is_idempotent(settings):
@@ -70,4 +70,4 @@ def test_teardown_is_idempotent(settings):
     teardown_crons(be)  # must not raise
 
     assert ScheduledTask.pg_cron.get_managed_jobs() == []
-    assert not ScheduledTask.objects.filter(source="settings", alias="default").exists()
+    assert not ScheduledTask.objects.filter(source="s", alias="default").exists()

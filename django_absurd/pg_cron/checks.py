@@ -9,6 +9,7 @@ from django.core.exceptions import ValidationError
 
 from django_absurd.backends import get_absurd_backends, get_declared_queues
 from django_absurd.checks import E007_HINT_QUEUE, E007_MSG
+from django_absurd.pg_cron.choices import Source
 from django_absurd.pg_cron.validators import (
     validate_alias_charset,
     validate_declared_queue,
@@ -24,7 +25,7 @@ E007_HINT_PG_CRON_ALIAS = (
 )
 E007_HINT_PG_CRON_JOBNAME = (
     "Shorten the schedule name or backend alias so the composed job name"
-    " (absurd:settings:<alias>:<name>) fits within 63 bytes."
+    " (absurd:s:<alias>:<name>) fits within 63 bytes."
 )
 
 
@@ -92,7 +93,7 @@ def check_pg_cron_names(name: t.Any, alias: str) -> list[CheckMessage]:
         )
     if not errors:
         try:
-            validate_jobname_length("settings", alias, name)
+            validate_jobname_length(Source.SETTINGS, alias, name)
         except ValidationError as exc:
             errors.append(
                 Error(
