@@ -37,11 +37,25 @@ def test_scheduledtask_option_columns_default_empty():
     task.refresh_from_db()
     assert task.args == []
     assert task.kwargs == {}
-    assert task.max_attempts is None
+    assert task.max_attempts == 5  # unset → Absurd's default retry ceiling
     assert task.retry_strategy is None
     assert task.headers is None
     assert task.cancellation is None
     assert task.idempotency_key == ""
+
+
+def test_scheduledtask_max_attempts_none_means_infinite():
+    # explicit None is allowed and kept — Absurd treats NULL max_attempts as unbounded
+    # retries (a deliberate opt-in, distinct from "unset", which defaults to 5).
+    task = ScheduledTask.objects.create(
+        name="forever",
+        alias="default",
+        task="demo.tasks.ping",
+        cron="* * * * *",
+        max_attempts=None,
+    )
+    task.refresh_from_db()
+    assert task.max_attempts is None
 
 
 @pytest.mark.django_db(transaction=True)

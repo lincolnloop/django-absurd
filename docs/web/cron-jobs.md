@@ -196,19 +196,22 @@ truth. Admins can additionally author `ScheduledTask.Source.ADMIN` schedules dir
 task, optional queue, and a cron expression. `alias` and `name` are fixed once created
 (they form the job's identity); the cron expression is validated by `pg_cron` itself on
 save, so `"30 seconds"` is accepted and an invalid expression comes back with
-`pg_cron`'s own message. Saving or deleting an admin schedule **immediately**
-(un)schedules its `pg_cron` job — the row is the source of truth, so any write that
-persists it (admin, ORM, or `loaddata`) keeps `pg_cron` in step (`cron.schedule` is an
-idempotent upsert). A write forced onto a **different** database
-(`loaddata --database=…`, `.using(…)`) raises `NotImplementedError` — schedules live
-only on the absurd DB. (When Absurd is on a **non-default** database, `loaddata`
-bypasses the router and targets `default`, so pass `--database=<alias>` to load
-schedules onto the absurd DB.) Writes that bypass `.save()` — a **data migration** (the
-historical model isn't the signal's sender), `bulk_create`, `QuerySet.update`, raw SQL —
-don't emit directly, but `migrate` (and `absurd_sync_crons`) reconciles admin rows, so
-their jobs materialize then. A settings schedule and an admin schedule **may** share the
-same name — they are distinct, source-namespaced jobs (`absurd:s:…` vs `absurd:a:…`, the
-source abbreviated to keep the job name short).
+`pg_cron`'s own message. **`max_attempts`** defaults to `5` (Absurd's default retry
+ceiling) and must be `≥ 1`; clearing it stores `NULL`, which Absurd treats as **retry
+forever** — a deliberate opt-in, so a mistyped schedule can't loop unbounded by
+accident. Saving or deleting an admin schedule **immediately** (un)schedules its
+`pg_cron` job — the row is the source of truth, so any write that persists it (admin,
+ORM, or `loaddata`) keeps `pg_cron` in step (`cron.schedule` is an idempotent upsert). A
+write forced onto a **different** database (`loaddata --database=…`, `.using(…)`) raises
+`NotImplementedError` — schedules live only on the absurd DB. (When Absurd is on a
+**non-default** database, `loaddata` bypasses the router and targets `default`, so pass
+`--database=<alias>` to load schedules onto the absurd DB.) Writes that bypass `.save()`
+— a **data migration** (the historical model isn't the signal's sender), `bulk_create`,
+`QuerySet.update`, raw SQL — don't emit directly, but `migrate` (and
+`absurd_sync_crons`) reconciles admin rows, so their jobs materialize then. A settings
+schedule and an admin schedule **may** share the same name — they are distinct,
+source-namespaced jobs (`absurd:s:…` vs `absurd:a:…`, the source abbreviated to keep the
+job name short).
 
 ### Timezone
 

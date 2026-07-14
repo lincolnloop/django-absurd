@@ -2,6 +2,7 @@ import typing as t
 from contextlib import contextmanager
 
 from django.core.exceptions import NON_FIELD_ERRORS, ValidationError
+from django.core.validators import MinValueValidator
 from django.db import DatabaseError, InternalError, connections, models, transaction
 
 from django_absurd.backends import get_absurd_backends, get_declared_queues
@@ -113,7 +114,12 @@ class ScheduledTask(models.Model):
         blank=True,
         error_messages={"invalid": "kwargs is not JSON-serializable."},
     )
-    max_attempts = models.IntegerField(null=True, blank=True)
+    # Not set → 5 (mirrors Absurd's default retry ceiling). Explicit NULL is allowed and
+    # means "retry forever" (Absurd's fail_run treats NULL max_attempts as unbounded) —
+    # a deliberate opt-in, not the default. Must be >= 1 when set (Absurd rejects < 1).
+    max_attempts = models.IntegerField(
+        default=5, null=True, blank=True, validators=[MinValueValidator(1)]
+    )
     retry_strategy = models.JSONField(null=True, blank=True)
     headers = models.JSONField(null=True, blank=True)
     cancellation = models.JSONField(null=True, blank=True)

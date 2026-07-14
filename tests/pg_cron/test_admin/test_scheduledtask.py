@@ -137,6 +137,17 @@ def test_add_view_cron_help_renders_pg_cron_link_as_html(settings, client, admin
     assert link.get_text() == "pg_cron"
 
 
+def test_add_view_prefills_default_max_attempts(settings, client, admin_user):
+    # max_attempts defaults to 5 in the form, so leaving it be gives a bounded schedule;
+    # infinite retries require deliberately clearing the field.
+    seed(settings)
+    client.force_login(admin_user)
+    soup = BeautifulSoup(client.get(ADD).content, "html.parser")
+    field = soup.select_one('input[name="max_attempts"]')
+    assert field is not None
+    assert field.get("value") == "5"
+
+
 def test_posting_add_creates_admin_schedule_and_schedules_job(
     settings, client, admin_user
 ):

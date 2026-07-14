@@ -403,21 +403,24 @@ directly in the admin (create/edit/delete): choose the **Backend** (a configured
 `pg_cron` backend), a name, task, optional queue, and a cron expression. `alias` and
 `name` are immutable once created (they form the job identity); the cron expression is
 validated by `pg_cron` itself at save time (so `<n> seconds` is accepted and an invalid
-expression is rejected with `pg_cron`'s own message). Saving or deleting an admin row
-immediately (un)schedules its `pg_cron` job — the row is the source of truth, so any
-write that persists it (admin, ORM, or `loaddata`) keeps `pg_cron` in step
-(`cron.schedule` is an idempotent upsert). A write forced onto a **different** database
-(`loaddata --database=…`, `.using(…)`) raises `NotImplementedError` — schedules live
-only on the absurd DB, so a misplaced row is rejected before it's inserted rather than
-paired with a phantom job. (When Absurd is on a **non-default** database, `loaddata`
-bypasses the router and targets `default`, so pass `--database=<alias>` to load
-schedules onto the absurd DB.) Writes that bypass `.save()` — a **data migration** (the
-historical model isn't the signal's sender), `bulk_create`, `QuerySet.update`, raw SQL —
-don't emit directly, but `migrate` (and `absurd_sync_crons`) reconciles admin rows, so
-their jobs materialize then. A settings schedule and an admin schedule **may** share a
-name: they are distinct, source-namespaced jobs (`absurd:s:…` vs `absurd:a:…`, the
-source abbreviated to keep the job name short). Removing admin-authored jobs at teardown
-is a guarded action (see Reconcile).
+expression is rejected with `pg_cron`'s own message). **`max_attempts`** defaults to `5`
+(Absurd's default retry ceiling) and must be `≥ 1`; clearing it stores `NULL`, which
+Absurd treats as **retry forever** — a deliberate opt-in, so a mistyped schedule can't
+loop unbounded by accident. Saving or deleting an admin row immediately (un)schedules
+its `pg_cron` job — the row is the source of truth, so any write that persists it
+(admin, ORM, or `loaddata`) keeps `pg_cron` in step (`cron.schedule` is an idempotent
+upsert). A write forced onto a **different** database (`loaddata --database=…`,
+`.using(…)`) raises `NotImplementedError` — schedules live only on the absurd DB, so a
+misplaced row is rejected before it's inserted rather than paired with a phantom job.
+(When Absurd is on a **non-default** database, `loaddata` bypasses the router and
+targets `default`, so pass `--database=<alias>` to load schedules onto the absurd DB.)
+Writes that bypass `.save()` — a **data migration** (the historical model isn't the
+signal's sender), `bulk_create`, `QuerySet.update`, raw SQL — don't emit directly, but
+`migrate` (and `absurd_sync_crons`) reconciles admin rows, so their jobs materialize
+then. A settings schedule and an admin schedule **may** share a name: they are distinct,
+source-namespaced jobs (`absurd:s:…` vs `absurd:a:…`, the source abbreviated to keep the
+job name short). Removing admin-authored jobs at teardown is a guarded action (see
+Reconcile).
 
 ### Validate
 
