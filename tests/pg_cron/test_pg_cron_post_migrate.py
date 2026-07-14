@@ -22,26 +22,43 @@ def run_scheduled(source: str, alias: str, name: str) -> None:
         )
 
 
-def test_reconcile_creates_owned_cron_jobs_under_pg_cron(settings):
+@pytest.fixture(params=["absurd_sync_crons", "migrate"])
+def run_cron_sync(request):
+    """Run a reconcile through each real entrypoint — the absurd_sync_crons command and a
+    full migrate (which fires post_migrate). Behavioral tests assert the same outcome for
+    both, so the pg_cron jobs stay correct however the reconcile is triggered."""
+
+    def run():
+        if request.param == "migrate":
+            call_command("migrate", verbosity=0)
+        else:
+            call_command("absurd_sync_crons")
+
+    return run
+
+
+def test_reconcile_creates_owned_cron_jobs_under_pg_cron(settings, run_cron_sync):
     settings.TASKS = build_pg_cron_tasks(
         {
             "a": {"task": "tests.tasks.add", "cron": "0 2 * * *"},
             "b": {"task": "tests.tasks.add", "cron": "0 3 * * *"},
         }
     )
-    reconcile_crons_after_migrate(sender=None)
+    run_cron_sync()
 
-    assert [r[0] for r in ScheduledTask.pg_cron.get_managed_jobs("default")] == [
+    assert [r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()] == [
         "absurd:settings:default:a",
         "absurd:settings:default:b",
     ]
     assert ScheduledTask.objects.filter(source="settings", alias="default").count() == 2
 
 
-def test_reconcile_emits_jobs_for_admin_rows_created_without_signal(settings):
+def test_reconcile_emits_jobs_for_admin_rows_created_without_signal(
+    settings, run_cron_sync
+):
     """A source="admin" row created without firing post_save (a data migration's
-    historical model, or bulk_create) has no pg_cron job; the migrate reconcile
-    re-emits it so pg_cron matches the rows."""
+    historical model, or bulk_create) has no pg_cron job; the reconcile re-emits it so
+    pg_cron matches the rows."""
     settings.TASKS = build_pg_cron_tasks({})
     ScheduledTask.objects.bulk_create(
         [
@@ -57,16 +74,16 @@ def test_reconcile_emits_jobs_for_admin_rows_created_without_signal(settings):
     )
     assert ScheduledTask.pg_cron.get_job("default", "seeded", "admin") is None
 
-    reconcile_crons_after_migrate(sender=None)
+    run_cron_sync()
 
     _, schedule, _, active = ScheduledTask.pg_cron.get_job("default", "seeded", "admin")
     assert schedule == "0 3 * * *"
     assert active is True
 
 
-def test_reconcile_admin_rows_is_idempotent(settings):
+def test_reconcile_admin_rows_is_idempotent(settings, run_cron_sync):
     """Re-running the reconcile re-emits admin jobs harmlessly (cron.schedule is an
-    upsert) — one row still maps to exactly one job."""
+    upsert) — one row still maps to exactly one job, unchanged."""
     settings.TASKS = build_pg_cron_tasks({})
     ScheduledTask.objects.bulk_create(
         [
@@ -80,15 +97,20 @@ def test_reconcile_admin_rows_is_idempotent(settings):
             )
         ]
     )
-    reconcile_crons_after_migrate(sender=None)
-    reconcile_crons_after_migrate(sender=None)
+    run_cron_sync()
+    run_cron_sync()
 
-    assert [
-        r[0] for r in ScheduledTask.pg_cron.get_managed_jobs("default", source="admin")
-    ] == ["absurd:admin:default:seeded"]
+    jobs = ScheduledTask.pg_cron.get_managed_jobs(source="admin")
+    assert len(jobs) == 1
+    jobname, schedule, _, active = jobs[0]
+    assert jobname == "absurd:admin:default:seeded"
+    assert schedule == "0 3 * * *"
+    assert active is True
 
 
-def test_reconcile_prunes_owned_settings_job_whose_row_vanished(settings):
+def test_reconcile_prunes_owned_settings_job_whose_row_vanished(
+    settings, run_cron_sync
+):
     """A settings job with no backing row — its row was removed out-of-band (a
     signal-less delete), so no post_delete unscheduled it — is orphaned; the reconcile
     prunes it so cron.job reconverges to the declared state. Set up by scheduling from an
@@ -103,12 +125,12 @@ def test_reconcile_prunes_owned_settings_job_whose_row_vanished(settings):
     ).schedule_pg_cron_job()
     assert ScheduledTask.pg_cron.get_job("default", "orphan", "settings") is not None
 
-    reconcile_crons_after_migrate(sender=None)
+    run_cron_sync()
 
     assert ScheduledTask.pg_cron.get_job("default", "orphan", "settings") is None
 
 
-def test_reconcile_prunes_admin_job_whose_row_vanished(settings):
+def test_reconcile_prunes_admin_job_whose_row_vanished(settings, run_cron_sync):
     """An admin job with no backing row is orphaned; the reconcile prunes it (symmetric
     with the settings lane). Set up by scheduling from an unsaved instance."""
     settings.TASKS = build_pg_cron_tasks({})
@@ -121,7 +143,7 @@ def test_reconcile_prunes_admin_job_whose_row_vanished(settings):
     ).schedule_pg_cron_job()
     assert ScheduledTask.pg_cron.get_job("default", "orphan", "admin") is not None
 
-    reconcile_crons_after_migrate(sender=None)
+    run_cron_sync()
 
     assert ScheduledTask.pg_cron.get_job("default", "orphan", "admin") is None
 
@@ -131,7 +153,7 @@ def test_reconcile_tears_down_when_scheduler_switches_to_beat(settings):
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     reconcile_crons_after_migrate(sender=None)
-    assert [r[0] for r in ScheduledTask.pg_cron.get_managed_jobs("default")] == [
+    assert [r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()] == [
         "absurd:settings:default:a"
     ]
 
@@ -140,7 +162,7 @@ def test_reconcile_tears_down_when_scheduler_switches_to_beat(settings):
     )
     reconcile_crons_after_migrate(sender=None)
 
-    assert ScheduledTask.pg_cron.get_managed_jobs("default") == []
+    assert ScheduledTask.pg_cron.get_managed_jobs() == []
     assert not ScheduledTask.objects.filter(source="settings", alias="default").exists()
 
 
@@ -181,7 +203,7 @@ def test_reconcile_skips_on_malformed_schedule_spec(settings):
 
     reconcile_crons_after_migrate(sender=None)  # must NOT raise
 
-    assert ScheduledTask.pg_cron.get_managed_jobs("default") == []
+    assert ScheduledTask.pg_cron.get_managed_jobs() == []
 
 
 def test_reconcile_skips_on_bad_dotted_path(settings):
@@ -191,7 +213,7 @@ def test_reconcile_skips_on_bad_dotted_path(settings):
 
     reconcile_crons_after_migrate(sender=None)  # must NOT raise
 
-    assert ScheduledTask.pg_cron.get_managed_jobs("default") == []
+    assert ScheduledTask.pg_cron.get_managed_jobs() == []
 
 
 def test_pg_cron_app_registered_after_core():
@@ -209,7 +231,7 @@ def test_migrate_provisions_queues_and_reconciles_crons(settings):
     call_command("migrate", verbosity=0)
 
     assert set(get_absurd_client().list_queues()) == {"default", "other", "reports"}
-    assert [r[0] for r in ScheduledTask.pg_cron.get_managed_jobs("default")] == [
+    assert [r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()] == [
         "absurd:settings:default:a"
     ]
     assert ScheduledTask.objects.filter(source="settings", alias="default").count() == 1

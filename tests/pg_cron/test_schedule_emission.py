@@ -15,7 +15,7 @@ LOADED_SCHEDULE_FIXTURE = str(
 
 def test_saving_admin_schedule_schedules_the_job(settings):
     settings.TASKS = build_pg_cron_tasks({})
-    ScheduledTask.objects.create(
+    scheduled_task = ScheduledTask.objects.create(
         source="admin",
         alias="default",
         name="nightly",
@@ -23,9 +23,7 @@ def test_saving_admin_schedule_schedules_the_job(settings):
         cron="0 2 * * *",
         enabled=True,
     )
-    _, schedule, _, active = ScheduledTask.pg_cron.get_job(
-        "default", "nightly", "admin"
-    )
+    _, schedule, _, active = scheduled_task.get_pg_cron_job()
     assert schedule == "0 2 * * *"
     assert active is True
 
@@ -101,7 +99,7 @@ def test_saving_unconfigured_alias_is_a_noop(settings):
         cron="0 2 * * *",
     )
     assert ScheduledTask.pg_cron.get_job("ghost", "x", "admin") is None
-    assert ScheduledTask.pg_cron.get_managed_jobs("ghost", source="admin") == []
+    assert ScheduledTask.pg_cron.get_managed_jobs(source="admin") == []
     scheduled_task.delete()  # no error
 
 

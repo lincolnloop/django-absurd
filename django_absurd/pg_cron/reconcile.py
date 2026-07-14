@@ -10,7 +10,6 @@ from django.utils.module_loading import import_string
 
 from django_absurd.backends import AbsurdBackend, build_merged_spawn_options
 from django_absurd.pg_cron.models import ScheduledTask, open_locked_cursor
-from django_absurd.pg_cron.validators import build_jobname_prefix
 from django_absurd.queues import resolve_absurd_database
 from django_absurd.scheduler import Schedule, get_settings_schedules
 
@@ -96,7 +95,7 @@ def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:
             .delete()
         )
         ScheduledTask.pg_cron.prune_jobs_without_rows(
-            database, backend.alias, "settings", declared_names
+            backend.alias, "settings", declared_names
         )
 
     return created, pruned
@@ -121,9 +120,7 @@ def sync_admin_crons(backend: AbsurdBackend) -> None:
         ):
             scheduled_task.schedule_pg_cron_job()
             names.append(scheduled_task.name)
-        ScheduledTask.pg_cron.prune_jobs_without_rows(
-            database, backend.alias, "admin", names
-        )
+        ScheduledTask.pg_cron.prune_jobs_without_rows(backend.alias, "admin", names)
 
 
 def teardown_crons(backend: AbsurdBackend, include_admin: bool = False) -> int:
@@ -139,13 +136,9 @@ def teardown_crons(backend: AbsurdBackend, include_admin: bool = False) -> int:
     Idempotent. Returns removed: count of ScheduledTask rows deleted.
     """
     database = resolve_absurd_database()
-    sources = ["settings"]
-    prefixes = [build_jobname_prefix(backend.alias)]
-    if include_admin:
-        sources.append("admin")
-        prefixes.append(build_jobname_prefix(backend.alias, source="admin"))
-    for prefix in prefixes:
-        ScheduledTask.pg_cron.unschedule_matching(database, prefix)
+    sources = ["settings", "admin"] if include_admin else ["settings"]
+    for source in sources:
+        ScheduledTask.pg_cron.unschedule_matching(backend.alias, source)
 
     removed, _ = (
         ScheduledTask.objects.using(database)

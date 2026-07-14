@@ -27,10 +27,9 @@ SYNC_CRONS_ADVISORY_LOCK = 0x616273_75726421  # "absurd!" as hex
 
 class PgCronManager(models.Manager):
     """The pg_cron catalog (``cron.job``) operations for these schedules, kept off
-    ``objects`` (which queries the ScheduledTask table). Everything runs on the single
-    absurd database — ``resolve_absurd_database()``, the same DB the AbsurdRouter puts
-    the rows in — so a job and its row always co-locate. The reconcile-facing methods
-    take the database explicitly (their callers resolve it once).
+    ``objects`` (which queries the ScheduledTask table). Every method defaults to the
+    single absurd database (``resolve_absurd_database()``); pass ``database`` only to
+    reuse an already-resolved value.
     """
 
     def get_job(self, alias: str, name: str, source: str) -> tuple | None:
@@ -43,36 +42,46 @@ class PgCronManager(models.Manager):
             )
             return cur.fetchone()
 
-    def get_managed_jobs(self, alias: str, source: str = "settings") -> list[tuple]:
-        """The ``(jobname, schedule, command, active)`` rows for a backend + source."""
+    def get_managed_jobs(self, source: str | None = None) -> list[tuple]:
+        """The ``(jobname, schedule, command, active)`` rows for every job we manage
+        (all share the ``absurd:`` prefix), across aliases. Pass source to narrow to one
+        lane (``absurd:<source>:``)."""
+        prefix = f"absurd:{source}:" if source is not None else "absurd:"
         with connections[resolve_absurd_database()].cursor() as cur:
             cur.execute(
                 "select jobname, schedule, command, active from cron.job "
                 "where starts_with(jobname, %s) order by jobname",
-                [build_jobname_prefix(alias, source)],
+                [prefix],
             )
             return cur.fetchall()
 
-    def unschedule_matching(self, database: str, prefix: str) -> None:
-        """Unschedule every pg_cron job whose name starts with the given prefix. Takes
-        the database explicitly because its callers (reconcile, teardown) resolve it
-        once and don't hold the advisory lock themselves."""
-        with open_locked_cursor(database) as cur:
+    def unschedule_matching(
+        self, alias: str, source: str, database: str | None = None
+    ) -> None:
+        """Unschedule every pg_cron job owned by one backend + source
+        (``absurd:<source>:<alias>:%``). Scoped to that exact prefix so tearing down one
+        backend's lane never touches another backend's jobs."""
+        with open_locked_cursor(database or resolve_absurd_database()) as cur:
             cur.execute(
-                "select jobid from cron.job where starts_with(jobname, %s)", [prefix]
+                "select jobid from cron.job where starts_with(jobname, %s)",
+                [build_jobname_prefix(alias, source=source)],
             )
             prune_pg_cron_jobs(cur, [jobid for (jobid,) in cur.fetchall()])
 
     def prune_jobs_without_rows(
-        self, database: str, alias: str, source: str, keep_names: list[str]
+        self,
+        alias: str,
+        source: str,
+        keep_names: list[str],
+        database: str | None = None,
     ) -> None:
-        """Unschedule owned jobs for a source (``absurd:<source>:<alias>:%``) whose
-        name isn't in keep_names — i.e. jobs with no backing row. Row deletion
+        """Unschedule owned jobs for a backend + source (``absurd:<source>:<alias>:%``)
+        whose name isn't in keep_names — i.e. jobs with no backing row. Row deletion
         unschedules its own job via post_delete, but a row removed by a signal-less path
         (bulk delete, ``flush``, raw SQL) leaves its job orphaned — reconcile heals it
         so ``cron.job`` reconverges to the rows."""
         keep = {build_jobname(alias, name, source) for name in keep_names}
-        with open_locked_cursor(database) as cur:
+        with open_locked_cursor(database or resolve_absurd_database()) as cur:
             cur.execute(
                 "select jobid, jobname from cron.job where starts_with(jobname, %s)",
                 [build_jobname_prefix(alias, source=source)],
@@ -153,6 +162,12 @@ class ScheduledTask(models.Model):
 
         if errors:
             raise ValidationError(errors)
+
+    def get_pg_cron_job(self) -> tuple | None:
+        """This row's own pg_cron job as ``(jobname, schedule, command, active)``, or
+        None if it isn't scheduled. (The manager lives on the class — Django managers
+        aren't accessible via instances.)"""
+        return ScheduledTask.pg_cron.get_job(self.alias, self.name, self.source)
 
     def schedule_pg_cron_job(self) -> None:
         """(Re)schedule this row's pg_cron job (``absurd:<source>:<alias>:<name>``) and

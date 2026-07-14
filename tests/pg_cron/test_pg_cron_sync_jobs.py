@@ -32,7 +32,7 @@ def test_creates_job_with_schedule_and_constant_command(settings):
     )
     sync_crons(get_absurd_backends()["default"])
 
-    rows = ScheduledTask.pg_cron.get_managed_jobs("default")
+    rows = ScheduledTask.pg_cron.get_managed_jobs()
     assert len(rows) == 1
     jobname, schedule, command, active = rows[0]
     assert jobname == "absurd:settings:default:a"
@@ -51,7 +51,7 @@ def test_sync_is_idempotent(settings):
     sync_crons(get_absurd_backends()["default"])
     sync_crons(get_absurd_backends()["default"])
 
-    rows = ScheduledTask.pg_cron.get_managed_jobs("default")
+    rows = ScheduledTask.pg_cron.get_managed_jobs()
     assert len(rows) == 1
     assert rows[0][0] == "absurd:settings:default:a"
 
@@ -69,7 +69,7 @@ def test_prune_removes_undeclared_job_but_keeps_foreign(settings):
         }
     )
     sync_crons(get_absurd_backends()["default"])
-    assert {r[0] for r in ScheduledTask.pg_cron.get_managed_jobs("default")} == {
+    assert {r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()} == {
         "absurd:settings:default:a",
         "absurd:settings:default:b",
     }
@@ -78,7 +78,7 @@ def test_prune_removes_undeclared_job_but_keeps_foreign(settings):
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     sync_crons(get_absurd_backends()["default"])
-    assert {r[0] for r in ScheduledTask.pg_cron.get_managed_jobs("default")} == {
+    assert {r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()} == {
         "absurd:settings:default:a"
     }
 
@@ -112,7 +112,7 @@ def test_prune_tolerates_already_unscheduled_job(settings):
     )
     sync_crons(get_absurd_backends()["default"])  # no exception
 
-    assert {r[0] for r in ScheduledTask.pg_cron.get_managed_jobs("default")} == {
+    assert {r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()} == {
         "absurd:settings:default:a"
     }
 
@@ -145,7 +145,7 @@ def test_prune_swallows_job_vanished_after_stale_scan(settings):
     with transaction.atomic(), connection.cursor() as cur:
         prune_pg_cron_jobs(cur, [jobid])  # dangling id -> swallowed, no exception
 
-    assert ScheduledTask.pg_cron.get_managed_jobs("default") == []
+    assert ScheduledTask.pg_cron.get_managed_jobs() == []
 
 
 def test_prune_reraises_unexpected_error(settings):
@@ -174,7 +174,7 @@ def test_rearm_reenables_disabled_job(settings):
 
     sync_crons(get_absurd_backends()["default"])
 
-    rows = ScheduledTask.pg_cron.get_managed_jobs("default")
+    rows = ScheduledTask.pg_cron.get_managed_jobs()
     assert len(rows) == 1
     assert rows[0][3] is True
 
@@ -196,7 +196,7 @@ def test_injection_args_are_quoted_and_schema_survives(settings):
     )
     sync_crons(get_absurd_backends()["default"])
 
-    rows = ScheduledTask.pg_cron.get_managed_jobs("default")
+    rows = ScheduledTask.pg_cron.get_managed_jobs()
     assert len(rows) == 1
     assert (
         rows[0][2]

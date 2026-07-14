@@ -30,7 +30,7 @@ def test_sync_crons_command_creates_cron_jobs(settings, capsys):
     )
     call_command("absurd_sync_crons")
 
-    jobs = [r[0] for r in ScheduledTask.pg_cron.get_managed_jobs("default")]
+    jobs = [r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()]
     assert "absurd:settings:default:a" in jobs
     assert "absurd:settings:default:b" in jobs
     assert len(jobs) == 2
@@ -64,7 +64,7 @@ def test_sync_crons_command_is_idempotent(settings, capsys):
     call_command("absurd_sync_crons")
     call_command("absurd_sync_crons")
 
-    assert len(ScheduledTask.pg_cron.get_managed_jobs("default")) == 1
+    assert len(ScheduledTask.pg_cron.get_managed_jobs()) == 1
 
 
 def test_teardown_removes_owned_cron_jobs(settings, capsys):
@@ -76,11 +76,11 @@ def test_teardown_removes_owned_cron_jobs(settings, capsys):
     )
     be = get_absurd_backends()["default"]
     sync_crons(be)
-    assert len(ScheduledTask.pg_cron.get_managed_jobs("default")) == 2
+    assert len(ScheduledTask.pg_cron.get_managed_jobs()) == 2
 
     call_command("absurd_sync_crons", teardown=True, no_input=True)
 
-    assert ScheduledTask.pg_cron.get_managed_jobs("default") == []
+    assert ScheduledTask.pg_cron.get_managed_jobs() == []
     assert not ScheduledTask.objects.filter(source="settings", alias="default").exists()
 
     out = capsys.readouterr().out

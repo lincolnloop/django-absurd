@@ -122,6 +122,21 @@ def test_add_view_backend_field_offers_only_pg_cron_backends(
     assert options == ["default"]
 
 
+def test_add_view_cron_help_renders_pg_cron_link_as_html(settings, client, admin_user):
+    # the cron field's help text embeds an <a> to the pg_cron docs; Django form
+    # help_text is not auto-escaped, so it must reach the page as a real anchor (an
+    # escaped &lt;a&gt; would be inert text, not a clickable link). BeautifulSoup finding
+    # it as an <a> element inside the cron row proves it rendered as HTML.
+    seed(settings)
+    client.force_login(admin_user)
+    soup = BeautifulSoup(client.get(ADD).content, "html.parser")
+    link = soup.select_one(
+        '.field-cron .help a[href="https://github.com/citusdata/pg_cron"]'
+    )
+    assert link is not None
+    assert link.get_text() == "pg_cron"
+
+
 def test_posting_add_creates_admin_schedule_and_schedules_job(
     settings, client, admin_user
 ):

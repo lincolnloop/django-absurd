@@ -59,7 +59,6 @@ def is_foreign_database(using: str | None) -> bool:
 
 
 def get_absurd_database() -> str:
-    # Lazy: this module imports during app loading, before the app registry is ready.
     from django_absurd.queues import resolve_absurd_database  # noqa: PLC0415
 
     return resolve_absurd_database()

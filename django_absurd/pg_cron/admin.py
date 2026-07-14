@@ -9,6 +9,7 @@ import typing as t
 
 from django import forms
 from django.contrib import admin
+from django.contrib.admin.utils import flatten_fieldsets
 
 from django_absurd.admin import resolve_admin_sites
 from django_absurd.backends import get_absurd_backends
@@ -18,6 +19,8 @@ from django_absurd.queues import get_absurd_backend
 CRON_HELP_TEXT = (
     "A 5-field cron (e.g. '0 2 * * *') or the interval form '<n> seconds' (1-59)."
     " High-frequency schedules (a few seconds) generate a lot of runs, so take care."
+    ' See <a href="https://github.com/citusdata/pg_cron" target="_blank"'
+    ' rel="noopener">pg_cron</a> for the exact schedule syntax.'
 )
 
 
@@ -118,10 +121,8 @@ class ScheduledTaskAdmin(admin.ModelAdmin):
 
     def get_readonly_fields(self, request: t.Any, obj: t.Any = None) -> tuple[str, ...]:
         if obj is not None and obj.source == ScheduledTask.Source.SETTINGS:
-            return tuple(f.name for f in self.model._meta.get_fields())  # noqa: SLF001
+            return tuple(flatten_fieldsets(self.get_fieldsets(request, obj)))
         if obj is not None:
-            # editing an admin row: identity + audit are immutable (source is a disabled
-            # form field, not readonly, so its unique check still runs — see the form)
             return ("alias", "created_at", "name", "updated_at")
         return ("created_at", "updated_at")
 
