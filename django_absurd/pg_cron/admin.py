@@ -101,22 +101,24 @@ class ScheduledTaskAdmin(admin.ModelAdmin):
         ("Identity", {"fields": ("source", "alias", "name")}),
         ("Schedule", {"fields": ("task", "queue", "cron", "enabled")}),
         (
-            "Spawn options",
+            "Retry",
             {
                 "fields": (
-                    "args",
-                    "kwargs",
                     "max_attempts",
                     "retry_kind",
                     "retry_base_seconds",
                     "retry_factor",
                     "retry_max_seconds",
-                    "headers",
-                    "cancellation_max_duration",
-                    "cancellation_max_delay",
-                    "idempotency_key",
                 )
             },
+        ),
+        (
+            "Cancellation",
+            {"fields": ("cancellation_max_duration", "cancellation_max_delay")},
+        ),
+        (
+            "Spawn options",
+            {"fields": ("args", "kwargs", "headers", "idempotency_key")},
         ),
         ("Audit", {"fields": ("created_at", "updated_at")}),
     )
