@@ -5,7 +5,7 @@ services:
     environment:
       - POSTGRES_PASSWORD=postgres
     volumes:
-      - pgdata:/var/lib/postgresql
+      - web_pgdata:/var/lib/postgresql
 
   app:
     build:
@@ -38,4 +38,4 @@ services:
     volumes: *mounts
 
 volumes:
-  pgdata:
+  web_pgdata:

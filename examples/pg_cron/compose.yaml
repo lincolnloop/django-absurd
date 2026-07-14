@@ -15,7 +15,7 @@ services:
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=demo
     volumes:
-      - pgdata:/var/lib/postgresql
+      - pg_cron_pgdata:/var/lib/postgresql
 
   app:
     build:
@@ -48,4 +48,4 @@ services:
     volumes: *mounts
 
 volumes:
-  pgdata:
+  pg_cron_pgdata:
