@@ -81,6 +81,17 @@ class ScheduledTaskForm(forms.ModelForm):
         if "cron" in self.fields:
             self.fields["cron"].help_text = CRON_HELP_TEXT
 
+    # A blank args/kwargs textarea cleans to None (JSONField's empty value), which would
+    # hit the NOT NULL columns as an IntegrityError (HTTP 500). Fall back to the field
+    # defaults instead so an empty box means "no positional args" / "no kwargs".
+    def clean_args(self) -> t.Any:
+        value = self.cleaned_data.get("args")
+        return [] if value is None else value
+
+    def clean_kwargs(self) -> t.Any:
+        value = self.cleaned_data.get("kwargs")
+        return {} if value is None else value
+
 
 class ScheduledTaskAdmin(admin.ModelAdmin):
     form = ScheduledTaskForm

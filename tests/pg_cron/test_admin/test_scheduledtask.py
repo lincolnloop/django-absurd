@@ -163,6 +163,22 @@ def test_posting_add_creates_admin_schedule_and_schedules_job(
     assert ScheduledTask.pg_cron.get_job("default", "fromadmin", "a") is not None
 
 
+def test_posting_add_with_blank_args_kwargs_falls_back_to_defaults(
+    settings, client, admin_user
+):
+    # Blank args/kwargs in the form must fall back to the field defaults ([] / {}),
+    # not save NULL into the NOT NULL JSON columns (which surfaced as HTTP 500).
+    seed(settings)
+    client.force_login(admin_user)
+    response = client.post(
+        ADD, {**ADD_PAYLOAD, "name": "blankjson", "args": "", "kwargs": ""}
+    )
+    assert response.status_code == 302
+    row = ScheduledTask.objects.get(name="blankjson")
+    assert row.args == []
+    assert row.kwargs == {}
+
+
 def test_posting_duplicate_admin_name_is_form_error_not_500(
     settings, client, admin_user
 ):

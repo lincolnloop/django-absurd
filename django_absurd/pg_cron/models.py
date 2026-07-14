@@ -172,6 +172,16 @@ class ScheduledTask(models.Model):
         # A settings and an admin schedule may share a name — they are distinct,
         # source-namespaced jobs — so uniqueness includes source.
         unique_together = (("source", "alias", "name"),)
+        # DB-level guarantee that max_attempts is a positive integer (>= 1) when set —
+        # NULL stays allowed (means "retry forever"). Absurd's spawn_task rejects < 1;
+        # this catches writes that bypass full_clean (bulk_create, raw SQL).
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(max_attempts__isnull=True)
+                | models.Q(max_attempts__gte=1),
+                name="pg_cron_scheduledtask_max_attempts_positive",
+            ),
+        ]
 
     def __str__(self) -> str:
         return f"{self.source}:{self.alias}:{self.name}"

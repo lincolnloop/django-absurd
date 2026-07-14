@@ -79,8 +79,8 @@ class Migration(migrations.Migration):
                 (
                     "source",
                     models.TextField(
-                        choices=[("s", "Settings"), ("a", "Admin")],
-                        default="s",
+                        choices=[("settings", "Settings"), ("admin", "Admin")],
+                        default="settings",
                     ),
                 ),
                 ("alias", models.TextField()),

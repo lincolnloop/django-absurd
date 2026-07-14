@@ -84,6 +84,24 @@ def test_scheduledtask_max_attempts_none_means_infinite():
 
 
 @pytest.mark.django_db(transaction=True)
+def test_scheduledtask_max_attempts_below_one_violates_db_constraint():
+    # The DB CheckConstraint guards writes that skip full_clean (bulk_create, raw SQL):
+    # Absurd's spawn_task rejects max_attempts < 1, so 0 must never reach the table.
+    with transaction.atomic(), pytest.raises(IntegrityError):
+        ScheduledTask.objects.bulk_create(
+            [
+                ScheduledTask(
+                    name="zero",
+                    alias="default",
+                    task="demo.tasks.ping",
+                    cron="* * * * *",
+                    max_attempts=0,
+                )
+            ]
+        )
+
+
+@pytest.mark.django_db(transaction=True)
 def test_scheduledtask_unique_per_source_alias_name():
     ScheduledTask.objects.create(
         name="dup",
