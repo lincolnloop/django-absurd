@@ -13,7 +13,7 @@ from django.contrib.admin.utils import flatten_fieldsets
 
 from django_absurd.admin import resolve_admin_sites
 from django_absurd.backends import get_absurd_backends
-from django_absurd.pg_cron.models import ScheduledTask
+from django_absurd.pg_cron.models import ScheduledTask, get_declared_queue_choices
 from django_absurd.queues import get_absurd_backend
 
 CRON_HELP_TEXT = (
@@ -59,13 +59,16 @@ class ScheduledTaskForm(forms.ModelForm):
         if self.instance.pk is None:
             self.instance.source = ScheduledTask.Source.ADMIN
         if "source" in self.fields:
-            # Keep source a (disabled) form field, not a readonly one: a readonly field
-            # is dropped from the form, and Django then skips the (source, alias, name)
-            # unique check that contains it — so a duplicate would surface as an
-            # IntegrityError (HTTP 500), not a form error. disabled=True keeps it in the
-            # check while ignoring any submitted value (it stays ADMIN).
-            self.fields["source"].disabled = True
+            # Hidden, not readonly: a readonly field is dropped from the form, and
+            # Django then skips the (source, alias, name) unique check that contains it
+            # — so a duplicate would surface as an IntegrityError (HTTP 500), not a form
+            # error. Keeping source a hidden field leaves it in that check; clean_source
+            # pins the value so a crafted POST can't set a different source.
+            self.fields["source"].widget = forms.HiddenInput()
             self.fields["source"].initial = ScheduledTask.Source.ADMIN
+            # Not required: clean_source supplies the value, so an omitted (or empty)
+            # submission must not trip the field's own required/choice validation first.
+            self.fields["source"].required = False
         if "alias" in self.fields:
             aliases = [
                 alias
@@ -80,6 +83,24 @@ class ScheduledTaskForm(forms.ModelForm):
             )
         if "cron" in self.fields:
             self.fields["cron"].help_text = CRON_HELP_TEXT
+        queue_field = self.fields.get("queue")
+        if isinstance(queue_field, forms.ChoiceField) and self.instance.queue:
+            # A stored queue that's no longer declared has dropped out of the field's
+            # (declared-queues) choices; add it back so the change form renders the real
+            # value instead of silently resubmitting a different one. It stays invalid —
+            # clean() rejects an undeclared queue with a validation error.
+            declared = get_declared_queue_choices()
+            if self.instance.queue not in {value for value, _ in declared}:
+                queue_field.choices = [
+                    *declared,
+                    (self.instance.queue, self.instance.queue),
+                ]
+
+    def clean_source(self) -> str:
+        # source is admin-owned for every admin-authored row; pin it regardless of the
+        # submitted (or tampered) value, while the field's presence keeps Django's
+        # (source, alias, name) unique validation running.
+        return ScheduledTask.Source.ADMIN
 
     # A blank args/kwargs textarea cleans to None (JSONField's empty value), which would
     # hit the NOT NULL columns as an IntegrityError (HTTP 500). Fall back to the field

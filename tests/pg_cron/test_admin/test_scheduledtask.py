@@ -179,6 +179,81 @@ def test_posting_add_with_blank_args_kwargs_falls_back_to_defaults(
     assert row.kwargs == {}
 
 
+def test_posting_add_with_tampered_source_is_forced_to_admin(
+    settings, client, admin_user
+):
+    # source is a hidden, pinned field: a crafted POST setting source="s" (settings)
+    # must not create a settings-owned row via the writable admin.
+    seed(settings)
+    client.force_login(admin_user)
+    response = client.post(ADD, {**ADD_PAYLOAD, "name": "tamper", "source": "s"})
+    assert response.status_code == 302
+    assert ScheduledTask.objects.get(name="tamper").source == "a"
+
+
+def test_editing_over_long_name_row_is_form_error_not_500(settings, client, admin_user):
+    # A row whose name overflows the 63-byte jobname budget (created out-of-band, so it
+    # skipped full_clean) must surface a form error on edit, not HTTP 500 — clean()
+    # keys the jobname-length error to NON_FIELD_ERRORS, not the read-only "name" field.
+    seed(settings)
+    client.force_login(admin_user)
+    row = ScheduledTask.objects.create(
+        source="a",
+        alias="default",
+        name="x" * 60,
+        task="tests.tasks.add",
+        cron="0 3 * * *",
+    )
+    response = client.post(change_url(row.pk), {**ADD_PAYLOAD, "cron": "0 4 * * *"})
+    assert response.status_code == 200
+    content = response.content.decode()
+    assert "job name exceeds 63 bytes (composed name" in content
+    assert "Postgres silently truncates longer names)." in content
+
+
+def test_editing_blank_args_kwargs_falls_back_to_defaults(settings, client, admin_user):
+    # queue="reports" (declared) so the edit exercises the "stored queue is still a
+    # valid choice" path (no injection) alongside the blank args/kwargs fallback.
+    seed(settings)
+    client.force_login(admin_user)
+    client.post(ADD, {**ADD_PAYLOAD, "name": "editblank", "queue": "reports"})
+    row = ScheduledTask.objects.get(name="editblank")
+    response = client.post(
+        change_url(row.pk),
+        {**ADD_PAYLOAD, "queue": "reports", "args": "", "kwargs": ""},
+    )
+    assert response.status_code == 302
+    row.refresh_from_db()
+    assert row.args == []
+    assert row.kwargs == {}
+
+
+def test_change_form_renders_stored_queue_absent_from_choices(
+    settings, client, admin_user
+):
+    # A stored queue no longer declared has dropped out of the field's choices; the
+    # change form must still render the real value (injected back) rather than silently
+    # offering a different one.
+    settings.TASKS = {
+        "default": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {"QUEUES": {"default": {}}, "SCHEDULER": "pg_cron"},
+        }
+    }
+    row = ScheduledTask.objects.create(
+        source="a",
+        alias="default",
+        name="stale",
+        task="tests.tasks.add",
+        queue="reports",
+        cron="0 3 * * *",
+    )
+    client.force_login(admin_user)
+    soup = BeautifulSoup(client.get(change_url(row.pk)).content, "html.parser")
+    values = [o.get("value") for o in soup.select('select[name="queue"] option')]
+    assert "reports" in values
+
+
 def test_posting_duplicate_admin_name_is_form_error_not_500(
     settings, client, admin_user
 ):

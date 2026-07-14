@@ -18,7 +18,12 @@ from django_absurd.pg_cron.validators import (
     validate_pg_cron_cron,
 )
 from django_absurd.queues import get_absurd_backend, resolve_absurd_database
-from django_absurd.validators import validate_task_path
+from django_absurd.validators import (
+    validate_args_is_list,
+    validate_headers_is_object,
+    validate_kwargs_is_dict,
+    validate_task_path,
+)
 
 __all__ = ["ScheduledTask"]
 
@@ -135,11 +140,13 @@ class ScheduledTask(models.Model):
     args = models.JSONField(
         default=list,
         blank=True,
+        validators=[validate_args_is_list],
         error_messages={"invalid": "args is not JSON-serializable."},
     )
     kwargs = models.JSONField(
         default=dict,
         blank=True,
+        validators=[validate_kwargs_is_dict],
         error_messages={"invalid": "kwargs is not JSON-serializable."},
     )
     # Unset defaults to the backend's DEFAULT_MAX_ATTEMPTS (bubbles up via
@@ -156,7 +163,9 @@ class ScheduledTask(models.Model):
     retry_base_seconds = models.FloatField(null=True, blank=True)
     retry_factor = models.FloatField(null=True, blank=True)
     retry_max_seconds = models.FloatField(null=True, blank=True)
-    headers = models.JSONField(null=True, blank=True)
+    headers = models.JSONField(
+        null=True, blank=True, validators=[validate_headers_is_object]
+    )
     cancellation_max_duration = models.IntegerField(null=True, blank=True)
     cancellation_max_delay = models.IntegerField(null=True, blank=True)
     idempotency_key = models.TextField(blank=True, default="")
@@ -188,26 +197,30 @@ class ScheduledTask(models.Model):
 
     def clean(self) -> None:
         errors: dict[str, list[str]] = {}
+        # NON_FIELD_ERRORS, not "name"/"alias": both are read-only on the change form,
+        # so a field-keyed error there would raise "no field named ..." (HTTP 500). The
+        # jobname length is a composite (source:alias:name) rule anyway.
         try:
             validate_jobname_length(self.source, self.alias, self.name)
         except ValidationError as exc:
-            errors["name"] = exc.messages
+            errors.setdefault(NON_FIELD_ERRORS, []).extend(exc.messages)
 
         try:
             validate_alias_is_pg_cron_backend(self.alias)
         except ValidationError as exc:
-            # NON_FIELD_ERRORS, not "alias": alias is read-only on the change form, so
-            # a field-keyed error there would raise "no field named alias" (HTTP 500).
-            errors[NON_FIELD_ERRORS] = exc.messages
+            errors.setdefault(NON_FIELD_ERRORS, []).extend(exc.messages)
         else:
             backend = get_absurd_backends()[self.alias]
-            if not self.queue:
-                try:
-                    validate_declared_queue(
-                        self.queue, self.task, set(get_declared_queues(backend))
-                    )
-                except ValidationError as exc:
-                    errors["queue"] = exc.messages
+            # Validate the effective queue (explicit override, else the task's own
+            # queue_name) against THIS backend's declared queues. The field's choices
+            # union queues across all pg_cron backends, so an explicit queue must still
+            # be checked here — it may belong to a different backend.
+            try:
+                validate_declared_queue(
+                    self.queue, self.task, set(get_declared_queues(backend))
+                )
+            except ValidationError as exc:
+                errors["queue"] = exc.messages
             try:
                 validate_pg_cron_cron(self.cron, backend.database)
             except ValidationError as exc:
