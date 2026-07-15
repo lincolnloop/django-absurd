@@ -47,7 +47,7 @@ TASKS = {
 | `task`            | yes      | Dotted import path to a [`@task`](tasks.md#define-a-task) function.                                                                                                                                                                                                                |
 | `cron`            | yes      | Cron expression. **Beat**: [croniter](https://pypi.org/project/croniter/) — 5-field `min hour dom mon dow`, or 6-field with a leading **seconds** column (`"*/30 * * * * *"`). **pg_cron**: a 5-field cron or `"<n> seconds"` (see [Schedule constraints](#schedule-constraints)). |
 | `queue`           | no       | Queue to enqueue on; defaults to the backend's default. Must be a [declared queue](configuration.md#declaring-queues).                                                                                                                                                             |
-| `args` / `kwargs` | no       | Positional / keyword arguments passed to the task each firing.                                                                                                                                                                                                                     |
+| `args` / `kwargs` | no       | Positional / keyword arguments passed to the task each firing. `args` must be a JSON array, `kwargs` a JSON object.                                                                                                                                                                |
 
 Cron is interpreted in Django's
 [`TIME_ZONE`](https://docs.djangoproject.com/en/6.0/ref/settings/#time-zone), so

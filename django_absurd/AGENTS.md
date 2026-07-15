@@ -45,7 +45,8 @@ additional queues, or use `OPTIONS["QUEUES"]` (below) to set per-queue policy.
 Backend `OPTIONS` (all optional):
 
 - `DATABASE` — which `DATABASES` alias to use (default: `"default"`).
-- `DEFAULT_MAX_ATTEMPTS` — retry ceiling per task (default: `5`).
+- `DEFAULT_MAX_ATTEMPTS` — retry ceiling per task (default: `5`; must be an integer
+  `>= 1`).
 - `QUEUES` — a map of queue name → `absurd_sdk.CreateQueueOptions` for per-queue config.
   Use this _instead of_ the top-level `QUEUES` list (which only names queues) — declare
   queues in one place or the other, never both (setting both is a configuration error).
@@ -141,10 +142,11 @@ System check IDs:
 - `absurd.E006` — `ENABLE_ADMIN` is not a bool, or `ADMIN_SITE` paths don't resolve to
   `AdminSite` instances.
 - `absurd.E007` — invalid `SCHEDULE` entry (bad task path, bad cron expression, unknown
-  key, non-serializable args/kwargs, or undeclared queue). See
+  key, non-serializable or wrong-shaped args/kwargs, or undeclared queue). See
   [Scheduling recurring tasks](#scheduling-recurring-tasks).
 - `absurd.E008` — `SCHEDULER="pg_cron"` is configured but `"django_absurd.pg_cron"` is
   not in `INSTALLED_APPS`. See [pg_cron backend](#pg_cron-backend).
+- `absurd.E009` — `OPTIONS["DEFAULT_MAX_ATTEMPTS"]` is not an integer `>= 1`.
 - `absurd.W003` (Warning) — `"django_absurd.pg_cron"` is in `INSTALLED_APPS` but ordered
   before `"django_absurd"`, causing its `post_migrate` cron reconcile to run before
   queue provisioning. See [pg_cron backend](#pg_cron-backend).
@@ -439,6 +441,7 @@ is a guarded action (see Reconcile).
   not by `check`)
 - unknown keys in the spec
 - `args`/`kwargs` values that are not JSON-serializable
+- an `args` that is not a JSON array, or a `kwargs` that is not a JSON object
 - a `queue` that is not declared in `OPTIONS["QUEUES"]`
 - an unknown `SCHEDULER` value
 - (`pg_cron` only) schedule name or backend alias containing characters outside
