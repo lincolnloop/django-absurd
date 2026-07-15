@@ -35,11 +35,17 @@ duplicate that material here.
 ## Testing conventions
 
 - pytest, **function-based only** (never class-based).
-- An **autouse `_enable_db(db)` fixture** in `tests/fixtures.py` (imported by each
-  suite's `conftest.py`) gives every test DB access — do NOT decorate tests with
-  `@pytest.mark.django_db`. Only add `@pytest.mark.django_db(transaction=True)` (or
-  markers for multi-DB / reset-sequences) when a test needs transactions/commits or DDL
-  (`migrate`, `create_queue`).
+- **Shared fixtures live in the parent `tests/conftest.py`**, inherited by all three
+  suites via `--confcutdir=..` in each suite's `pytest.toml` (each suite's rootdir is
+  its own dir, so without `confcutdir` a parent conftest isn't discovered). Do NOT
+  re-import fixtures into a suite conftest — a suite `conftest.py` holds only
+  suite-specific fixtures (e.g. pg_cron's `_clear_owned_pg_cron_jobs`).
+- An **autouse `_enable_db(db)` fixture** (in `tests/conftest.py`) gives every test DB
+  access — do NOT decorate tests with `@pytest.mark.django_db`. Only add
+  `@pytest.mark.django_db(transaction=True)` (or markers for multi-DB / reset-sequences)
+  when a test needs transactions/commits or DDL (`migrate`, `create_queue`). A parent
+  autouse `_reset_task_backends` clears Django's cached task-backend handler each test
+  so a mutated `settings.TASKS` can't leak a stale backend.
 - **No monkeypatching / `unittest.mock.patch`.** Test observable behavior, not
   internals. If a test needs to patch our own functions to reach a branch, restructure
   so a real input drives that branch instead.
