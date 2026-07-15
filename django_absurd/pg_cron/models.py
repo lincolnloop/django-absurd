@@ -11,7 +11,7 @@ from django_absurd.backends import (
     get_declared_queues,
     get_pg_cron_backends,
 )
-from django_absurd.pg_cron.choices import Source
+from django_absurd.pg_cron.choices import RetryKind, Source
 from django_absurd.pg_cron.validators import (
     build_jobname,
     build_jobname_prefix,
@@ -46,12 +46,6 @@ def get_default_max_attempts() -> int:
     means "retry forever"."""
     backend = get_absurd_backend()
     return backend.default_max_attempts if backend is not None else 5
-
-
-class RetryKind(models.TextChoices):
-    EXPONENTIAL = "exponential", "Exponential"
-    FIXED = "fixed", "Fixed"
-    NONE = "none", "None"
 
 
 def get_pg_cron_alias_choices() -> list[tuple[str, str]]:
