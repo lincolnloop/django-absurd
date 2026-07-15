@@ -1,5 +1,5 @@
-import django.core.validators
 from django.contrib.postgres.operations import CreateExtension
+from django.core.validators import MinValueValidator
 from django.db import migrations, models
 
 import django_absurd.pg_cron.models
@@ -84,7 +84,7 @@ class Migration(migrations.Migration):
                 ),
                 (
                     "name",
-                    models.TextField(
+                    models.CharField(
                         validators=[
                             django_absurd.pg_cron.validators.validate_name_charset
                         ]
@@ -92,30 +92,26 @@ class Migration(migrations.Migration):
                 ),
                 (
                     "source",
-                    models.TextField(
+                    models.CharField(
                         choices=[("s", "Settings"), ("a", "Admin")], default="s"
                     ),
                 ),
                 (
                     "alias",
-                    models.TextField(
-                        validators=[
-                            django.core.validators.RegexValidator(
-                                "^[A-Za-z0-9_-]+\\Z",
-                                message="Backend alias contains characters other than [A-Za-z0-9_-].",
-                            )
-                        ]
+                    models.CharField(
+                        choices=django_absurd.pg_cron.models.get_pg_cron_alias_choices,
+                        help_text="Which Absurd pg_cron backend (its TASKS alias) runs this schedule.",
                     ),
                 ),
                 (
                     "task",
-                    models.TextField(
+                    models.CharField(
                         validators=[django_absurd.validators.validate_task_path]
                     ),
                 ),
                 (
                     "queue",
-                    models.TextField(
+                    models.CharField(
                         blank=True,
                         choices=django_absurd.pg_cron.models.get_declared_queue_choices,
                         default="",
@@ -145,12 +141,12 @@ class Migration(migrations.Migration):
                         blank=True,
                         default=django_absurd.pg_cron.models.get_default_max_attempts,
                         null=True,
-                        validators=[django.core.validators.MinValueValidator(1)],
+                        validators=[MinValueValidator(1)],
                     ),
                 ),
                 (
                     "retry_kind",
-                    models.TextField(
+                    models.CharField(
                         blank=True,
                         choices=[
                             ("exponential", "Exponential"),
@@ -178,8 +174,20 @@ class Migration(migrations.Migration):
                     models.IntegerField(blank=True, null=True),
                 ),
                 ("cancellation_max_delay", models.IntegerField(blank=True, null=True)),
-                ("idempotency_key", models.TextField(blank=True, default="")),
-                ("cron", models.TextField()),
+                ("idempotency_key", models.CharField(blank=True, default="")),
+                (
+                    "cron",
+                    models.CharField(
+                        help_text=(
+                            "A 5-field cron (e.g. '0 2 * * *') or the interval form"
+                            " '<n> seconds' (1-59). High-frequency schedules (a few"
+                            " seconds) generate a lot of runs, so take care. See <a"
+                            ' href="https://github.com/citusdata/pg_cron"'
+                            ' target="_blank" rel="noopener">pg_cron</a> for the exact'
+                            " schedule syntax."
+                        )
+                    ),
+                ),
                 ("enabled", models.BooleanField(default=True)),
                 ("created_at", models.DateTimeField(auto_now_add=True)),
                 ("updated_at", models.DateTimeField(auto_now=True)),

@@ -5,12 +5,15 @@ from django.core.exceptions import NON_FIELD_ERRORS, ValidationError
 from django.core.validators import MinValueValidator
 from django.db import DatabaseError, InternalError, connections, models, transaction
 
-from django_absurd.backends import get_absurd_backends, get_declared_queues
+from django_absurd.backends import (
+    get_absurd_backends,
+    get_declared_queues,
+    get_pg_cron_backends,
+)
 from django_absurd.pg_cron.choices import Source
 from django_absurd.pg_cron.validators import (
     build_jobname,
     build_jobname_prefix,
-    validate_alias_charset,
     validate_alias_is_pg_cron_backend,
     validate_declared_queue,
     validate_jobname_length,
@@ -27,8 +30,12 @@ from django_absurd.validators import (
 
 __all__ = ["ScheduledTask"]
 
-# Advisory lock key serializing concurrent pg_cron job writers.
-SYNC_CRONS_ADVISORY_LOCK = 0x616273_75726421  # "absurd!" as hex
+CRON_HELP_TEXT = (
+    "A 5-field cron (e.g. '0 2 * * *') or the interval form '<n> seconds' (1-59)."
+    " High-frequency schedules (a few seconds) generate a lot of runs, so take care."
+    ' See <a href="https://github.com/citusdata/pg_cron" target="_blank"'
+    ' rel="noopener">pg_cron</a> for the exact schedule syntax.'
+)
 
 
 def get_default_max_attempts() -> int:
@@ -46,14 +53,18 @@ class RetryKind(models.TextChoices):
     NONE = "none", "None"
 
 
+def get_pg_cron_alias_choices() -> list[tuple[str, str]]:
+    """The configured pg_cron backend aliases, sorted, for the alias field's choices."""
+    return [(alias, alias) for alias in sorted(get_pg_cron_backends())]
+
+
 def get_declared_queue_choices() -> list[tuple[str, str]]:
     """Declared queues across configured pg_cron backends, sorted, for use as field
     choices. Falls back to [("default", "default")] when no queues are declared.
     Called at form-render / validation / migration-state time — import-safe."""
     queues: set[str] = set()
-    for backend in get_absurd_backends().values():
-        if backend.scheduler == "pg_cron":
-            queues.update(get_declared_queues(backend))
+    for backend in get_pg_cron_backends().values():
+        queues.update(get_declared_queues(backend))
     if not queues:
         return [("default", "default")]
     return [(q, q) for q in sorted(queues)]
@@ -130,11 +141,14 @@ class ScheduledTask(models.Model):
     objects = models.Manager()
     pg_cron = PgCronManager()
 
-    name = models.TextField(validators=[validate_name_charset])
-    source = models.TextField(choices=Source.choices, default=Source.SETTINGS)
-    alias = models.TextField(validators=[validate_alias_charset])
-    task = models.TextField(validators=[validate_task_path])
-    queue = models.TextField(choices=get_declared_queue_choices, blank=True, default="")
+    name = models.CharField(validators=[validate_name_charset])
+    source = models.CharField(choices=Source.choices, default=Source.SETTINGS)
+    alias = models.CharField(
+        choices=get_pg_cron_alias_choices,
+        help_text="Which Absurd pg_cron backend (its TASKS alias) runs this schedule.",
+    )
+    task = models.CharField(validators=[validate_task_path])
+    queue = models.CharField(choices=get_declared_queue_choices, blank=True, default="")
     # JSONField.validate raises "invalid" before run_validators, so the shared
     # serializability message is set via error_messages (matching the check path).
     args = models.JSONField(
@@ -159,7 +173,7 @@ class ScheduledTask(models.Model):
         blank=True,
         validators=[MinValueValidator(1)],
     )
-    retry_kind = models.TextField(choices=RetryKind.choices, blank=True, default="")
+    retry_kind = models.CharField(choices=RetryKind.choices, blank=True, default="")
     retry_base_seconds = models.FloatField(null=True, blank=True)
     retry_factor = models.FloatField(null=True, blank=True)
     retry_max_seconds = models.FloatField(null=True, blank=True)
@@ -168,8 +182,8 @@ class ScheduledTask(models.Model):
     )
     cancellation_max_duration = models.IntegerField(null=True, blank=True)
     cancellation_max_delay = models.IntegerField(null=True, blank=True)
-    idempotency_key = models.TextField(blank=True, default="")
-    cron = models.TextField()
+    idempotency_key = models.CharField(blank=True, default="")
+    cron = models.CharField(help_text=CRON_HELP_TEXT)
     enabled = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -295,8 +309,9 @@ def resolve_pg_cron_backend(scheduled_task: ScheduledTask) -> t.Any:
 def open_locked_cursor(database: str) -> t.Iterator[t.Any]:
     """A cursor on ``database`` inside a transaction holding the shared advisory lock,
     so concurrent pg_cron job writers serialise."""
+    advisory_lock_key = 0x616273_75726421  # "absurd!" as hex
     with transaction.atomic(using=database), connections[database].cursor() as cur:
-        cur.execute("select pg_advisory_xact_lock(%s)", [SYNC_CRONS_ADVISORY_LOCK])
+        cur.execute("select pg_advisory_xact_lock(%s)", [advisory_lock_key])
         yield cur
 
 

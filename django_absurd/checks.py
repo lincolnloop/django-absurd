@@ -13,7 +13,11 @@ from django.db.utils import OperationalError, ProgrammingError
 from django.utils.connection import ConnectionDoesNotExist
 from django.utils.module_loading import import_string
 
-from django_absurd.backends import get_absurd_backends, get_declared_queues
+from django_absurd.backends import (
+    get_absurd_backends,
+    get_declared_queues,
+    get_pg_cron_backends,
+)
 from django_absurd.connection import BACKEND_ERROR_MESSAGE, validate_backend
 from django_absurd.models import Queue
 from django_absurd.queues import get_absurd_backend, get_absurd_database
@@ -333,12 +337,11 @@ def check_scheduler_app_installed(
     app_configs: Sequence[AppConfig] | None,
     **kwargs: t.Any,
 ) -> list[CheckMessage]:
-    backends = get_absurd_backends()
     app_installed = apps.is_installed(PG_CRON_APP_NAME)
 
     if not app_installed:
         # E008 only fires when a backend actually needs the app.
-        if any(backend.scheduler == "pg_cron" for backend in backends.values()):
+        if get_pg_cron_backends():
             return [Error(E008_MSG, hint=E008_HINT, id="absurd.E008")]
         return []
 

@@ -216,6 +216,23 @@ def test_pg_cron_bad_alias_charset_rejected(settings, capsys):
     assert "Backend alias contains characters other than [A-Za-z0-9_-]." in out
 
 
+def test_pg_cron_bad_alias_charset_rejected_without_settings_schedule(settings, capsys):
+    """The alias charset is validated per-backend, so a bad alias is caught even when
+    the backend has no settings SCHEDULE (admin-only authoring)."""
+    out = run_pg_cron_check(
+        settings,
+        capsys,
+        {
+            "scheduler": "pg_cron",
+            "alias": "bad.alias",
+            "queues": BASE_QUEUES,
+            "schedule": {},
+        },
+    )
+    assert "absurd.E007" in out
+    assert "Backend alias contains characters other than [A-Za-z0-9_-]." in out
+
+
 def test_pg_cron_missing_task_no_queue_error(settings, capsys):
     """A missing task under pg_cron yields core's import E007 only — no queue E007."""
     out = run_pg_cron_check(
