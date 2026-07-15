@@ -9,14 +9,13 @@ import typing as t
 
 from django import forms
 from django.contrib import admin
+from django.contrib.admin.options import IS_POPUP_VAR
 from django.contrib.admin.utils import flatten_fieldsets
 from django.core.exceptions import NON_FIELD_ERRORS, ValidationError
-from django.http import HttpResponseRedirect
-from django.urls import reverse
 
 from django_absurd.admin import resolve_admin_sites
 from django_absurd.backends import get_absurd_backends
-from django_absurd.pg_cron.models import ScheduledTask, get_declared_queue_choices
+from django_absurd.pg_cron.models import ScheduledTask
 from django_absurd.pg_cron.reconcile import build_scheduled_fields
 from django_absurd.queues import get_absurd_backend
 from django_absurd.validators import validate_task_path
@@ -51,35 +50,12 @@ class ScheduledTaskForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         if self.instance.pk is None:
             self.instance.source = ScheduledTask.Source.ADMIN
-        queue_field = self.fields.get("queue")
-        if isinstance(queue_field, forms.ChoiceField):
-            # The queue is required (every write lane resolves a concrete queue), so
-            # the dropdown offers only real queues — drop the blank "----" choice
-            # Django adds.
-            declared = get_declared_queue_choices()
-            if self.instance.queue and self.instance.queue not in {
-                value for value, _ in declared
-            }:
-                # A stored queue that's no longer declared has dropped out of the
-                # field's (declared-queues) choices; add it back so the change form
-                # renders the real value instead of silently resubmitting a different
-                # one. It stays invalid — clean() rejects an undeclared queue.
-                declared = [*declared, (self.instance.queue, self.instance.queue)]
-            queue_field.choices = declared
 
     def validate_unique(self) -> None:
-        # source is read-only, so Django excludes it and would skip the
-        # (source, alias, name) unique check — a duplicate would then surface as an
-        # IntegrityError (HTTP 500). Un-exclude it so Django's own check runs and a
-        # duplicate is a form error; self.instance.source is already pinned to ADMIN.
-        # _get_validation_exclusions / _update_errors are real BaseModelForm methods
-        # missing from django-stubs.
-        exclude = self._get_validation_exclusions()  # type: ignore[attr-defined]
-        exclude.discard("source")
         try:
-            self.instance.validate_unique(exclude=exclude)
+            self.instance.validate_unique()
         except ValidationError as exc:
-            self._update_errors(exc)  # type: ignore[attr-defined]
+            self.add_error(None, exc)
 
     # A blank args/kwargs textarea cleans to None (JSONField's empty value), which would
     # hit the NOT NULL columns as an IntegrityError (HTTP 500). Fall back to the field
@@ -96,33 +72,35 @@ class ScheduledTaskForm(forms.ModelForm):
 class ScheduledTaskCreateForm(ScheduledTaskForm):
     class Meta(ScheduledTaskForm.Meta):
         # The create step collects only identity + cron; every spawn column is
-        # resolved from the task's decorators in _post_clean, and the row is created
+        # resolved from the task's decorators in clean(), and the row is created
         # disabled so the user reviews it on the change page before activating.
         fields = ("alias", "name", "task", "cron")  # type: ignore[assignment]
 
-    def _post_clean(self) -> None:
+    def clean(self) -> dict[str, t.Any]:
         # Resolve every spawn column from the task's decorators and create the row
         # disabled for review on the change page. validate_task_path normally runs in
         # Model.full_clean, but that keys errors to the model field and would need the
         # spawn columns already set; instead validate the path explicitly here first so
         # an unimportable / not-a-task path is reported on the task field, and
         # build_scheduled_fields — which imports and binds the task — is only reached
-        # once the path is known-good, so it cannot raise. (A resolved-but-undeclared
-        # queue still passes here and is caught by the model in super()._post_clean,
-        # whose queue-keyed error add_error re-homes onto the form.)
-        alias = self.cleaned_data.get("alias")
-        task_path = self.cleaned_data.get("task")
-        if alias and task_path:
+        # once the path is known-good, so it cannot raise. Columns set on self.instance
+        # here survive _post_clean's construct_instance (which writes only form fields)
+        # into instance.full_clean, where Model.clean validates the resolved queue.
+        # (A resolved-but-undeclared queue's model error is keyed to the queue field,
+        # which add_error re-homes onto the form.)
+        cleaned = super().clean() or {}
+        self.instance.enabled = False
+        if "alias" in cleaned and "task" in cleaned:
+            task_path = cleaned["task"]
             try:
                 validate_task_path(task_path)
             except ValidationError as exc:
                 self.add_error("task", exc)
             else:
-                backend = get_absurd_backends()[alias]
+                backend = get_absurd_backends()[cleaned["alias"]]
                 for field, value in build_scheduled_fields(backend, task_path).items():
                     setattr(self.instance, field, value)
-            self.instance.enabled = False
-        super()._post_clean()  # type: ignore[misc]
+        return cleaned
 
     def add_error(self, field: t.Any, error: t.Any) -> None:
         # The resolved spawn columns (queue, retry_kind, ...) aren't fields on this
@@ -197,15 +175,12 @@ class ScheduledTaskAdmin(admin.ModelAdmin):
         self, request: t.Any, obj: t.Any, post_url_continue: t.Any = None
     ) -> t.Any:
         # Land on the change page so the user reviews the resolved (disabled) row and
-        # activates it, rather than dropping back to the changelist.
-        self.message_user(
-            request,
-            f"The scheduled task “{obj}” was added successfully. Review the resolved "
-            "options below and enable it to activate.",
-        )
-        return HttpResponseRedirect(
-            reverse("admin:django_absurd_pg_cron_scheduledtask_change", args=[obj.pk])
-        )
+        # activates it, rather than dropping back to the changelist — except when
+        # "Save and add another" was pressed or we're in a popup.
+        if "_addanother" not in request.POST and IS_POPUP_VAR not in request.POST:
+            request.POST = request.POST.copy()
+            request.POST["_continue"] = 1
+        return super().response_add(request, obj, post_url_continue)
 
     def has_change_permission(self, request: t.Any, obj: t.Any = None) -> bool:
         # settings-declared rows are read-only regardless of Django permissions;

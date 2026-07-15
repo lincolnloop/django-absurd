@@ -125,7 +125,7 @@ def test_pg_cron_jobname_too_long_rejected(settings, capsys):
 def test_pg_cron_undeclared_task_queue_rejected(settings, capsys):
     """Task with queue_name='reports' not in declared queues must be rejected."""
     # tests.tasks.on_reports has @task(queue_name="reports"); exclude it from declared
-    # queues so get_effective_queue finds it undeclared. Still include "other"
+    # queues so the effective-queue check finds it undeclared. Still include "other"
     # (required by the tasks module import) but omit "reports".
     out = run_pg_cron_check(
         settings,
@@ -137,7 +137,7 @@ def test_pg_cron_undeclared_task_queue_rejected(settings, capsys):
                 "ghostly": {
                     "task": "tests.tasks.on_reports",
                     "cron": "0 2 * * *",
-                    # no "queue" key — get_effective_queue falls back to task.queue_name
+                    # no "queue" key — the check falls back to task.queue_name
                 }
             },
         },

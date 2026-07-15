@@ -69,11 +69,13 @@ between reconciles).
 
 Reuse existing validators: name charset; task (importable + is a `@task` + its
 `queue_name` declared on the backend); cron (pg_cron grammar, DB probe); jobname length;
-uniqueness `(source, alias, name)` (via the inherited `validate_unique`). Because
-resolution runs in `_post_clean` before `full_clean`, the decorator-derived columns are
-validated too (e.g. a task with `@absurd_default_params(max_attempts=0)` is rejected by
-the field's `MinValueValidator(1)`, not a DB `IntegrityError`). Invariant: a created row
-is always valid.
+uniqueness `(source, alias, name)` (via the inherited `validate_unique`). Only the
+concrete `queue`/`cron` are model-validated (`Model.clean()`); the decorator-derived
+spawn columns are set on the instance in `clean()` but are NOT form fields, so
+`full_clean` excludes them — a nonsensical decorator value (e.g.
+`@absurd_default_params(max_attempts=0)`) reaches the DB `CheckConstraint` and raises
+`IntegrityError`. That is developer error, identical to the settings lane (which never
+`full_clean`s). Do not add validation machinery for it.
 
 ## Kept as-is
 

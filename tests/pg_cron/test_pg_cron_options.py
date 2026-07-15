@@ -1,7 +1,7 @@
 import pytest
 
 from django_absurd.backends import get_absurd_backends
-from django_absurd.pg_cron.reconcile import get_effective_queue, resolve_spawn_options
+from django_absurd.pg_cron.reconcile import resolve_spawn_options
 from django_absurd.scheduler import Schedule
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -33,13 +33,3 @@ def test_max_attempts_falls_back_to_backend_default(settings):
     be = get_absurd_backends()["default"]
     s = Schedule(name="x", task="tests.tasks.add", cron="0 2 * * *")  # no decorator
     assert resolve_spawn_options(be, s.task)["max_attempts"] == 7  # NOT 5
-
-
-def test_effective_queue_uses_task_queue_name_when_unset(settings):
-    settings.TASKS = {
-        "default": {"BACKEND": ABSURD, "OPTIONS": {"QUEUES": BASE_QUEUES}}
-    }
-    s = Schedule(
-        name="x", task="tests.tasks.on_reports", cron="0 2 * * *"
-    )  # @task(queue_name="reports")
-    assert get_effective_queue(s) == "reports"

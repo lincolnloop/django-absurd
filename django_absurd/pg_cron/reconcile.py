@@ -1,6 +1,6 @@
 """pg_cron reconcile engine: materialize declared SCHEDULE entries into
 ScheduledTask rows (the rows' post_save signal emits the pg_cron jobs), prune
-undeclared ones, and tear down on scheduler switch — plus the option/effective-queue
+undeclared ones, and tear down on scheduler switch — plus the spawn-option
 resolution they depend on. Per-row pg_cron job emission lives on the ScheduledTask
 model."""
 
@@ -12,7 +12,7 @@ from django_absurd.backends import AbsurdBackend, build_merged_spawn_options
 from django_absurd.pg_cron.choices import Source
 from django_absurd.pg_cron.models import ScheduledTask, open_locked_cursor
 from django_absurd.queues import resolve_absurd_database
-from django_absurd.scheduler import Schedule, get_settings_schedules
+from django_absurd.scheduler import get_settings_schedules
 
 
 def resolve_spawn_options(backend: AbsurdBackend, task_path: str) -> dict[str, t.Any]:
@@ -65,15 +65,6 @@ def build_scheduled_fields(
         "headers": opts.get("headers"),
         "idempotency_key": opts.get("idempotency_key") or "",
     }
-
-
-def get_effective_queue(schedule: Schedule) -> str:
-    """Return the queue name a scheduled task will run on.
-
-    Uses the schedule's explicit queue override when set; falls back to the
-    task's own queue_name.
-    """
-    return schedule.queue or import_string(schedule.task).queue_name
 
 
 def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:
