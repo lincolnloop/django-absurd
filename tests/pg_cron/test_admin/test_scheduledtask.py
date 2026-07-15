@@ -1,4 +1,3 @@
-import sys
 from html import unescape
 
 import pytest
@@ -8,7 +7,6 @@ from django.core.management import call_command
 from django.urls import reverse, reverse_lazy
 
 from django_absurd.backends import get_absurd_backends
-from django_absurd.pg_cron.admin import ScheduledTaskCreateForm
 from django_absurd.pg_cron.models import ScheduledTask
 from django_absurd.pg_cron.reconcile import build_scheduled_fields, sync_crons
 
@@ -139,9 +137,10 @@ def test_add_view_renders_only_the_minimal_fields(settings, client, admin_user):
     assert "queue" not in names
 
 
-def test_create_with_undeclared_task_queue_is_form_error_not_created(
-    settings, client, admin_user
-):
+def narrow_to_default_queue_only(settings):
+    """Re-declare the backend with only the "default" queue, leaving tests.tasks (and
+    its "other"/"reports"-queued tasks) already imported — so a create POST resolves a
+    task against a backend that no longer declares that task's queue."""
     settings.TASKS = {
         "default": {
             "BACKEND": "django_absurd.backends.AbsurdBackend",
@@ -149,77 +148,92 @@ def test_create_with_undeclared_task_queue_is_form_error_not_created(
         }
     }
     call_command("absurd_sync_queues")
+
+
+def test_create_with_undeclared_resolved_queue_is_form_error_not_created(
+    settings, client, admin_user
+):
+    # on_reports' own queue ("reports") resolves fine, but the backend no longer
+    # declares it, so the model rejects the resolved queue. queue isn't a field on the
+    # 4-field create form, so the form must re-home that queue-keyed error onto the form
+    # (a non-field error) rather than raise "has no field named queue" (HTTP 500) — and
+    # create nothing.
+    seed(settings)  # imports tests.tasks while "reports" is declared
+    narrow_to_default_queue_only(settings)
     client.force_login(admin_user)
     response = client.post(
         ADD,
         {
             "alias": "default",
-            "name": "badq",
-            "task": "tests.tasks.routed",
+            "name": "undeclaredq",
+            "task": "tests.tasks.on_reports",
             "cron": "0 2 * * *",
         },
     )
-    # routed's own queue ("other") isn't declared for this backend. The create form
-    # re-renders with an error and creates nothing (not HTTP 500). The two direct-form
-    # tests below pin the exact message for each of the two resolution states, so the
-    # HTTP-level invariant asserted here is: rejected, not created.
     assert response.status_code == 200
-    assert not ScheduledTask.objects.filter(name="badq").exists()
+    assert "queue 'reports' is not declared." in unescape(response.content.decode())
+    assert not ScheduledTask.objects.filter(name="undeclaredq").exists()
 
 
-def test_create_form_reports_a_cold_module_resolution_failure_on_task(settings):
-    # Cold task module: the task's module isn't yet imported when the form runs (the
-    # fresh-process / first-request state), so resolving it re-imports and binds the
-    # task to the current backend, and a task whose own queue isn't declared there
-    # raises. The create form surfaces that on the task field rather than 500ing.
-    settings.TASKS = {
-        "default": {
-            "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "OPTIONS": {"QUEUES": {"default": {}}, "SCHEDULER": "pg_cron"},
-        }
-    }
-    call_command("absurd_sync_queues")
-    cached_tasks_module = sys.modules.pop("tests.tasks", None)
-    try:
-        form = ScheduledTaskCreateForm(
-            data={
-                "alias": "default",
-                "name": "coldq",
-                "task": "tests.tasks.routed",
-                "cron": "0 2 * * *",
-            }
-        )
-        assert form.is_valid() is False
-        assert form.errors["task"] == ["Queue 'other' is not valid for backend."]
-    finally:
-        if cached_tasks_module is not None:
-            sys.modules["tests.tasks"] = cached_tasks_module
-
-
-def test_create_form_rehomes_a_missing_field_queue_error_onto_the_form(settings):
-    # Warm task module (the normal running-app state): resolution succeeds and sets the
-    # task's own queue on the instance; after narrowing the declared queues the model
-    # rejects it with a queue-keyed error. queue isn't a field on the 4-field create
-    # form, so the form re-homes that error onto the form as a non-field error instead
-    # of raising "has no field named queue" (HTTP 500).
-    seed(settings)  # declares reports/other; imports/warms tests.tasks bindings
-    settings.TASKS = {
-        "default": {
-            "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "OPTIONS": {"QUEUES": {"default": {}}, "SCHEDULER": "pg_cron"},
-        }
-    }
-    call_command("absurd_sync_queues")
-    form = ScheduledTaskCreateForm(
-        data={
+def test_create_with_unimportable_task_is_form_error_not_created(
+    settings, client, admin_user
+):
+    # An unimportable task path is rejected on the task field before any spawn-option
+    # resolution runs (so build_scheduled_fields never sees a bad path), and nothing is
+    # created.
+    seed(settings)
+    client.force_login(admin_user)
+    response = client.post(
+        ADD,
+        {
             "alias": "default",
-            "name": "warmq",
-            "task": "tests.tasks.on_reports",
+            "name": "bogus",
+            "task": "tests.tasks.does_not_exist",
             "cron": "0 2 * * *",
-        }
+        },
     )
-    assert form.is_valid() is False
-    assert form.non_field_errors() == ["queue 'reports' is not declared."]
+    assert response.status_code == 200
+    assert "task 'tests.tasks.does_not_exist' could not be imported" in unescape(
+        response.content.decode()
+    )
+    assert not ScheduledTask.objects.filter(name="bogus").exists()
+
+
+def test_create_with_non_task_target_is_form_error_not_created(
+    settings, client, admin_user
+):
+    # A path that imports but isn't a Django task is rejected on the task field (so
+    # resolution, which reads task-only attributes, is never reached).
+    seed(settings)
+    client.force_login(admin_user)
+    response = client.post(
+        ADD,
+        {
+            "alias": "default",
+            "name": "notatask",
+            "task": "os.getpid",
+            "cron": "0 2 * * *",
+        },
+    )
+    assert response.status_code == 200
+    assert "'os.getpid' is not a Django task." in unescape(response.content.decode())
+    assert not ScheduledTask.objects.filter(name="notatask").exists()
+
+
+def test_create_with_blank_task_skips_resolution_and_is_required_error(
+    settings, client, admin_user
+):
+    # A blank task never reaches cleaned_data, so spawn-option resolution is skipped
+    # entirely; the form reports the field as required and creates nothing.
+    seed(settings)
+    client.force_login(admin_user)
+    response = client.post(
+        ADD,
+        {"alias": "default", "name": "notask", "task": "", "cron": "0 2 * * *"},
+    )
+    assert response.status_code == 200
+    assert "This field is required." in response.content.decode()
+    assert not ScheduledTask.objects.filter(name="notask").exists()
 
 
 def test_create_with_bad_cron_is_form_error_not_created(settings, client, admin_user):

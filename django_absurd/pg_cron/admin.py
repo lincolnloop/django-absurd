@@ -12,7 +12,6 @@ from django.contrib import admin
 from django.contrib.admin.utils import flatten_fieldsets
 from django.core.exceptions import NON_FIELD_ERRORS, ValidationError
 from django.http import HttpResponseRedirect
-from django.tasks.exceptions import InvalidTask
 from django.urls import reverse
 
 from django_absurd.admin import resolve_admin_sites
@@ -20,6 +19,7 @@ from django_absurd.backends import get_absurd_backends
 from django_absurd.pg_cron.models import ScheduledTask, get_declared_queue_choices
 from django_absurd.pg_cron.reconcile import build_scheduled_fields
 from django_absurd.queues import get_absurd_backend
+from django_absurd.validators import validate_task_path
 
 
 class ScheduledTaskForm(forms.ModelForm):
@@ -99,20 +99,25 @@ class ScheduledTaskCreateForm(ScheduledTaskForm):
 
     def _post_clean(self) -> None:
         # Resolve every spawn column from the task's decorators and create the row
-        # disabled for review on the change page. Resolving imports/binds the task to
-        # the backend; a task whose own queue isn't declared there raises rather than
-        # returning, so route that to the task field instead of HTTP 500 (mirrors
-        # validate_task_path, which reports an unimportable task on the task field).
-        if "alias" in self.cleaned_data and "task" in self.cleaned_data:
-            backend = get_absurd_backends().get(self.cleaned_data["alias"])
-            if backend is not None:
-                try:
-                    fields = build_scheduled_fields(backend, self.cleaned_data["task"])
-                except InvalidTask as exc:
-                    self.add_error("task", str(exc))
-                else:
-                    for field, value in fields.items():
-                        setattr(self.instance, field, value)
+        # disabled for review on the change page. validate_task_path normally runs in
+        # Model.full_clean, but that keys errors to the model field and would need the
+        # spawn columns already set; instead validate the path explicitly here first so
+        # an unimportable / not-a-task path is reported on the task field, and
+        # build_scheduled_fields — which imports and binds the task — is only reached
+        # once the path is known-good, so it cannot raise. (A resolved-but-undeclared
+        # queue still passes here and is caught by the model in super()._post_clean,
+        # whose queue-keyed error add_error re-homes onto the form.)
+        alias = self.cleaned_data.get("alias")
+        task_path = self.cleaned_data.get("task")
+        if alias and task_path:
+            try:
+                validate_task_path(task_path)
+            except ValidationError as exc:
+                self.add_error("task", exc)
+            else:
+                backend = get_absurd_backends()[alias]
+                for field, value in build_scheduled_fields(backend, task_path).items():
+                    setattr(self.instance, field, value)
             self.instance.enabled = False
         super()._post_clean()  # type: ignore[misc]
 
