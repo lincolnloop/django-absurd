@@ -63,7 +63,7 @@ def test_bad_task_no_queue_reports_task_not_queue(validate):
     # no override + unimportable/not-a-task path: validate_declared_queue must SWALLOW
     # the task error (reported by validate_task_path) and not mislabel it as a queue
     # error. Exercises the try/except-return branch on both subjects.
-    result = validate(task="os.getpid")
+    result = validate(queue="", task="os.getpid")
     assert result
     assert "is not a Django task." in result
     assert "is not declared" not in result

@@ -24,7 +24,7 @@ VALID = {
     "alias": "default",
     "name": "ok",
     "task": "tests.tasks.add",
-    "queue": "",
+    "queue": "default",
     "args": [],
     "kwargs": {},
     "cron": "0 2 * * *",

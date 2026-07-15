@@ -37,6 +37,7 @@ def test_revalidating_a_saved_admin_schedule_does_not_self_clash(settings):
         alias="default",
         name="nightly",
         task="tests.tasks.add",
+        queue="default",
         cron="0 2 * * *",
     )
     scheduled_task.enabled = False

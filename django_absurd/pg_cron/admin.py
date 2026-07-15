@@ -52,17 +52,20 @@ class ScheduledTaskForm(forms.ModelForm):
         if self.instance.pk is None:
             self.instance.source = ScheduledTask.Source.ADMIN
         queue_field = self.fields.get("queue")
-        if isinstance(queue_field, forms.ChoiceField) and self.instance.queue:
-            # A stored queue that's no longer declared has dropped out of the field's
-            # (declared-queues) choices; add it back so the change form renders the real
-            # value instead of silently resubmitting a different one. It stays invalid —
-            # clean() rejects an undeclared queue with a validation error.
+        if isinstance(queue_field, forms.ChoiceField):
+            # The queue is required (every write lane resolves a concrete queue), so
+            # the dropdown offers only real queues — drop the blank "----" choice
+            # Django adds.
             declared = get_declared_queue_choices()
-            if self.instance.queue not in {value for value, _ in declared}:
-                queue_field.choices = [
-                    *declared,
-                    (self.instance.queue, self.instance.queue),
-                ]
+            if self.instance.queue and self.instance.queue not in {
+                value for value, _ in declared
+            }:
+                # A stored queue that's no longer declared has dropped out of the
+                # field's (declared-queues) choices; add it back so the change form
+                # renders the real value instead of silently resubmitting a different
+                # one. It stays invalid — clean() rejects an undeclared queue.
+                declared = [*declared, (self.instance.queue, self.instance.queue)]
+            queue_field.choices = declared
 
     def validate_unique(self) -> None:
         # source is read-only, so Django excludes it and would skip the

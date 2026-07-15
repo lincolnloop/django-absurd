@@ -36,7 +36,7 @@ TASKS = {
 ADD_PAYLOAD = {
     "alias": "default",
     "task": "tests.tasks.add",
-    "queue": "",
+    "queue": "default",
     "cron": "0 3 * * *",
     "enabled": "on",
     "args": "[]",
@@ -580,6 +580,24 @@ def test_editing_admin_schedule_after_backend_flip_is_form_error_not_500(
     )
 
 
+def test_change_form_rejects_a_blank_queue(settings, client, admin_user):
+    seed(settings)
+    client.force_login(admin_user)
+    client.post(
+        ADD,
+        {
+            "alias": "default",
+            "name": "needsqueue",
+            "task": "tests.tasks.add",
+            "cron": "0 3 * * *",
+        },
+    )
+    row = ScheduledTask.objects.get(name="needsqueue")
+    response = client.post(get_change_url(row.pk), {**ADD_PAYLOAD, "queue": ""})
+    assert response.status_code == 200
+    assert "This field is required." in response.content.decode()
+
+
 def test_change_view_queue_is_a_dropdown_of_declared_queues(
     settings, client, admin_user
 ):
@@ -588,7 +606,7 @@ def test_change_view_queue_is_a_dropdown_of_declared_queues(
     pk = create_scheduled_task(client, name="queuedropdown")
     soup = BeautifulSoup(client.get(get_change_url(pk)).content, "html.parser")
     values = [o.get("value") for o in soup.select('select[name="queue"] option')]
-    assert values == ["", "default", "other", "reports"]
+    assert values == ["default", "other", "reports"]
 
 
 def test_change_view_retry_kind_is_a_dropdown(settings, client, admin_user):

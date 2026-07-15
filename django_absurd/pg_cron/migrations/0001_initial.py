@@ -112,9 +112,7 @@ class Migration(migrations.Migration):
                 (
                     "queue",
                     models.CharField(
-                        blank=True,
                         choices=django_absurd.pg_cron.models.get_declared_queue_choices,
-                        default="",
                     ),
                 ),
                 (
