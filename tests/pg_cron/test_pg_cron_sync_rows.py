@@ -91,3 +91,17 @@ def test_reconcile_splits_retry_strategy_into_columns(settings):
     row = ScheduledTask.objects.get(source="s", alias="default", name="r")
     assert row.retry_kind == "exponential"
     assert row.retry_base_seconds == 2.0
+
+
+def test_sync_materializes_decorator_derived_columns(settings):
+    settings.TASKS = build_tasks(
+        {"full": {"task": "tests.tasks.fully_specced", "cron": "0 2 * * *"}}
+    )
+    sync_crons(get_absurd_backends()["default"])
+    row = ScheduledTask.objects.get(source="s", name="full")
+    assert row.queue == "reports"
+    assert row.max_attempts == 9
+    assert row.retry_kind == "fixed"
+    assert row.retry_base_seconds == 5
+    assert row.cancellation_max_duration == 45
+    assert row.cancellation_max_delay == 3

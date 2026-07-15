@@ -15,9 +15,7 @@ from django_absurd.queues import resolve_absurd_database
 from django_absurd.scheduler import Schedule, get_settings_schedules
 
 
-def resolve_spawn_options(
-    backend: AbsurdBackend, schedule: Schedule
-) -> dict[str, t.Any]:
+def resolve_spawn_options(backend: AbsurdBackend, task_path: str) -> dict[str, t.Any]:
     """Return the normalised spawn options dict for a scheduled task.
 
     Reproduces the enqueue path's option resolution exactly: task-decorator
@@ -31,11 +29,42 @@ def resolve_spawn_options(
     # than app startup.
     from absurd_sdk import _normalize_spawn_options  # noqa: PLC0415
 
-    task = import_string(schedule.task)
+    task = import_string(task_path)
     defaults = getattr(task.func, "absurd_default_params", None)
     merged = build_merged_spawn_options(defaults, None)
     merged["max_attempts"] = merged.pop("max_attempts", backend.default_max_attempts)
     return _normalize_spawn_options(**merged)
+
+
+def build_scheduled_fields(
+    backend: AbsurdBackend,
+    task_path: str,
+    *,
+    queue_override: str | None = None,
+) -> dict[str, t.Any]:
+    """Return the ten spawn-option columns for a scheduled task row.
+
+    Resolves decorator defaults against the backend's fallback, then flattens
+    nested retry_strategy / cancellation dicts into their typed sub-columns.
+    Does not include schedule-owned keys (task, args, kwargs, cron, enabled).
+    """
+    task = import_string(task_path)
+    queue = queue_override or task.queue_name
+    opts = resolve_spawn_options(backend, task_path)
+    return {
+        "queue": queue,
+        "max_attempts": opts.get("max_attempts"),
+        "retry_kind": (opts.get("retry_strategy") or {}).get("kind") or "",
+        "retry_base_seconds": (opts.get("retry_strategy") or {}).get("base_seconds"),
+        "retry_factor": (opts.get("retry_strategy") or {}).get("factor"),
+        "retry_max_seconds": (opts.get("retry_strategy") or {}).get("max_seconds"),
+        "cancellation_max_duration": (opts.get("cancellation") or {}).get(
+            "max_duration"
+        ),
+        "cancellation_max_delay": (opts.get("cancellation") or {}).get("max_delay"),
+        "headers": opts.get("headers"),
+        "idempotency_key": opts.get("idempotency_key") or "",
+    }
 
 
 def get_effective_queue(schedule: Schedule) -> str:
@@ -68,35 +97,20 @@ def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:
     created = 0
     with open_locked_cursor(database):
         for schedule in schedules:
-            opts = resolve_spawn_options(backend, schedule)
+            spawn_fields = build_scheduled_fields(
+                backend, schedule.task, queue_override=schedule.queue
+            )
             _, was_created = ScheduledTask.objects.using(database).update_or_create(
                 source=Source.SETTINGS,
                 alias=backend.alias,
                 name=schedule.name,
                 defaults={
                     "task": schedule.task,
-                    "queue": get_effective_queue(schedule),
                     "args": schedule.args,
                     "kwargs": schedule.kwargs,
-                    "max_attempts": opts.get("max_attempts"),
-                    "retry_kind": (opts.get("retry_strategy") or {}).get("kind") or "",
-                    "retry_base_seconds": (opts.get("retry_strategy") or {}).get(
-                        "base_seconds"
-                    ),
-                    "retry_factor": (opts.get("retry_strategy") or {}).get("factor"),
-                    "retry_max_seconds": (opts.get("retry_strategy") or {}).get(
-                        "max_seconds"
-                    ),
-                    "headers": opts.get("headers"),
-                    "cancellation_max_duration": (opts.get("cancellation") or {}).get(
-                        "max_duration"
-                    ),
-                    "cancellation_max_delay": (opts.get("cancellation") or {}).get(
-                        "max_delay"
-                    ),
-                    "idempotency_key": opts.get("idempotency_key") or "",
                     "cron": schedule.cron,
                     "enabled": True,
+                    **spawn_fields,
                 },
             )
             created += was_created

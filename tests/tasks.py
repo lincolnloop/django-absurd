@@ -76,3 +76,13 @@ def retrying():
 @absurd_default_params(cancellation=CancellationPolicy(max_duration=30))
 def cancellable():
     return "cancellable"
+
+
+@task(queue_name="reports")
+@absurd_default_params(
+    max_attempts=9,
+    retry_strategy=RetryStrategy(kind="fixed", base_seconds=5),
+    cancellation=CancellationPolicy(max_duration=45, max_delay=3),
+)
+def fully_specced():
+    return "fully_specced"

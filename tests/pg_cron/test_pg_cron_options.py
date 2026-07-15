@@ -19,7 +19,7 @@ def test_max_attempts_from_decorator(settings):
     be = get_absurd_backends()["default"]
     s = Schedule(name="x", task="tests.tasks.capped", cron="0 2 * * *")
     assert (
-        resolve_spawn_options(be, s)["max_attempts"] == 3
+        resolve_spawn_options(be, s.task)["max_attempts"] == 3
     )  # capped => @absurd_default_params(max_attempts=3)
 
 
@@ -32,7 +32,7 @@ def test_max_attempts_falls_back_to_backend_default(settings):
     }
     be = get_absurd_backends()["default"]
     s = Schedule(name="x", task="tests.tasks.add", cron="0 2 * * *")  # no decorator
-    assert resolve_spawn_options(be, s)["max_attempts"] == 7  # NOT 5
+    assert resolve_spawn_options(be, s.task)["max_attempts"] == 7  # NOT 5
 
 
 def test_effective_queue_uses_task_queue_name_when_unset(settings):
