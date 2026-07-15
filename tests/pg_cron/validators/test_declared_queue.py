@@ -59,11 +59,12 @@ def test_explicit_queue_declared_only_by_another_backend_rejected(settings):
 # value like "ghost" cannot reach the server via the normal admin form POST.
 
 
-def test_bad_task_no_queue_reports_task_not_queue(validate):
-    # no override + unimportable/not-a-task path: validate_declared_queue must SWALLOW
+def test_bad_task_no_queue_reports_task_not_queue(validate_check_and_model):
+    # blank queue + unimportable/not-a-task path: validate_declared_queue must SWALLOW
     # the task error (reported by validate_task_path) and not mislabel it as a queue
-    # error. Exercises the try/except-return branch on both subjects.
-    result = validate(queue="", task="os.getpid")
+    # error. Check + model only: queue is now a required no-blank-choice field, so the
+    # admin form can't submit a blank queue to reach this branch.
+    result = validate_check_and_model(queue="", task="os.getpid")
     assert result
     assert "is not a Django task." in result
     assert "is not declared" not in result

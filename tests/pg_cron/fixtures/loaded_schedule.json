@@ -7,7 +7,7 @@
       "alias": "default",
       "name": "loaded",
       "task": "tests.tasks.add",
-      "queue": "",
+      "queue": "default",
       "cron": "0 5 * * *",
       "args": [],
       "kwargs": {},
