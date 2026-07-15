@@ -1,11 +1,12 @@
 import pytest
+from asgiref.local import Local
 from django.db import connection
+from django.tasks import task_backends
 
 from tests.fixtures import (  # noqa: F401
     _enable_db,
     _reset_absurd_queues,
     admin_user,
-    reset_task_backends,
     staff_user,
 )
 
@@ -13,9 +14,14 @@ from tests.fixtures import (  # noqa: F401
 @pytest.fixture(autouse=True)
 def _reset_task_backends():
     """Blow away the task-backend cache before each test so a mutated ``settings.TASKS``
-    (Django 6.0's test setting_changed receivers don't reset it) can't leak a stale
-    backend into the next test's task resolution."""
-    reset_task_backends()
+    can't leak a stale backend into the next test's task resolution.
+
+    ``TaskBackendHandler`` caches the ``TASKS`` setting (a cached_property) and each
+    created backend (in ``_connections``); Django 6.0's test setting_changed receivers
+    do NOT reset it, so a stale backend would bind tasks to the wrong queues and make
+    task resolution non-deterministic across tests."""
+    task_backends._connections = Local(task_backends.thread_critical)
+    task_backends.__dict__.pop("settings", None)
 
 
 @pytest.fixture(autouse=True)
