@@ -120,6 +120,7 @@ class ScheduledTaskCreateForm(ScheduledTaskForm):
 class ScheduledTaskAdmin(admin.ModelAdmin):
     form = ScheduledTaskForm
     add_fieldsets = ((None, {"fields": ("alias", "name", "task", "cron")}),)
+    save_on_top = True
     ordering = ("alias", "name")
     list_display = (
         "name",
@@ -134,8 +135,11 @@ class ScheduledTaskAdmin(admin.ModelAdmin):
     list_filter = ("alias", "enabled", "source", "queue")
     search_fields = ("name", "task")
     fieldsets = (
+        # Activation up top: the review step's one action is flipping a resolved,
+        # disabled schedule on.
+        ("Activation", {"fields": ("enabled",)}),
         ("Identity", {"fields": ("source", "alias", "name")}),
-        ("Schedule", {"fields": ("task", "queue", "cron", "enabled")}),
+        ("Schedule", {"fields": ("task", "queue", "cron")}),
         (
             "Retry",
             {
