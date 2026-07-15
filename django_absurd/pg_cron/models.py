@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from django.core.exceptions import NON_FIELD_ERRORS, ValidationError
 from django.core.validators import MinValueValidator
 from django.db import DatabaseError, InternalError, connections, models, transaction
+from django.utils.module_loading import import_string
 
 from django_absurd.backends import (
     get_absurd_backends,
@@ -224,21 +225,7 @@ class ScheduledTask(models.Model):
         except ValidationError as exc:
             errors.setdefault(NON_FIELD_ERRORS, []).extend(exc.messages)
         else:
-            backend = get_absurd_backends()[self.alias]
-            # Validate the effective queue (explicit override, else the task's own
-            # queue_name) against THIS backend's declared queues. The field's choices
-            # union queues across all pg_cron backends, so an explicit queue must still
-            # be checked here — it may belong to a different backend.
-            try:
-                validate_declared_queue(
-                    self.queue, self.task, set(get_declared_queues(backend))
-                )
-            except ValidationError as exc:
-                errors["queue"] = exc.messages
-            try:
-                validate_pg_cron_cron(self.cron, backend.database)
-            except ValidationError as exc:
-                errors["cron"] = exc.messages
+            errors.update(self.validate_against_backend())
 
         retry_timing_fields = (
             "retry_base_seconds",
@@ -254,6 +241,43 @@ class ScheduledTask(models.Model):
 
         if errors:
             raise ValidationError(errors)
+
+    def validate_against_backend(self) -> dict[str, list[str]]:
+        """Validate queue + cron against the row's resolved pg_cron backend, and resolve
+        a blank queue to the task's own queue_name. Returns field errors (empty if OK).
+        Assumes the alias is a pg_cron backend (checked by the caller)."""
+        backend = get_absurd_backends()[self.alias]
+        errors: dict[str, list[str]] = {}
+        # Validate the effective queue (explicit override, else the task's own
+        # queue_name) against THIS backend's declared queues. The field's choices union
+        # queues across all pg_cron backends, so an explicit queue must still be checked
+        # here — it may belong to a different backend.
+        try:
+            validate_declared_queue(
+                self.queue, self.task, set(get_declared_queues(backend))
+            )
+        except ValidationError as exc:
+            errors["queue"] = exc.messages
+        else:
+            self.resolve_blank_queue()
+        try:
+            validate_pg_cron_cron(self.cron, backend.database)
+        except ValidationError as exc:
+            errors["cron"] = exc.messages
+        return errors
+
+    def resolve_blank_queue(self) -> None:
+        """Fill a blank queue with the task's own queue_name (mirrors the settings
+        lane's get_effective_queue), so the wrapper spawns on a real queue rather than
+        "" (which has no queue table). A bad task path is reported by the task field
+        validator and blocks the save, so the queue can stay blank in that case."""
+        if self.queue:
+            return
+        try:
+            validate_task_path(self.task)
+        except ValidationError:
+            return
+        self.queue = import_string(self.task).queue_name
 
     def get_pg_cron_job(self) -> tuple | None:
         """This row's own pg_cron job as ``(jobname, schedule, command, active)``, or
