@@ -6,11 +6,16 @@ import json
 from django.core.exceptions import ValidationError
 from django.core.management import call_command
 from django.core.management.base import SystemCheckError
-from django.urls import reverse_lazy
+from django.urls import reverse, reverse_lazy
 
 from django_absurd.pg_cron.models import ScheduledTask
 
 ADD_URL = reverse_lazy("admin:django_absurd_pg_cron_scheduledtask_add")
+
+
+def get_change_url(pk):
+    return reverse("admin:django_absurd_pg_cron_scheduledtask_change", args=[pk])
+
 
 BACKEND = "django_absurd.backends.AbsurdBackend"
 QUEUES: dict = {"default": {}, "other": {}, "reports": {}}
@@ -82,17 +87,31 @@ def validate_from_system_check(settings, capsys, **kwargs):
 
 
 def validate_from_admin_post(client, admin_user, settings, **kwargs):
-    """Subject: the admin add-form POST. Return the joined form-error text, or None
-    when the form validates (the POST redirects)."""
+    """Subject: the admin change-form POST over a pre-seeded admin row. Return the
+    joined form-error text, or None when the form validates (the POST redirects).
+
+    The two-step create form collects only identity + cron and resolves every spawn
+    column from the task, so it can't express rules about args/kwargs/queue/retry/
+    cancellation. The change form exposes those fields, so drive validation there:
+    seed a baseline admin row, then POST the overrides to its editable fields. alias
+    and name are read-only on the change form; rules on those move to the
+    check + model subjects."""
     configure_pg_cron_backend(settings)
     client.force_login(admin_user)
     fields = {**VALID, **kwargs}
+    scheduled_task = ScheduledTask.objects.create(
+        source="a",
+        alias=VALID["alias"],
+        name=VALID["name"],
+        task=VALID["task"],
+        queue="default",
+        cron=VALID["cron"],
+    )
     payload = {
-        "alias": fields["alias"],
-        "name": fields["name"],
         "task": fields["task"],
         "queue": fields["queue"],
         "cron": fields["cron"],
+        "enabled": "on",
         "args": json.dumps(fields["args"]),
         "kwargs": json.dumps(fields["kwargs"]),
         "max_attempts": "",
@@ -105,7 +124,7 @@ def validate_from_admin_post(client, admin_user, settings, **kwargs):
         "cancellation_max_delay": "",
         "idempotency_key": "",
     }
-    response = client.post(ADD_URL, payload)
+    response = client.post(get_change_url(scheduled_task.pk), payload)
     if response.status_code == 302:
         return None
     form = response.context["adminform"].form

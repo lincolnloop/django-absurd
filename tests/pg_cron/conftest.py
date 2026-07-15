@@ -5,8 +5,17 @@ from tests.fixtures import (  # noqa: F401
     _enable_db,
     _reset_absurd_queues,
     admin_user,
+    reset_task_backends,
     staff_user,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_task_backends():
+    """Blow away the task-backend cache before each test so a mutated ``settings.TASKS``
+    (Django 6.0's test setting_changed receivers don't reset it) can't leak a stale
+    backend into the next test's task resolution."""
+    reset_task_backends()
 
 
 @pytest.fixture(autouse=True)

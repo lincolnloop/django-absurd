@@ -1,9 +1,25 @@
 import pytest
+from asgiref.local import Local
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ImproperlyConfigured
 from django.db.utils import OperationalError, ProgrammingError
+from django.tasks import task_backends
 
 from django_absurd.queues import get_absurd_client
+
+
+def reset_task_backends():
+    """Drop the cached task backends so the next task resolution re-binds against the
+    current TASKS.
+
+    ``TaskBackendHandler`` caches the ``TASKS`` setting (a cached_property) and each
+    created backend (in ``_connections``). Django 6.0's test setting_changed receivers
+    do NOT reset it when a test mutates ``settings.TASKS``, so a stale backend would
+    bind tasks to the wrong queues — making task resolution non-deterministic across
+    tests.
+    """
+    task_backends._connections = Local(task_backends.thread_critical)
+    task_backends.__dict__.pop("settings", None)
 
 
 @pytest.fixture(autouse=True)

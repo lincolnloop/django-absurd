@@ -5,14 +5,16 @@ BAD = ["dot.dot", "has space", "unicodé", "with/slash"]
 GOOD = ["MixedCase123", "ok", "with-dash", "with_underscore"]
 
 
+# name is read-only on the change form (set once at create, immutable after), so the
+# admin-POST subject can't express this rule; the check + model subjects enforce it.
 @pytest.mark.parametrize("name", BAD)
-def test_bad_name_rejected(validate, name):
-    result = validate(name=name)
+def test_bad_name_rejected(validate_check_and_model, name):
+    result = validate_check_and_model(name=name)
     assert result
     assert NAME_MSG in result
 
 
 @pytest.mark.parametrize("name", GOOD)
-def test_good_name_accepted(validate, name):
-    result = validate(name=name)
+def test_good_name_accepted(validate_check_and_model, name):
+    result = validate_check_and_model(name=name)
     assert not result or NAME_MSG not in result

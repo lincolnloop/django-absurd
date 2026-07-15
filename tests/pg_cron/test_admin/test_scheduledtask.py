@@ -1,3 +1,4 @@
+import sys
 from html import unescape
 
 import pytest
@@ -7,8 +8,9 @@ from django.core.management import call_command
 from django.urls import reverse, reverse_lazy
 
 from django_absurd.backends import get_absurd_backends
+from django_absurd.pg_cron.admin import ScheduledTaskCreateForm
 from django_absurd.pg_cron.models import ScheduledTask
-from django_absurd.pg_cron.reconcile import sync_crons
+from django_absurd.pg_cron.reconcile import build_scheduled_fields, sync_crons
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -64,7 +66,7 @@ def rows(response):
     return soup.select("#result_list tbody tr")
 
 
-def change_url(pk):
+def get_change_url(pk):
     return reverse("admin:django_absurd_pg_cron_scheduledtask_change", args=[pk])
 
 
@@ -97,6 +99,173 @@ def test_search_by_name_narrows(settings, client, admin_user):
     seed(settings)
     client.force_login(admin_user)
     assert len(rows(client.get(CHANGELIST, {"q": "nightly"}))) == 1
+
+
+def test_create_resolves_all_spawn_options_and_is_disabled(
+    settings, client, admin_user
+):
+    seed(settings)
+    client.force_login(admin_user)
+    response = client.post(
+        ADD,
+        {
+            "alias": "default",
+            "name": "fromdecorators",
+            "task": "tests.tasks.fully_specced",
+            "cron": "0 2 * * *",
+        },
+    )
+    assert response.status_code == 302
+    row = ScheduledTask.objects.get(name="fromdecorators")
+    assert response["Location"] == get_change_url(row.pk)
+    assert row.source == "a"
+    assert row.enabled is False
+    assert row.queue == "reports"
+    assert row.max_attempts == 9
+    assert row.retry_kind == "fixed"
+    assert row.retry_base_seconds == 5
+    assert row.cancellation_max_duration == 45
+    assert row.cancellation_max_delay == 3
+
+
+def test_add_view_renders_only_the_minimal_fields(settings, client, admin_user):
+    seed(settings)
+    client.force_login(admin_user)
+    soup = BeautifulSoup(client.get(ADD).content, "html.parser")
+    names = {i.get("name") for i in soup.select("#scheduledtask_form [name]")}
+    assert {"alias", "name", "task", "cron"} <= names
+    assert "max_attempts" not in names
+    assert "retry_kind" not in names
+    assert "queue" not in names
+
+
+def test_create_with_undeclared_task_queue_is_form_error_not_created(
+    settings, client, admin_user
+):
+    settings.TASKS = {
+        "default": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {"QUEUES": {"default": {}}, "SCHEDULER": "pg_cron"},
+        }
+    }
+    call_command("absurd_sync_queues")
+    client.force_login(admin_user)
+    response = client.post(
+        ADD,
+        {
+            "alias": "default",
+            "name": "badq",
+            "task": "tests.tasks.routed",
+            "cron": "0 2 * * *",
+        },
+    )
+    # routed's own queue ("other") isn't declared for this backend. The create form
+    # re-renders with an error and creates nothing (not HTTP 500). The two direct-form
+    # tests below pin the exact message for each of the two resolution states, so the
+    # HTTP-level invariant asserted here is: rejected, not created.
+    assert response.status_code == 200
+    assert not ScheduledTask.objects.filter(name="badq").exists()
+
+
+def test_create_form_reports_a_cold_module_resolution_failure_on_task(settings):
+    # Cold task module: the task's module isn't yet imported when the form runs (the
+    # fresh-process / first-request state), so resolving it re-imports and binds the
+    # task to the current backend, and a task whose own queue isn't declared there
+    # raises. The create form surfaces that on the task field rather than 500ing.
+    settings.TASKS = {
+        "default": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {"QUEUES": {"default": {}}, "SCHEDULER": "pg_cron"},
+        }
+    }
+    call_command("absurd_sync_queues")
+    cached_tasks_module = sys.modules.pop("tests.tasks", None)
+    try:
+        form = ScheduledTaskCreateForm(
+            data={
+                "alias": "default",
+                "name": "coldq",
+                "task": "tests.tasks.routed",
+                "cron": "0 2 * * *",
+            }
+        )
+        assert form.is_valid() is False
+        assert form.errors["task"] == ["Queue 'other' is not valid for backend."]
+    finally:
+        if cached_tasks_module is not None:
+            sys.modules["tests.tasks"] = cached_tasks_module
+
+
+def test_create_form_rehomes_a_missing_field_queue_error_onto_the_form(settings):
+    # Warm task module (the normal running-app state): resolution succeeds and sets the
+    # task's own queue on the instance; after narrowing the declared queues the model
+    # rejects it with a queue-keyed error. queue isn't a field on the 4-field create
+    # form, so the form re-homes that error onto the form as a non-field error instead
+    # of raising "has no field named queue" (HTTP 500).
+    seed(settings)  # declares reports/other; imports/warms tests.tasks bindings
+    settings.TASKS = {
+        "default": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {"QUEUES": {"default": {}}, "SCHEDULER": "pg_cron"},
+        }
+    }
+    call_command("absurd_sync_queues")
+    form = ScheduledTaskCreateForm(
+        data={
+            "alias": "default",
+            "name": "warmq",
+            "task": "tests.tasks.on_reports",
+            "cron": "0 2 * * *",
+        }
+    )
+    assert form.is_valid() is False
+    assert form.non_field_errors() == ["queue 'reports' is not declared."]
+
+
+def test_create_with_bad_cron_is_form_error_not_created(settings, client, admin_user):
+    seed(settings)
+    client.force_login(admin_user)
+    response = client.post(
+        ADD,
+        {
+            "alias": "default",
+            "name": "badcron",
+            "task": "tests.tasks.add",
+            "cron": "not a cron",
+        },
+    )
+    assert response.status_code == 200
+    assert not ScheduledTask.objects.filter(name="badcron").exists()
+
+
+def test_create_and_sync_produce_identical_spawn_columns(settings, client, admin_user):
+    # parity: admin-create resolves the same spawn columns as build_scheduled_fields
+    # (the same function sync_crons uses for the settings lane).
+    seed(settings)
+    client.force_login(admin_user)
+    client.post(
+        ADD,
+        {
+            "alias": "default",
+            "name": "fully_specced",
+            "task": "tests.tasks.fully_specced",
+            "cron": "0 2 * * *",
+        },
+    )
+    admin_row = ScheduledTask.objects.get(source="a", name="fully_specced")
+    expected = build_scheduled_fields(
+        get_absurd_backends()["default"], "tests.tasks.fully_specced"
+    )
+    cols = (
+        "queue",
+        "max_attempts",
+        "retry_kind",
+        "retry_base_seconds",
+        "cancellation_max_duration",
+        "cancellation_max_delay",
+    )
+    for col in cols:
+        assert getattr(admin_row, col) == expected[col]
 
 
 def test_add_link_present_and_add_view_renders(settings, client, admin_user):
@@ -152,12 +321,19 @@ def test_add_view_cron_help_renders_pg_cron_link_as_html(settings, client, admin
     assert link.get_text() == "pg_cron"
 
 
-def test_add_view_prefills_default_max_attempts(settings, client, admin_user):
-    # max_attempts defaults to 5 in the form, so leaving it be gives a bounded schedule;
-    # infinite retries require deliberately clearing the field.
+def create_scheduled_task(client, name, task="tests.tasks.add", cron="0 3 * * *"):
+    """Create a source="admin" row through the minimal create form and return its pk."""
+    client.post(ADD, {"alias": "default", "name": name, "task": task, "cron": cron})
+    return ScheduledTask.objects.get(name=name).pk
+
+
+def test_change_view_shows_resolved_default_max_attempts(settings, client, admin_user):
+    # The create form resolves max_attempts from the task/backend (here the backend
+    # default, 5); the change form then renders that resolved value editable.
     seed(settings)
     client.force_login(admin_user)
-    soup = BeautifulSoup(client.get(ADD).content, "html.parser")
+    pk = create_scheduled_task(client, name="maxattempts")
+    soup = BeautifulSoup(client.get(get_change_url(pk)).content, "html.parser")
     field = soup.select_one('input[name="max_attempts"]')
     assert field is not None
     assert field.get("value") == "5"
@@ -233,7 +409,7 @@ def test_editing_over_long_name_row_is_form_error_not_500(settings, client, admi
         task="tests.tasks.add",
         cron="0 3 * * *",
     )
-    response = client.post(change_url(row.pk), {**ADD_PAYLOAD, "cron": "0 4 * * *"})
+    response = client.post(get_change_url(row.pk), {**ADD_PAYLOAD, "cron": "0 4 * * *"})
     assert response.status_code == 200
     content = response.content.decode()
     assert "job name exceeds 63 bytes (composed name" in content
@@ -248,7 +424,7 @@ def test_editing_blank_args_kwargs_falls_back_to_defaults(settings, client, admi
     client.post(ADD, {**ADD_PAYLOAD, "name": "editblank", "queue": "reports"})
     row = ScheduledTask.objects.get(name="editblank")
     response = client.post(
-        change_url(row.pk),
+        get_change_url(row.pk),
         {**ADD_PAYLOAD, "queue": "reports", "args": "", "kwargs": ""},
     )
     assert response.status_code == 302
@@ -278,7 +454,7 @@ def test_change_form_renders_stored_queue_absent_from_choices(
         cron="0 3 * * *",
     )
     client.force_login(admin_user)
-    soup = BeautifulSoup(client.get(change_url(row.pk)).content, "html.parser")
+    soup = BeautifulSoup(client.get(get_change_url(row.pk)).content, "html.parser")
     values = [o.get("value") for o in soup.select('select[name="queue"] option')]
     assert "reports" in values
 
@@ -314,7 +490,7 @@ def test_settings_schedule_detail_is_readonly(settings, client, admin_user):
     seed(settings)
     pk = ScheduledTask.objects.get(name="hourly").pk  # a settings row
     client.force_login(admin_user)
-    response = client.get(change_url(pk))
+    response = client.get(get_change_url(pk))
     assert response.status_code == 200
     soup = BeautifulSoup(response.content, "html.parser")
     assert soup.select_one('input[name="cron"]') is None  # read-only, not editable
@@ -328,7 +504,7 @@ def test_admin_schedule_edit_form_cron_editable_name_immutable(
     client.force_login(admin_user)
     client.post(ADD, {**ADD_PAYLOAD, "name": "editable"})
     pk = ScheduledTask.objects.get(name="editable").pk
-    response = client.get(change_url(pk))
+    response = client.get(get_change_url(pk))
     assert response.status_code == 200
     soup = BeautifulSoup(response.content, "html.parser")
     assert (
@@ -346,7 +522,8 @@ def test_posting_edit_reschedules_the_job_with_the_new_cron(
     pk = ScheduledTask.objects.get(name="reschedule").pk
 
     response = client.post(
-        change_url(pk), {**ADD_PAYLOAD, "task": "tests.tasks.add", "cron": "30 6 * * *"}
+        get_change_url(pk),
+        {**ADD_PAYLOAD, "task": "tests.tasks.add", "cron": "30 6 * * *"},
     )
     assert response.status_code == 302
     _, schedule, _, _ = ScheduledTask.pg_cron.get_job("default", "reschedule", "a")
@@ -398,7 +575,7 @@ def test_editing_admin_schedule_after_backend_flip_is_form_error_not_500(
         }
     }
     response = client.post(
-        change_url(pk),
+        get_change_url(pk),
         {
             "task": "tests.tasks.add",
             "queue": "",
@@ -423,26 +600,33 @@ def test_editing_admin_schedule_after_backend_flip_is_form_error_not_500(
     )
 
 
-def test_add_view_queue_is_a_dropdown_of_declared_queues(settings, client, admin_user):
+def test_change_view_queue_is_a_dropdown_of_declared_queues(
+    settings, client, admin_user
+):
     seed(settings)  # QUEUES: default, other, reports
     client.force_login(admin_user)
-    soup = BeautifulSoup(client.get(ADD).content, "html.parser")
+    pk = create_scheduled_task(client, name="queuedropdown")
+    soup = BeautifulSoup(client.get(get_change_url(pk)).content, "html.parser")
     values = [o.get("value") for o in soup.select('select[name="queue"] option')]
     assert values == ["", "default", "other", "reports"]
 
 
-def test_add_view_retry_kind_is_a_dropdown(settings, client, admin_user):
+def test_change_view_retry_kind_is_a_dropdown(settings, client, admin_user):
     seed(settings)
     client.force_login(admin_user)
-    soup = BeautifulSoup(client.get(ADD).content, "html.parser")
+    pk = create_scheduled_task(client, name="retrykind")
+    soup = BeautifulSoup(client.get(get_change_url(pk)).content, "html.parser")
     values = [o.get("value") for o in soup.select('select[name="retry_kind"] option')]
     assert values == ["", "exponential", "fixed", "none"]
 
 
-def test_add_view_cancellation_fields_are_number_inputs(settings, client, admin_user):
+def test_change_view_cancellation_fields_are_number_inputs(
+    settings, client, admin_user
+):
     seed(settings)
     client.force_login(admin_user)
-    soup = BeautifulSoup(client.get(ADD).content, "html.parser")
+    pk = create_scheduled_task(client, name="cancellation")
+    soup = BeautifulSoup(client.get(get_change_url(pk)).content, "html.parser")
     assert soup.select_one('input[name="cancellation_max_duration"]') is not None
     assert soup.select_one('input[name="cancellation_max_delay"]') is not None
 
