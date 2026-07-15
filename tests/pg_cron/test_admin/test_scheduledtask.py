@@ -126,6 +126,17 @@ def test_add_view_backend_field_offers_only_pg_cron_backends(
     assert options == ["default"]
 
 
+def test_add_view_alias_field_labeled_alias(settings, client, admin_user):
+    # The field is model-named "alias" everywhere; the add form must not relabel it to
+    # "Backend" — the readonly change view shows "Alias", so both must agree.
+    seed(settings)
+    client.force_login(admin_user)
+    soup = BeautifulSoup(client.get(ADD).content, "html.parser")
+    label = soup.select_one('label[for="id_alias"]')
+    assert label is not None
+    assert label.get_text(strip=True).rstrip(":") == "Alias"
+
+
 def test_add_view_cron_help_renders_pg_cron_link_as_html(settings, client, admin_user):
     # the cron field's help text embeds an <a> to the pg_cron docs; Django form
     # help_text is not auto-escaped, so it must reach the page as a real anchor (an

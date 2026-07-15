@@ -77,8 +77,9 @@ class ScheduledTaskForm(forms.ModelForm):
             ]
             self.fields["alias"] = forms.ChoiceField(
                 choices=[(alias, alias) for alias in aliases],
-                label="Backend",
-                help_text="Which Absurd pg_cron backend runs this schedule.",
+                label="Alias",
+                help_text="Which Absurd pg_cron backend (its TASKS alias) runs this"
+                " schedule.",
                 initial=aliases[0] if len(aliases) == 1 else None,
             )
         if "cron" in self.fields:
