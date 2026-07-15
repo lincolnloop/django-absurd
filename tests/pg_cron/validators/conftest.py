@@ -10,7 +10,7 @@ from tests.pg_cron.validators.utils import (
 @pytest.fixture(params=["check", "form", "model"])
 def validate(request, settings, capsys, client, admin_user):
     """Parametrized subject: run a case through each real enforcing entrypoint —
-    the system check, the admin add-form POST, and ScheduledTask.full_clean()."""
+    the system check, the admin change-form POST, and ScheduledTask.full_clean()."""
     if request.param == "check":
         return lambda **kwargs: validate_from_system_check(settings, capsys, **kwargs)
     if request.param == "form":

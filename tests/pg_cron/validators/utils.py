@@ -6,11 +6,9 @@ import json
 from django.core.exceptions import ValidationError
 from django.core.management import call_command
 from django.core.management.base import SystemCheckError
-from django.urls import reverse, reverse_lazy
+from django.urls import reverse
 
 from django_absurd.pg_cron.models import ScheduledTask
-
-ADD_URL = reverse_lazy("admin:django_absurd_pg_cron_scheduledtask_add")
 
 
 def get_change_url(pk):

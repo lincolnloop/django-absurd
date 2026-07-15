@@ -195,6 +195,11 @@ class ScheduledTaskAdmin(admin.ModelAdmin):
     ) -> t.Any:
         # Land on the change page so the user reviews the resolved (disabled) row and
         # activates it, rather than dropping back to the changelist.
+        self.message_user(
+            request,
+            f"The scheduled task “{obj}” was added successfully. Review the resolved "
+            "options below and enable it to activate.",
+        )
         return HttpResponseRedirect(
             reverse("admin:django_absurd_pg_cron_scheduledtask_change", args=[obj.pk])
         )
