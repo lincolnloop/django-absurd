@@ -69,13 +69,15 @@ def on_reports():
 @task
 @absurd_default_params(retry_strategy=RetryStrategy(kind="exponential", base_seconds=2))
 def retrying():
-    return "retrying"
+    msg = "path-resolved for its decorator; never run"
+    raise NotImplementedError(msg)
 
 
 @task
 @absurd_default_params(cancellation=CancellationPolicy(max_duration=30))
 def cancellable():
-    return "cancellable"
+    msg = "path-resolved for its decorator; never run"
+    raise NotImplementedError(msg)
 
 
 @task(queue_name="reports")
@@ -85,4 +87,5 @@ def cancellable():
     cancellation=CancellationPolicy(max_duration=45, max_delay=3),
 )
 def fully_specced():
-    return "fully_specced"
+    msg = "path-resolved for its decorator; never run"
+    raise NotImplementedError(msg)

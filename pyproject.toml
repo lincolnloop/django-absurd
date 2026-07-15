@@ -77,6 +77,9 @@ exclude_lines = [
   "if t.TYPE_CHECKING:",
   "pragma: no cover",
   "raise NotImplementedError",
+  # a `msg = "..."` line immediately followed by `raise NotImplementedError(msg)`
+  # (the errmsg-lint idiom) — exclude the assignment too, not just the raise.
+  'msg = [rf]?".*"\n\s*raise NotImplementedError\(msg\)',
 ]
 skip_covered = true
 
