@@ -406,22 +406,31 @@ matters most there.
 **Admin.** `ScheduledTask` rows appear in Django admin. Settings-declared rows
 (`ScheduledTask.Source.SETTINGS`) are **read-only** — `SCHEDULE` in settings is their
 source of truth. Admins can additionally author `ScheduledTask.Source.ADMIN` schedules
-directly in the admin (create/edit/delete): choose the **Backend** (a configured
-`pg_cron` backend), a name, task, an optional **queue** (a dropdown of the backend's
-declared queues; blank runs the task on its own `queue_name`), a cron expression, and
-the spawn options grouped into **Retry** / **Cancellation** / **Spawn options**
-sections. `alias` and `name` are immutable once created (they form the job identity);
-the cron expression is validated by `pg_cron` itself at save time (so `<n> seconds` is
-accepted and an invalid expression is rejected with `pg_cron`'s own message).
-**`max_attempts`** defaults to `5` (Absurd's default retry ceiling) and must be `≥ 1`;
-clearing it stores `NULL`, which Absurd treats as **retry forever** — a deliberate
-opt-in, so a mistyped schedule can't loop unbounded by accident. Saving or deleting an
-admin row immediately (un)schedules its `pg_cron` job — the row is the source of truth,
-so any write that persists it (admin, ORM, or `loaddata`) keeps `pg_cron` in step
-(`cron.schedule` is an idempotent upsert). A write forced onto a **different** database
+directly in the admin (create / edit / delete) via a **two-step flow**:
+
+1. **Add form** — fill only **Backend** (alias), **Name**, **Task** (dotted import
+   path), and **Cron** expression. On save, the remaining spawn options (`queue`,
+   `max_attempts`, retry strategy, cancellation policy, `headers`, `idempotency_key`)
+   are resolved from the task's `@task` / `@absurd_default_params` decorators and
+   stored. **Queue is required** — a blank queue is rejected; it always resolves to a
+   concrete queue. The row is created **disabled** (`enabled=False`) so it does not fire
+   yet. Resolution is frozen at create: later decorator edits do not change existing
+   rows.
+
+2. **Change form** — review the resolved values, fill `args` / `kwargs` if the task
+   needs them, and set **Enabled** to activate. Once enabled, saving or deleting the row
+   immediately (un)schedules its `pg_cron` job.
+
+`alias` and `name` are immutable once created (they form the job identity); the cron
+expression is validated by `pg_cron` itself at save time (so `<n> seconds` is accepted
+and an invalid expression is rejected with `pg_cron`'s own message). **`max_attempts`**
+defaults to `5` (Absurd's default retry ceiling) and must be `≥ 1`; clearing it stores
+`NULL`, which Absurd treats as **retry forever** — a deliberate opt-in, so a mistyped
+schedule can't loop unbounded by accident. The row is the source of truth: any write
+that persists it (admin, ORM, or `loaddata`) keeps `pg_cron` in step (`cron.schedule` is
+an idempotent upsert). A write forced onto a **different** database
 (`loaddata --database=…`, `.using(…)`) raises `NotImplementedError` — schedules live
-only on the absurd DB, so a misplaced row is rejected before it's inserted rather than
-paired with a phantom job. (When Absurd is on a **non-default** database, `loaddata`
+only on the absurd DB. (When Absurd is on a **non-default** database, `loaddata`
 bypasses the router and targets `default`, so pass `--database=<alias>` to load
 schedules onto the absurd DB.) Writes that bypass `.save()` — a **data migration** (the
 historical model isn't the signal's sender), `bulk_create`, `QuerySet.update`, raw SQL —
