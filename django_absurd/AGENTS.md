@@ -45,7 +45,8 @@ additional queues, or use `OPTIONS["QUEUES"]` (below) to set per-queue policy.
 Backend `OPTIONS` (all optional):
 
 - `DATABASE` — which `DATABASES` alias to use (default: `"default"`).
-- `DEFAULT_MAX_ATTEMPTS` — retry ceiling per task (default: `5`).
+- `DEFAULT_MAX_ATTEMPTS` — retry ceiling per task (default: `5`; must be an integer
+  `>= 1`).
 - `QUEUES` — a map of queue name → `absurd_sdk.CreateQueueOptions` for per-queue config.
   Use this _instead of_ the top-level `QUEUES` list (which only names queues) — declare
   queues in one place or the other, never both (setting both is a configuration error).
@@ -141,10 +142,11 @@ System check IDs:
 - `absurd.E006` — `ENABLE_ADMIN` is not a bool, or `ADMIN_SITE` paths don't resolve to
   `AdminSite` instances.
 - `absurd.E007` — invalid `SCHEDULE` entry (bad task path, bad cron expression, unknown
-  key, non-serializable args/kwargs, or undeclared queue). See
+  key, non-serializable or wrong-shaped args/kwargs, or undeclared queue). See
   [Scheduling recurring tasks](#scheduling-recurring-tasks).
 - `absurd.E008` — `SCHEDULER="pg_cron"` is configured but `"django_absurd.pg_cron"` is
   not in `INSTALLED_APPS`. See [pg_cron backend](#pg_cron-backend).
+- `absurd.E009` — `OPTIONS["DEFAULT_MAX_ATTEMPTS"]` is not an integer `>= 1`.
 - `absurd.W003` (Warning) — `"django_absurd.pg_cron"` is in `INSTALLED_APPS` but ordered
   before `"django_absurd"`, causing its `post_migrate` cron reconcile to run before
   queue provisioning. See [pg_cron backend](#pg_cron-backend).
@@ -339,8 +341,11 @@ OPTIONS = {
 }
 ```
 
-Sub-minute (6-field) cron expressions are **beat-only** — `pg_cron` fires at minute
-granularity and `absurd.E007` rejects a 6-field entry when `SCHEDULER="pg_cron"`.
+`pg_cron` validates its own schedule grammar: a 5-field cron **or** the interval form
+`<n> seconds` (1-59). Sub-minute cadence therefore works under `pg_cron` via
+`30 seconds` — distinct from beat's 6-field croniter syntax, which `pg_cron` does not
+accept. This grammar is validated by the database (at sync for settings schedules, at
+save time for admin ones), not by `check`.
 
 Beat and pg_cron are **mutually exclusive** per backend: running `absurd_beat` or
 `absurd_worker --beat` against a backend with `SCHEDULER="pg_cron"` raises
@@ -351,26 +356,39 @@ Beat and pg_cron are **mutually exclusive** per backend: running `absurd_beat` o
 ```bash
 python manage.py migrate              # reconciles on every deploy (recommended)
 python manage.py absurd_sync_crons    # explicit reconcile / backstop
-python manage.py absurd_sync_crons --teardown  # remove all jobs + rows (before uninstall)
+python manage.py absurd_sync_crons --teardown  # unschedule all jobs (prompts; --no-input)
 ```
 
 `migrate` fires `post_migrate`, which reconciles the declared `SCHEDULE` into `pg_cron`
 jobs automatically — a settings-only change needs no new migration file.
 `absurd_sync_crons` is the backstop for pipelines that skip `migrate`.
 
+`--teardown` unschedules every owned `pg_cron` job for the backend — **including
+admin-authored ones** — and deletes their `ScheduledTask` rows (settings **and** admin).
+Deleting the admin rows is deliberate: the next `migrate` re-emits a job for every
+surviving admin row, so keeping the rows would silently resurrect the jobs teardown just
+killed. Because it destroys admin-authored schedules, it prompts for confirmation unless
+`--no-input` is passed. Migrate-time teardown (switching a backend off `pg_cron`) is
+narrower — it only clears settings jobs and rows, never admin ones.
+
 **Wrapper model:** each schedule is materialised as a `ScheduledTask` row (the
-projection table, `django_absurd_scheduledtask`). The row stores explicit option columns
-— `args`, `kwargs`, `max_attempts`, `retry_strategy`, `headers`, `cancellation`,
-`idempotency_key` — one typed column per spawn option. The `pg_cron` job command is a
-constant call to `public.django_absurd_run_scheduled(source, alias, name)`; the wrapper
-reads the row at fire time, reassembles `params`/`options` jsonb from those named
-columns server-side, then calls `absurd.spawn_task`. Editing args/kwargs/options takes
-effect on the next fire without touching `cron.job`. Both the projection table and the
-wrapper function live in the `public` schema (Django app tables live there); the
-`absurd` schema is owned by the Absurd SDK's migration and is dropped wholesale on
-reverse, which would remove a wrapper placed there while the `ScheduledTask` table
-survived — keeping both in `public` avoids that hazard. They are created and managed by
-the `django_absurd_pg_cron` app migration, applied by `manage.py migrate`.
+projection table, `django_absurd_scheduledtask`). The row stores explicit, typed option
+columns — `args`, `kwargs`, `max_attempts`, the retry strategy split into `retry_kind`
+(a choice of `fixed`/`exponential`/`none`) + `retry_base_seconds`/`retry_factor`/
+`retry_max_seconds`, the cancellation policy as `cancellation_max_duration`/
+`cancellation_max_delay`, `headers` (free-form JSON), and `idempotency_key`. Typed
+columns validate at save time (a bad retry kind or non-numeric timing is rejected in the
+admin, not at fire time). The `pg_cron` job command is a constant call to
+`public.django_absurd_run_scheduled(source, alias, name)`; the wrapper reads the row at
+fire time, reassembles `params`/`options` jsonb from those named columns server-side
+(rebuilding the `retry_strategy`/`cancellation` objects, omitting null keys), then calls
+`absurd.spawn_task`. Editing args/kwargs/options takes effect on the next fire without
+touching `cron.job`. Both the projection table and the wrapper function live in the
+`public` schema (Django app tables live there); the `absurd` schema is owned by the
+Absurd SDK's migration and is dropped wholesale on reverse, which would remove a wrapper
+placed there while the `ScheduledTask` table survived — keeping both in `public` avoids
+that hazard. They are created and managed by the `django_absurd_pg_cron` app migration,
+applied by `manage.py migrate`.
 
 The reconcile path never stores `{}` in `retry_strategy` or `cancellation` — it stores
 `None` (SQL `NULL`) when those options are absent. A row inserted directly (not via
@@ -385,9 +403,42 @@ schedule on a non-default backend (mirrors `task.using(backend=...)` semantics).
 beat scheduler only an explicit `queue` key is checked, so setting `queue` explicitly
 matters most there.
 
-**No admin UI.** `ScheduledTask` is not registered in the admin. Settings is the only
-source of truth for schedules; edit `SCHEDULE` in settings rather than editing rows
-directly (the projection table is managed by reconcile).
+**Admin.** `ScheduledTask` rows appear in Django admin. Settings-declared rows
+(`ScheduledTask.Source.SETTINGS`) are **read-only** — `SCHEDULE` in settings is their
+source of truth. Admins can additionally author `ScheduledTask.Source.ADMIN` schedules
+directly in the admin (create / edit / delete) via a **two-step flow**:
+
+1. **Add form** — fill only **Backend** (alias), **Name**, **Task** (dotted import
+   path), and **Cron** expression. On save, the remaining spawn options (`queue`,
+   `max_attempts`, retry strategy, cancellation policy, `headers`, `idempotency_key`)
+   are resolved from the task's `@task` / `@absurd_default_params` decorators and
+   stored. **Queue is required** — a blank queue is rejected; it always resolves to a
+   concrete queue. The row is created **disabled** (`enabled=False`) so it does not fire
+   yet. Resolution is frozen at create: later decorator edits do not change existing
+   rows.
+
+2. **Change form** — review the resolved values, fill `args` / `kwargs` if the task
+   needs them, and set **Enabled** to activate. Once enabled, saving or deleting the row
+   immediately (un)schedules its `pg_cron` job.
+
+`alias` and `name` are immutable once created (they form the job identity); the cron
+expression is validated by `pg_cron` itself at save time (so `<n> seconds` is accepted
+and an invalid expression is rejected with `pg_cron`'s own message). **`max_attempts`**
+defaults to `5` (Absurd's default retry ceiling) and must be `≥ 1`; clearing it stores
+`NULL`, which Absurd treats as **retry forever** — a deliberate opt-in, so a mistyped
+schedule can't loop unbounded by accident. The row is the source of truth: any write
+that persists it (admin, ORM, or `loaddata`) keeps `pg_cron` in step (`cron.schedule` is
+an idempotent upsert). A write forced onto a **different** database
+(`loaddata --database=…`, `.using(…)`) raises `NotImplementedError` — schedules live
+only on the absurd DB. (When Absurd is on a **non-default** database, `loaddata`
+bypasses the router and targets `default`, so pass `--database=<alias>` to load
+schedules onto the absurd DB.) Writes that bypass `.save()` — a **data migration** (the
+historical model isn't the signal's sender), `bulk_create`, `QuerySet.update`, raw SQL —
+don't emit directly, but `migrate` (and `absurd_sync_crons`) reconciles admin rows, so
+their jobs materialize then. A settings schedule and an admin schedule **may** share a
+name: they are distinct, source-namespaced jobs (`absurd:s:…` vs `absurd:a:…`, the
+source abbreviated to keep the job name short). Removing admin-authored jobs at teardown
+is a guarded action (see Reconcile).
 
 ### Validate
 
@@ -395,16 +446,16 @@ directly (the projection table is managed by reconcile).
 `absurd.E007` for:
 
 - an unimportable or non-`@task` `task` path
-- an invalid cron expression
-- 6-field (sub-minute) cron under `SCHEDULER="pg_cron"`
+- an invalid cron expression (beat only; `pg_cron` grammar is validated by the database,
+  not by `check`)
 - unknown keys in the spec
 - `args`/`kwargs` values that are not JSON-serializable
+- an `args` that is not a JSON array, or a `kwargs` that is not a JSON object
 - a `queue` that is not declared in `OPTIONS["QUEUES"]`
 - an unknown `SCHEDULER` value
 - (`pg_cron` only) schedule name or backend alias containing characters outside
   `[A-Za-z0-9_-]`
-- (`pg_cron` only) composed job name (`absurd:settings:<alias>:<name>`) exceeding 63
-  bytes
+- (`pg_cron` only) composed job name (`absurd:s:<alias>:<name>`) exceeding 63 bytes
 
 Fix everything `absurd.E007` reports before relying on the schedule in production.
 

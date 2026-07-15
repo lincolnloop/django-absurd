@@ -42,14 +42,14 @@ def test_upsert_and_prune_settings_rows(settings):
 def test_admin_rows_untouched(settings):
     ScheduledTask.objects.create(
         name="a",
-        source="admin",
+        source="a",
         alias="default",
         task="tests.tasks.add",
         cron="0 2 * * *",
     )
     settings.TASKS = build_tasks({})
     sync_crons(get_absurd_backends()["default"])
-    assert ScheduledTask.objects.filter(source="admin", name="a").exists()
+    assert ScheduledTask.objects.filter(source="a", name="a").exists()
 
 
 def test_sync_writes_named_option_columns(settings):
@@ -65,7 +65,43 @@ def test_sync_writes_named_option_columns(settings):
     )
     backend = get_absurd_backends()["default"]
     sync_crons(backend)
-    row = ScheduledTask.objects.get(source="settings", alias="default", name="nightly")
+    row = ScheduledTask.objects.get(source="s", alias="default", name="nightly")
     assert row.args == [1, 2]
     assert row.kwargs == {"k": "v"}
     assert row.max_attempts == 3
+
+
+def test_reconcile_splits_cancellation_into_columns(settings):
+    settings.TASKS = build_tasks(
+        {"c": {"task": "tests.tasks.cancellable", "cron": "0 2 * * *"}}
+    )
+    backend = get_absurd_backends()["default"]
+    sync_crons(backend)
+    row = ScheduledTask.objects.get(source="s", alias="default", name="c")
+    assert row.cancellation_max_duration == 30
+    assert row.cancellation_max_delay is None
+
+
+def test_reconcile_splits_retry_strategy_into_columns(settings):
+    settings.TASKS = build_tasks(
+        {"r": {"task": "tests.tasks.retrying", "cron": "0 2 * * *"}}
+    )
+    backend = get_absurd_backends()["default"]
+    sync_crons(backend)
+    row = ScheduledTask.objects.get(source="s", alias="default", name="r")
+    assert row.retry_kind == "exponential"
+    assert row.retry_base_seconds == 2.0
+
+
+def test_sync_materializes_decorator_derived_columns(settings):
+    settings.TASKS = build_tasks(
+        {"full": {"task": "tests.tasks.fully_specced", "cron": "0 2 * * *"}}
+    )
+    sync_crons(get_absurd_backends()["default"])
+    row = ScheduledTask.objects.get(source="s", name="full")
+    assert row.queue == "reports"
+    assert row.max_attempts == 9
+    assert row.retry_kind == "fixed"
+    assert row.retry_base_seconds == 5
+    assert row.cancellation_max_duration == 45
+    assert row.cancellation_max_delay == 3

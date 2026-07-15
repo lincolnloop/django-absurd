@@ -13,13 +13,19 @@ from django.db.utils import OperationalError, ProgrammingError
 from django.utils.connection import ConnectionDoesNotExist
 from django.utils.module_loading import import_string
 
-from django_absurd.backends import get_absurd_backends, get_declared_queues
+from django_absurd.backends import (
+    get_absurd_backends,
+    get_declared_queues,
+    get_pg_cron_backends,
+)
 from django_absurd.connection import BACKEND_ERROR_MESSAGE, validate_backend
 from django_absurd.models import Queue
 from django_absurd.queues import get_absurd_backend, get_absurd_database
 from django_absurd.routers import AbsurdRouter
 from django_absurd.validators import (
+    validate_args_is_list,
     validate_args_serializable,
+    validate_kwargs_is_dict,
     validate_kwargs_serializable,
     validate_task_path,
 )
@@ -79,8 +85,14 @@ E007_HINT_UNKNOWN_KEY = (
     "Remove unknown keys; valid keys are: task, cron, queue, args, kwargs."
 )
 E007_HINT_SERIALIZE = "Ensure args and kwargs contain only JSON-serializable values."
+E007_HINT_SHAPE = (
+    "args must be a JSON array (list); kwargs must be a JSON object (dict)."
+)
 E007_HINT_QUEUE = "Declare the queue under OPTIONS['QUEUES'] or correct the queue name."
 E007_HINT_SCHEDULER = "Set SCHEDULER to 'beat' or 'pg_cron'."
+
+E009_MSG = "django-absurd: OPTIONS['DEFAULT_MAX_ATTEMPTS'] must be an integer >= 1."
+E009_HINT = "Set DEFAULT_MAX_ATTEMPTS to a positive integer (Absurd rejects < 1)."
 
 E008_MSG = (
     "django-absurd: SCHEDULER is 'pg_cron' but 'django_absurd.pg_cron'"
@@ -124,6 +136,26 @@ def check_absurd_admin_config(
     if "ADMIN_SITE" in options:
         errors.extend(validate_admin_site_option(options["ADMIN_SITE"]))
 
+    return errors
+
+
+@register("absurd")
+def check_absurd_default_max_attempts(
+    *,
+    app_configs: Sequence[AppConfig] | None,
+    **kwargs: t.Any,
+) -> list[CheckMessage]:
+    # DEFAULT_MAX_ATTEMPTS becomes the retry ceiling for every schedule reconcile
+    # writes; a value < 1 would fail the pg_cron max_attempts CheckConstraint and crash
+    # migrate. Validate it for every backend that sets it (bool is rejected — it is an
+    # int subclass but not a meaningful attempt count).
+    errors: list[CheckMessage] = []
+    for backend in get_absurd_backends().values():
+        if "DEFAULT_MAX_ATTEMPTS" not in backend.options:
+            continue
+        value = backend.options["DEFAULT_MAX_ATTEMPTS"]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            errors.append(Error(E009_MSG, hint=E009_HINT, id="absurd.E009"))
     return errors
 
 
@@ -265,9 +297,11 @@ def validate_schedule(
             )
         )
 
-    for field, validate in (
-        ("args", validate_args_serializable),
-        ("kwargs", validate_kwargs_serializable),
+    for field, validate, hint in (
+        ("args", validate_args_serializable, E007_HINT_SERIALIZE),
+        ("args", validate_args_is_list, E007_HINT_SHAPE),
+        ("kwargs", validate_kwargs_serializable, E007_HINT_SERIALIZE),
+        ("kwargs", validate_kwargs_is_dict, E007_HINT_SHAPE),
     ):
         value = spec.get(field)
         if value is not None:
@@ -277,7 +311,7 @@ def validate_schedule(
                 errors.append(
                     Error(
                         f"{E007_MSG} Schedule {name!r}: {exc.message}",
-                        hint=E007_HINT_SERIALIZE,
+                        hint=hint,
                         id="absurd.E007",
                     )
                 )
@@ -303,12 +337,11 @@ def check_scheduler_app_installed(
     app_configs: Sequence[AppConfig] | None,
     **kwargs: t.Any,
 ) -> list[CheckMessage]:
-    backends = get_absurd_backends()
     app_installed = apps.is_installed(PG_CRON_APP_NAME)
 
     if not app_installed:
         # E008 only fires when a backend actually needs the app.
-        if any(backend.scheduler == "pg_cron" for backend in backends.values()):
+        if get_pg_cron_backends():
             return [Error(E008_MSG, hint=E008_HINT, id="absurd.E008")]
         return []
 

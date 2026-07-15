@@ -2,6 +2,7 @@
 DJANGO_SETTINGS_MODULE = "tests.multidb.settings"
 addopts = [
   "--allow-hosts=db,localhost,127.0.0.1",
+  "--confcutdir=..",
   "--disable-socket",
   "--junitxml=junit-multidb.xml",
   "--reuse-db",

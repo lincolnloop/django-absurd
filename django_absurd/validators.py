@@ -37,3 +37,27 @@ def make_json_serializable_validator(field: str) -> t.Callable[[t.Any], None]:
 
 validate_args_serializable = make_json_serializable_validator("args")
 validate_kwargs_serializable = make_json_serializable_validator("kwargs")
+
+
+def validate_args_is_list(value: t.Any) -> None:
+    # The worker calls task(*args); a non-list (dict/scalar) would raise TypeError on
+    # every fire, so reject the wrong shape here rather than at runtime.
+    if not isinstance(value, list):
+        msg = "args must be a JSON array (list)."
+        raise ValidationError(msg)
+
+
+def validate_kwargs_is_dict(value: t.Any) -> None:
+    # The worker calls task(**kwargs); a non-dict (list/scalar) would raise TypeError on
+    # every fire.
+    if not isinstance(value, dict):
+        msg = "kwargs must be a JSON object (dict)."
+        raise ValidationError(msg)
+
+
+def validate_headers_is_object(value: t.Any) -> None:
+    # headers is an optional JsonObject; null is allowed (no headers), any other
+    # non-dict shape is not.
+    if value is not None and not isinstance(value, dict):
+        msg = "headers must be a JSON object (dict)."
+        raise ValidationError(msg)

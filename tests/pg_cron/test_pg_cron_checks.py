@@ -101,9 +101,9 @@ def test_pg_cron_bad_name_charset_rejected(settings, capsys):
 
 def test_pg_cron_jobname_too_long_rejected(settings, capsys):
     """Composed jobname exceeding 63 bytes must be rejected under pg_cron."""
-    # alias "default" + name long enough to push absurd:settings:default:<name> > 63 bytes
-    # "absurd:settings:default:" = 24 chars, so name needs > 39 chars
-    long_name = "a" * 40
+    # alias "default" + name long enough to push absurd:s:default:<name> > 63 bytes
+    # "absurd:s:default:" = 17 chars, so name needs > 46 chars
+    long_name = "a" * 47
     out = run_pg_cron_check(
         settings,
         capsys,
@@ -125,7 +125,7 @@ def test_pg_cron_jobname_too_long_rejected(settings, capsys):
 def test_pg_cron_undeclared_task_queue_rejected(settings, capsys):
     """Task with queue_name='reports' not in declared queues must be rejected."""
     # tests.tasks.on_reports has @task(queue_name="reports"); exclude it from declared
-    # queues so get_effective_queue finds it undeclared. Still include "other"
+    # queues so the effective-queue check finds it undeclared. Still include "other"
     # (required by the tasks module import) but omit "reports".
     out = run_pg_cron_check(
         settings,
@@ -137,7 +137,7 @@ def test_pg_cron_undeclared_task_queue_rejected(settings, capsys):
                 "ghostly": {
                     "task": "tests.tasks.on_reports",
                     "cron": "0 2 * * *",
-                    # no "queue" key — get_effective_queue falls back to task.queue_name
+                    # no "queue" key — the check falls back to task.queue_name
                 }
             },
         },
@@ -210,6 +210,23 @@ def test_pg_cron_bad_alias_charset_rejected(settings, capsys):
                     "cron": "0 2 * * *",
                 }
             },
+        },
+    )
+    assert "absurd.E007" in out
+    assert "Backend alias contains characters other than [A-Za-z0-9_-]." in out
+
+
+def test_pg_cron_bad_alias_charset_rejected_without_settings_schedule(settings, capsys):
+    """The alias charset is validated per-backend, so a bad alias is caught even when
+    the backend has no settings SCHEDULE (admin-only authoring)."""
+    out = run_pg_cron_check(
+        settings,
+        capsys,
+        {
+            "scheduler": "pg_cron",
+            "alias": "bad.alias",
+            "queues": BASE_QUEUES,
+            "schedule": {},
         },
     )
     assert "absurd.E007" in out

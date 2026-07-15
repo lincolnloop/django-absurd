@@ -3,7 +3,11 @@ import typing as t
 from django.core.management.base import BaseCommand, CommandError
 
 from django_absurd.management.base import resolve_backend
-from django_absurd.pg_cron.reconcile import sync_crons, teardown_crons
+from django_absurd.pg_cron.reconcile import (
+    sync_admin_crons,
+    sync_crons,
+    teardown_crons,
+)
 
 
 class Command(BaseCommand):
@@ -20,13 +24,26 @@ class Command(BaseCommand):
             action="store_true",
             help="Remove all owned pg_cron jobs and settings ScheduledTask rows.",
         )
+        parser.add_argument(
+            "--noinput",
+            "--no-input",
+            action="store_true",
+            dest="no_input",
+            help="Skip the teardown confirmation prompt.",
+        )
 
     def handle(self, *args: t.Any, **options: t.Any) -> None:
         alias, backend = resolve_backend(options)
 
         if options["teardown"]:
-            removed = teardown_crons(backend)
-            self.stdout.write(f"Removed {removed} cron(s) — backend '{alias}'.")
+            if not options["no_input"] and not self.confirm_teardown(alias):
+                self.stdout.write("Aborted.")
+                return
+            removed = teardown_crons(backend, include_admin=True)
+            self.stdout.write(
+                f"Unscheduled all pg_cron jobs and removed {removed} schedule row(s) "
+                f"— backend '{alias}'."
+            )
             return
 
         if backend.scheduler != "pg_cron":
@@ -38,6 +55,7 @@ class Command(BaseCommand):
 
         try:
             created, pruned = sync_crons(backend)
+            sync_admin_crons(backend)
         except KeyError as exc:
             msg = (
                 f"SCHEDULE entry is missing required key {exc} — "
@@ -47,3 +65,14 @@ class Command(BaseCommand):
         self.stdout.write(
             f"Synced {created} cron(s); pruned {pruned} — backend '{alias}'."
         )
+
+    def confirm_teardown(self, alias: str) -> bool:
+        prompt = (
+            f"This unschedules ALL pg_cron jobs for backend '{alias}', including "
+            "admin-authored schedules. Proceed? [y/N] "
+        )
+        try:
+            answer = input(prompt)
+        except EOFError:  # non-interactive (CI, `docker exec -T`) — abort, don't crash
+            return False
+        return answer.strip().lower() in ("y", "yes")

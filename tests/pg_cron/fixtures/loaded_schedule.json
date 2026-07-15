@@ -1,0 +1,28 @@
+[
+  {
+    "model": "django_absurd_pg_cron.scheduledtask",
+    "pk": 1,
+    "fields": {
+      "source": "a",
+      "alias": "default",
+      "name": "loaded",
+      "task": "tests.tasks.add",
+      "queue": "default",
+      "cron": "0 5 * * *",
+      "args": [],
+      "kwargs": {},
+      "enabled": true,
+      "idempotency_key": "",
+      "max_attempts": null,
+      "retry_kind": "",
+      "retry_base_seconds": null,
+      "retry_factor": null,
+      "retry_max_seconds": null,
+      "headers": null,
+      "cancellation_max_duration": null,
+      "cancellation_max_delay": null,
+      "created_at": "2026-01-01T00:00:00Z",
+      "updated_at": "2026-01-01T00:00:00Z"
+    }
+  }
+]

@@ -1,8 +1,9 @@
 """nanodjango demo: django-absurd pg_cron scheduler.
 
 Postgres fires `ping` every minute directly via pg_cron (no beat process); the
-worker drains it and logs 'pong 🏓'. The `django_absurd.pg_cron` app's migration
-creates the extension. Watch Tasks/Runs in the admin.
+worker drains it, logs 'pong 🏓', and returns 'pong' as the task result. The
+`django_absurd.pg_cron` app's migration creates the extension. Watch Tasks/Runs
+in the admin.
 
     docker compose up
     http://localhost:8000/   → the admin (Tasks / Runs / …); login admin / admin
@@ -54,9 +55,10 @@ logger = logging.getLogger("demo")
 
 
 @task
-def ping() -> None:
-    """Fired every minute by pg_cron; the worker runs it and logs 'pong 🏓'."""
-    logger.info("pong 🏓")
+def ping(message: str = "pong") -> str:
+    """Fired every minute by pg_cron; the worker logs the message and returns it."""
+    logger.info("%s 🏓", message)
+    return message
 
 
 @app.route("/")

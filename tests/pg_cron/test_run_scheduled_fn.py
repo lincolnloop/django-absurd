@@ -30,7 +30,7 @@ def fire_wrapper(source: str, alias: str, name: str) -> None:
 def test_fires_task_from_row() -> None:
     call_command("absurd_sync_queues")
     ScheduledTask.objects.create(
-        source="settings",
+        source="s",
         name="p",
         alias="default",
         task="tests.tasks.create_payload",
@@ -39,18 +39,18 @@ def test_fires_task_from_row() -> None:
         kwargs={},
         cron="* * * * *",
     )
-    fire_wrapper("settings", "default", "p")
+    fire_wrapper("s", "default", "p")
     call_command("absurd_worker", queue="default", burst=True)
     assert Payload.objects.count() == 1
 
 
 def test_missing_row_is_noop() -> None:
-    fire_wrapper("settings", "default", "nope")  # no exception
+    fire_wrapper("s", "default", "nope")  # no exception
 
 
 def test_disabled_row_is_noop() -> None:
     ScheduledTask.objects.create(
-        source="settings",
+        source="s",
         name="off",
         alias="default",
         task="tests.tasks.create_payload",
@@ -60,7 +60,7 @@ def test_disabled_row_is_noop() -> None:
         cron="* * * * *",
         enabled=False,
     )
-    fire_wrapper("settings", "default", "off")
+    fire_wrapper("s", "default", "off")
     call_command("absurd_worker", queue="default", burst=True)
     assert Payload.objects.count() == 0
 
@@ -69,7 +69,7 @@ def test_disambiguation_by_alias() -> None:
     """Same name across two aliases fires only the targeted row."""
     call_command("absurd_sync_queues")
     ScheduledTask.objects.create(
-        source="settings",
+        source="s",
         name="n",
         alias="default",
         task="tests.tasks.create_payload",
@@ -79,7 +79,7 @@ def test_disambiguation_by_alias() -> None:
         cron="* * * * *",
     )
     ScheduledTask.objects.create(
-        source="settings",
+        source="s",
         name="n",
         alias="other",
         task="tests.tasks.create_payload",
@@ -88,10 +88,59 @@ def test_disambiguation_by_alias() -> None:
         kwargs={},
         cron="* * * * *",
     )
-    fire_wrapper("settings", "default", "n")
+    fire_wrapper("s", "default", "n")
     call_command("absurd_worker", queue="default", burst=True)
     payloads = list(Payload.objects.values_list("data", flat=True))
     assert payloads == ["from-default"]
+
+
+def test_wrapper_rebuilds_retry_strategy_from_columns() -> None:
+    call_command("absurd_sync_queues")
+    ScheduledTask.objects.create(
+        source="s",
+        name="retry_opts",
+        alias="default",
+        task="tests.tasks.capped",
+        queue="default",
+        args=[1, 2],
+        kwargs={},
+        retry_kind="fixed",
+        retry_base_seconds=1.5,
+        cron="* * * * *",
+    )
+    fire_wrapper("s", "default", "retry_opts")
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT retry_strategy::text FROM absurd.tasks_view WHERE queue = %s",
+            ["default"],
+        )
+        row = cur.fetchone()
+    assert row is not None
+    assert json.loads(row[0]) == {"kind": "fixed", "base_seconds": 1.5}
+
+
+def test_wrapper_rebuilds_cancellation_from_columns() -> None:
+    call_command("absurd_sync_queues")
+    ScheduledTask.objects.create(
+        source="s",
+        name="cancel_opts",
+        alias="default",
+        task="tests.tasks.capped",
+        queue="default",
+        args=[1, 2],
+        kwargs={},
+        cancellation_max_duration=30,
+        cron="* * * * *",
+    )
+    fire_wrapper("s", "default", "cancel_opts")
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT cancellation::text FROM absurd.tasks_view WHERE queue = %s",
+            ["default"],
+        )
+        row = cur.fetchone()
+    assert row is not None
+    assert json.loads(row[0]) == {"max_duration": 30}
 
 
 def test_wrapper_reassembles_options_from_columns() -> None:
@@ -102,7 +151,7 @@ def test_wrapper_reassembles_options_from_columns() -> None:
     """
     call_command("absurd_sync_queues")
     ScheduledTask.objects.create(
-        source="settings",
+        source="s",
         name="opts",
         alias="default",
         task="tests.tasks.capped",
@@ -112,7 +161,7 @@ def test_wrapper_reassembles_options_from_columns() -> None:
         max_attempts=5,
         cron="* * * * *",
     )
-    fire_wrapper("settings", "default", "opts")
+    fire_wrapper("s", "default", "opts")
     with connection.cursor() as cur:
         cur.execute(
             "SELECT params::text, max_attempts FROM absurd.tasks_view WHERE queue = %s",

@@ -190,3 +190,33 @@ def test_check_with_database_runs_db_state(settings, capsys):
     settings.TASKS = build_tasks_setting({"synced": {}, "missing": {}})
     out = run_absurd_check(capsys, databases=["default"])
     assert "absurd.W002" not in out
+
+
+E009_MSG = "django-absurd: OPTIONS['DEFAULT_MAX_ATTEMPTS'] must be an integer >= 1."
+
+
+@pytest.mark.parametrize("value", [-1, 0, 1.5, "3", True])
+def test_default_max_attempts_invalid_is_error(settings, capsys, value):
+    # A DEFAULT_MAX_ATTEMPTS < 1 (or a non-int) would feed 0/garbage into every
+    # reconciled schedule's max_attempts and crash migrate against the CheckConstraint;
+    # catch it at check time. bool is rejected (int subclass, not an attempt count).
+    settings.TASKS = {
+        "default": {
+            "BACKEND": ABSURD,
+            "OPTIONS": {"QUEUES": {"default": {}}, "DEFAULT_MAX_ATTEMPTS": value},
+        }
+    }
+    out = run_absurd_check(capsys)
+    assert E009_MSG in out
+    assert "absurd.E009" in out
+
+
+def test_default_max_attempts_valid_no_error(settings, capsys):
+    settings.TASKS = {
+        "default": {
+            "BACKEND": ABSURD,
+            "OPTIONS": {"QUEUES": {"default": {}}, "DEFAULT_MAX_ATTEMPTS": 3},
+        }
+    }
+    out = run_absurd_check(capsys)
+    assert "absurd.E009" not in out

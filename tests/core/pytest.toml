@@ -2,6 +2,7 @@
 DJANGO_SETTINGS_MODULE = "tests.core.settings"
 addopts = [
   "--allow-hosts=db,localhost,127.0.0.1",
+  "--confcutdir=..",
   "--cov",
   "--cov-report=term",
   "--cov-report=xml",

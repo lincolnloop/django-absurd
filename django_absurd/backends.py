@@ -253,6 +253,15 @@ def get_absurd_backends() -> dict[str, "AbsurdBackend"]:
     }
 
 
+def get_pg_cron_backends() -> dict[str, "AbsurdBackend"]:
+    """The configured Absurd backends whose scheduler is pg_cron, keyed by alias."""
+    return {
+        alias: be
+        for alias, be in get_absurd_backends().items()
+        if be.scheduler == "pg_cron"
+    }
+
+
 def build_merged_spawn_options(defaults: t.Any, per_call: t.Any) -> dict[str, t.Any]:
     merged: dict[str, t.Any] = {}
     if defaults is not None:

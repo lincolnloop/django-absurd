@@ -2,6 +2,7 @@
 DJANGO_SETTINGS_MODULE = "tests.pg_cron.settings"
 addopts = [
   "--allow-hosts=db,db_pg_cron,localhost,127.0.0.1",
+  "--confcutdir=..",
   "--cov",
   "--cov-append",
   "--cov-report=term",

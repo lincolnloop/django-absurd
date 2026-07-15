@@ -1,6 +1,7 @@
 import pytest
 from bs4 import BeautifulSoup
 from django.contrib import admin as djadmin
+from django.contrib.auth.models import Permission
 from django.urls import reverse_lazy
 
 from django_absurd.admin import resolve_admin_sites
@@ -22,7 +23,15 @@ def test_scheduledtask_registered_on_default_site():
     assert "scheduledtask" in registered
 
 
-def test_staff_user_sees_scheduledtask_in_index(client, staff_user):
+def test_staff_user_with_view_permission_sees_scheduledtask_in_index(
+    client, staff_user
+):
+    staff_user.user_permissions.add(
+        Permission.objects.get(
+            codename="view_scheduledtask",
+            content_type__app_label="django_absurd_pg_cron",
+        )
+    )
     client.force_login(staff_user)
     soup = BeautifulSoup(client.get(INDEX).content, "html.parser")
     assert (
