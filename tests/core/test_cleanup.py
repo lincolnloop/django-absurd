@@ -1,3 +1,5 @@
+import re
+
 import pytest
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command
@@ -74,7 +76,8 @@ def test_run_cleanup_screams_when_schema_absent():
         cur.execute("DROP SCHEMA IF EXISTS absurd CASCADE")
     try:
         with pytest.raises(
-            ImproperlyConfigured, match="Absurd schema is not installed"
+            ImproperlyConfigured,
+            match=re.escape("Absurd schema is not installed. Run: manage.py migrate"),
         ):
             run_cleanup()
     finally:
