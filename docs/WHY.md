@@ -152,6 +152,39 @@ app: adding it to `INSTALLED_APPS` on a DB that isn't pg_cron-ready breaks visib
 still operator-side prerequisites that a migration can't deliver. Those stay documented
 as manual setup steps.
 
+## Cleanup & retention
+
+Retention — deleting aged task history — is enforced by a plain function plus an
+on-demand command, not a library-shipped scheduled task. A shipped task would have to
+bind to a concrete backend and queue the moment its module is imported, and the task
+framework validates that queue at import; any project whose Absurd backend or default
+queue differs from the assumed names would then fail to boot. Shipping the logic and
+letting each project wrap it in its own task sidesteps that entirely, and matches how
+task libraries expect you to register your own tasks.
+
+The function returns plain per-queue count dictionaries rather than a richer typed
+object, because that return value becomes a task result and task results are stored as
+JSON — a dataclass or named tuple would serialise as an unlabelled array or not at all,
+losing the field names that make the stored result worth keeping.
+
+Cleanup deliberately does not turn a missing schema into a friendly "run migrate" error
+the way the configuration paths do: it is a maintenance operation, so the raw database
+error is allowed to surface rather than adding a guard that implies the call was safe.
+
+Wiping everything is a separate, guarded command that drops queues and their data while
+leaving the schema, functions, and migration history intact — because a full schema
+teardown is already what running migrations backwards achieves, and the migration system
+should stay the sole owner of the schema. It follows the framework's own
+destructive-command convention (confirm interactively, skip with a no-input flag) so the
+safety model is one users already know. Dropping a queue removes only that queue's own
+maintenance jobs and data; user-defined recurring schedules live elsewhere and survive,
+so a reset never silently cancels recurring work.
+
+Scheduling this cleanup is the application-level (beat) answer. Absurd's own per-queue
+maintenance — partition upkeep, retention, detachment — is driven exclusively through
+pg_cron; on a pg_cron deployment the proper path is that native maintenance, not the
+application-level wrapper.
+
 ## Admin & ORM introspection
 
 Queue state is exposed read-only, in two forms — a Django admin and plain ORM models —
@@ -178,3 +211,8 @@ Native async enqueue, one-shot deferred (scheduled-for-later) enqueue, and task 
 are unsupported on purpose: Absurd has no notion of priority, and async/one-shot
 deferral aren't wired — we won't fake them behind a flag that implies otherwise.
 (Recurring scheduling is supported — see above.)
+
+A surface to enable Absurd's native pg_cron maintenance jobs (partition, retention, and
+detachment scheduling) is not built yet. That native scheduling is pg_cron-only, so
+until a project-facing surface exists those jobs are simply never created — which is why
+the shipped retention story is the application-level cleanup above.
