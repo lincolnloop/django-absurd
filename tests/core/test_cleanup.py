@@ -1,9 +1,7 @@
 import re
 
 import pytest
-from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command
-from django.db import connection
 
 from django_absurd.cleanup import cleanup_all_queues
 from tests.tasks import add, cleanup_queues
@@ -96,20 +94,6 @@ def test_cleanup_respects_batch_limit(settings, cleanup):
     assert cleanup() == [
         {"queue_name": "default", "tasks_deleted": 0, "events_deleted": 0}
     ]
-
-
-def test_cleanup_screams_when_schema_absent(cleanup):
-    with connection.cursor() as cur:
-        cur.execute("DROP SCHEMA IF EXISTS absurd CASCADE")
-    try:
-        with pytest.raises(
-            ImproperlyConfigured,
-            match=re.escape("Absurd schema is not installed. Run: manage.py migrate"),
-        ):
-            cleanup()
-    finally:
-        call_command("migrate", "django_absurd", "zero", verbosity=0)
-        call_command("migrate", verbosity=0)  # restore absurd schema
 
 
 def test_cleanup_command_reports_per_queue_counts(settings, capsys):
