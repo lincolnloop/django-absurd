@@ -34,44 +34,71 @@ def drain(queue="default"):
     call_command("absurd_worker", queue=queue, burst=True)
 
 
-def test_cleanup_all_queues_deletes_aged_terminal_tasks(settings):
+@pytest.fixture(params=["command", "direct"])
+def cleanup(request, capsys):
+    """Run cleanup through both entrypoints (management command + direct call), each
+    normalized to the per-queue count dicts, so behavioral tests cover both. The command
+    path parses its stdout back into dicts."""
+
+    def run():
+        if request.param == "direct":
+            return cleanup_all_queues()
+        capsys.readouterr()  # discard any prior output
+        call_command("absurd_cleanup")
+        return [
+            parse_cleanup_line(line) for line in capsys.readouterr().out.splitlines()
+        ]
+
+    return run
+
+
+def parse_cleanup_line(line):
+    match = re.fullmatch(r"(.+): (\d+) tasks, (\d+) events deleted", line)
+    return {
+        "queue_name": match[1],
+        "tasks_deleted": int(match[2]),
+        "events_deleted": int(match[3]),
+    }
+
+
+def test_cleanup_deletes_aged_terminal_tasks(settings, cleanup):
     sync_queue(settings)
     add.enqueue(2, 3)
     drain()
-    assert cleanup_all_queues() == [
+    assert cleanup() == [
         {"queue_name": "default", "tasks_deleted": 1, "events_deleted": 0}
     ]
 
 
-def test_cleanup_all_queues_skips_non_terminal_tasks(settings):
+def test_cleanup_skips_non_terminal_tasks(settings, cleanup):
     sync_queue(settings)
     add.enqueue(2, 3)  # pending — worker not run, so not terminal
-    assert cleanup_all_queues() == [
+    assert cleanup() == [
         {"queue_name": "default", "tasks_deleted": 0, "events_deleted": 0}
     ]
     drain()  # now completed → terminal
-    assert cleanup_all_queues() == [
+    assert cleanup() == [
         {"queue_name": "default", "tasks_deleted": 1, "events_deleted": 0}
     ]
 
 
-def test_cleanup_all_queues_respects_batch_limit(settings):
+def test_cleanup_respects_batch_limit(settings, cleanup):
     sync_queue(settings, cleanup_limit=2)
     for _ in range(3):
         add.enqueue(2, 3)
     drain()
-    assert cleanup_all_queues() == [
+    assert cleanup() == [
         {"queue_name": "default", "tasks_deleted": 2, "events_deleted": 0}
     ]
-    assert cleanup_all_queues() == [
+    assert cleanup() == [
         {"queue_name": "default", "tasks_deleted": 1, "events_deleted": 0}
     ]
-    assert cleanup_all_queues() == [
+    assert cleanup() == [
         {"queue_name": "default", "tasks_deleted": 0, "events_deleted": 0}
     ]
 
 
-def test_cleanup_all_queues_screams_when_schema_absent():
+def test_cleanup_screams_when_schema_absent(cleanup):
     with connection.cursor() as cur:
         cur.execute("DROP SCHEMA IF EXISTS absurd CASCADE")
     try:
@@ -79,7 +106,7 @@ def test_cleanup_all_queues_screams_when_schema_absent():
             ImproperlyConfigured,
             match=re.escape("Absurd schema is not installed. Run: manage.py migrate"),
         ):
-            cleanup_all_queues()
+            cleanup()
     finally:
         call_command("migrate", "django_absurd", "zero", verbosity=0)
         call_command("migrate", verbosity=0)  # restore absurd schema
