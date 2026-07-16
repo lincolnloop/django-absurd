@@ -6,7 +6,7 @@ from django.core.management import call_command
 from django.db import connection
 
 from django_absurd.tasks import run_cleanup
-from tests.tasks import add
+from tests.tasks import add, cleanup_wrapper
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -98,3 +98,15 @@ def test_cleanup_command_reports_no_backends(settings, capsys):
     settings.TASKS = {}
     call_command("absurd_cleanup")
     assert capsys.readouterr().out == "No Absurd task backends configured.\n"
+
+
+def test_wrapper_task_result_is_deleted_counts(settings):
+    sync_queue(settings)
+    add.enqueue(2, 3)
+    drain()  # one completed task now eligible
+    result = cleanup_wrapper.enqueue()
+    drain()
+    got = cleanup_wrapper.get_result(result.id)
+    assert got.return_value == [
+        {"queue_name": "default", "tasks_deleted": 1, "events_deleted": 0}
+    ]

@@ -3,6 +3,7 @@ from django.contrib.auth.models import Group
 from django.tasks import task
 
 from django_absurd.params import absurd_default_params
+from django_absurd.tasks import run_cleanup
 from tests.models import Payload
 
 
@@ -89,3 +90,8 @@ def cancellable():
 def fully_specced():
     msg = "path-resolved for its decorator; never run"
     raise NotImplementedError(msg)
+
+
+@task
+def cleanup_wrapper():
+    return run_cleanup()

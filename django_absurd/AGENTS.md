@@ -459,6 +459,48 @@ is a guarded action (see Reconcile).
 
 Fix everything `absurd.E007` reports before relying on the schedule in production.
 
+## Cleanup / retention
+
+`run_cleanup()` enforces each queue's `cleanup_ttl` / `cleanup_limit` retention knobs
+(configured via `OPTIONS["QUEUES"]` — see [Configure](#configure)). It deletes terminal
+task rows (completed, failed, cancelled) older than the queue's TTL, up to the batch
+limit, and returns one dict per queue:
+
+```python
+[{"queue_name": "default", "tasks_deleted": 12, "events_deleted": 0}]
+```
+
+**On demand:** `manage.py absurd_cleanup` runs it and prints per-queue counts:
+
+```bash
+python manage.py absurd_cleanup
+# default: 12 tasks, 0 events deleted
+```
+
+**Scheduled:** there is no shipped `@task` wrapper — write one in your app and register
+it in `SCHEDULE`. The return value is stored as the task result so you can retrieve it
+via `get_result`:
+
+```python
+# myapp/tasks.py
+from django.tasks import task
+from django_absurd.tasks import run_cleanup
+
+@task
+def cleanup_queues():
+    return run_cleanup()
+```
+
+```python
+# settings.py
+"SCHEDULE": {"absurd-cleanup": {
+    "task": "myapp.tasks.cleanup_queues", "cron": "0 3 * * *"}}
+```
+
+The wrapper's queue (set by `@task(queue_name=…)` or the `SCHEDULE` entry's `queue` key)
+is where cleanup runs. Retention knobs are per-queue policy on the Absurd queue itself —
+set them in `OPTIONS["QUEUES"]`, not on the wrapper task.
+
 ## Retrieving results
 
 `enqueue` returns a `TaskResult`; refresh it or fetch one later by id:
