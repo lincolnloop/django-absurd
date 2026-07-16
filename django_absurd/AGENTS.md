@@ -461,14 +461,17 @@ Fix everything `absurd.E007` reports before relying on the schedule in productio
 
 ## Cleanup / retention
 
-`run_cleanup()` enforces each queue's `cleanup_ttl` / `cleanup_limit` retention knobs
-(configured via `OPTIONS["QUEUES"]` — see [Configure](#configure)). It deletes terminal
-task rows (completed, failed, cancelled) older than the queue's TTL, up to the batch
-limit, and returns one dict per queue:
+`cleanup_all_queues()` enforces each queue's `cleanup_ttl` / `cleanup_limit` retention
+knobs (configured via `OPTIONS["QUEUES"]` — see [Configure](#configure)). It deletes
+terminal task rows (completed, failed, cancelled) older than the queue's TTL, up to the
+batch limit, and returns one dict per queue:
 
 ```python
 [{"queue_name": "default", "tasks_deleted": 12, "events_deleted": 0}]
 ```
+
+→ [Absurd: Cleanup](https://earendil-works.github.io/absurd/cleanup/) (the underlying
+`cleanup_all_queues` behaviour and the full retention model).
 
 **On demand:** `manage.py absurd_cleanup` runs it and prints per-queue counts:
 
@@ -484,11 +487,11 @@ via `get_result`:
 ```python
 # myapp/tasks.py
 from django.tasks import task
-from django_absurd.tasks import run_cleanup
+from django_absurd.cleanup import cleanup_all_queues
 
 @task
 def cleanup_queues():
-    return run_cleanup()
+    return cleanup_all_queues()
 ```
 
 ```python

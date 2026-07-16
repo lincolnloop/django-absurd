@@ -2,8 +2,8 @@ from absurd_sdk import CancellationPolicy, RetryStrategy
 from django.contrib.auth.models import Group
 from django.tasks import task
 
+from django_absurd.cleanup import cleanup_all_queues
 from django_absurd.params import absurd_default_params
-from django_absurd.tasks import run_cleanup
 from tests.models import Payload
 
 
@@ -94,4 +94,4 @@ def fully_specced():
 
 @task
 def cleanup_wrapper():
-    return run_cleanup()
+    return cleanup_all_queues()

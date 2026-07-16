@@ -8,10 +8,10 @@ Absurd stores task rows in Postgres — they accumulate unless you prune them. E
 exposes two retention knobs (see
 [Configuration — Declaring queues](configuration.md#declaring-queues)):
 
-| Option          | What it controls                                             |
-| --------------- | ------------------------------------------------------------ |
-| `cleanup_ttl`   | Minimum age a terminal task must reach before it is deleted. |
-| `cleanup_limit` | Maximum rows deleted per `run_cleanup()` call (batch cap).   |
+| Option          | What it controls                                                                                         |
+| --------------- | -------------------------------------------------------------------------------------------------------- |
+| `cleanup_ttl`   | Minimum age a terminal task must reach before it is deleted.                                             |
+| `cleanup_limit` | Max terminal rows deleted **per queue** per run — applied separately to task and event rows (batch cap). |
 
 **Terminal** means completed, failed, or cancelled — running and pending tasks are never
 touched. See [Absurd's storage docs](https://earendil-works.github.io/absurd/storage/)
@@ -37,11 +37,11 @@ register it in [`SCHEDULE`](cron-jobs.md):
 
 ```python title="myapp/tasks.py"
 from django.tasks import task
-from django_absurd.tasks import run_cleanup
+from django_absurd.cleanup import cleanup_all_queues
 
 @task
 def cleanup_queues():
-    return run_cleanup()
+    return cleanup_all_queues()
 ```
 
 ```python title="settings.py"

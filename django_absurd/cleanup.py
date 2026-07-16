@@ -7,7 +7,7 @@ from django_absurd.queues import resolve_absurd_database
 CLEANUP_COLUMNS = ("queue_name", "tasks_deleted", "events_deleted")
 
 
-def run_cleanup() -> list[dict]:
+def cleanup_all_queues() -> list[dict]:
     using = resolve_absurd_database()
     try:
         with connections[using].cursor() as cur:
