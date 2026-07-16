@@ -14,8 +14,10 @@ exposes two retention knobs (see
 | `cleanup_limit` | Max terminal rows deleted **per queue** per run — applied separately to task and event rows (batch cap). |
 
 **Terminal** means completed, failed, or cancelled — running and pending tasks are never
-touched. See [Absurd's storage docs](https://earendil-works.github.io/absurd/storage/)
-for the full retention model.
+touched. See [Absurd's cleanup docs](https://earendil-works.github.io/absurd/cleanup/)
+for the retention model, and
+[Absurd's storage docs](https://earendil-works.github.io/absurd/storage/) for how queues
+store rows.
 
 ## Run on demand
 
