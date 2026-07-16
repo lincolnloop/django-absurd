@@ -67,3 +67,19 @@ TASKS = {
 The wrapper runs on its `@task` queue (or the `queue` key in the schedule entry). Its
 return value — a list of per-queue dicts — is stored as the task result and retrievable
 via `get_result` (see [Tasks — Read the result](tasks.md#read-the-result)).
+
+## Reset — drop all queues
+
+`absurd_flush` drops **every** queue and its data (tasks, runs, events). The Absurd
+schema and functions are kept — only the queues go. It prompts for confirmation; pass
+`--noinput` (alias `--no-input`) to skip the prompt in automation:
+
+```bash
+python manage.py absurd_flush            # prompts, then drops on 'yes'
+python manage.py absurd_flush --noinput  # drops without prompting
+```
+
+!!! warning "Destructive"
+
+    This deletes all task history across every queue. Re-provision your declared queues
+    afterward with `migrate`, `absurd_sync_queues`, or by starting a worker.

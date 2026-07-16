@@ -1,9 +1,13 @@
+import contextlib
+import io
 import re
+import sys
 
 import pytest
 from django.core.management import call_command
 
 from django_absurd.cleanup import cleanup_queues
+from django_absurd.queues import get_absurd_client
 from tests.tasks import add, routed
 from tests.tasks import cleanup as cleanup_task
 
@@ -58,6 +62,17 @@ def parse_cleanup_line(line):
         "tasks_deleted": int(match[2]),
         "events_deleted": int(match[3]),
     }
+
+
+@contextlib.contextmanager
+def answer(text):
+    """Feed a line to the next input() prompt via a real stdin (no mock)."""
+    original = sys.stdin
+    sys.stdin = io.StringIO(text)
+    try:
+        yield
+    finally:
+        sys.stdin = original
 
 
 def test_cleanup_deletes_aged_terminal_tasks(settings, cleanup):
@@ -137,3 +152,48 @@ def test_wrapper_task_result_is_deleted_counts(settings):
     assert got.return_value == [
         {"queue_name": "default", "tasks_deleted": 1, "events_deleted": 0}
     ]
+
+
+def test_flush_reports_no_backends(settings, capsys):
+    settings.TASKS = {}
+    call_command("absurd_flush")
+    assert capsys.readouterr().out == "No Absurd task backends configured.\n"
+
+
+def test_flush_reports_no_queues(capsys):
+    call_command("absurd_flush")
+    assert capsys.readouterr().out == "No queues to flush.\n"
+
+
+def test_flush_noinput_drops_all_queues(settings, capsys):
+    sync_queue(settings, names=("default", "other"))
+    capsys.readouterr()  # discard sync output
+    call_command("absurd_flush", "--noinput")
+    assert capsys.readouterr().out == "Dropped 2 queue(s): default, other\n"
+    assert get_absurd_client().list_queues() == []
+
+
+def test_flush_interactive_yes_drops_all_queues(settings, capsys):
+    sync_queue(settings, names=("default", "other"))
+    capsys.readouterr()  # discard sync output
+    with answer("yes\n"):
+        call_command("absurd_flush")
+    assert capsys.readouterr().out == (
+        "This will DROP 2 queue(s) and ALL their data: default, other\n"
+        "Type 'yes' to continue, or 'no' to cancel: "
+        "Dropped 2 queue(s): default, other\n"
+    )
+    assert get_absurd_client().list_queues() == []
+
+
+def test_flush_interactive_no_keeps_queues(settings, capsys):
+    sync_queue(settings, names=("default", "other"))
+    capsys.readouterr()  # discard sync output
+    with answer("no\n"):
+        call_command("absurd_flush")
+    assert capsys.readouterr().out == (
+        "This will DROP 2 queue(s) and ALL their data: default, other\n"
+        "Type 'yes' to continue, or 'no' to cancel: "
+        "Flush cancelled.\n"
+    )
+    assert sorted(get_absurd_client().list_queues()) == ["default", "other"]

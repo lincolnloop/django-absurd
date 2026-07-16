@@ -510,6 +510,18 @@ The wrapper's queue (set by `@task(queue_name=…)` or the `SCHEDULE` entry's `q
 is where cleanup runs. Retention knobs are per-queue policy on the Absurd queue itself —
 set them in `OPTIONS["QUEUES"]`, not on the wrapper task.
 
+**Reset (destructive):** `manage.py absurd_flush` drops **every** queue and its data
+(tasks, runs, events); the Absurd schema and functions are kept. It prompts for
+confirmation; pass `--noinput` (alias `--no-input`) to skip the prompt in automation:
+
+```bash
+python manage.py absurd_flush            # prompts, then drops on 'yes'
+python manage.py absurd_flush --noinput  # drops without prompting
+```
+
+Re-provision declared queues afterward with `migrate`, `absurd_sync_queues`, or by
+starting a worker.
+
 ## Retrieving results
 
 `enqueue` returns a `TaskResult`; refresh it or fetch one later by id:
