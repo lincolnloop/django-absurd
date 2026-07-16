@@ -83,3 +83,18 @@ def test_run_cleanup_screams_when_schema_absent():
     finally:
         call_command("migrate", "django_absurd", "zero", verbosity=0)
         call_command("migrate", verbosity=0)  # restore absurd schema
+
+
+def test_cleanup_command_reports_per_queue_counts(settings, capsys):
+    sync_queue(settings)
+    add.enqueue(2, 3)
+    drain()
+    capsys.readouterr()  # discard sync/worker output
+    call_command("absurd_cleanup")
+    assert capsys.readouterr().out == "default: 1 tasks, 0 events deleted\n"
+
+
+def test_cleanup_command_reports_no_backends(settings, capsys):
+    settings.TASKS = {}
+    call_command("absurd_cleanup")
+    assert capsys.readouterr().out == "No Absurd task backends configured.\n"
