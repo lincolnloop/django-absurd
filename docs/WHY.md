@@ -183,7 +183,10 @@ so a reset never silently cancels recurring work.
 Scheduling this cleanup is the application-level (beat) answer. Absurd's own per-queue
 maintenance — partition upkeep, retention, detachment — is driven exclusively through
 pg_cron; on a pg_cron deployment the proper path is that native maintenance, not the
-application-level wrapper.
+application-level wrapper. That Absurd already ships this maintenance for pg_cron is
+itself the argument against a single all-in-one shipped task: on the very scheduler that
+would most want one, the engine already provides it — so the library ships the retention
+logic and leaves scheduling to whichever mechanism the deployment already runs.
 
 ## Admin & ORM introspection
 
