@@ -93,5 +93,5 @@ def fully_specced():
 
 
 @task
-def cleanup_wrapper():
+def cleanup_queues():
     return cleanup_all_queues()
