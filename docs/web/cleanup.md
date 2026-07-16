@@ -34,10 +34,11 @@ The same function is importable — `cleanup_queues()` for all queues, or
 `cleanup_queues(["reports", "emails"])` for specific ones — returning a list of
 per-queue count dicts.
 
-## Schedule recurring cleanup
+## Schedule recurring cleanup (beat)
 
-There is no built-in scheduled task — write a one-line `@task` wrapper in your app and
-register it in [`SCHEDULE`](cron-jobs.md):
+Under the **beat** scheduler — application-level scheduling — run cleanup as an ordinary
+scheduled task: write a one-line `@task` wrapper in your app and register it in
+[`SCHEDULE`](cron-jobs.md):
 
 ```python title="myapp/tasks.py"
 from django.tasks import task

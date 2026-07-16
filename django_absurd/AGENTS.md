@@ -486,9 +486,10 @@ python manage.py absurd_cleanup reports    # just 'reports'
 # default: 12 tasks, 0 events deleted
 ```
 
-**Scheduled:** there is no shipped `@task` wrapper — write one in your app and register
-it in `SCHEDULE`. The return value is stored as the task result so you can retrieve it
-via `get_result`:
+**Scheduled (beat):** under the beat scheduler (application-level scheduling), run
+cleanup as an ordinary scheduled task — write a one-line `@task` wrapper in your app and
+register it in `SCHEDULE`. The return value is stored as the task result so you can
+retrieve it via `get_result`:
 
 ```python
 # myapp/tasks.py

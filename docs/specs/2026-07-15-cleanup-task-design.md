@@ -155,3 +155,8 @@ Bookkeeping — where the shipped branch diverged from the design above:
 - **Tests.** Behavioral tests parametrized over both entrypoints (command + direct) via
   a `cleanup` fixture; `absurd_flush` tested both interactively (real `sys.stdin`) and
   `--noinput`.
+- **Scheduling scoped to beat / application-level.** Spec called the wrapper
+  "scheduler-agnostic (beat or pg_cron)"; user docs now present it as the beat path
+  only. pg_cron deployments get Absurd's native maintenance surface (`enable_cron`:
+  partitions/cleanup/detach) instead — deferred to #64 (django-absurd currently exposes
+  no such surface).
