@@ -510,8 +510,10 @@ The wrapper's queue (set by `@task(queue_name=…)` or the `SCHEDULE` entry's `q
 is where cleanup runs. Retention knobs are per-queue policy on the Absurd queue itself —
 set them in `OPTIONS["QUEUES"]`, not on the wrapper task.
 
-**Reset (destructive):** `manage.py absurd_flush` drops **every** queue and its data
-(tasks, runs, events); the Absurd schema and functions are kept. It prompts for
+**Reset (destructive):** `manage.py absurd_flush` **deletes all task history** — it
+removes every queue (its per-queue tables and registry entry) along with all tasks,
+runs, and events in them. It does **not** uninstall Absurd: the schema, migrations, and
+functions stay, so you never re-`migrate` — only re-provision the queues. It prompts for
 confirmation; pass `--noinput` (alias `--no-input`) to skip the prompt in automation:
 
 ```bash

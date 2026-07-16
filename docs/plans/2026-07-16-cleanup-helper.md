@@ -468,3 +468,28 @@ output.
 `queue_name`/`tasks_deleted`/`events_deleted` used identically in Tasks 1–3;
 `CLEANUP_COLUMNS` matches the SQL select list and the dict keys; command reads those
 exact keys.
+
+---
+
+## Deviations from this plan (as-built, 2026-07-16)
+
+Bookkeeping — plan Tasks 1–3 landed, then a review round + follow-up work diverged:
+
+- **Names/locations.** `django_absurd/tasks.py`→`cleanup.py`; `run_cleanup()`→
+  `cleanup_queues()`; test wrapper `cleanup_wrapper`→`cleanup`; docs
+  `docs/web/scheduling.md`→`cleanup.md` (+ nav).
+- **Return type.** `list[dict]` + `CLEANUP_COLUMNS` tuple → `list[QueueCleanup]`
+  (`TypedDict`); constant removed.
+- **Schema-absent handling REMOVED.** Task 1's `ImproperlyConfigured` guard + its test
+  dropped by decision (raw error bubbles).
+- **Command signature.** `absurd_cleanup` gained positional `queues` (`nargs="*"`) →
+  `cleanup_queues(names or None)`; `handle` stays `-> None` (Django echoes truthy
+  returns).
+- **Per-queue targeting ADDED** — `cleanup_queues(queues=None)`; behavioral tests
+  parametrized over command + direct via a `cleanup` fixture (command path parses
+  stdout).
+- **`absurd_flush` ADDED** (not in this plan) — destructive drop-all-queues, Django
+  `flush` UX (interactive confirm + `--noinput`); tested both ways (real `sys.stdin` +
+  `--noinput`). Delivers #26's dangerous-reset half.
+- **Delivers all of #26** (manual cleanup: all + per-queue; dangerous drop-all), beyond
+  this plan's original single-command scope.

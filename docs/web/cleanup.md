@@ -70,8 +70,10 @@ via `get_result` (see [Tasks — Read the result](tasks.md#read-the-result)).
 
 ## Reset — drop all queues
 
-`absurd_flush` drops **every** queue and its data (tasks, runs, events). The Absurd
-schema and functions are kept — only the queues go. It prompts for confirmation; pass
+`absurd_flush` **deletes all task history** — it removes every queue (its per-queue
+tables and registry entry) along with all tasks, runs, and events in them. It does
+**not** uninstall Absurd: the schema, migrations, and functions stay in place, so you
+never re-`migrate` — you only re-provision the queues. It prompts for confirmation; pass
 `--noinput` (alias `--no-input`) to skip the prompt in automation:
 
 ```bash
@@ -81,5 +83,6 @@ python manage.py absurd_flush --noinput  # drops without prompting
 
 !!! warning "Destructive"
 
-    This deletes all task history across every queue. Re-provision your declared queues
-    afterward with `migrate`, `absurd_sync_queues`, or by starting a worker.
+    This permanently deletes all task history across every queue. It leaves the Absurd
+    schema and migrations untouched — re-provision your declared queues afterward with
+    `migrate`, `absurd_sync_queues`, or by starting a worker.

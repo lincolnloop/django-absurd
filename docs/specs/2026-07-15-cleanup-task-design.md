@@ -126,3 +126,32 @@ including one with no `"default"` queue).
   #26's manual on-demand _cleanup_ half, via `absurd_cleanup`).
 - A **shipped `@task`** and multi-backend-alias tightening — #63.
 - Per-queue / ttl-override arguments — retention lives in queue policy.
+
+## Deviations from this spec (as-built, 2026-07-16)
+
+Bookkeeping — where the shipped branch diverged from the design above:
+
+- **Function renamed + relocated.** `run_cleanup()` in `django_absurd/tasks.py` →
+  `cleanup_queues()` in `django_absurd/cleanup.py`. `tasks.py` misread as a Django
+  tasks-autodiscovery module; `cleanup.py` clearer. `cleanup_queues` mirrors the SQL
+  `absurd.cleanup_all_queues()`.
+- **Return type refined.** `list[dict]` → `list[QueueCleanup]` (a `TypedDict`) — same
+  runtime dict (JSON-serializable), fields now named/typed. NamedTuple/dataclass
+  rejected (serialize as arrays / not JSON).
+- **Schema-absent guard DROPPED.** Spec mandated catching `ProgrammingError` →
+  `ImproperlyConfigured("Absurd schema is not installed. Run: manage.py migrate")`.
+  Removed by decision — raw error bubbles ("too bad if you're there"); the schema-absent
+  test went with it.
+- **Per-queue targeting ADDED** (was out of scope). `cleanup_queues(queues=None)` +
+  `absurd_cleanup [queue …]` positional args. Delivers #26's per-queue half.
+  (ttl-override args still out of scope.)
+- **Drop-all-queues ADDED** (spec left it in #26). Shipped `absurd_flush` — drops every
+  queue + data, keeps schema; Django `flush` UX (interactive confirm + `--noinput`). #26
+  now fully delivered here.
+- **Wrapper example renamed.** Documented user wrapper `cleanup_queues` → `cleanup` (the
+  util took the `cleanup_queues` name).
+- **Docs page.** User-facing cleanup docs live at `docs/web/cleanup.md` (nav "Cleanup"),
+  not the scheduling page.
+- **Tests.** Behavioral tests parametrized over both entrypoints (command + direct) via
+  a `cleanup` fixture; `absurd_flush` tested both interactively (real `sys.stdin`) and
+  `--noinput`.
