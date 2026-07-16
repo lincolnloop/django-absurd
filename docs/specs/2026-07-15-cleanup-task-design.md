@@ -9,23 +9,32 @@ schedule retention through django-absurd's own `SCHEDULE` (beat or pg_cron) — 
 external tooling. The task returns the per-queue deleted counts, recorded as its task
 result (visibility).
 
-## Component (new)
+## Components (new)
 
-`django_absurd/tasks.py` — the library's first shipped `@task`:
+One shared cleanup function, two entrypoints (scheduled task + on-demand command):
+
+**Shared — `django_absurd/tasks.py`:**
 
 ```
-@task
-def cleanup_queues() -> list[dict]:
+def run_cleanup() -> list[dict]:
     # execute on connections[resolve_absurd_database()]:
     #   select queue_name, tasks_deleted, events_deleted from absurd.cleanup_all_queues()
-    # log a one-line summary; return the rows (JSON-serializable) as the result
+    # return the rows as list[dict] (JSON-serializable)
+
+@task
+def cleanup_queues() -> list[dict]:          # the library's first shipped @task
+    # call run_cleanup(); log a one-line summary; return the rows (the task result)
 ```
+
+**On-demand — `django_absurd/management/commands/absurd_cleanup.py`:** calls
+`run_cleanup()` synchronously (in-process, no worker needed) and writes the per-queue
+deleted counts to stdout — same pattern as `absurd_sync_queues`.
 
 Policy-driven, no args: `cleanup_all_queues()` reads each queue's own `cleanup_ttl` /
 `cleanup_limit` from `absurd.queues`, deleting task + event history older than the ttl,
 batch-limited. Covers both storage modes for **row** retention. The SDK exposes no
-cleanup method, so the task runs the SQL directly via a cursor on the resolved Absurd
-database. Verb-named module + function; no leading-underscore helpers.
+cleanup method, so `run_cleanup` runs the SQL directly via a cursor on the resolved
+Absurd database. Verb-named functions; no leading-underscore helpers.
 
 ## Configuration — nothing new
 
@@ -51,17 +60,21 @@ inspectable in Runs / results.
 
 ## Testing (behavioral, real DB + worker, no mocks)
 
-- enqueue `cleanup_queues`, run the worker in burst → assert the result is the
-  deleted-counts list (`queue_name` / `tasks_deleted` / `events_deleted`).
-- seed old task history on an (unpartitioned) queue with a short `cleanup_ttl`, run the
-  task → assert the aged rows are deleted (first coverage of cleanup _execution_).
+- **Task via worker:** enqueue `cleanup_queues`, run the worker in burst → assert the
+  result is the deleted-counts list (`queue_name` / `tasks_deleted` / `events_deleted`).
+- **Command:** `call_command("absurd_cleanup")` with `capsys` → assert the full emitted
+  per-queue summary text.
+- **Execution:** seed old task history on an (unpartitioned) queue with a short
+  `cleanup_ttl`, run cleanup (via either entrypoint) → assert the aged rows are deleted
+  (first coverage of cleanup _execution_).
 - Tests use the default unpartitioned path only.
 
 ## Out of scope
 
 - Partition lifecycle (`ensure_partitions` / detach) and partitioned-queue _behavior_ —
   tracked in #61 (implement-or-disable), including the false "automatic partition
-  lifecycle" doc claim. This task does row retention for partitioned queues but not
-  their partition lifecycle.
-- Manual/on-demand cleanup + drop-all management command — #26.
-- Per-queue / ttl-override task arguments — retention lives in queue policy.
+  lifecycle" doc claim. Cleanup does row retention for partitioned queues but not their
+  partition lifecycle.
+- The **dangerous drop-all-queues** management mode — stays in #26 (this delivers only
+  #26's manual on-demand _cleanup_ half, via `absurd_cleanup`).
+- Per-queue / ttl-override arguments — retention lives in queue policy.
