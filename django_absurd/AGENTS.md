@@ -486,8 +486,10 @@ await send_report.aget_result(result.id)       # async variant
   (post_migrate), on worker start, by `absurd_sync_queues`, and on first enqueue;
   provisioning also reconciles mutable policy. Nothing ever drops queues removed from
   config. A queue's `storage_mode` is immutable after creation (a declared change is
-  reported as a warning, not applied). Only queues declared in `QUEUES` are created — an
-  undeclared queue name is rejected, not silently created.
+  reported as a warning, not applied); `storage_mode="partitioned"` is declarable but
+  **experimental — not tested yet**, with no automated partition lifecycle. Only queues
+  declared in `QUEUES` are created — an undeclared queue name is rejected, not silently
+  created.
 - **Teardown is destructive.** `migrate django_absurd zero` drops the `absurd` schema
   and all data in it.
 

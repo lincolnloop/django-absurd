@@ -31,13 +31,13 @@ You declare queues in **one** place — never both:
 
 `OPTIONS["QUEUES"]` (map) : Names → per-queue policy
 ([`absurd_sdk.CreateQueueOptions`](https://earendil-works.github.io/absurd/sdks/python/)).
-Use this to set
-[storage mode, retention, partitioning](https://earendil-works.github.io/absurd/storage/).
+Use this to set [retention](https://earendil-works.github.io/absurd/storage/)
+(`cleanup_ttl` / `cleanup_limit`).
 
     ```python
     "OPTIONS": {"QUEUES": {
         "default": {},
-        "reports": {"storage_mode": "partitioned", "cleanup_ttl": "7 days"},
+        "reports": {"cleanup_ttl": "7 days"},
     }}
     ```
 
@@ -46,6 +46,11 @@ Use this to set
     Setting both the top-level `QUEUES` list **and** `OPTIONS["QUEUES"]` is a
     configuration error (`absurd.E002`). Undeclared queue names are rejected, never
     silently created.
+
+!!! warning "Partitioned storage is experimental"
+
+    `storage_mode="partitioned"` is declarable but **not tested yet**, and its partition
+    lifecycle isn't automated — don't rely on it in production.
 
 ## Backend `OPTIONS`
 
