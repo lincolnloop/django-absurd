@@ -461,22 +461,28 @@ Fix everything `absurd.E007` reports before relying on the schedule in productio
 
 ## Cleanup / retention
 
-`cleanup_all_queues()` enforces each queue's `cleanup_ttl` / `cleanup_limit` retention
-knobs (configured via `OPTIONS["QUEUES"]` — see [Configure](#configure)). It deletes
-terminal task rows (completed, failed, cancelled) older than the queue's TTL, up to the
-batch limit, and returns one dict per queue:
+`cleanup_queues()` enforces each queue's `cleanup_ttl` / `cleanup_limit` retention knobs
+(configured via `OPTIONS["QUEUES"]` — see [Configure](#configure)). It deletes terminal
+task rows (completed, failed, cancelled) older than the queue's TTL, up to the batch
+limit, and returns one dict per queue:
 
 ```python
-[{"queue_name": "default", "tasks_deleted": 12, "events_deleted": 0}]
+from django_absurd.cleanup import cleanup_queues
+
+cleanup_queues()                       # every declared queue
+cleanup_queues(["reports", "emails"])  # only these queues
+# → [{"queue_name": "default", "tasks_deleted": 12, "events_deleted": 0}]
 ```
 
 → [Absurd: Cleanup](https://earendil-works.github.io/absurd/cleanup/) (the underlying
-`cleanup_all_queues` behaviour and the full retention model).
+`absurd.cleanup_all_queues()` behaviour and the full retention model).
 
-**On demand:** `manage.py absurd_cleanup` runs it and prints per-queue counts:
+**On demand:** `manage.py absurd_cleanup` runs it and prints per-queue counts; pass
+queue names to limit it, or omit them for all:
 
 ```bash
-python manage.py absurd_cleanup
+python manage.py absurd_cleanup            # all queues
+python manage.py absurd_cleanup reports    # just 'reports'
 # default: 12 tasks, 0 events deleted
 ```
 
@@ -487,17 +493,17 @@ via `get_result`:
 ```python
 # myapp/tasks.py
 from django.tasks import task
-from django_absurd.cleanup import cleanup_all_queues
+from django_absurd.cleanup import cleanup_queues
 
 @task
-def cleanup_queues():
-    return cleanup_all_queues()
+def cleanup():
+    return cleanup_queues()
 ```
 
 ```python
 # settings.py
 "SCHEDULE": {"absurd-cleanup": {
-    "task": "myapp.tasks.cleanup_queues", "cron": "0 3 * * *"}}
+    "task": "myapp.tasks.cleanup", "cron": "0 3 * * *"}}
 ```
 
 The wrapper's queue (set by `@task(queue_name=…)` or the `SCHEDULE` entry's `queue` key)

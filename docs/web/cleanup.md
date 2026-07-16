@@ -20,15 +20,19 @@ for the full retention model.
 ## Run on demand
 
 ```bash
-python manage.py absurd_cleanup
+python manage.py absurd_cleanup            # every queue
+python manage.py absurd_cleanup reports    # only the named queue(s)
 ```
 
-Deletes eligible rows across every configured Absurd backend and prints per-queue
-counts:
+Deletes eligible rows across the configured Absurd backend and prints per-queue counts:
 
 ```
 default: 12 tasks, 0 events deleted
 ```
+
+The same function is importable — `cleanup_queues()` for all queues, or
+`cleanup_queues(["reports", "emails"])` for specific ones — returning a list of
+per-queue count dicts.
 
 ## Schedule recurring cleanup
 
@@ -37,11 +41,11 @@ register it in [`SCHEDULE`](cron-jobs.md):
 
 ```python title="myapp/tasks.py"
 from django.tasks import task
-from django_absurd.cleanup import cleanup_all_queues
+from django_absurd.cleanup import cleanup_queues
 
 @task
-def cleanup_queues():
-    return cleanup_all_queues()
+def cleanup():
+    return cleanup_queues()
 ```
 
 ```python title="settings.py"
@@ -51,7 +55,7 @@ TASKS = {
         "OPTIONS": {
             "SCHEDULE": {
                 "absurd-cleanup": {
-                    "task": "myapp.tasks.cleanup_queues",
+                    "task": "myapp.tasks.cleanup",
                     "cron": "0 3 * * *",   # 3am daily
                 },
             },

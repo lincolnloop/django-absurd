@@ -11,15 +11,23 @@ class QueueCleanup(t.TypedDict):
     events_deleted: int
 
 
-def cleanup_all_queues() -> list[QueueCleanup]:
+def cleanup_queues(queues: list[str] | None = None) -> list[QueueCleanup]:
+    # A None queue arg to absurd.cleanup_all_queues() cleans every queue in one call;
+    # a name cleans that one. Loop over the requested names, or [None] for all.
+    targets: list[str | None] = list(queues) if queues is not None else [None]
     using = resolve_absurd_database()
+    rows: list[QueueCleanup] = []
     with connections[using].cursor() as cur:
-        cur.execute(
-            "select queue_name, tasks_deleted, events_deleted "
-            "from absurd.cleanup_all_queues()"
-        )
-        rows = cur.fetchall()
-    return [
-        QueueCleanup(queue_name=queue_name, tasks_deleted=tasks, events_deleted=events)
-        for queue_name, tasks, events in rows
-    ]
+        for target in targets:
+            cur.execute(
+                "select queue_name, tasks_deleted, events_deleted "
+                "from absurd.cleanup_all_queues(%s)",
+                [target],
+            )
+            rows.extend(
+                QueueCleanup(
+                    queue_name=queue_name, tasks_deleted=tasks, events_deleted=events
+                )
+                for queue_name, tasks, events in cur.fetchall()
+            )
+    return rows

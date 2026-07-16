@@ -3,24 +3,25 @@ import re
 import pytest
 from django.core.management import call_command
 
-from django_absurd.cleanup import cleanup_all_queues
-from tests.tasks import add, cleanup_queues
+from django_absurd.cleanup import cleanup_queues
+from tests.tasks import add, routed
+from tests.tasks import cleanup as cleanup_task
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
 ABSURD = "django_absurd.backends.AbsurdBackend"
 
 
-def sync_queue(settings, cleanup_ttl="0 seconds", cleanup_limit=1000):
+def sync_queue(
+    settings, cleanup_ttl="0 seconds", cleanup_limit=1000, names=("default",)
+):
     settings.TASKS = {
         "default": {
             "BACKEND": ABSURD,
             "OPTIONS": {
                 "QUEUES": {
-                    "default": {
-                        "cleanup_ttl": cleanup_ttl,
-                        "cleanup_limit": cleanup_limit,
-                    }
+                    name: {"cleanup_ttl": cleanup_ttl, "cleanup_limit": cleanup_limit}
+                    for name in names
                 }
             },
         }
@@ -38,11 +39,11 @@ def cleanup(request, capsys):
     normalized to the per-queue count dicts, so behavioral tests cover both. The command
     path parses its stdout back into dicts."""
 
-    def run():
+    def run(queues=None):
         if request.param == "direct":
-            return cleanup_all_queues()
+            return cleanup_queues(queues)
         capsys.readouterr()  # discard any prior output
-        call_command("absurd_cleanup")
+        call_command("absurd_cleanup", *(queues or []))
         return [
             parse_cleanup_line(line) for line in capsys.readouterr().out.splitlines()
         ]
@@ -96,6 +97,21 @@ def test_cleanup_respects_batch_limit(settings, cleanup):
     ]
 
 
+def test_cleanup_targets_specific_queue(settings, cleanup):
+    sync_queue(settings, names=("default", "other"))
+    add.enqueue(2, 3)  # default
+    routed.enqueue()  # routed is @task(queue_name="other")
+    drain("default")
+    drain("other")
+    assert cleanup(["default"]) == [
+        {"queue_name": "default", "tasks_deleted": 1, "events_deleted": 0}
+    ]
+    # 'other' was untouched, so its aged task is still there to clean
+    assert cleanup(["other"]) == [
+        {"queue_name": "other", "tasks_deleted": 1, "events_deleted": 0}
+    ]
+
+
 def test_cleanup_command_reports_per_queue_counts(settings, capsys):
     sync_queue(settings)
     add.enqueue(2, 3)
@@ -115,9 +131,9 @@ def test_wrapper_task_result_is_deleted_counts(settings):
     sync_queue(settings)
     add.enqueue(2, 3)
     drain()  # one completed task now eligible
-    result = cleanup_queues.enqueue()
+    result = cleanup_task.enqueue()
     drain()
-    got = cleanup_queues.get_result(result.id)
+    got = cleanup_task.get_result(result.id)
     assert got.return_value == [
         {"queue_name": "default", "tasks_deleted": 1, "events_deleted": 0}
     ]
