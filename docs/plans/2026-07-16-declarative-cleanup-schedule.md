@@ -22,9 +22,11 @@ Postgres).
 
 ## Global Constraints
 
-- **Depends on #65 merged** (`django_absurd/cleanup.py:cleanup_queues`,
-  `absurd_cleanup`, `absurd_flush`). Branch off up-to-date `origin/main` after #65
-  lands.
+- **Depends on #65** (`django_absurd/cleanup.py:cleanup_queues`, `absurd_cleanup`,
+  `absurd_flush`, + the `cleanup` test-app task/wrapper test). Base off a tree that has
+  #65 (branch off `origin/main` once #65 merges; the `cleanup-task` branch already
+  contains it). Task 1a removes #65's wrapper test artifacts — confirm they're present
+  at the base before deleting.
 - Django 6.0 / Python 3.12 floor. `import typing as t` only; absolute imports;
   verb-named functions; no leading-underscore module constants.
 - pytest function-based; no `unittest.mock` / monkeypatch; behavioral through real
@@ -85,6 +87,10 @@ Notes for the implementer:
 - Reuse: extract the beat-cron validity check `validate_schedule` does inline
   (`checks.py:~282`) into a small helper and call it from both places (DRY; seam for
   #66).
+- **This SUPERSEDES the spec's `validate_cron(cron, scheduler)` two-arg helper.** E010
+  must NOT DB-probe pg_cron cron at check time (matches `check_absurd_schedule_config`'s
+  stance, `checks.py:291-298`) — so extract only the **beat-cron** helper; the pg_cron
+  branch of a unified validator is deferred to #66. Don't build the two-arg version.
 
 - [ ] **Step 1: Write failing checks — malformed CLEANUP shapes (parametrized) + valid
       passes**
@@ -150,18 +156,38 @@ Notes for the implementer:
   and reschedule it via the cleanup cron.
 - `fire_cleanup` MUST mirror `fire_schedule`/`spawn_scheduled`: wrap in try/except (a
   raise must not kill the loop) and bracket with `close_old_connections()`
-  (`scheduler.py:66,81`). It calls `cleanup_queues()` and logs the per-queue counts
-  (past-tense log line).
+  (`scheduler.py:66,81` — the import is already present). It calls `cleanup_queues()`
+  and logs the per-queue counts (past-tense log line).
+- **Helper-reuse reality (fix stale claims):** `run_beat_until` is file-local to
+  `tests/core/test_scheduler.py:138` — NOT importable/shared. Replicate its frozen-time
+  `fake_wait` pattern inside `tests/core/test_cleanup.py` (import `run_beat` +
+  `freeze_time`, define a local `fake_wait`). And `sync_queue` (`test_cleanup.py:19`)
+  can't express `CLEANUP`/`SCHEDULER` — extend it with an optional `cleanup=None` kwarg
+  that adds `OPTIONS["CLEANUP"]` when given (keeps the `cleanup_ttl="0 seconds"`
+  seeding).
+- **Coverage:** the `except` branch of `fire_cleanup` needs its own test — induce a real
+  failure by dropping the `absurd` schema (raw error bubbles, since #65 removed the
+  friendly guard) and assert the beat loop survives + logs. No mocks.
 
 - [ ] **Step 1: Write the failing beat-cleanup test**
 
-Add to `tests/core/test_cleanup.py` (reuse `sync_queue` / `drain` / the aged-row seeding
-already there; drive beat with the injected `wait`/`now` seam like `run_beat_until`).
-Test: CLEANUP-only backend (`SCHEDULER=beat`, no `SCHEDULE`,
-`OPTIONS["CLEANUP"]={"schedule": "* * * * *"}`), seed one aged terminal task (short
-`cleanup_ttl`), run the beat loop until just past the first minute slot → assert the
-aged row is deleted (via `cleanup_queues()` observation or the queue's task count). This
-proves the guard change + seed + in-process firing together.
+Add to `tests/core/test_cleanup.py`. First extend `sync_queue` with a `cleanup=None`
+kwarg (adds `OPTIONS["CLEANUP"] = cleanup` when given). Add a local frozen-time
+`fake_wait` helper (replicating `test_scheduler.py:138`'s pattern; `freeze_time` at
+`2026-01-01 00:00:00`). Two tests:
+
+1. **Fires on cadence (happy path):** CLEANUP-only backend (`SCHEDULER=beat` default, no
+   `SCHEDULE`, `cleanup={"schedule": "* * * * *"}`, `cleanup_ttl="0 seconds"`);
+   enqueue + `drain()` one task so it's aged-terminal;
+   `run_beat(backend, now=…, wait=fake_wait)` with cutoff `00:01:30` (fires the
+   `00:01:00` slot exactly once). Assert the task is gone — `run_cleanup`-observe
+   returns `tasks_deleted == 0` on a follow-up call, or the queue's task count is 0.
+   Proves guard-change + seed + in-process firing.
+2. **Crash containment (covers `fire_cleanup`'s `except`):** same setup, then
+   `DROP SCHEMA IF EXISTS absurd CASCADE` before running beat; assert `run_beat`
+   **returns without raising** (loop survived) and the failure was logged (`caplog` at
+   `ERROR`, "django_absurd" logger). Restore in `finally` (`migrate … zero` + `migrate`,
+   mirroring the drop/restore pattern already in the suite).
 
 - [ ] **Step 2: Run — verify it fails**
 
@@ -217,20 +243,32 @@ Notes for the implementer:
   `cron.schedule(<jobname>, <cleanup schedule>, 'select absurd.cleanup_all_queues()')`
   through `open_locked_cursor`; unschedule via `cron.unschedule(<jobname>)` (guard the
   not-found case like `prune_pg_cron_jobs`, `models.py:320`).
-- Reconcile is stateless (no `ScheduledTask` row): if the backend has `CLEANUP` →
-  schedule/update; else → unschedule. Wire it into `sync_crons`,
-  `reconcile_crons_after_migrate` (per-backend, after the schedule sync), and
-  `teardown_crons` (always unschedule the cleanup job — it's outside the managed
-  prefixes, so nothing else removes it; this closes the leak the review flagged).
-  pg_cron validates the cron itself (`cron.schedule` raises on bad grammar → surfaces as
-  `CommandError` in the command, skip-with-log at migrate — match the existing stance).
+- Reconcile is stateless (no `ScheduledTask` row): `CLEANUP` present → schedule/update;
+  absent → unschedule. **Placement matters for coverage + migrate-safety:**
+  - Put the schedule-or-unschedule logic **inside `sync_crons`** (`reconcile.py:70`),
+    NOT in the `apps.py` wrapper. `sync_crons` is the single path both
+    `absurd_sync_crons` and `reconcile_crons_after_migrate`'s pg_cron branch
+    (`apps.py:74-89`) run through — so the drop-CLEANUP-then-reconcile branch is covered
+    by the sync-command test, and a bad cron at migrate is caught by the wrapper's
+    existing try/except (`apps.py:97-107`) instead of crashing migrate. Do NOT add a
+    separate reconcile call in `apps.py`.
+  - Also unschedule the cleanup job in **`teardown_crons`** (`reconcile.py:146`)
+    **unconditionally** — independent of the `include_admin` flag / `sources` branching
+    (`reconcile.py:159`), since the cleanup job has no source lane. This is the path
+    `absurd_sync_crons --teardown` (`include_admin=True`) and the scheduler-flip reach;
+    without it the job leaks (the review's gap).
+- pg_cron validates the cron itself: `cron.schedule` raises on bad grammar →
+  `CommandError` in the command, skip-with-log at migrate. Match the existing stance.
 
 - [ ] **Step 1: Write the failing pg_cron integration tests**
 
 Create `tests/pg_cron/test_cleanup_schedule.py`
-(`pytestmark = pytest.mark.django_db(transaction=True)`; set `settings.TASKS` with
-`SCHEDULER=pg_cron` + `OPTIONS["CLEANUP"]={"schedule": "17 * * * *"}` + declared
-`QUEUES`). Tests, using the `cron.job` query pattern from `test_pg_cron_sync_jobs.py`:
+(`pytestmark = pytest.mark.django_db(transaction=True)`; **build `settings.TASKS`
+inline** — `build_pg_cron_tasks` (`tests/pg_cron/utils.py:10`) hard-codes a `SCHEDULE`
+key and can't carry `CLEANUP` — with `SCHEDULER=pg_cron` +
+`OPTIONS["CLEANUP"]={"schedule": "17 * * * *"}` + declared `QUEUES`, and **no
+`SCHEDULE`** so the `get_managed_jobs() == []` assertion is meaningful). Tests, using
+the `cron.job` query pattern from `test_pg_cron_sync_jobs.py`:
 
 - after `call_command("absurd_sync_crons")`: `cron.job` has
   `django_absurd_cleanup_default` with schedule `17 * * * *` and command
@@ -276,8 +314,10 @@ git commit -m "feat: pg_cron schedules a standalone cleanup job from CLEANUP"
 
 - Modify: `django_absurd/AGENTS.md`, `docs/web/cleanup.md`, `docs/web/configuration.md`,
   `docs/WHY.md`
+- Modify: `tests/tasks.py`, `tests/core/test_cleanup.py` (retire the wrapper artifacts —
+  see Step 1a)
 
-**Interfaces:** none (docs). Verification is `uvx zensical build` + grep.
+**Interfaces:** none (docs). Verification is `uvx zensical build` + grep + the suite.
 
 - [ ] **Step 1: Rewrite the user docs**
 
@@ -288,7 +328,17 @@ pg_cron; keep the on-demand `absurd_cleanup` command + `cleanup_queues()` as the
 programmatic/ad-hoc path. Link the
 [Absurd cleanup docs](https://earendil-works.github.io/absurd/cleanup/) (per the
 source-docs rule). Add a `CLEANUP` row to `docs/web/configuration.md`'s Backend
-`OPTIONS` table and the `absurd.E010` row to its check-ID table.
+`OPTIONS` table and an `absurd.E010` row to its check-ID table (with a `cron-jobs.md`
+cross-reference, matching the E007/E008 rows).
+
+- [ ] **Step 1a: Retire the wrapper test artifacts**
+
+Since the wrapper pattern is fully superseded (maintainer: "blow it away … entirely
+declarative"), remove the wrapper-only test artifacts #65 introduced: delete
+`test_wrapper_task_result_is_deleted_counts` from `tests/core/test_cleanup.py` and the
+`cleanup` test-app task from `tests/tasks.py` (and its `cleanup as cleanup_task`
+import). The beat-cleanup test (Task 2) is now the scheduled-cleanup coverage. Run
+`uv run pytest tests/core -q` to confirm nothing else referenced them.
 
 - [ ] **Step 2: Rewrite WHY.md**
 
