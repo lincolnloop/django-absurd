@@ -195,6 +195,19 @@ def test_flush_interactive_no_keeps_queues(settings, capsys):
     assert sorted(get_absurd_client().list_queues()) == ["default", "other"]
 
 
+def test_flush_non_interactive_eof_keeps_queues(settings, capsys):
+    sync_queue(settings, names=("default", "other"))
+    capsys.readouterr()  # discard sync output
+    with answer(""):  # empty stdin → input() raises EOFError
+        call_command("absurd_flush")
+    assert capsys.readouterr().out == (
+        "This will DROP 2 queue(s) and ALL their data: default, other\n"
+        "Type 'yes' to continue, or 'no' to cancel: "
+        "Flush cancelled.\n"
+    )
+    assert sorted(get_absurd_client().list_queues()) == ["default", "other"]
+
+
 def run_beat_until(backend, cutoff):
     with freeze_time("2026-01-01 00:00:00") as frozen:
 

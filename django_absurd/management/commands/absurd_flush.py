@@ -33,7 +33,10 @@ class Command(BaseCommand):
             self.stdout.write(
                 f"This will DROP {len(queues)} queue(s) and ALL their data: {names}"
             )
-            confirm = input("Type 'yes' to continue, or 'no' to cancel: ")
+            try:
+                confirm = input("Type 'yes' to continue, or 'no' to cancel: ")
+            except EOFError:  # non-interactive (CI, docker exec -T) — cancel
+                confirm = "no"
         else:
             confirm = "yes"
         if confirm != "yes":

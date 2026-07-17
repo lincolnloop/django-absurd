@@ -33,5 +33,9 @@ class Command(BaseCommand):
         signal.signal(signal.SIGTERM, handle_signal)
 
         schedules = get_settings_schedules(backend)
-        self.stdout.write(f"Started beat with {len(schedules)} schedule(s).")
+        cleanup = backend.options.get("CLEANUP")
+        message = f"Started beat with {len(schedules)} schedule(s)."
+        if cleanup:
+            message += f" + cleanup: {cleanup['schedule']}"
+        self.stdout.write(message)
         run_beat(backend, stop=stop)
