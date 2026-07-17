@@ -36,40 +36,36 @@ The same function is importable — `cleanup_queues()` for all queues, or
 `cleanup_queues(["reports", "emails"])` for specific ones — returning a list of
 per-queue count dicts.
 
-## Schedule recurring cleanup (beat)
+## Schedule recurring cleanup
 
-Under the **beat** scheduler — application-level scheduling — run cleanup as an ordinary
-scheduled task: write a one-line `@task` wrapper in your app and register it in
-[`SCHEDULE`](cron-jobs.md):
-
-```python title="myapp/tasks.py"
-from django.tasks import task
-from django_absurd.cleanup import cleanup_queues
-
-@task
-def cleanup():
-    return cleanup_queues()
-```
+Add `OPTIONS["CLEANUP"] = {"schedule": "<cron>"}` to run cleanup automatically on
+cadence — no user code required:
 
 ```python title="settings.py"
 TASKS = {
     "default": {
         "BACKEND": "django_absurd.backends.AbsurdBackend",
         "OPTIONS": {
-            "SCHEDULE": {
-                "absurd-cleanup": {
-                    "task": "myapp.tasks.cleanup",
-                    "cron": "0 3 * * *",   # 3am daily
-                },
-            },
+            "CLEANUP": {"schedule": "0 3 * * *"},   # 3am daily
         },
     },
 }
 ```
 
-The wrapper runs on its `@task` queue (or the `queue` key in the schedule entry). Its
-return value — a list of per-queue dicts — is stored as the task result and retrievable
-via `get_result` (see [Tasks — Read the result](tasks.md#read-the-result)).
+This works under **either** scheduler:
+
+- **beat** — runs cleanup in-process on the declared cadence.
+- **pg_cron** — schedules a native database job (`django_absurd_cleanup_<alias>`)
+  alongside your other cron jobs (see [Cron Jobs](cron-jobs.md)).
+
+`manage.py check` reports `absurd.E010` for a missing or invalid `schedule` cron
+expression. See
+[Absurd's cleanup docs](https://earendil-works.github.io/absurd/cleanup/) for the
+underlying retention model.
+
+Retention knobs (`cleanup_ttl`, `cleanup_limit`) remain per-queue policy — configure
+them in `OPTIONS["QUEUES"]` (see
+[Configuration — Declaring queues](configuration.md#declaring-queues)).
 
 ## Reset — drop all queues
 

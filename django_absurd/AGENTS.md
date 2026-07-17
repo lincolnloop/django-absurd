@@ -50,6 +50,8 @@ Backend `OPTIONS` (all optional):
 - `QUEUES` — a map of queue name → `absurd_sdk.CreateQueueOptions` for per-queue config.
   Use this _instead of_ the top-level `QUEUES` list (which only names queues) — declare
   queues in one place or the other, never both (setting both is a configuration error).
+- `CLEANUP` — a map `{"schedule": "<cron>"}` to run cleanup automatically on cadence
+  (beat: in-process; pg_cron: native database job). Omit to skip scheduled cleanup.
 - `ENABLE_ADMIN` — register Absurd models in Django admin (default: `True`). Set to
   `False` to disable.
 - `ADMIN_SITE` — tuple of dotted paths to `AdminSite` instances to register on (default:
@@ -147,6 +149,8 @@ System check IDs:
 - `absurd.E008` — `SCHEDULER="pg_cron"` is configured but `"django_absurd.pg_cron"` is
   not in `INSTALLED_APPS`. See [pg_cron backend](#pg_cron-backend).
 - `absurd.E009` — `OPTIONS["DEFAULT_MAX_ATTEMPTS"]` is not an integer `>= 1`.
+- `absurd.E010` — invalid `CLEANUP` configuration (missing or invalid `schedule` cron
+  expression, or unknown keys).
 - `absurd.W003` (Warning) — `"django_absurd.pg_cron"` is in `INSTALLED_APPS` but ordered
   before `"django_absurd"`, causing its `post_migrate` cron reconcile to run before
   queue provisioning. See [pg_cron backend](#pg_cron-backend).
@@ -486,30 +490,25 @@ python manage.py absurd_cleanup reports    # just 'reports'
 # default: 12 tasks, 0 events deleted
 ```
 
-**Scheduled (beat):** under the beat scheduler (application-level scheduling), run
-cleanup as an ordinary scheduled task — write a one-line `@task` wrapper in your app and
-register it in `SCHEDULE`. The return value is stored as the task result so you can
-retrieve it via `get_result`:
+**Scheduled:** add `OPTIONS["CLEANUP"] = {"schedule": "<cron>"}` to run cleanup
+automatically on cadence — zero user code required:
 
 ```python
-# myapp/tasks.py
-from django.tasks import task
-from django_absurd.cleanup import cleanup_queues
-
-@task
-def cleanup():
-    return cleanup_queues()
+TASKS = {
+    "default": {
+        "BACKEND": "django_absurd.backends.AbsurdBackend",
+        "OPTIONS": {
+            "CLEANUP": {"schedule": "0 3 * * *"},   # 3am daily
+        },
+    },
+}
 ```
 
-```python
-# settings.py
-"SCHEDULE": {"absurd-cleanup": {
-    "task": "myapp.tasks.cleanup", "cron": "0 3 * * *"}}
-```
-
-The wrapper's queue (set by `@task(queue_name=…)` or the `SCHEDULE` entry's `queue` key)
-is where cleanup runs. Retention knobs are per-queue policy on the Absurd queue itself —
-set them in `OPTIONS["QUEUES"]`, not on the wrapper task.
+This works under **either** scheduler: beat runs cleanup in-process on the declared
+cadence; pg_cron schedules a native database job (`django_absurd_cleanup_<alias>`).
+`manage.py check` reports `absurd.E010` for an invalid cron expression. Retention knobs
+(`cleanup_ttl`, `cleanup_limit`) remain per-queue policy — set them in
+`OPTIONS["QUEUES"]`.
 
 **Reset (destructive):** `manage.py absurd_flush` **deletes all task history** — it
 removes every queue (its per-queue tables and registry entry) along with all tasks,

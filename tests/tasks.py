@@ -2,7 +2,6 @@ from absurd_sdk import CancellationPolicy, RetryStrategy
 from django.contrib.auth.models import Group
 from django.tasks import task
 
-from django_absurd.cleanup import cleanup_queues
 from django_absurd.params import absurd_default_params
 from tests.models import Payload
 
@@ -90,8 +89,3 @@ def cancellable():
 def fully_specced():
     msg = "path-resolved for its decorator; never run"
     raise NotImplementedError(msg)
-
-
-@task
-def cleanup():
-    return cleanup_queues()

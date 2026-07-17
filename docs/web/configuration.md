@@ -56,13 +56,14 @@ Use this to set [retention](https://earendil-works.github.io/absurd/storage/)
 
 All optional:
 
-| Option                 | Default                          | What it does                                                                                                              |
-| ---------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `DATABASE`             | `"default"`                      | Which [`DATABASES`](https://docs.djangoproject.com/en/6.0/ref/settings/#databases) alias to use.                          |
-| `DEFAULT_MAX_ATTEMPTS` | `5`                              | Retry ceiling per task; must be an integer `>= 1` (override per task/call — see [Tasks](tasks.md#retries-spawn-options)). |
-| `QUEUES`               | —                                | Map of queue name → policy (above). Mutually exclusive with the top-level list.                                           |
-| `ENABLE_ADMIN`         | `True`                           | Register the read-only Absurd models in the Django admin.                                                                 |
-| `ADMIN_SITE`           | `("django.contrib.admin.site",)` | Dotted paths to the `AdminSite`(s) to register on.                                                                        |
+| Option                 | Default                          | What it does                                                                                                                                                        |
+| ---------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE`             | `"default"`                      | Which [`DATABASES`](https://docs.djangoproject.com/en/6.0/ref/settings/#databases) alias to use.                                                                    |
+| `DEFAULT_MAX_ATTEMPTS` | `5`                              | Retry ceiling per task; must be an integer `>= 1` (override per task/call — see [Tasks](tasks.md#retries-spawn-options)).                                           |
+| `QUEUES`               | —                                | Map of queue name → policy (above). Mutually exclusive with the top-level list.                                                                                     |
+| `CLEANUP`              | —                                | Map `{"schedule": "<cron>"}` to run cleanup on cadence (beat: in-process; pg_cron: native job). Omit to skip. See [Cleanup](cleanup.md#schedule-recurring-cleanup). |
+| `ENABLE_ADMIN`         | `True`                           | Register the read-only Absurd models in the Django admin.                                                                                                           |
+| `ADMIN_SITE`           | `("django.contrib.admin.site",)` | Dotted paths to the `AdminSite`(s) to register on.                                                                                                                  |
 
 ## Non-default database
 
@@ -79,15 +80,16 @@ DATABASE_ROUTERS = ["django_absurd.routers.AbsurdRouter"]
 `python manage.py check django_absurd` verifies the configuration and points at anything
 wrong. Fix what it reports rather than silencing it:
 
-| ID            | Means                                                                                                                    |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `absurd.E001` | Backend / database misconfiguration.                                                                                     |
-| `absurd.E002` | `QUEUES` declared in both the top level and `OPTIONS`.                                                                   |
-| `absurd.E003` | Invalid per-queue policy options.                                                                                        |
-| `absurd.E004` | Multiple Absurd backends targeting different databases.                                                                  |
-| `absurd.E005` | `AbsurdRouter` missing from `DATABASE_ROUTERS`.                                                                          |
-| `absurd.E006` | `ENABLE_ADMIN` isn't a bool, or `ADMIN_SITE` doesn't resolve to `AdminSite`s.                                            |
-| `absurd.E007` | Invalid `SCHEDULE` entry (see [Cron Jobs](cron-jobs.md)).                                                                |
-| `absurd.E008` | `SCHEDULER` is `pg_cron` but `django_absurd.pg_cron` is not in `INSTALLED_APPS` (see [Cron Jobs](cron-jobs.md)).         |
-| `absurd.E009` | `OPTIONS["DEFAULT_MAX_ATTEMPTS"]` is not an integer `>= 1`.                                                              |
-| `absurd.W003` | (Warning) `django_absurd.pg_cron` is ordered before `django_absurd` in `INSTALLED_APPS` (see [Cron Jobs](cron-jobs.md)). |
+| ID            | Means                                                                                                                             |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `absurd.E001` | Backend / database misconfiguration.                                                                                              |
+| `absurd.E002` | `QUEUES` declared in both the top level and `OPTIONS`.                                                                            |
+| `absurd.E003` | Invalid per-queue policy options.                                                                                                 |
+| `absurd.E004` | Multiple Absurd backends targeting different databases.                                                                           |
+| `absurd.E005` | `AbsurdRouter` missing from `DATABASE_ROUTERS`.                                                                                   |
+| `absurd.E006` | `ENABLE_ADMIN` isn't a bool, or `ADMIN_SITE` doesn't resolve to `AdminSite`s.                                                     |
+| `absurd.E007` | Invalid `SCHEDULE` entry (see [Cron Jobs](cron-jobs.md)).                                                                         |
+| `absurd.E008` | `SCHEDULER` is `pg_cron` but `django_absurd.pg_cron` is not in `INSTALLED_APPS` (see [Cron Jobs](cron-jobs.md)).                  |
+| `absurd.E009` | `OPTIONS["DEFAULT_MAX_ATTEMPTS"]` is not an integer `>= 1`.                                                                       |
+| `absurd.E010` | Invalid `CLEANUP` configuration (missing or invalid `schedule` cron expression, or unknown keys) (see [Cron Jobs](cron-jobs.md)). |
+| `absurd.W003` | (Warning) `django_absurd.pg_cron` is ordered before `django_absurd` in `INSTALLED_APPS` (see [Cron Jobs](cron-jobs.md)).          |

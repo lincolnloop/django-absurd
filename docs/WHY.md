@@ -154,13 +154,22 @@ as manual setup steps.
 
 ## Cleanup & retention
 
-Retention — deleting aged task history — is enforced by a plain function plus an
-on-demand command, not a library-shipped scheduled task. A shipped task would have to
-bind to a concrete backend and queue the moment its module is imported, and the task
-framework validates that queue at import; any project whose Absurd backend or default
-queue differs from the assumed names would then fail to boot. Shipping the logic and
-letting each project wrap it in its own task sidesteps that entirely, and matches how
-task libraries expect you to register your own tasks.
+Retention — deleting aged task history — is enforced by a plain function
+(`cleanup_queues()`) plus an on-demand command (`absurd_cleanup`), and wired to a
+cadence via `OPTIONS["CLEANUP"] = {"schedule": "<cron>"}`. No user code required: the
+library drives cleanup in-process under beat, and schedules a native database job
+(`django_absurd_cleanup_<alias>`) under pg_cron — the same declarative config works for
+both schedulers.
+
+The first iteration shipped the retention logic and asked each project to wrap it in its
+own `@task` and register that task in `SCHEDULE`. That was a reasonable first step, but
+it imposed user code for a universal maintenance concern, required a concrete queue
+binding that the task framework validates at import time (breaking projects whose queue
+names differed from the assumed default), and the pg_cron path gave users the same
+application-level wrapper rather than a native job. The declarative `CLEANUP` key
+replaces that: zero user code, works uniformly under beat or pg_cron, and preserves the
+no-shipped-`@task` property that originally motivated keeping cleanup out of the
+library.
 
 The function returns plain per-queue count dictionaries rather than a richer typed
 object, because that return value becomes a task result and task results are stored as
@@ -179,14 +188,6 @@ destructive-command convention (confirm interactively, skip with a no-input flag
 safety model is one users already know. Dropping a queue removes only that queue's own
 maintenance jobs and data; user-defined recurring schedules live elsewhere and survive,
 so a reset never silently cancels recurring work.
-
-Scheduling this cleanup is the application-level (beat) answer. Absurd's own per-queue
-maintenance — partition upkeep, retention, detachment — is driven exclusively through
-pg_cron; on a pg_cron deployment the proper path is that native maintenance, not the
-application-level wrapper. That Absurd already ships this maintenance for pg_cron is
-itself the argument against a single all-in-one shipped task: on the very scheduler that
-would most want one, the engine already provides it — so the library ships the retention
-logic and leaves scheduling to whichever mechanism the deployment already runs.
 
 ## Admin & ORM introspection
 
