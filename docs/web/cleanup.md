@@ -58,7 +58,7 @@ This works under **either** scheduler:
 - **pg_cron** — schedules a native database job (`django_absurd_cleanup_<alias>`)
   alongside your other cron jobs (see [Cron Jobs](cron-jobs.md)).
 
-`manage.py check` reports `absurd.E010` for a missing/malformed `CLEANUP` (not a
+`manage.py check` reports `absurd.E010` for a malformed `CLEANUP` (not a
 `{"schedule": …}` map, or unknown keys); the cron grammar is checked at `check` time for
 beat, and by the database at sync for pg_cron. See
 [Absurd's cleanup docs](https://earendil-works.github.io/absurd/cleanup/) for the

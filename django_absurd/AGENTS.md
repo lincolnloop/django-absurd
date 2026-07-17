@@ -506,9 +506,9 @@ TASKS = {
 
 This works under **either** scheduler: beat runs cleanup in-process on the declared
 cadence; pg_cron schedules a native database job (`django_absurd_cleanup_<alias>`).
-`manage.py check` reports `absurd.E010` for a missing/malformed `CLEANUP` (the beat cron
-grammar is checked then too; pg_cron's is validated by the database at sync). Retention
-knobs (`cleanup_ttl`, `cleanup_limit`) remain per-queue policy — set them in
+`manage.py check` reports `absurd.E010` for a malformed `CLEANUP` (the beat cron grammar
+is checked then too; pg_cron's is validated by the database at sync). Retention knobs
+(`cleanup_ttl`, `cleanup_limit`) remain per-queue policy — set them in
 `OPTIONS["QUEUES"]`.
 
 **Reset (destructive):** `manage.py absurd_flush` **deletes all task history** — it
