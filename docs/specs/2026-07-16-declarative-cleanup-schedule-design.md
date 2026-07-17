@@ -100,7 +100,6 @@ native SQL).
   pg_cron maintenance surface stays in #64/#61. `CLEANUP` is cleanup-only.
 - Per-queue cleanup scheduling — `CLEANUP` is backend-global; retention amounts are
   already per-queue policy.
-- Removing the on-demand `absurd_cleanup` command.
 - Static (check-time) pg_cron cron-grammar validation — #66; reuse one cron validator
   across beat / pg_cron / cleanup when that lands.
 
