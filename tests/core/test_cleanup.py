@@ -1,13 +1,20 @@
 import contextlib
+import datetime as dt
 import io
+import logging
 import re
 import sys
 
 import pytest
 from django.core.management import call_command
+from django.db import connection
+from django.utils import timezone
+from freezegun import freeze_time
 
+from django_absurd.backends import get_absurd_backends
 from django_absurd.cleanup import cleanup_queues
 from django_absurd.queues import get_absurd_client
+from django_absurd.scheduler import run_beat
 from tests.tasks import add, routed
 from tests.tasks import cleanup as cleanup_task
 
@@ -17,19 +24,21 @@ ABSURD = "django_absurd.backends.AbsurdBackend"
 
 
 def sync_queue(
-    settings, cleanup_ttl="0 seconds", cleanup_limit=1000, names=("default",)
+    settings,
+    cleanup_ttl="0 seconds",
+    cleanup_limit=1000,
+    names=("default",),
+    cleanup=None,
 ):
-    settings.TASKS = {
-        "default": {
-            "BACKEND": ABSURD,
-            "OPTIONS": {
-                "QUEUES": {
-                    name: {"cleanup_ttl": cleanup_ttl, "cleanup_limit": cleanup_limit}
-                    for name in names
-                }
-            },
+    options = {
+        "QUEUES": {
+            name: {"cleanup_ttl": cleanup_ttl, "cleanup_limit": cleanup_limit}
+            for name in names
         }
     }
+    if cleanup is not None:
+        options["CLEANUP"] = cleanup
+    settings.TASKS = {"default": {"BACKEND": ABSURD, "OPTIONS": options}}
     call_command("absurd_sync_queues")
 
 
@@ -197,3 +206,39 @@ def test_flush_interactive_no_keeps_queues(settings, capsys):
         "Flush cancelled.\n"
     )
     assert sorted(get_absurd_client().list_queues()) == ["default", "other"]
+
+
+def run_beat_until(backend, cutoff):
+    with freeze_time("2026-01-01 00:00:00") as frozen:
+
+        def fake_wait(timeout: float) -> bool:
+            frozen.tick(dt.timedelta(seconds=timeout))
+            return timezone.now() >= cutoff
+
+        run_beat(backend, wait=fake_wait)
+
+
+def test_beat_fires_cleanup_on_cadence(settings, cleanup):
+    sync_queue(settings, cleanup={"schedule": "* * * * *"})
+    backend = get_absurd_backends()["default"]
+    add.enqueue(2, 3)
+    drain()  # completed → aged-terminal (cleanup_ttl="0 seconds")
+    run_beat_until(backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC))
+    assert cleanup() == [
+        {"queue_name": "default", "tasks_deleted": 0, "events_deleted": 0}
+    ]
+
+
+def test_beat_isolates_failing_cleanup(settings, caplog):
+    sync_queue(settings, cleanup={"schedule": "* * * * *"})
+    backend = get_absurd_backends()["default"]
+    with connection.cursor() as cur:
+        cur.execute("DROP SCHEMA IF EXISTS absurd CASCADE")
+    try:
+        with caplog.at_level(logging.ERROR, logger="django_absurd"):
+            run_beat_until(backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC))
+        errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+        assert [r.getMessage() for r in errors] == ["django-absurd cleanup failed"]
+    finally:
+        call_command("migrate", "django_absurd", "zero", verbosity=0)
+        call_command("migrate", verbosity=0)  # restore absurd schema
