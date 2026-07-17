@@ -94,6 +94,12 @@ E007_HINT_SCHEDULER = "Set SCHEDULER to 'beat' or 'pg_cron'."
 E009_MSG = "django-absurd: OPTIONS['DEFAULT_MAX_ATTEMPTS'] must be an integer >= 1."
 E009_HINT = "Set DEFAULT_MAX_ATTEMPTS to a positive integer (Absurd rejects < 1)."
 
+E010_MSG = "django-absurd: invalid CLEANUP option."
+E010_HINT = (
+    "Set CLEANUP to a dict with a single 'schedule' key:"
+    ' OPTIONS["CLEANUP"] = {"schedule": "<cron>"}.'
+)
+
 E008_MSG = (
     "django-absurd: SCHEDULER is 'pg_cron' but 'django_absurd.pg_cron'"
     " is not in INSTALLED_APPS."
@@ -278,9 +284,7 @@ def validate_schedule(
     # pg_cron the check only enforces structural presence (a non-empty string),
     # leaving the grammar to cron.schedule.
     cron = spec.get("cron", "")
-    if scheduler == "beat" and (
-        not isinstance(cron, str) or not croniter.croniter.is_valid(cron)
-    ):
+    if scheduler == "beat" and not is_valid_beat_cron(cron):
         errors.append(
             Error(
                 f"{E007_MSG} Schedule {name!r}: invalid cron expression {cron!r}.",
@@ -329,6 +333,36 @@ def validate_schedule(
         )
 
     return errors
+
+
+def is_valid_beat_cron(cron: t.Any) -> bool:
+    return isinstance(cron, str) and croniter.croniter.is_valid(cron)
+
+
+@register("absurd")
+def check_absurd_cleanup_config(
+    *,
+    app_configs: Sequence[AppConfig] | None,
+    **kwargs: t.Any,
+) -> list[CheckMessage]:
+    errors: list[CheckMessage] = []
+    for backend in get_absurd_backends().values():
+        if "CLEANUP" not in backend.options:
+            continue
+        if not is_valid_cleanup(backend.options["CLEANUP"], backend.scheduler):
+            errors.append(Error(E010_MSG, hint=E010_HINT, id="absurd.E010"))
+    return errors
+
+
+def is_valid_cleanup(cleanup: t.Any, scheduler: str) -> bool:
+    if not isinstance(cleanup, Mapping) or set(cleanup) != {"schedule"}:
+        return False
+    schedule = cleanup["schedule"]
+    # pg_cron cron grammar stays DB-authoritative at sync (matching the SCHEDULE
+    # stance); at check time only the beat scheduler's cron is validated here.
+    if scheduler == "beat":
+        return is_valid_beat_cron(schedule)
+    return isinstance(schedule, str) and bool(schedule.strip())
 
 
 @register("absurd")
