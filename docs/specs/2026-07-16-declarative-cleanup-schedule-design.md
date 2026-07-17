@@ -44,25 +44,30 @@ does not hold one. Long cleanup blocks the single-threaded loop until it returns
 
 ## pg_cron path
 
-The pg_cron app's reconcile (post_migrate + `absurd_sync_crons`) schedules **one** cron
-job running `select absurd.cleanup_all_queues()` on `CLEANUP["schedule"]`. The cleanup
-job is **its own thing, outside the managed `ScheduledTask` (`absurd:`) machinery** — a
-deliberate design call (C2): it uses a distinct name **`django_absurd_cleanup_<alias>`**
-that is NOT swept by `get_managed_jobs()`'s `starts_with(jobname, 'absurd:')` scan
-(`models.py:88-95`) — so it never pollutes the `== []` teardown/prune assertions — and
-is distinct from Absurd's own `absurd_cleanup_<md5>` maintenance jobs. It has **no
-`ScheduledTask` projection row**; a dedicated reconcile enables it (when `CLEANUP` is
-set) or unschedules it (when absent), managed statelessly by that deterministic name.
-Because it lives outside the managed prefixes, it must be **explicitly torn down** by
-its own hook wired into `teardown_crons` (`reconcile.py`) and the scheduler-flip path
-(`apps.py`) — those only handle `absurd:s:`/`absurd:a:` today and would otherwise leak
-it. It is cleanup-only, not `enable_cron`'s 3-job bundle, so partition/detach stay with
-#61, and it **survives `absurd_flush`** (`drop_queue`→`disable_cron` only removes
-`absurd_*` jobs). The raw `select absurd.cleanup_all_queues()` command is a static,
-argument-free literal — no injection surface. Cron grammar is DB-authoritative
-(`cron.schedule` at sync). Admin visibility for this job is deferred to #67 (a read-only
-maintenance panel) — deliberately NOT via a `ScheduledTask` row, which would drag it
-back into the managed namespace.
+The pg_cron app's reconcile (post_migrate + `absurd_sync_crons`) schedules **Absurd's
+own global cleanup job** on `CLEANUP["schedule"]` — jobname **`absurd_cleanup_all`**,
+command **`select * from absurd.cleanup_all_queues(null::text);`**, the exact identity
+`absurd.enable_cron` / `absurdctl cron --enable` use. This is a deliberate design call
+(C2, revised): rather than forking a parallel per-alias job that would be INCOMPATIBLE
+with Absurd's own, we reference the **one shared job** (a `cron.schedule` upsert;
+`absurdctl cron --disable` also removes it). It lives outside the managed
+`ScheduledTask` (`absurd:` colon) machinery, so it is NOT swept by
+`get_managed_jobs()`'s `starts_with(jobname, 'absurd:')` scan (`models.py:88-95`) — it
+never pollutes the `== []` teardown/prune assertions. It has **no `ScheduledTask`
+projection row**; a dedicated reconcile enables it (when `CLEANUP` is set) or
+unschedules it (when absent), managed statelessly by that fixed name. **django-absurd is
+authoritative** over `absurd_cleanup_all` when `CLEANUP` is set (it schedules and
+unschedules it), so cleanup must be driven by `OPTIONS["CLEANUP"]` OR `absurdctl cron` —
+not both (multi-manager arbitration deferred to #63). Because it lives outside the
+managed prefixes, it must be **explicitly torn down** by its own hook wired into
+`teardown_crons` (`reconcile.py`) and the scheduler-flip path (`apps.py`) — those only
+handle `absurd:s:`/`absurd:a:` today and would otherwise leak it. It is cleanup-only,
+not `enable_cron`'s 3-job bundle, so partition/detach stay with #61. The
+`select * from absurd.cleanup_all_queues(null::text);` command is a static literal — no
+injection surface. Cron grammar is DB-authoritative (`cron.schedule` at sync). Admin
+visibility for this job is deferred to #67 (a read-only maintenance panel) —
+deliberately NOT via a `ScheduledTask` row, which would drag it back into the managed
+namespace.
 
 ## Kept (on-demand / programmatic)
 
@@ -96,11 +101,11 @@ scheduler. pg_cron cron stays DB-authoritative at sync; static grammar validatio
   cleanup reconcile lives in that app's post_migrate and would silently no-op, but
   `absurd.E008` already errors on any `SCHEDULER=pg_cron` + app-absent config (keyed on
   the scheduler value, not on SCHEDULE content), so it's caught upstream. No new signal.
-- **Two Absurd backends with `CLEANUP` on the same DB** — each schedules its own
-  `django_absurd_cleanup_<alias>` job / beat tick against the same DB. Redundant, not
-  incorrect (cleanup is DB-global + idempotent — a second run just finds fewer eligible
-  rows). This design assumes **≤1 Absurd backend per DB**; hardening `E004` to forbid
-  same-DB duplicates is tracked in #63. No new check here.
+- **Two Absurd backends with `CLEANUP` on the same DB** — both target the same shared
+  `absurd_cleanup_all` job (last reconcile wins its schedule) / beat tick against the
+  same DB. Redundant, not incorrect (cleanup is DB-global + idempotent — a second run
+  just finds fewer eligible rows). This design assumes **≤1 Absurd backend per DB**;
+  hardening `E004` to forbid same-DB duplicates is tracked in #63. No new check here.
 
 ## Testing (behavioral, real DB, no mocks)
 
@@ -108,10 +113,11 @@ scheduler. pg_cron cron stays DB-authoritative at sync; static grammar validatio
   (short `cleanup_ttl`); drive the beat cleanup firing path once → assert the aged rows
   are deleted and the per-queue counts are logged.
 - **pg_cron suite (integration — requested):** set `CLEANUP` + `SCHEDULER=pg_cron`;
-  reconcile (`absurd_sync_crons` / migrate) → assert the cleanup job exists in
-  `cron.job` with the declared schedule and the `select absurd.cleanup_all_queues()`
-  command; drop `CLEANUP`, reconcile → assert the job is unscheduled. (Job presence +
-  command asserted; actual firing is pg_cron-timed, not asserted.)
+  reconcile (`absurd_sync_crons` / migrate) → assert the `absurd_cleanup_all` job exists
+  in `cron.job` with the declared schedule and the
+  `select * from absurd.cleanup_all_queues(null::text);` command; drop `CLEANUP`,
+  reconcile → assert the job is unscheduled. (Job presence + command asserted; actual
+  firing is pg_cron-timed, not asserted.)
 - Assert the COMPLETE emitted/logged text; alphabetize any parametrize values.
 
 ## WHY.md

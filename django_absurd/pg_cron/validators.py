@@ -52,15 +52,6 @@ def build_jobname_prefix(alias: str, source: str = Source.SETTINGS) -> str:
     return f"absurd:{source}:{alias}:"
 
 
-def build_cleanup_jobname(alias: str) -> str:
-    """Return the pg_cron job name for a backend's standalone cleanup job.
-
-    Deliberately outside the ``absurd:`` namespace so ``get_managed_jobs()`` never
-    sweeps it — the cleanup job is stateless (no ScheduledTask row) and driven
-    directly by ``OPTIONS["CLEANUP"]``."""
-    return f"django_absurd_cleanup_{alias}"
-
-
 def validate_jobname_length(source: str, alias: str, name: str) -> None:
     jobname = build_jobname(alias, name, source)
     size = len(jobname.encode())

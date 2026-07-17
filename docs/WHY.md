@@ -157,9 +157,12 @@ as manual setup steps.
 Retention — deleting aged task history — is enforced by a plain function
 (`cleanup_queues()`) plus an on-demand command (`absurd_cleanup`), and wired to a
 cadence via `OPTIONS["CLEANUP"] = {"schedule": "<cron>"}`. No user code required: the
-library drives cleanup in-process under beat, and schedules a native database job
-(`django_absurd_cleanup_<alias>`) under pg_cron — the same declarative config works for
-both schedulers.
+library drives cleanup in-process under beat, and schedules Absurd's own native cleanup
+job (`absurd_cleanup_all`, the same identity `absurdctl cron` uses — not a parallel job)
+under pg_cron — the same declarative config works for both schedulers. When
+`OPTIONS["CLEANUP"]` is set, django-absurd is authoritative over that job (schedules and
+unschedules it), so cleanup is driven one way only — via `OPTIONS["CLEANUP"]` or
+`absurdctl cron`, not both (multi-manager arbitration deferred to #63).
 
 The first iteration shipped the retention logic and asked each project to wrap it in its
 own `@task` and register that task in `SCHEDULE`. That was a reasonable first step, but

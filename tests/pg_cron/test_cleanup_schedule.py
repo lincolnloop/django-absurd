@@ -26,7 +26,7 @@ def fetch_cleanup_row():
     with connection.cursor() as cur:
         cur.execute(
             "select jobname, schedule, command from cron.job where jobname = %s",
-            ["django_absurd_cleanup_default"],
+            ["absurd_cleanup_all"],
         )
         return cur.fetchone()
 
@@ -37,9 +37,9 @@ def test_sync_schedules_standalone_cleanup_job(settings):
     call_command("absurd_sync_crons")
 
     assert fetch_cleanup_row() == (
-        "django_absurd_cleanup_default",
+        "absurd_cleanup_all",
         "17 * * * *",
-        "select absurd.cleanup_all_queues()",
+        "select * from absurd.cleanup_all_queues(null::text);",
     )
 
 

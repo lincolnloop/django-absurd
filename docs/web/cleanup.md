@@ -59,8 +59,11 @@ TASKS = {
 This works under **either** scheduler:
 
 - **beat** — runs cleanup in-process on the declared cadence.
-- **pg_cron** — schedules a native database job (`django_absurd_cleanup_<alias>`)
-  alongside your other cron jobs (see [Cron Jobs](cron-jobs.md)).
+- **pg_cron** — schedules Absurd's own native cleanup job (`absurd_cleanup_all`, the
+  same identity `absurdctl cron` uses) alongside your other cron jobs (see
+  [Cron Jobs](cron-jobs.md)). django-absurd is authoritative over this job when
+  `OPTIONS["CLEANUP"]` is set (it schedules and unschedules it), so drive cleanup one
+  way only — `OPTIONS["CLEANUP"]` **or** `absurdctl cron`, not both.
 
 `manage.py check` reports `absurd.E010` for a malformed `CLEANUP` (not a
 `{"schedule": …}` map, or unknown keys); the cron grammar is checked at `check` time for

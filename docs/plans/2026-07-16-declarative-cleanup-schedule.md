@@ -6,13 +6,14 @@
 
 **Goal:** One declarative `OPTIONS["CLEANUP"] = {"schedule": "<cron>"}` backend knob
 that runs per-queue retention on a cadence under both schedulers — beat fires
-`cleanup_queues()` in-process; pg_cron schedules a native
-`select absurd.cleanup_all_queues()` job — replacing the user-written `@task` wrapper
-entirely.
+`cleanup_queues()` in-process; pg_cron schedules Absurd's own native
+`absurd_cleanup_all` (`select * from absurd.cleanup_all_queues(null::text);`) job —
+replacing the user-written `@task` wrapper entirely.
 
 **Architecture:** Reuses `cleanup_queues()` (#65). beat: a non-task firing branch seeded
-into `run_beat`. pg_cron: a standalone cron job `django_absurd_cleanup_<alias>` outside
-the managed `ScheduledTask` (`absurd:`) namespace, with its own reconcile + teardown.
+into `run_beat`. pg_cron: schedules Absurd's own global `absurd_cleanup_all` job (same
+identity `absurdctl cron` uses) outside the managed `ScheduledTask` (`absurd:`)
+namespace, with its own reconcile + teardown; django-absurd is authoritative over it.
 New `absurd.E010` validates the option.
 
 **Tech Stack:** Django 6.0, psycopg3, croniter, pg_cron, pytest (function-based, real
@@ -233,17 +234,20 @@ git commit -m "feat: beat runs CLEANUP in-process on cadence"
   the reconcile entry points `sync_crons` (`reconcile.py:70`),
   `reconcile_crons_after_migrate` (`apps.py:58`), `teardown_crons` (`reconcile.py:146`);
   the cron.job query pattern (`tests/pg_cron/test_pg_cron_sync_jobs.py:29-40`).
-- Produces: a `build_cleanup_jobname(alias) -> str` returning
-  `django_absurd_cleanup_<alias>` (NOT in the `absurd:` prefix — never swept by
-  `get_managed_jobs()`); reconcile that schedules/unschedules that job.
+- Produces: module constants `ABSURD_CLEANUP_JOB = "absurd_cleanup_all"` +
+  `CLEANUP_COMMAND = "select * from absurd.cleanup_all_queues(null::text);"` — Absurd's
+  OWN global cleanup identity (NOT in the `absurd:` colon prefix — never swept by
+  `get_managed_jobs()`); reconcile that schedules/unschedules that shared job.
 
 Notes for the implementer:
 
-- The cleanup job command is the static literal `select absurd.cleanup_all_queues()` —
-  no interpolated data, no injection surface. Schedule via
-  `cron.schedule(<jobname>, <cleanup schedule>, 'select absurd.cleanup_all_queues()')`
-  through `open_locked_cursor`; unschedule via `cron.unschedule(<jobname>)` (guard the
-  not-found case like `prune_pg_cron_jobs`, `models.py:320`).
+- The cleanup job targets Absurd's own global job: jobname `absurd_cleanup_all`, command
+  the static literal `select * from absurd.cleanup_all_queues(null::text);` (the exact
+  identity `absurd.enable_cron` / `absurdctl cron --enable` use, so the two never fork a
+  parallel job) — no interpolated data, no injection surface. Schedule via
+  `cron.schedule(ABSURD_CLEANUP_JOB, <cleanup schedule>, CLEANUP_COMMAND)` through
+  `open_locked_cursor`; unschedule via `cron.unschedule(<jobname>)` (guard the not-found
+  case like `prune_pg_cron_jobs`, `models.py:320`).
 - Reconcile is stateless (no `ScheduledTask` row): `CLEANUP` present → schedule/update;
   absent → unschedule. **Placement matters for coverage + migrate-safety:**
   - Put the schedule-or-unschedule logic **inside `sync_crons`** (`reconcile.py:70`),
@@ -271,9 +275,9 @@ key and can't carry `CLEANUP` — with `SCHEDULER=pg_cron` +
 `SCHEDULE`** so the `get_managed_jobs() == []` assertion is meaningful). Tests, using
 the `cron.job` query pattern from `test_pg_cron_sync_jobs.py`:
 
-- after `call_command("absurd_sync_crons")`: `cron.job` has
-  `django_absurd_cleanup_default` with schedule `17 * * * *` and command
-  `select absurd.cleanup_all_queues()`. Assert the complete row tuple.
+- after `call_command("absurd_sync_crons")`: `cron.job` has `absurd_cleanup_all` with
+  schedule `17 * * * *` and command
+  `select * from absurd.cleanup_all_queues(null::text);`. Assert the complete row tuple.
 - `ScheduledTask.pg_cron.get_managed_jobs() == []` — the cleanup job is NOT in the
   managed `absurd:` namespace.
 - drop `CLEANUP`, re-sync → the cleanup job is gone from `cron.job`.
@@ -288,9 +292,10 @@ use the ALLOW_CONNECTIONS-false + terminate dance from `CLAUDE.md` first.)
 
 - [ ] **Step 3: Implement (prose)**
 
-Add `build_cleanup_jobname(alias)` to `pg_cron/validators.py`. Add reconcile logic in
-`pg_cron/reconcile.py` that schedules `select absurd.cleanup_all_queues()` under that
-jobname when the backend declares `CLEANUP`, else unschedules it; call it from
+Add module constants `ABSURD_CLEANUP_JOB = "absurd_cleanup_all"` +
+`CLEANUP_COMMAND = "select * from absurd.cleanup_all_queues(null::text);"` to
+`pg_cron/reconcile.py`. Add reconcile logic that schedules that shared job (Absurd's own
+global identity) when the backend declares `CLEANUP`, else unschedules it; call it from
 `sync_crons`, `reconcile_crons_after_migrate`, and `teardown_crons`. Use
 `open_locked_cursor` + the not-found-safe unschedule.
 
@@ -372,8 +377,8 @@ git commit -m "docs: declarative CLEANUP replaces the cleanup @task wrapper"
 - Config `OPTIONS["CLEANUP"]` → Task 1. ✓
 - beat in-process firing (seed + guard + fire_cleanup + close_old_connections +
   try/except) → Task 2. ✓
-- pg_cron standalone job `django_absurd_cleanup_<alias>`, own reconcile + teardown,
-  outside `absurd:` namespace → Task 3. ✓
+- pg_cron shared job `absurd_cleanup_all` (Absurd's own global identity), own
+  reconcile + teardown, outside `absurd:` colon namespace → Task 3. ✓
 - Validation `E010` + reuse beat-cron helper → Task 1 (beat cron) + Task 3 (pg_cron cron
   at sync). ✓
 - Removed wrapper docs; kept command; WHY historical note → Task 4. ✓
@@ -387,6 +392,6 @@ git commit -m "docs: declarative CLEANUP replaces the cleanup @task wrapper"
 prose by project rule (no production code blocks).
 
 **Type consistency:** `cleanup_queues()` / `OPTIONS["CLEANUP"]["schedule"]` /
-`get_cleanup_schedule` / `fire_cleanup` / `build_cleanup_jobname` / `E010` used
-consistently across tasks; jobname `django_absurd_cleanup_<alias>` is the single
-spelling everywhere.
+`get_cleanup_schedule` / `fire_cleanup` / `ABSURD_CLEANUP_JOB` / `E010` used
+consistently across tasks; jobname `absurd_cleanup_all` is the single spelling
+everywhere.
