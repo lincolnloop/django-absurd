@@ -17,8 +17,6 @@ from django_absurd.params import AbsurdSpawnParams
 
 logger = logging.getLogger("django_absurd")
 
-CLEANUP_KEY = "\x00cleanup"
-
 
 @dataclasses.dataclass(frozen=True)
 class Schedule:
@@ -115,25 +113,30 @@ def run_beat(
         s.name: get_next_datetime(s.cron, now()) for s in schedules
     }
     by_name = {s.name: s for s in schedules}
-    cron_by_key = {s.name: s.cron for s in schedules}
-    if cleanup_cron is not None:
-        cron_by_key[CLEANUP_KEY] = cleanup_cron
-        upcoming[CLEANUP_KEY] = get_next_datetime(cleanup_cron, now())
+    cleanup_due = (
+        get_next_datetime(cleanup_cron, now()) if cleanup_cron is not None else None
+    )
 
     while not stop.is_set():
-        earliest = min(upcoming.values())
+        earliest = min(
+            [*upcoming.values(), *([cleanup_due] if cleanup_due is not None else [])]
+        )
         delay = (earliest - now()).total_seconds()
         if delay > 0 and wait(delay):
             break
         current = now()
-        for key, due in list(upcoming.items()):
+        for name, due in list(upcoming.items()):
             if due > current:
                 continue
-            if key == CLEANUP_KEY:
-                fire_cleanup(backend, due)
-            else:
-                fire_schedule(by_name[key], due)
-            upcoming[key] = get_next_datetime(cron_by_key[key], current)
+            fire_schedule(by_name[name], due)
+            upcoming[name] = get_next_datetime(by_name[name].cron, current)
+        if (
+            cleanup_cron is not None
+            and cleanup_due is not None
+            and cleanup_due <= current
+        ):
+            fire_cleanup(backend, cleanup_due)
+            cleanup_due = get_next_datetime(cleanup_cron, current)
 
 
 def fire_cleanup(backend: AbsurdBackend, slot: datetime.datetime) -> None:
