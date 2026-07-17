@@ -27,6 +27,7 @@ class AbsurdBackendOptions(t.TypedDict, total=False):
     ADMIN_SITE: tuple[str, ...]
     SCHEDULER: str
     SCHEDULE: dict[str, t.Any]
+    CLEANUP: dict[str, t.Any]
 
 
 class AbsurdBackend(BaseTaskBackend):

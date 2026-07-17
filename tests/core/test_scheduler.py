@@ -27,14 +27,17 @@ from tests.tasks import make_group as make_group_task
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
-def make_tasks_setting(schedule):
+def make_tasks_setting(schedule, cleanup=None):
+    options = {
+        "QUEUES": {"default": {}, "other": {}, "reports": {}},
+        "SCHEDULE": schedule,
+    }
+    if cleanup is not None:
+        options["CLEANUP"] = cleanup
     return {
         "default": {
             "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "OPTIONS": {
-                "QUEUES": {"default": {}, "other": {}, "reports": {}},
-                "SCHEDULE": schedule,
-            },
+            "OPTIONS": options,
         }
     }
 
@@ -161,6 +164,29 @@ def test_beat_fires_each_due_slot(settings):
     call_command("absurd_worker", queue="default", burst=True)
     expected_fires = 2  # slots 00:01 and 00:02
     assert Payload.objects.count() == expected_fires
+
+
+def test_beat_fires_multiple_schedules_due_same_slot(settings):
+    # Two distinct schedules sharing a cron slot both fire in the one tick pass.
+    settings.TASKS = make_tasks_setting(
+        {
+            "a": {
+                "task": "tests.tasks.make_group",
+                "cron": "*/1 * * * *",
+                "args": ["a"],
+            },
+            "b": {
+                "task": "tests.tasks.make_group",
+                "cron": "*/1 * * * *",
+                "args": ["b"],
+            },
+        }
+    )
+    backend = get_absurd_backends()["default"]
+    call_command("absurd_sync_queues")
+    run_beat_until(backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC))
+    call_command("absurd_worker", queue="default", burst=True)
+    assert set(Group.objects.values_list("name", flat=True)) == {"a", "b"}
 
 
 def test_beat_no_schedules_returns(settings):
@@ -442,6 +468,40 @@ def test_absurd_beat_valid_alias_and_signal_handler(settings):
         killer.join(timeout=2)
         signal.signal(signal.SIGINT, prev_sigint)
         signal.signal(signal.SIGTERM, prev_sigterm)
+
+
+def test_absurd_beat_startup_reports_cleanup(settings, capsys):
+    # Covers absurd_beat.py:38-39 (cleanup appended to the startup message). Empty
+    # SCHEDULE + a CLEANUP makes run_beat loop, so a handler-gated SIGINT stops it; the
+    # startup message is written before run_beat, so capsys captures it.
+    settings.TASKS = make_tasks_setting({}, cleanup={"schedule": "17 * * * *"})
+    call_command("absurd_sync_queues")
+    capsys.readouterr()  # discard sync output
+
+    prev_sigint = signal.getsignal(signal.SIGINT)
+    prev_sigterm = signal.getsignal(signal.SIGTERM)
+
+    def fire_sigint() -> None:
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:  # pragma: no branch
+            if signal.getsignal(signal.SIGINT) is not prev_sigint:
+                break
+            time.sleep(0.005)
+        os.kill(os.getpid(), signal.SIGINT)
+
+    killer = threading.Thread(target=fire_sigint, daemon=True)
+    try:
+        killer.start()
+        call_command("absurd_beat")
+    finally:
+        killer.join(timeout=2)
+        signal.signal(signal.SIGINT, prev_sigint)
+        signal.signal(signal.SIGTERM, prev_sigterm)
+
+    assert (
+        capsys.readouterr().out
+        == "Started beat with 0 schedule(s). + cleanup: 17 * * * *\n"
+    )
 
 
 def test_absurd_beat_unknown_alias_errors(settings):

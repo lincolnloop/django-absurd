@@ -1,5 +1,6 @@
 import dataclasses
 import datetime
+import functools
 import hashlib
 import logging
 import threading
@@ -11,6 +12,7 @@ from django.utils import timezone
 from django.utils.module_loading import import_string
 
 from django_absurd.backends import AbsurdBackend
+from django_absurd.cleanup import cleanup_queues
 from django_absurd.connection import validate_backend
 from django_absurd.params import AbsurdSpawnParams
 
@@ -81,6 +83,11 @@ def spawn_scheduled(schedule: Schedule, slot: datetime.datetime) -> None:
         close_old_connections()
 
 
+def get_cleanup_schedule(backend: AbsurdBackend) -> str | None:
+    cleanup = backend.options.get("CLEANUP") or {}
+    return cleanup.get("schedule") or None
+
+
 def run_beat(
     backend: AbsurdBackend,
     *,
@@ -90,29 +97,84 @@ def run_beat(
 ) -> None:
     validate_backend(backend.database)
     schedules = get_settings_schedules(backend)
-    if not schedules:
+    cleanup_cron = get_cleanup_schedule(backend)
+    entries = build_beat_entries(backend, schedules, cleanup_cron, now())
+    if not entries:
         logger.info("django-absurd beat: no schedules declared")
         return
 
-    logger.info("django-absurd beat started: schedules=%d", len(schedules))
+    logger.info(
+        "django-absurd beat started: schedules=%d cleanup=%s",
+        len(schedules),
+        cleanup_cron or "off",
+    )
     stop = stop or threading.Event()
     wait = wait or stop.wait
 
-    upcoming: dict[str, datetime.datetime] = {
-        s.name: get_next_datetime(s.cron, now()) for s in schedules
-    }
-    by_name = {s.name: s for s in schedules}
-
     while not stop.is_set():
-        earliest = min(upcoming.values())
+        earliest = min(e.next_at for e in entries)
         delay = (earliest - now()).total_seconds()
         if delay > 0 and wait(delay):
             break
         current = now()
-        for name, due in list(upcoming.items()):
-            if due <= current:
-                fire_schedule(by_name[name], due)
-                upcoming[name] = get_next_datetime(by_name[name].cron, current)
+        for entry in entries:
+            if entry.next_at <= current:
+                entry.fire(entry.next_at)
+                entry.next_at = get_next_datetime(entry.cron, current)
+
+
+@dataclasses.dataclass
+class BeatEntry:
+    """One thing the beat loop fires on a cron cadence — a task schedule or cleanup.
+
+    Both kinds share one loop: ``fire`` is the callback for a due slot, ``next_at`` is
+    advanced after each firing.
+    """
+
+    cron: str
+    fire: t.Callable[[datetime.datetime], None]
+    next_at: datetime.datetime
+
+
+def build_beat_entries(
+    backend: AbsurdBackend,
+    schedules: list[Schedule],
+    cleanup_cron: str | None,
+    moment: datetime.datetime,
+) -> list[BeatEntry]:
+    entries = [
+        BeatEntry(
+            s.cron,
+            functools.partial(fire_schedule, s),
+            get_next_datetime(s.cron, moment),
+        )
+        for s in schedules
+    ]
+    if cleanup_cron is not None:
+        entries.append(
+            BeatEntry(
+                cleanup_cron,
+                functools.partial(fire_cleanup, backend),
+                get_next_datetime(cleanup_cron, moment),
+            )
+        )
+    return entries
+
+
+def fire_cleanup(backend: AbsurdBackend, slot: datetime.datetime) -> None:
+    close_old_connections()
+    try:
+        counts = cleanup_queues()
+    except Exception:
+        logger.exception("django-absurd cleanup failed")
+    else:
+        logger.info(
+            "django-absurd cleanup ran: slot=%s counts=%s",
+            slot.astimezone(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            counts,
+        )
+    finally:
+        close_old_connections()
 
 
 def fire_schedule(schedule: Schedule, slot: datetime.datetime) -> None:

@@ -24,8 +24,10 @@ execution, tasks, steps, runs, events, retries).
 
 A named lane tasks flow through. Declare them in your
 [configuration](configuration.md#declaring-queues); they're provisioned at `migrate` and
-on worker start. Each queue can be **unpartitioned** or **partitioned** (with automatic
-partition lifecycle).
+on worker start. Queues are **unpartitioned** by default. **Partitioned** storage is
+declarable but **experimental — not tested yet**, and its partition lifecycle
+(provisioning + detaching old partitions) is not automated; don't rely on it in
+production.
 
 → [Absurd: Storage](https://earendil-works.github.io/absurd/storage/) (queue types,
 partitioning, retention).

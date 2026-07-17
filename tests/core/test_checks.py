@@ -220,3 +220,54 @@ def test_default_max_attempts_valid_no_error(settings, capsys):
     }
     out = run_absurd_check(capsys)
     assert "absurd.E009" not in out
+
+
+E010_MSG = "django-absurd: invalid CLEANUP option."
+E010_HINT = (
+    "Set CLEANUP to a dict with a single 'schedule' key:"
+    ' OPTIONS["CLEANUP"] = {"schedule": "<cron>"}.'
+)
+
+
+@pytest.mark.parametrize(
+    ("cleanup", "scheduler"),
+    [
+        ("0 2 * * *", "beat"),
+        ({"schedule": ""}, "beat"),
+        ({"schedule": ""}, "pg_cron"),
+        ({"schedule": "0 2 * * *", "unknown": 1}, "beat"),
+        ({"schedule": "not a cron"}, "beat"),
+        ({"schedule": 5}, "beat"),
+    ],
+)
+def test_invalid_cleanup_errors(settings, capsys, cleanup, scheduler):
+    settings.TASKS = {
+        "default": {
+            "BACKEND": ABSURD,
+            "OPTIONS": {
+                "QUEUES": {"default": {}},
+                "SCHEDULER": scheduler,
+                "CLEANUP": cleanup,
+            },
+        }
+    }
+    out = run_absurd_check(capsys)
+    assert E010_MSG in out
+    assert E010_HINT in out
+    assert "absurd.E010" in out
+
+
+@pytest.mark.parametrize("scheduler", ["beat", "pg_cron"])
+def test_valid_cleanup_no_error(settings, capsys, scheduler):
+    settings.TASKS = {
+        "default": {
+            "BACKEND": ABSURD,
+            "OPTIONS": {
+                "QUEUES": {"default": {}},
+                "SCHEDULER": scheduler,
+                "CLEANUP": {"schedule": "0 2 * * *"},
+            },
+        }
+    }
+    out = run_absurd_check(capsys)
+    assert "absurd.E010" not in out

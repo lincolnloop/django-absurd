@@ -10,9 +10,26 @@ from django.utils.module_loading import import_string
 
 from django_absurd.backends import AbsurdBackend, build_merged_spawn_options
 from django_absurd.pg_cron.choices import Source
-from django_absurd.pg_cron.models import ScheduledTask, open_locked_cursor
+from django_absurd.pg_cron.models import (
+    ScheduledTask,
+    open_locked_cursor,
+    prune_pg_cron_jobs,
+)
 from django_absurd.queues import resolve_absurd_database
-from django_absurd.scheduler import get_settings_schedules
+from django_absurd.scheduler import get_cleanup_schedule, get_settings_schedules
+
+# Absurd's OWN global cleanup job: reconcile schedules/unschedules exactly this
+# identity — the same jobname and command that absurd.enable_cron / `absurdctl cron
+# --enable` use — so django-absurd and absurdctl reference one shared job rather than
+# forking a parallel one. It lives outside our managed ``absurd:`` (colon) namespace,
+# so get_managed_jobs() never sweeps it. When ``django_absurd.pg_cron`` is installed,
+# django-absurd is AUTHORITATIVE over this job: it schedules it from OPTIONS["CLEANUP"]
+# and removes it otherwise — including at migrate teardown / scheduler-flip even when
+# CLEANUP was never set — so a job created via ``absurdctl cron`` is reclaimed and
+# removed. Drive cleanup ONE way — OPTIONS["CLEANUP"] OR `absurdctl cron`, not both
+# (arbitration deferred to https://github.com/lincolnloop/django-absurd/issues/63).
+ABSURD_CLEANUP_JOB = "absurd_cleanup_all"
+CLEANUP_COMMAND = "select * from absurd.cleanup_all_queues(null::text);"
 
 
 def resolve_spawn_options(backend: AbsurdBackend, task_path: str) -> dict[str, t.Any]:
@@ -86,7 +103,7 @@ def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:
     database = resolve_absurd_database()
 
     created = 0
-    with open_locked_cursor(database):
+    with open_locked_cursor(database) as cur:
         for schedule in schedules:
             spawn_fields = build_scheduled_fields(
                 backend, schedule.task, queue_override=schedule.queue
@@ -115,8 +132,43 @@ def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:
         ScheduledTask.pg_cron.prune_jobs_without_rows(
             backend.alias, Source.SETTINGS, declared_names
         )
+        reconcile_cleanup_job(cur, backend)
 
     return created, pruned
+
+
+def reconcile_cleanup_job(cur: t.Any, backend: AbsurdBackend) -> None:
+    """Schedule or unschedule Absurd's global cleanup job from OPTIONS["CLEANUP"].
+
+    Stateless (no ScheduledTask row). This targets Absurd's OWN global cleanup job —
+    jobname ``absurd_cleanup_all`` running ``select * from
+    absurd.cleanup_all_queues(null::text)`` — deliberately the same identity
+    ``absurd.enable_cron`` / ``absurdctl cron --enable`` uses, so the two never fork a
+    parallel job. A declared CLEANUP schedule → upsert that job on the declared cadence
+    (cron.schedule is an idempotent upsert); an absent one → unschedule it (tolerating
+    an already-gone job). Because ``django_absurd.pg_cron`` is installed, django-absurd
+    is AUTHORITATIVE over this job: it schedules it from OPTIONS["CLEANUP"] and removes
+    it otherwise — including at migrate teardown / scheduler-flip even when CLEANUP was
+    never set — so a job created via ``absurdctl cron`` is reclaimed and removed. Drive
+    cleanup ONE way — OPTIONS["CLEANUP"] OR ``absurdctl cron``, not both (multi-manager
+    arbitration is deferred to https://github.com/lincolnloop/django-absurd/issues/63).
+    Runs on the caller's already-locked cursor so it shares the reconcile's advisory
+    lock and transaction.
+    """
+    cleanup_cron = get_cleanup_schedule(backend)
+    if cleanup_cron is not None:
+        cur.execute(
+            "select cron.schedule(%s, %s, %s)",
+            [ABSURD_CLEANUP_JOB, cleanup_cron, CLEANUP_COMMAND],
+        )
+    else:
+        unschedule_cleanup_job(cur)
+
+
+def unschedule_cleanup_job(cur: t.Any) -> None:
+    """Remove Absurd's global cleanup job, tolerating an already-gone job."""
+    cur.execute("select jobid from cron.job where jobname = %s", [ABSURD_CLEANUP_JOB])
+    prune_pg_cron_jobs(cur, [jobid for (jobid,) in cur.fetchall()])
 
 
 def sync_admin_crons(backend: AbsurdBackend) -> None:
@@ -159,6 +211,9 @@ def teardown_crons(backend: AbsurdBackend, include_admin: bool = False) -> int:
     sources = [Source.SETTINGS, Source.ADMIN] if include_admin else [Source.SETTINGS]
     for source in sources:
         ScheduledTask.pg_cron.unschedule_matching(backend.alias, source)
+
+    with open_locked_cursor(database) as cur:
+        unschedule_cleanup_job(cur)
 
     removed, _ = (
         ScheduledTask.objects.using(database)

@@ -50,6 +50,8 @@ Backend `OPTIONS` (all optional):
 - `QUEUES` — a map of queue name → `absurd_sdk.CreateQueueOptions` for per-queue config.
   Use this _instead of_ the top-level `QUEUES` list (which only names queues) — declare
   queues in one place or the other, never both (setting both is a configuration error).
+- `CLEANUP` — a map `{"schedule": "<cron>"}` to run cleanup automatically on cadence
+  (beat: in-process; pg_cron: native database job). Omit to skip scheduled cleanup.
 - `ENABLE_ADMIN` — register Absurd models in Django admin (default: `True`). Set to
   `False` to disable.
 - `ADMIN_SITE` — tuple of dotted paths to `AdminSite` instances to register on (default:
@@ -147,6 +149,8 @@ System check IDs:
 - `absurd.E008` — `SCHEDULER="pg_cron"` is configured but `"django_absurd.pg_cron"` is
   not in `INSTALLED_APPS`. See [pg_cron backend](#pg_cron-backend).
 - `absurd.E009` — `OPTIONS["DEFAULT_MAX_ATTEMPTS"]` is not an integer `>= 1`.
+- `absurd.E010` — invalid `CLEANUP` configuration (not a `{"schedule": …}` map, or
+  unknown keys; cron grammar checked at `check` time for beat, at sync for pg_cron).
 - `absurd.W003` (Warning) — `"django_absurd.pg_cron"` is in `INSTALLED_APPS` but ordered
   before `"django_absurd"`, causing its `post_migrate` cron reconcile to run before
   queue provisioning. See [pg_cron backend](#pg_cron-backend).
@@ -459,6 +463,73 @@ is a guarded action (see Reconcile).
 
 Fix everything `absurd.E007` reports before relying on the schedule in production.
 
+## Cleanup / retention
+
+`cleanup_queues()` enforces each queue's `cleanup_ttl` / `cleanup_limit` retention knobs
+(configured via `OPTIONS["QUEUES"]` — see [Configure](#configure)). It deletes terminal
+task rows (completed, failed, cancelled) older than the queue's TTL, up to the batch
+limit, and returns one dict per queue:
+
+```python
+from django_absurd.cleanup import cleanup_queues
+
+cleanup_queues()                       # every declared queue
+cleanup_queues(["reports", "emails"])  # only these queues
+# → [{"queue_name": "default", "tasks_deleted": 12, "events_deleted": 0}]
+```
+
+→ [Absurd: Cleanup](https://earendil-works.github.io/absurd/cleanup/) (the underlying
+`absurd.cleanup_all_queues()` behaviour and the full retention model).
+
+**On demand:** `manage.py absurd_cleanup` runs it and prints per-queue counts; pass
+queue names to limit it, or omit them for all:
+
+```bash
+python manage.py absurd_cleanup            # all queues
+python manage.py absurd_cleanup reports    # just 'reports'
+# default: 12 tasks, 0 events deleted
+```
+
+**Scheduled:** add `OPTIONS["CLEANUP"] = {"schedule": "<cron>"}` to run cleanup
+automatically on cadence — zero user code required:
+
+```python
+TASKS = {
+    "default": {
+        "BACKEND": "django_absurd.backends.AbsurdBackend",
+        "OPTIONS": {
+            "CLEANUP": {"schedule": "0 3 * * *"},   # 3am daily
+        },
+    },
+}
+```
+
+This works under **either** scheduler: beat runs cleanup in-process on the declared
+cadence; pg_cron schedules Absurd's own native cleanup job (`absurd_cleanup_all`, the
+same identity `absurdctl cron` uses — compatible, not a parallel job). When
+`django_absurd.pg_cron` is installed, django-absurd is authoritative over that job: it
+schedules it from `OPTIONS["CLEANUP"]` and removes it otherwise — including at migrate
+teardown / scheduler-flip even when `CLEANUP` was never set — so a job created via
+`absurdctl cron` is reclaimed and removed. Drive cleanup one way only —
+`OPTIONS["CLEANUP"]` **or** `absurdctl cron`, not both. `manage.py check` reports
+`absurd.E010` for a malformed `CLEANUP` (the beat cron grammar is checked then too;
+pg_cron's is validated by the database at sync). Retention knobs (`cleanup_ttl`,
+`cleanup_limit`) remain per-queue policy — set them in `OPTIONS["QUEUES"]`.
+
+**Reset (destructive):** `manage.py absurd_flush` **deletes all task history** — it
+removes every queue (its per-queue tables and registry entry) along with all tasks,
+runs, and events in them. It does **not** uninstall Absurd: the schema, migrations, and
+functions stay, so you never re-`migrate` — only re-provision the queues. It prompts for
+confirmation; pass `--noinput` (alias `--no-input`) to skip the prompt in automation:
+
+```bash
+python manage.py absurd_flush            # prompts, then drops on 'yes'
+python manage.py absurd_flush --noinput  # drops without prompting
+```
+
+Re-provision declared queues afterward with `migrate`, `absurd_sync_queues`, or by
+starting a worker.
+
 ## Retrieving results
 
 `enqueue` returns a `TaskResult`; refresh it or fetch one later by id:
@@ -486,8 +557,10 @@ await send_report.aget_result(result.id)       # async variant
   (post_migrate), on worker start, by `absurd_sync_queues`, and on first enqueue;
   provisioning also reconciles mutable policy. Nothing ever drops queues removed from
   config. A queue's `storage_mode` is immutable after creation (a declared change is
-  reported as a warning, not applied). Only queues declared in `QUEUES` are created — an
-  undeclared queue name is rejected, not silently created.
+  reported as a warning, not applied); `storage_mode="partitioned"` is declarable but
+  **experimental — not tested yet**, with no automated partition lifecycle. Only queues
+  declared in `QUEUES` are created — an undeclared queue name is rejected, not silently
+  created.
 - **Teardown is destructive.** `migrate django_absurd zero` drops the `absurd` schema
   and all data in it.
 

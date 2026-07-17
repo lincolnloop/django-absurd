@@ -152,6 +152,46 @@ app: adding it to `INSTALLED_APPS` on a DB that isn't pg_cron-ready breaks visib
 still operator-side prerequisites that a migration can't deliver. Those stay documented
 as manual setup steps.
 
+## Cleanup & retention
+
+Retention — deleting aged task history — is enforced by a plain function
+(`cleanup_queues()`) plus an on-demand command (`absurd_cleanup`), and wired to a
+cadence via `OPTIONS["CLEANUP"] = {"schedule": "<cron>"}`. No user code required: the
+library drives cleanup in-process under beat, and schedules Absurd's own native cleanup
+job (`absurd_cleanup_all`, the same identity `absurdctl cron` uses — not a parallel job)
+under pg_cron — the same declarative config works for both schedulers. When
+`OPTIONS["CLEANUP"]` is set, django-absurd is authoritative over that job (schedules and
+unschedules it), so cleanup is driven one way only — via `OPTIONS["CLEANUP"]` or
+`absurdctl cron`, not both (multi-manager arbitration deferred to #63).
+
+The first iteration shipped the retention logic and asked each project to wrap it in its
+own `@task` and register that task in `SCHEDULE`. That was a reasonable first step, but
+it imposed user code for a universal maintenance concern, required a concrete queue
+binding that the task framework validates at import time (breaking projects whose queue
+names differed from the assumed default), and the pg_cron path gave users the same
+application-level wrapper rather than a native job. The declarative `CLEANUP` key
+replaces that: zero user code, works uniformly under beat or pg_cron, and preserves the
+no-shipped-`@task` property that originally motivated keeping cleanup out of the
+library.
+
+The function returns plain per-queue count dictionaries rather than a richer typed
+object, because that return value becomes a task result and task results are stored as
+JSON — a dataclass or named tuple would serialise as an unlabelled array or not at all,
+losing the field names that make the stored result worth keeping.
+
+Cleanup deliberately does not turn a missing schema into a friendly "run migrate" error
+the way the configuration paths do: it is a maintenance operation, so the raw database
+error is allowed to surface rather than adding a guard that implies the call was safe.
+
+Wiping everything is a separate, guarded command that drops queues and their data while
+leaving the schema, functions, and migration history intact — because a full schema
+teardown is already what running migrations backwards achieves, and the migration system
+should stay the sole owner of the schema. It follows the framework's own
+destructive-command convention (confirm interactively, skip with a no-input flag) so the
+safety model is one users already know. Dropping a queue removes only that queue's own
+maintenance jobs and data; user-defined recurring schedules live elsewhere and survive,
+so a reset never silently cancels recurring work.
+
 ## Admin & ORM introspection
 
 Queue state is exposed read-only, in two forms — a Django admin and plain ORM models —
@@ -178,3 +218,10 @@ Native async enqueue, one-shot deferred (scheduled-for-later) enqueue, and task 
 are unsupported on purpose: Absurd has no notion of priority, and async/one-shot
 deferral aren't wired — we won't fake them behind a flag that implies otherwise.
 (Recurring scheduling is supported — see above.)
+
+A surface to enable Absurd's native `enable_cron` partition + detach maintenance jobs is
+not built yet. That native scheduling is pg_cron-only, so until a project-facing surface
+exists those partition/detach jobs are simply never created. (Retention itself is
+already covered natively — the declarative `CLEANUP` job schedules a native database job
+under pg_cron, see above; only the partition/detach half of `enable_cron` remains
+unsurfaced.)
