@@ -29,24 +29,40 @@ Retention _amounts_ stay per-queue (`cleanup_ttl` / `cleanup_limit`). Honoured u
 
 ## beat path
 
-`run_beat` derives a cleanup cadence from `CLEANUP["schedule"]` alongside the task
-schedules. On fire — same forward-only croniter cadence as task schedules — beat calls
-`cleanup_queues()` **in-process** against the backend DB and logs per-queue counts. No
-enqueue, no `@task`, no worker (beat already holds a DB connection). This is a non-task
-firing branch in the beat loop, distinct from `spawn_scheduled`.
+`run_beat` gains a cleanup cadence from `CLEANUP["schedule"]` **as a first-class seed**,
+not an afterthought — the current loop is built purely from task schedules and **returns
+early when `SCHEDULE` is empty** (`scheduler.py:92-95`), so a CLEANUP-only backend (the
+headline case) would never tick. The plan must: (1) change the early-exit guard to
+`not schedules and not cleanup`; (2) seed the cleanup cadence into the loop's
+`upcoming`/`by_name` maps beside the task schedules; (3) on the cleanup slot, fire a
+**non-task branch** that calls `cleanup_queues()` in-process and logs per-queue counts.
+The cleanup firing MUST reuse the existing `fire_schedule` try/except (a raised cleanup
+otherwise kills the whole beat loop) and the same `close_old_connections()` bracketing
+`spawn_scheduled` uses (`scheduler.py:66,81`) — beat manages its connection per-fire, it
+does not hold one. Long cleanup blocks the single-threaded loop until it returns
+(acceptable; note it). No enqueue, no `@task`, no worker.
 
 ## pg_cron path
 
 The pg_cron app's reconcile (post_migrate + `absurd_sync_crons`) schedules **one** cron
-job running `select absurd.cleanup_all_queues()` on `CLEANUP["schedule"]`. Managed
-statelessly by a deterministic job name in our own namespace (e.g.
-`absurd:cleanup:<alias>`) — distinct from task-schedule jobs (`absurd:s:…`) and from
-Absurd's own maintenance jobs (`absurd_*`); reconcile observes presence via that name,
-no `ScheduledTask` projection row. Dropping `CLEANUP` unschedules it. It is our job, not
-`enable_cron`'s 3-job bundle: cleanup-only, so partition/detach stay with #61, and it
-**survives `absurd_flush`** (`drop_queue`→`disable_cron` only removes `absurd_*`
-per-queue maintenance jobs, never ours). Cron grammar is DB-authoritative — validated by
-`cron.schedule` at sync, matching the existing schedule stance.
+job running `select absurd.cleanup_all_queues()` on `CLEANUP["schedule"]`. The cleanup
+job is **its own thing, outside the managed `ScheduledTask` (`absurd:`) machinery** — a
+deliberate design call (C2): it uses a distinct name **`django_absurd_cleanup_<alias>`**
+that is NOT swept by `get_managed_jobs()`'s `starts_with(jobname, 'absurd:')` scan
+(`models.py:88-95`) — so it never pollutes the `== []` teardown/prune assertions — and
+is distinct from Absurd's own `absurd_cleanup_<md5>` maintenance jobs. It has **no
+`ScheduledTask` projection row**; a dedicated reconcile enables it (when `CLEANUP` is
+set) or unschedules it (when absent), managed statelessly by that deterministic name.
+Because it lives outside the managed prefixes, it must be **explicitly torn down** by
+its own hook wired into `teardown_crons` (`reconcile.py`) and the scheduler-flip path
+(`apps.py`) — those only handle `absurd:s:`/`absurd:a:` today and would otherwise leak
+it. It is cleanup-only, not `enable_cron`'s 3-job bundle, so partition/detach stay with
+#61, and it **survives `absurd_flush`** (`drop_queue`→`disable_cron` only removes
+`absurd_*` jobs). The raw `select absurd.cleanup_all_queues()` command is a static,
+argument-free literal — no injection surface. Cron grammar is DB-authoritative
+(`cron.schedule` at sync). Admin visibility for this job is deferred to #67 (a read-only
+maintenance panel) — deliberately NOT via a `ScheduledTask` row, which would drag it
+back into the managed namespace.
 
 ## Kept (on-demand / programmatic)
 
@@ -60,18 +76,31 @@ The user-written `@task` wrapper + the "schedule a cleanup task" guidance — de
 
 ## Validation
 
-`AbsurdBackendOptions` gains `CLEANUP` (TypedDict `{"schedule": str}`). Validation
-**reuses the existing cron/schedule validation** rather than minting a new error code:
-the schedule string is checked by the same validator `SCHEDULE` entries use — beat via
-croniter, pg_cron via `cron.schedule` at sync (loud in the command, skip-with-log at
-migrate) — just invoked from a new call site (it's the same rule, a different config
-location). The `CLEANUP` shape (`{"schedule": <non-empty str>}`) is validated within the
-existing config-check path; the default is **no new `absurd.E0xx`** — only add a
-distinct code if planning shows the existing diagnostics can't carry it. No
-scheduler-gating: `CLEANUP` is valid under either scheduler. A **static**
-(connection-free) pg_cron cron-grammar check — the `5-field` / `[1-59] seconds` forms —
-is deferred to #66 (it applies to `SCHEDULE` crons too), leaving the sync-time DB check
-authoritative for now.
+`AbsurdBackendOptions` gains `CLEANUP` (TypedDict `{"schedule": str}`). Nothing reads
+`OPTIONS["CLEANUP"]` today (`check_absurd_schedule_config`, `checks.py:200`, only sees
+`SCHEDULE`), and beat's cron check is an inline `croniter…is_valid` welded to the `E007`
+"Schedule …" message — so no reusable validator exists yet and CLEANUP has no validation
+home. Therefore **mint `absurd.E010`**: a dedicated check reading `OPTIONS["CLEANUP"]`
+that validates the shape (`{"schedule": <non-empty str>}`, reject unknown keys) and the
+cron. Do NOT overload `E007` (its meaning is "invalid `SCHEDULE` entry" — misleading for
+a CLEANUP problem). Extract a shared **`validate_cron(cron, scheduler)`** helper (beat →
+croniter; pg_cron → the existing `validate_pg_cron_cron`, `validators.py:94`) so
+beat/pg_cron/CLEANUP validate through one path — the same seam #66 (static pg_cron
+grammar check) builds on. No scheduler-gating: `CLEANUP` is valid under either
+scheduler. pg_cron cron stays DB-authoritative at sync; static grammar validation is
+#66.
+
+## Edge cases (accepted for now)
+
+- **`CLEANUP` + `SCHEDULER=pg_cron` but `django_absurd.pg_cron` not installed** — the
+  cleanup reconcile lives in that app's post_migrate and would silently no-op, but
+  `absurd.E008` already errors on any `SCHEDULER=pg_cron` + app-absent config (keyed on
+  the scheduler value, not on SCHEDULE content), so it's caught upstream. No new signal.
+- **Two Absurd backends with `CLEANUP` on the same DB** — each schedules its own
+  `django_absurd_cleanup_<alias>` job / beat tick against the same DB. Redundant, not
+  incorrect (cleanup is DB-global + idempotent — a second run just finds fewer eligible
+  rows). This design assumes **≤1 Absurd backend per DB**; hardening `E004` to forbid
+  same-DB duplicates is tracked in #63. No new check here.
 
 ## Testing (behavioral, real DB, no mocks)
 
@@ -102,6 +131,9 @@ native SQL).
   already per-queue policy.
 - Static (check-time) pg_cron cron-grammar validation — #66; reuse one cron validator
   across beat / pg_cron / cleanup when that lands.
+- Admin visibility for the pg_cron cleanup job — #67 (read-only maintenance panel);
+  deliberately not via a `ScheduledTask` row.
+- Hardening `E004` to forbid two Absurd backends on one DB — #63.
 
 ## Depends on
 
