@@ -24,7 +24,8 @@ that ruled out a shipped task never arises.
 Backend `OPTIONS` gains `CLEANUP: {"schedule": "<cron>"}`. Backend-global: cleans every
 queue on that backend (`cleanup_queues(None)` / `absurd.cleanup_all_queues()`).
 Retention _amounts_ stay per-queue (`cleanup_ttl` / `cleanup_limit`). Honoured under
-`SCHEDULER` beat OR pg_cron — no scheduler-gating. Absent → no scheduled cleanup.
+`SCHEDULER` beat OR pg_cron — no scheduler-gating. Absent → no scheduled cleanup. The
+`schedule` cron reuses the schedulers' existing cron validation (see Validation).
 
 ## beat path
 
@@ -59,12 +60,18 @@ The user-written `@task` wrapper + the "schedule a cleanup task" guidance — de
 
 ## Validation
 
-`AbsurdBackendOptions` gains `CLEANUP` (TypedDict `{"schedule": str}`). New system check
-(`absurd.E010` — next free ID) fires when `CLEANUP` is malformed (not
-`{"schedule": <non-empty str>}`). Cron validity is checked where each scheduler already
-does it — beat via croniter, pg_cron via `cron.schedule` at sync (loud in the command,
-skip-with-log at migrate). No scheduler-gating error: `CLEANUP` is valid under either
-scheduler.
+`AbsurdBackendOptions` gains `CLEANUP` (TypedDict `{"schedule": str}`). Validation
+**reuses the existing cron/schedule validation** rather than minting a new error code:
+the schedule string is checked by the same validator `SCHEDULE` entries use — beat via
+croniter, pg_cron via `cron.schedule` at sync (loud in the command, skip-with-log at
+migrate) — just invoked from a new call site (it's the same rule, a different config
+location). The `CLEANUP` shape (`{"schedule": <non-empty str>}`) is validated within the
+existing config-check path; the default is **no new `absurd.E0xx`** — only add a
+distinct code if planning shows the existing diagnostics can't carry it. No
+scheduler-gating: `CLEANUP` is valid under either scheduler. A **static**
+(connection-free) pg_cron cron-grammar check — the `5-field` / `[1-59] seconds` forms —
+is deferred to #66 (it applies to `SCHEDULE` crons too), leaving the sync-time DB check
+authoritative for now.
 
 ## Testing (behavioral, real DB, no mocks)
 
@@ -94,6 +101,8 @@ native SQL).
 - Per-queue cleanup scheduling — `CLEANUP` is backend-global; retention amounts are
   already per-queue policy.
 - Removing the on-demand `absurd_cleanup` command.
+- Static (check-time) pg_cron cron-grammar validation — #66; reuse one cron validator
+  across beat / pg_cron / cleanup when that lands.
 
 ## Depends on
 
