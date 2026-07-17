@@ -60,13 +60,15 @@ it is NOT swept by `get_managed_jobs()`'s `starts_with(jobname, 'absurd:')` scan
 (`models.py:88-95`) — it never pollutes the `== []` teardown/prune assertions. It has
 **no `ScheduledTask` projection row**; a dedicated reconcile enables it (when `CLEANUP`
 is set) or unschedules it (when absent), managed statelessly by that fixed name.
-**django-absurd is authoritative** over `absurd_cleanup_all` when `CLEANUP` is set (it
-schedules and unschedules it), so cleanup must be driven by `OPTIONS["CLEANUP"]` OR
-`absurdctl cron` — not both (multi-manager arbitration deferred to #63). Because it
-lives outside the managed prefixes, it must be **explicitly torn down** by its own hook
-wired into `teardown_crons` (`reconcile.py`) and the scheduler-flip path (`apps.py`) —
-those only handle `absurd:s:`/`absurd:a:` today and would otherwise leak it. It is
-cleanup-only, not `enable_cron`'s 3-job bundle, so partition/detach stay with #61. The
+**django-absurd is authoritative** over `absurd_cleanup_all` when the pg_cron app is
+installed (schedules it from `CLEANUP`, removes it otherwise — incl. teardown /
+scheduler-flip even without `CLEANUP`), so cleanup must be driven by
+`OPTIONS["CLEANUP"]` OR `absurdctl cron` — not both (multi-manager arbitration deferred
+to #63). Because it lives outside the managed prefixes, it must be **explicitly torn
+down** by its own hook wired into `teardown_crons` (`reconcile.py`) and the
+scheduler-flip path (`apps.py`) — those only handle `absurd:s:`/`absurd:a:` today and
+would otherwise leak it. It is cleanup-only, not `enable_cron`'s 3-job bundle, so
+partition/detach stay with #61. The
 `select * from absurd.cleanup_all_queues(null::text);` command is a static literal — no
 injection surface. Cron grammar is DB-authoritative (`cron.schedule` at sync). Admin
 visibility for this job is deferred to #67 (a read-only maintenance panel) —

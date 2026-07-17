@@ -22,10 +22,12 @@ from django_absurd.scheduler import get_cleanup_schedule, get_settings_schedules
 # identity — the same jobname and command that absurd.enable_cron / `absurdctl cron
 # --enable` use — so django-absurd and absurdctl reference one shared job rather than
 # forking a parallel one. It lives outside our managed ``absurd:`` (colon) namespace,
-# so get_managed_jobs() never sweeps it. When OPTIONS["CLEANUP"] is set, django-absurd
-# is AUTHORITATIVE over this job (it upserts/unschedules it), so cleanup must be driven
-# by OPTIONS["CLEANUP"] OR `absurdctl cron` — not both (arbitration deferred to
-# https://github.com/lincolnloop/django-absurd/issues/63).
+# so get_managed_jobs() never sweeps it. When ``django_absurd.pg_cron`` is installed,
+# django-absurd is AUTHORITATIVE over this job: it schedules it from OPTIONS["CLEANUP"]
+# and removes it otherwise — including at migrate teardown / scheduler-flip even when
+# CLEANUP was never set — so a job created via ``absurdctl cron`` is reclaimed and
+# removed. Drive cleanup ONE way — OPTIONS["CLEANUP"] OR `absurdctl cron`, not both
+# (arbitration deferred to https://github.com/lincolnloop/django-absurd/issues/63).
 ABSURD_CLEANUP_JOB = "absurd_cleanup_all"
 CLEANUP_COMMAND = "select * from absurd.cleanup_all_queues(null::text);"
 
@@ -144,11 +146,14 @@ def reconcile_cleanup_job(cur: t.Any, backend: AbsurdBackend) -> None:
     ``absurd.enable_cron`` / ``absurdctl cron --enable`` uses, so the two never fork a
     parallel job. A declared CLEANUP schedule → upsert that job on the declared cadence
     (cron.schedule is an idempotent upsert); an absent one → unschedule it (tolerating
-    an already-gone job). django-absurd is thus AUTHORITATIVE over this job when
-    OPTIONS["CLEANUP"] is set, so drive cleanup via OPTIONS["CLEANUP"] OR ``absurdctl
-    cron`` — not both (multi-manager arbitration is deferred to
-    https://github.com/lincolnloop/django-absurd/issues/63). Runs on the caller's
-    already-locked cursor so it shares the reconcile's advisory lock and transaction.
+    an already-gone job). Because ``django_absurd.pg_cron`` is installed, django-absurd
+    is AUTHORITATIVE over this job: it schedules it from OPTIONS["CLEANUP"] and removes
+    it otherwise — including at migrate teardown / scheduler-flip even when CLEANUP was
+    never set — so a job created via ``absurdctl cron`` is reclaimed and removed. Drive
+    cleanup ONE way — OPTIONS["CLEANUP"] OR ``absurdctl cron``, not both (multi-manager
+    arbitration is deferred to https://github.com/lincolnloop/django-absurd/issues/63).
+    Runs on the caller's already-locked cursor so it shares the reconcile's advisory
+    lock and transaction.
     """
     cleanup_cron = get_cleanup_schedule(backend)
     if cleanup_cron is not None:

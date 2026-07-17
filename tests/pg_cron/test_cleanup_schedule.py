@@ -94,3 +94,25 @@ def test_teardown_removes_cleanup_job(settings):
     call_command("absurd_sync_crons", "--teardown", "--no-input")
 
     assert fetch_cleanup_row() is None
+
+
+def test_teardown_reclaims_cleanup_job_without_cleanup_option(settings):
+    settings.TASKS = {
+        "default": {
+            "BACKEND": ABSURD,
+            "OPTIONS": {
+                "QUEUES": {"default": {}, "other": {}, "reports": {}},
+                "SCHEDULER": "pg_cron",
+            },
+        }
+    }
+    with connection.cursor() as cur:
+        cur.execute(
+            "select cron.schedule(%s, %s, %s)",
+            ["absurd_cleanup_all", "5 * * * *", "select 1"],
+        )
+    assert fetch_cleanup_row() is not None
+
+    call_command("absurd_sync_crons", "--teardown", "--no-input")
+
+    assert fetch_cleanup_row() is None
