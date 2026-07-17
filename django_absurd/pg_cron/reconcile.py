@@ -10,9 +10,16 @@ from django.utils.module_loading import import_string
 
 from django_absurd.backends import AbsurdBackend, build_merged_spawn_options
 from django_absurd.pg_cron.choices import Source
-from django_absurd.pg_cron.models import ScheduledTask, open_locked_cursor
+from django_absurd.pg_cron.models import (
+    ScheduledTask,
+    open_locked_cursor,
+    prune_pg_cron_jobs,
+)
+from django_absurd.pg_cron.validators import build_cleanup_jobname
 from django_absurd.queues import resolve_absurd_database
-from django_absurd.scheduler import get_settings_schedules
+from django_absurd.scheduler import get_cleanup_schedule, get_settings_schedules
+
+CLEANUP_COMMAND = "select absurd.cleanup_all_queues()"
 
 
 def resolve_spawn_options(backend: AbsurdBackend, task_path: str) -> dict[str, t.Any]:
@@ -86,7 +93,7 @@ def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:
     database = resolve_absurd_database()
 
     created = 0
-    with open_locked_cursor(database):
+    with open_locked_cursor(database) as cur:
         for schedule in schedules:
             spawn_fields = build_scheduled_fields(
                 backend, schedule.task, queue_override=schedule.queue
@@ -115,8 +122,35 @@ def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:
         ScheduledTask.pg_cron.prune_jobs_without_rows(
             backend.alias, Source.SETTINGS, declared_names
         )
+        reconcile_cleanup_job(cur, backend)
 
     return created, pruned
+
+
+def reconcile_cleanup_job(cur: t.Any, backend: AbsurdBackend) -> None:
+    """Schedule or unschedule the standalone cleanup job from OPTIONS["CLEANUP"].
+
+    Stateless (no ScheduledTask row): a declared CLEANUP schedule → upsert the
+    ``django_absurd_cleanup_<alias>`` job running the cleanup command; an absent one →
+    unschedule it (tolerating an already-gone job). Runs on the caller's already-locked
+    cursor so it shares the reconcile's advisory lock and transaction.
+    """
+    jobname = build_cleanup_jobname(backend.alias)
+    cleanup_cron = get_cleanup_schedule(backend)
+    if cleanup_cron is not None:
+        cur.execute(
+            "select cron.schedule(%s, %s, %s)",
+            [jobname, cleanup_cron, CLEANUP_COMMAND],
+        )
+    else:
+        unschedule_cleanup_job(cur, backend)
+
+
+def unschedule_cleanup_job(cur: t.Any, backend: AbsurdBackend) -> None:
+    """Remove a backend's cleanup job, tolerating an already-gone job."""
+    jobname = build_cleanup_jobname(backend.alias)
+    cur.execute("select jobid from cron.job where jobname = %s", [jobname])
+    prune_pg_cron_jobs(cur, [jobid for (jobid,) in cur.fetchall()])
 
 
 def sync_admin_crons(backend: AbsurdBackend) -> None:
@@ -159,6 +193,9 @@ def teardown_crons(backend: AbsurdBackend, include_admin: bool = False) -> int:
     sources = [Source.SETTINGS, Source.ADMIN] if include_admin else [Source.SETTINGS]
     for source in sources:
         ScheduledTask.pg_cron.unschedule_matching(backend.alias, source)
+
+    with open_locked_cursor(database) as cur:
+        unschedule_cleanup_job(cur, backend)
 
     removed, _ = (
         ScheduledTask.objects.using(database)
