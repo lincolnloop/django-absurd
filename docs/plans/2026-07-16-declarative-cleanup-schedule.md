@@ -22,11 +22,12 @@ Postgres).
 
 ## Global Constraints
 
-- **Depends on #65** (`django_absurd/cleanup.py:cleanup_queues`, `absurd_cleanup`,
-  `absurd_flush`, + the `cleanup` test-app task/wrapper test). Base off a tree that has
-  #65 (branch off `origin/main` once #65 merges; the `cleanup-task` branch already
-  contains it). Task 1a removes #65's wrapper test artifacts — confirm they're present
-  at the base before deleting.
+- **Built in-place on the `cleanup-task` branch, atop #65's commits, in the same PR
+  (#65).** The wrapper docs + test artifacts #65 introduced are blown away here (Task 1a
+  - Task 4), so they never reach `main` — no merge-first, no separate branch. The tree
+    already has `cleanup_queues`, `absurd_cleanup`, `absurd_flush`, the `cleanup`
+    test-app task, and `test_wrapper_task_result_is_deleted_counts`; Task 1a removes the
+    last two.
 - Django 6.0 / Python 3.12 floor. `import typing as t` only; absolute imports;
   verb-named functions; no leading-underscore module constants.
 - pytest function-based; no `unittest.mock` / monkeypatch; behavioral through real
