@@ -96,4 +96,6 @@ python manage.py absurd_flush --noinput  # drops without prompting
 
     Any existing scheduled jobs (pg_cron schedule jobs and beat schedules) survive the
     flush and will **error on each fire** until the queues exist again — re-provision
-    promptly.
+    promptly. Exception: the `absurd_cleanup_all` job (set via `OPTIONS["CLEANUP"]`)
+    also survives and runs harmlessly — it finds no eligible rows until queues are
+    re-provisioned.

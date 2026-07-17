@@ -31,7 +31,7 @@ def fetch_cleanup_row():
         return cur.fetchone()
 
 
-def test_sync_schedules_standalone_cleanup_job(settings):
+def test_sync_schedules_absurd_cleanup_all_job(settings):
     settings.TASKS = build_cleanup_tasks("17 * * * *")
 
     call_command("absurd_sync_crons")
@@ -68,6 +68,22 @@ def test_sync_unschedules_cleanup_job_when_cleanup_dropped(settings):
     call_command("absurd_sync_crons")
 
     assert fetch_cleanup_row() is None
+
+
+def test_cleanup_all_job_survives_flush(settings):
+    settings.TASKS = build_cleanup_tasks("17 * * * *")
+
+    call_command("absurd_sync_crons")
+    call_command("absurd_sync_queues")
+    assert fetch_cleanup_row() is not None
+
+    call_command("absurd_flush", "--noinput")
+
+    assert fetch_cleanup_row() == (
+        "absurd_cleanup_all",
+        "17 * * * *",
+        "select * from absurd.cleanup_all_queues(null::text);",
+    )
 
 
 def test_teardown_removes_cleanup_job(settings):
