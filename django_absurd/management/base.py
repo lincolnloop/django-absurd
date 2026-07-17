@@ -1,3 +1,5 @@
+import typing as t
+
 from django.core.management.base import BaseCommand, CommandError
 
 from django_absurd.backends import AbsurdBackend, get_absurd_backends
@@ -11,7 +13,7 @@ BEAT_DISABLED_UNDER_PG_CRON = (
 )
 
 
-def resolve_backend(options: dict) -> tuple[str, AbsurdBackend]:
+def resolve_backend(options: dict[str, t.Any]) -> tuple[str, AbsurdBackend]:
     backends = get_absurd_backends()
     alias = options["alias"]
     if alias is not None:

@@ -3,6 +3,7 @@ drain the queue, and assert the task result is persisted.
 """
 
 import pytest
+import pytest_django.fixtures
 from django.core.management import call_command
 from django.db import connection
 
@@ -32,7 +33,9 @@ TASKS_PG_CRON = {
 }
 
 
-def test_e2e_sync_fire_worker_assert_payload(settings):
+def test_e2e_sync_fire_worker_assert_payload(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     """Sync schedule into pg_cron, fire wrapper directly, drain queue, assert row."""
     settings.TASKS = TASKS_PG_CRON
 

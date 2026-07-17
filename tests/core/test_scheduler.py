@@ -3,9 +3,11 @@ import os
 import signal
 import threading
 import time
+import typing as t
 import zoneinfo
 
 import pytest
+import pytest_django.fixtures
 from django.contrib.auth.models import Group
 from django.core.management import call_command
 from django.core.management.base import CommandError
@@ -27,8 +29,11 @@ from tests.tasks import make_group as make_group_task
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
-def make_tasks_setting(schedule, cleanup=None):
-    options = {
+def make_tasks_setting(
+    schedule: dict[str, t.Any],
+    cleanup: dict[str, t.Any] | None = None,
+) -> dict[str, dict[str, t.Any]]:
+    options: dict[str, t.Any] = {
         "QUEUES": {"default": {}, "other": {}, "reports": {}},
         "SCHEDULE": schedule,
     }
@@ -42,7 +47,9 @@ def make_tasks_setting(schedule, cleanup=None):
     }
 
 
-def test_settings_provider_reads_entries(settings):
+def test_settings_provider_reads_entries(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     settings.TASKS = make_tasks_setting(
         {
             "nightly": {
@@ -67,7 +74,9 @@ def test_settings_provider_reads_entries(settings):
     ]
 
 
-def test_settings_provider_defaults_and_empty(settings):
+def test_settings_provider_defaults_and_empty(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     settings.TASKS = make_tasks_setting(
         {"ping": {"task": "tests.tasks.add", "cron": "*/5 * * * *"}}
     )
@@ -78,7 +87,9 @@ def test_settings_provider_defaults_and_empty(settings):
     assert s.kwargs == {}
 
 
-def test_settings_provider_no_schedule_key(settings):
+def test_settings_provider_no_schedule_key(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     settings.TASKS = {
         "default": {
             "BACKEND": "django_absurd.backends.AbsurdBackend",
@@ -90,19 +101,21 @@ def test_settings_provider_no_schedule_key(settings):
 
 
 @freeze_time("2026-01-01 01:59:00")
-def test_get_next_datetime_same_day():
+def test_get_next_datetime_same_day() -> None:
     expected = dt.datetime(2026, 1, 1, 2, 0, tzinfo=dt.UTC)
     assert get_next_datetime("0 2 * * *", timezone.now()) == expected
 
 
 @freeze_time("2026-01-01 02:00:00")
-def test_get_next_datetime_rolls_forward():
+def test_get_next_datetime_rolls_forward() -> None:
     expected = dt.datetime(2026, 1, 2, 2, 0, tzinfo=dt.UTC)
     assert get_next_datetime("0 2 * * *", timezone.now()) == expected
 
 
 @freeze_time("2026-01-01 12:00:00")  # 06:00 in Chicago (UTC-6)
-def test_get_next_datetime_uses_django_timezone(settings):
+def test_get_next_datetime_uses_django_timezone(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     # cron interpreted in Django TIME_ZONE: 02:00 Chicago already passed -> tomorrow
     settings.TIME_ZONE = "America/Chicago"
     chicago = zoneinfo.ZoneInfo("America/Chicago")
@@ -112,7 +125,7 @@ def test_get_next_datetime_uses_django_timezone(settings):
 
 
 @freeze_time("2026-01-01 12:00:00")
-def test_get_next_datetime_six_field_leading_seconds():
+def test_get_next_datetime_six_field_leading_seconds() -> None:
     # A 6-field cron uses a LEADING seconds column, so "*/30 * * * * *" means every
     # 30 seconds -> next fire at :30, not every second (which is what a trailing-seconds
     # reading of the same string produces).
@@ -121,24 +134,27 @@ def test_get_next_datetime_six_field_leading_seconds():
 
 
 @freeze_time("2026-01-01 12:00:00")
-def test_get_next_datetime_six_field_non_divisor_seconds():
+def test_get_next_datetime_six_field_non_divisor_seconds() -> None:
     # Leading seconds holds for any step: "*/7 * * * * *" fires at :07, not :01.
     expected = dt.datetime(2026, 1, 1, 12, 0, 7, tzinfo=dt.UTC)
     assert get_next_datetime("*/7 * * * * *", timezone.now()) == expected
 
 
 @freeze_time("2026-01-01 12:00:00")
-def test_get_next_datetime_six_field_zero_seconds():
+def test_get_next_datetime_six_field_zero_seconds() -> None:
     # Leading seconds=0 with a minute step fires on the minute boundary, not every
     # second: "0 */5 * * * *" -> next at 12:05:00.
     expected = dt.datetime(2026, 1, 1, 12, 5, 0, tzinfo=dt.UTC)
     assert get_next_datetime("0 */5 * * * *", timezone.now()) == expected
 
 
-# run_beat_until and tests below it use run_beat's injected wait/now seam because a real
-# threading.Event.wait can't be fast-forwarded by freezegun; the command path is not
-# deterministic enough for exact multi-slot counts.
-def run_beat_until(backend, cutoff: dt.datetime) -> None:
+# run_beat_until and tests below it use run_beat's injected wait/now seam
+# because a real threading.Event.wait can't be fast-forwarded by freezegun;
+# the command path is not deterministic enough for exact multi-slot counts.
+def run_beat_until(
+    backend: t.Any,
+    cutoff: dt.datetime,
+) -> None:
     with freeze_time("2026-01-01 00:00:00") as frozen:
 
         def fake_wait(timeout: float) -> bool:
@@ -148,7 +164,9 @@ def run_beat_until(backend, cutoff: dt.datetime) -> None:
         run_beat(backend, wait=fake_wait)
 
 
-def test_beat_fires_each_due_slot(settings):
+def test_beat_fires_each_due_slot(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     settings.TASKS = make_tasks_setting(
         {
             "p": {
@@ -166,7 +184,9 @@ def test_beat_fires_each_due_slot(settings):
     assert Payload.objects.count() == expected_fires
 
 
-def test_beat_fires_multiple_schedules_due_same_slot(settings):
+def test_beat_fires_multiple_schedules_due_same_slot(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     # Two distinct schedules sharing a cron slot both fire in the one tick pass.
     settings.TASKS = make_tasks_setting(
         {
@@ -189,13 +209,17 @@ def test_beat_fires_multiple_schedules_due_same_slot(settings):
     assert set(Group.objects.values_list("name", flat=True)) == {"a", "b"}
 
 
-def test_beat_no_schedules_returns(settings):
+def test_beat_no_schedules_returns(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     settings.TASKS = make_tasks_setting({})
     backend = get_absurd_backends()["default"]
     run_beat(backend, stop=threading.Event())  # returns immediately, no hang
 
 
-def test_beat_isolates_failing_schedule(settings):
+def test_beat_isolates_failing_schedule(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     settings.TASKS = make_tasks_setting(
         {
             "bad": {"task": "tests.tasks.does_not_exist", "cron": "*/1 * * * *"},
@@ -214,7 +238,9 @@ def test_beat_isolates_failing_schedule(settings):
     assert Payload.objects.count() == expected_good
 
 
-def test_beat_spawns_task_with_args(settings):
+def test_beat_spawns_task_with_args(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     settings.TASKS = make_tasks_setting(
         {
             "g": {
@@ -231,7 +257,9 @@ def test_beat_spawns_task_with_args(settings):
     assert Group.objects.filter(name="beat-args").exists()
 
 
-def test_beat_spawns_task_with_kwargs(settings):
+def test_beat_spawns_task_with_kwargs(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     settings.TASKS = make_tasks_setting(
         {
             "g": {
@@ -248,7 +276,9 @@ def test_beat_spawns_task_with_kwargs(settings):
     assert Group.objects.filter(name="beat-kw").exists()
 
 
-def test_beat_empty_queue_string_falls_back_to_task_queue(settings):
+def test_beat_empty_queue_string_falls_back_to_task_queue(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     """queue: "" normalises to the task's own queue (parity with pg_cron's
     fallback), not a literal "" queue that enqueue would reject."""
     settings.TASKS = make_tasks_setting(
@@ -268,7 +298,9 @@ def test_beat_empty_queue_string_falls_back_to_task_queue(settings):
     assert Group.objects.filter(name="beat-empty-q").exists()
 
 
-def test_beat_routes_task_to_queue(settings):
+def test_beat_routes_task_to_queue(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     settings.TASKS = make_tasks_setting(
         {
             "g": {
@@ -288,7 +320,7 @@ def test_beat_routes_task_to_queue(settings):
     assert Group.objects.filter(name="beat-routed").exists()
 
 
-def test_derive_idempotency_key_stable_same_inputs():
+def test_derive_idempotency_key_stable_same_inputs() -> None:
     schedule = Schedule(name="nightly", task="tests.tasks.add", cron="0 2 * * *")
     slot = dt.datetime(2026, 1, 1, 2, 0, tzinfo=dt.UTC)
     assert derive_idempotency_key(schedule, slot) == derive_idempotency_key(
@@ -296,7 +328,7 @@ def test_derive_idempotency_key_stable_same_inputs():
     )
 
 
-def test_derive_idempotency_key_differs_across_slots():
+def test_derive_idempotency_key_differs_across_slots() -> None:
     schedule = Schedule(name="nightly", task="tests.tasks.add", cron="0 2 * * *")
     slot_a = dt.datetime(2026, 1, 1, 2, 0, tzinfo=dt.UTC)
     slot_b = dt.datetime(2026, 1, 2, 2, 0, tzinfo=dt.UTC)
@@ -305,14 +337,14 @@ def test_derive_idempotency_key_differs_across_slots():
     )
 
 
-def test_derive_idempotency_key_differs_across_names():
+def test_derive_idempotency_key_differs_across_names() -> None:
     slot = dt.datetime(2026, 1, 1, 2, 0, tzinfo=dt.UTC)
     s_a = Schedule(name="alpha", task="tests.tasks.add", cron="0 2 * * *")
     s_b = Schedule(name="beta", task="tests.tasks.add", cron="0 2 * * *")
     assert derive_idempotency_key(s_a, slot) != derive_idempotency_key(s_b, slot)
 
 
-def test_derive_idempotency_key_distinguishes_sub_minute_slots():
+def test_derive_idempotency_key_distinguishes_sub_minute_slots() -> None:
     # 6-field crons (croniter accepts them) yield sub-minute slots; the key must
     # distinguish slots in the same minute, or two fires would collide and the
     # second would be wrongly deduped.
@@ -324,7 +356,7 @@ def test_derive_idempotency_key_distinguishes_sub_minute_slots():
     )
 
 
-def test_derive_idempotency_key_differs_across_backends():
+def test_derive_idempotency_key_differs_across_backends() -> None:
     slot = dt.datetime(2026, 1, 1, 2, 0, tzinfo=dt.UTC)
     s_a = Schedule(
         name="alpha", task="tests.tasks.add", cron="0 2 * * *", backend="default"
@@ -335,7 +367,9 @@ def test_derive_idempotency_key_differs_across_backends():
     assert derive_idempotency_key(s_a, slot) != derive_idempotency_key(s_b, slot)
 
 
-def test_settings_provider_sets_backend_alias(settings):
+def test_settings_provider_sets_backend_alias(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     settings.TASKS = {
         "default": {
             "BACKEND": "django_absurd.backends.AbsurdBackend",
@@ -364,7 +398,9 @@ def test_settings_provider_sets_backend_alias(settings):
     assert schedule.backend == "second"
 
 
-def test_beat_routes_task_to_nondefault_backend(settings):
+def test_beat_routes_task_to_nondefault_backend(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     settings.TASKS = {
         "default": {
             "BACKEND": "django_absurd.backends.AbsurdBackend",
@@ -395,9 +431,12 @@ def test_beat_routes_task_to_nondefault_backend(settings):
     assert Group.objects.filter(name="cross-backend").exists()
 
 
-def test_idempotency_key_dedups_same_slot(settings):
-    # The command/loop never re-fires a single slot; this tests spawn_scheduled directly
-    # to prove our key + Absurd's real dedup together collapse repeated fires to one task.
+def test_idempotency_key_dedups_same_slot(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
+    # The command/loop never re-fires a single slot; this tests spawn_scheduled
+    # directly to prove our key + Absurd's real dedup together collapse repeated
+    # fires to one task.
     settings.TASKS = make_tasks_setting(
         {
             "p": {
@@ -418,7 +457,9 @@ def test_idempotency_key_dedups_same_slot(settings):
     assert Payload.objects.count() == 1
 
 
-def test_absurd_beat_empty_schedule_runs_handle(settings):
+def test_absurd_beat_empty_schedule_runs_handle(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     # Covers absurd_beat handle body (single-backend path via base.py:16-17).
     # Empty SCHEDULE → run_beat returns immediately (no blocking), no threads needed.
     settings.TASKS = make_tasks_setting({})
@@ -432,7 +473,9 @@ def test_absurd_beat_empty_schedule_runs_handle(settings):
         signal.signal(signal.SIGTERM, prev_sigterm)
 
 
-def test_absurd_beat_valid_alias_and_signal_handler(settings):
+def test_absurd_beat_valid_alias_and_signal_handler(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     # Covers base.py:15 (valid alias → backend = backends[alias]) and
     # absurd_beat.py:27 (handle_signal body: stop.set()).
     settings.TASKS = make_tasks_setting(
@@ -470,7 +513,10 @@ def test_absurd_beat_valid_alias_and_signal_handler(settings):
         signal.signal(signal.SIGTERM, prev_sigterm)
 
 
-def test_absurd_beat_startup_reports_cleanup(settings, capsys):
+def test_absurd_beat_startup_reports_cleanup(
+    settings: pytest_django.fixtures.SettingsWrapper,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     # Covers absurd_beat.py:38-39 (cleanup appended to the startup message). Empty
     # SCHEDULE + a CLEANUP makes run_beat loop, so a handler-gated SIGINT stops it; the
     # startup message is written before run_beat, so capsys captures it.
@@ -504,7 +550,9 @@ def test_absurd_beat_startup_reports_cleanup(settings, capsys):
     )
 
 
-def test_absurd_beat_unknown_alias_errors(settings):
+def test_absurd_beat_unknown_alias_errors(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     settings.TASKS = make_tasks_setting(
         {"m": {"task": "tests.tasks.add", "cron": "*/5 * * * *"}}
     )
@@ -512,7 +560,9 @@ def test_absurd_beat_unknown_alias_errors(settings):
         call_command("absurd_beat", alias="nope")
 
 
-def test_absurd_beat_multiple_backends_requires_alias(settings):
+def test_absurd_beat_multiple_backends_requires_alias(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     settings.TASKS = {
         "default": {
             "BACKEND": "django_absurd.backends.AbsurdBackend",
@@ -527,7 +577,9 @@ def test_absurd_beat_multiple_backends_requires_alias(settings):
         call_command("absurd_beat")
 
 
-def test_worker_beat_rejects_burst(settings):
+def test_worker_beat_rejects_burst(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     settings.TASKS = make_tasks_setting(
         {"g": {"task": "tests.tasks.make_group", "cron": "*/1 * * * *", "args": ["x"]}}
     )
@@ -535,7 +587,9 @@ def test_worker_beat_rejects_burst(settings):
         call_command("absurd_worker", queue="default", burst=True, beat=True)
 
 
-def test_beat_stop_interrupts_long_sleep(settings):
+def test_beat_stop_interrupts_long_sleep(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     # Real threading.Event.wait — stop.set() must wake the beat promptly.
     settings.TASKS = make_tasks_setting(
         {
@@ -551,7 +605,9 @@ def test_beat_stop_interrupts_long_sleep(settings):
 
     stop = threading.Event()
     beat_thread = threading.Thread(
-        target=run_beat, kwargs={"backend": backend, "stop": stop}, daemon=True
+        target=run_beat,
+        kwargs={"backend": backend, "stop": stop},
+        daemon=True,
     )
     beat_thread.start()
     time.sleep(0.05)  # let beat enter stop.wait
@@ -562,7 +618,9 @@ def test_beat_stop_interrupts_long_sleep(settings):
     assert Payload.objects.count() == 0
 
 
-def test_worker_with_beat_runs_scheduled_task(settings):
+def test_worker_with_beat_runs_scheduled_task(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     settings.TASKS = make_tasks_setting(
         {
             "g": {
@@ -574,13 +632,14 @@ def test_worker_with_beat_runs_scheduled_task(settings):
     )
     call_command("absurd_sync_queues")
 
-    def watch():
+    def watch() -> None:
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:  # pragma: no branch
             if Group.objects.filter(name="beat-ran").exists():
                 break
             time.sleep(0.05)
-        os.kill(os.getpid(), signal.SIGTERM)  # stop worker + beat (main-thread handler)
+        # stop worker + beat (main-thread handler)
+        os.kill(os.getpid(), signal.SIGTERM)
 
     watcher = threading.Thread(target=watch, daemon=True)
     watcher.start()
@@ -593,7 +652,9 @@ def test_worker_with_beat_runs_scheduled_task(settings):
     assert Group.objects.filter(name="beat-ran").exists()
 
 
-def test_beat_already_stopped_on_entry_skips_loop(settings):
+def test_beat_already_stopped_on_entry_skips_loop(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     # Covers scheduler.py 92->exit: while-False branch when stop is pre-set.
     # Beat has at least one schedule so it passes the early-return guard, reaches
     # the while loop with stop already set → exits without enqueueing anything.
@@ -616,7 +677,9 @@ def test_beat_already_stopped_on_entry_skips_loop(settings):
     assert Payload.objects.count() == 0
 
 
-def test_beat_skips_not_yet_due_schedule(settings):
+def test_beat_skips_not_yet_due_schedule(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     # Covers scheduler.py 99->98: if due <= current False branch.
     # Two schedules: one every minute (due), one at 02:00 (far future, not due).
     # After one slot cutoff only the due schedule fires.
@@ -637,14 +700,19 @@ def test_beat_skips_not_yet_due_schedule(settings):
     backend = get_absurd_backends()["default"]
     call_command("absurd_sync_queues")
     # Cutoff at 00:01:30 → "due" slot 00:01 fires, "later" slot 02:00 does not.
-    run_beat_until(backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC))
+    run_beat_until(
+        backend,
+        dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC),
+    )
     call_command("absurd_worker", queue="default", burst=True)
     assert Payload.objects.count() == 1
     assert Payload.objects.filter(data="due").exists()
     assert not Payload.objects.filter(data="later").exists()
 
 
-def test_plain_worker_runs_blocking_worker(settings):
+def test_plain_worker_runs_blocking_worker(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     # Covers worker.py line 114: else branch of arun_worker (no burst, no beat).
     settings.TASKS = make_tasks_setting(
         {
@@ -658,7 +726,7 @@ def test_plain_worker_runs_blocking_worker(settings):
     call_command("absurd_sync_queues")
     make_group_task.enqueue("plain-worker")
 
-    def watch():
+    def watch() -> None:
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:  # pragma: no branch
             if Group.objects.filter(name="plain-worker").exists():

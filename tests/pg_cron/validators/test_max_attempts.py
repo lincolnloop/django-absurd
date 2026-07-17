@@ -1,7 +1,11 @@
+from pytest_django.fixtures import SettingsWrapper
+
 from tests.pg_cron.validators.utils import validate_from_model
 
 
-def test_max_attempts_below_one_rejected(settings):
+def test_max_attempts_below_one_rejected(
+    settings: SettingsWrapper,
+) -> None:
     # Absurd's spawn_task rejects max_attempts < 1; the model's MinValueValidator(1)
     # catches it at authoring instead of at fire time.
     result = validate_from_model(settings, max_attempts=0)

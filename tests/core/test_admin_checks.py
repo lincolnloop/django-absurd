@@ -1,3 +1,4 @@
+import pytest
 from django.core.management import call_command
 from django.core.management.base import SystemCheckError
 from django.test import override_settings
@@ -11,7 +12,7 @@ E006_BAD_PATH_MSG = (
 )
 
 
-def run_check(capsys):
+def run_check(capsys: pytest.CaptureFixture[str]) -> str:
     try:
         call_command("check", "django_absurd")
     except SystemCheckError as exc:
@@ -30,7 +31,9 @@ def run_check(capsys):
         }
     }
 )
-def test_bad_admin_site_path_emits_e006(capsys):
+def test_bad_admin_site_path_emits_e006(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     out = run_check(capsys)
     assert "absurd.E006" in out
     assert E006_BAD_PATH_MSG in out
@@ -46,7 +49,9 @@ def test_bad_admin_site_path_emits_e006(capsys):
         }
     }
 )
-def test_non_bool_enable_admin_emits_e006(capsys):
+def test_non_bool_enable_admin_emits_e006(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     out = run_check(capsys)
     assert "absurd.E006" in out
     assert "django-absurd: OPTIONS['ENABLE_ADMIN'] must be a bool." in out
@@ -62,7 +67,9 @@ def test_non_bool_enable_admin_emits_e006(capsys):
         }
     }
 )
-def test_valid_admin_config_no_e006(capsys):
+def test_valid_admin_config_no_e006(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     out = run_check(capsys)
     assert "absurd.E006" not in out
     assert "admin.E0" not in out
@@ -70,7 +77,9 @@ def test_valid_admin_config_no_e006(capsys):
 
 
 @override_settings(TASKS={"default": {"BACKEND": IMMEDIATE}})
-def test_no_absurd_backend_emits_no_e006(capsys):
+def test_no_absurd_backend_emits_no_e006(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     out = run_check(capsys)
     assert "absurd.E006" not in out
 
@@ -84,7 +93,9 @@ def test_no_absurd_backend_emits_no_e006(capsys):
         }
     }
 )
-def test_admin_site_not_a_sequence_emits_e006(capsys):
+def test_admin_site_not_a_sequence_emits_e006(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     out = run_check(capsys)
     assert "absurd.E006" in out
     assert (
@@ -102,7 +113,9 @@ def test_admin_site_not_a_sequence_emits_e006(capsys):
         }
     }
 )
-def test_admin_site_not_an_adminsite_emits_e006(capsys):
+def test_admin_site_not_an_adminsite_emits_e006(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     out = run_check(capsys)
     assert "absurd.E006" in out
     assert "is not an AdminSite instance" in out

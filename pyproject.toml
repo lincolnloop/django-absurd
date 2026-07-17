@@ -109,12 +109,14 @@ source = "vcs"
 
 [tool.mypy]
 exclude = [
+  "/migrations/",
   "^build/",
   "^dist/",
   "^\\.tox/",
   "^examples/",
 ]
 plugins = ["mypy_django_plugin.main"]
+strict = true
 
 [tool.pytest.ini_options]
 addopts = [
@@ -145,8 +147,6 @@ select = ["ALL"]
   "E501",  # Allow exceeded line length in migrations.
 ]
 "tests/**/*" = [
-  "ANN",  # No type annotations required in tests
-  "E501",  # Allow long lines in tests
   "S101",  # Allow use of asserts
   "S603",  # Allow subprocess calls in tests
   "SLF001",  # Allow private member access in tests (e.g. _meta)

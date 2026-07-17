@@ -1,4 +1,9 @@
+import collections.abc
+
 import pytest
+import pytest_django.fixtures
+from django.contrib.auth.models import AbstractBaseUser
+from django.test import Client
 
 from tests.pg_cron.validators.utils import (
     validate_from_admin_post,
@@ -8,7 +13,13 @@ from tests.pg_cron.validators.utils import (
 
 
 @pytest.fixture(params=["check", "form", "model"])
-def validate(request, settings, capsys, client, admin_user):
+def validate(
+    request: pytest.FixtureRequest,
+    settings: pytest_django.fixtures.SettingsWrapper,
+    capsys: pytest.CaptureFixture[str],
+    client: Client,
+    admin_user: AbstractBaseUser,
+) -> collections.abc.Callable[..., str | None]:
     """Parametrized subject: run a case through each real enforcing entrypoint —
     the system check, the admin change-form POST, and ScheduledTask.full_clean()."""
     if request.param == "check":
@@ -21,7 +32,11 @@ def validate(request, settings, capsys, client, admin_user):
 
 
 @pytest.fixture(params=["check", "model"])
-def validate_check_and_model(request, settings, capsys):
+def validate_check_and_model(
+    request: pytest.FixtureRequest,
+    settings: pytest_django.fixtures.SettingsWrapper,
+    capsys: pytest.CaptureFixture[str],
+) -> collections.abc.Callable[..., str | None]:
     """Subjects for rules the admin form cannot express (e.g. a non-JSON Python
     object for args/kwargs is not a form text input): the system check + full_clean."""
     if request.param == "check":
@@ -30,7 +45,12 @@ def validate_check_and_model(request, settings, capsys):
 
 
 @pytest.fixture(params=["form", "model"])
-def validate_model_and_form(request, settings, client, admin_user):
+def validate_model_and_form(
+    request: pytest.FixtureRequest,
+    settings: pytest_django.fixtures.SettingsWrapper,
+    client: Client,
+    admin_user: AbstractBaseUser,
+) -> collections.abc.Callable[..., str | None]:
     """Subjects for rules the system check does not enforce (e.g. cron grammar is
     DB-authoritative, deferred from check time): the admin form POST + full_clean."""
     if request.param == "form":

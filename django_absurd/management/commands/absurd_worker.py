@@ -3,6 +3,9 @@ import typing as t
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management.base import CommandError
 
+if t.TYPE_CHECKING:
+    from django.core.management.base import CommandParser
+
 from django_absurd.management.base import (
     BEAT_DISABLED_UNDER_PG_CRON,
     AbsurdReportCommand,
@@ -15,7 +18,7 @@ from django_absurd.worker import WorkerOptions, run_worker
 class Command(AbsurdReportCommand):
     help = "Start the Absurd task worker."
 
-    def add_arguments(self, parser: t.Any) -> None:
+    def add_arguments(self, parser: "CommandParser") -> None:
         parser.add_argument(
             "--queue",
             default="default",

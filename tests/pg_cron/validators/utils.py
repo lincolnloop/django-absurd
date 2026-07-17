@@ -2,24 +2,32 @@
 entrypoint and return the emitted error text (or None)."""
 
 import json
+import typing as t
 
+import pytest
 from django.core.exceptions import ValidationError
 from django.core.management import call_command
 from django.core.management.base import SystemCheckError
+from django.test import Client
 from django.urls import reverse
+from pytest_django.fixtures import SettingsWrapper
 
 from django_absurd.pg_cron.models import ScheduledTask
 
 
-def get_change_url(pk):
+def get_change_url(pk: int) -> str:
     return reverse("admin:django_absurd_pg_cron_scheduledtask_change", args=[pk])
 
 
 BACKEND = "django_absurd.backends.AbsurdBackend"
-QUEUES: dict = {"default": {}, "other": {}, "reports": {}}
+QUEUES: dict[str, dict[str, t.Any]] = {
+    "default": {},
+    "other": {},
+    "reports": {},
+}
 
 # Valid baseline: every field passes, so a single override isolates one rule.
-VALID = {
+VALID: dict[str, t.Any] = {
     "source": "a",
     "alias": "default",
     "name": "ok",
@@ -32,7 +40,10 @@ VALID = {
 }
 
 
-def configure_pg_cron_backend(settings, schedule=None):
+def configure_pg_cron_backend(
+    settings: SettingsWrapper,
+    schedule: dict[str, t.Any] | None = None,
+) -> None:
     """A pg_cron 'default' backend so model clean() resolves it (declared queues,
     alias-is-pg_cron-backend), and the check has a SCHEDULE to validate."""
     settings.TASKS = {
@@ -47,7 +58,7 @@ def configure_pg_cron_backend(settings, schedule=None):
     }
 
 
-def clean_scheduled_task(**kwargs):
+def clean_scheduled_task(**kwargs: t.Any) -> str | None:
     """Run ScheduledTask.full_clean() over the baseline + overrides. Return joined
     error text or None. Does NOT configure settings — callers needing a specific
     TASKS layout (e.g. a non-pg_cron backend) set it first."""
@@ -58,16 +69,27 @@ def clean_scheduled_task(**kwargs):
     return None
 
 
-def validate_from_model(settings, **kwargs):
+def validate_from_model(
+    settings: SettingsWrapper,
+    **kwargs: t.Any,
+) -> str | None:
     """Subject: ScheduledTask.full_clean(). Return joined error text or None."""
     configure_pg_cron_backend(settings)
     return clean_scheduled_task(**kwargs)
 
 
-def validate_from_system_check(settings, capsys, **kwargs):
-    """Subject: the system check over a pg_cron SCHEDULE. Return captured text or None."""
+def validate_from_system_check(
+    settings: SettingsWrapper,
+    capsys: pytest.CaptureFixture[str],
+    **kwargs: t.Any,
+) -> str | None:
+    """Subject: the system check over a pg_cron SCHEDULE. Return captured text or
+    None."""
     fields = {**VALID, **kwargs}
-    entry = {"cron": fields["cron"], "task": fields["task"]}
+    entry: dict[str, t.Any] = {
+        "cron": fields["cron"],
+        "task": fields["task"],
+    }
     # omit empty optionals so the baseline is clean (a literal queue="" would read
     # as an undeclared queue; empty args/kwargs are the defaults)
     for key in ("args", "kwargs", "queue"):
@@ -84,7 +106,12 @@ def validate_from_system_check(settings, capsys, **kwargs):
     return out if "absurd.E007" in out else None
 
 
-def validate_from_admin_post(client, admin_user, settings, **kwargs):
+def validate_from_admin_post(
+    client: Client,
+    admin_user: t.Any,
+    settings: SettingsWrapper,
+    **kwargs: t.Any,
+) -> str | None:
     """Subject: the admin change-form POST over a pre-seeded admin row. Return the
     joined form-error text, or None when the form validates (the POST redirects).
 
@@ -99,13 +126,13 @@ def validate_from_admin_post(client, admin_user, settings, **kwargs):
     fields = {**VALID, **kwargs}
     scheduled_task = ScheduledTask.objects.create(
         source="a",
-        alias=VALID["alias"],
-        name=VALID["name"],
-        task=VALID["task"],
+        alias=t.cast("str", VALID["alias"]),
+        name=t.cast("str", VALID["name"]),
+        task=t.cast("str", VALID["task"]),
         queue="default",
-        cron=VALID["cron"],
+        cron=t.cast("str", VALID["cron"]),
     )
-    payload = {
+    payload: dict[str, t.Any] = {
         "task": fields["task"],
         "queue": fields["queue"],
         "cron": fields["cron"],

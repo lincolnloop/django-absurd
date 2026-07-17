@@ -1,4 +1,7 @@
+import typing as t
+
 import pytest
+import pytest_django.fixtures
 
 from django_absurd.backends import get_absurd_backends
 from django_absurd.pg_cron.models import ScheduledTask
@@ -9,7 +12,9 @@ pytestmark = pytest.mark.django_db(transaction=True)
 ABSURD = "django_absurd.backends.AbsurdBackend"
 
 
-def build_tasks(schedule):
+def build_tasks(
+    schedule: dict[str, t.Any],
+) -> dict[str, dict[str, t.Any]]:
     return {
         "default": {
             "BACKEND": ABSURD,
@@ -22,7 +27,9 @@ def build_tasks(schedule):
     }
 
 
-def test_upsert_and_prune_settings_rows(settings):
+def test_upsert_and_prune_settings_rows(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     settings.TASKS = build_tasks(
         {
             "a": {"task": "tests.tasks.add", "cron": "0 2 * * *"},
@@ -39,7 +46,9 @@ def test_upsert_and_prune_settings_rows(settings):
     assert set(ScheduledTask.objects.values_list("name", flat=True)) == {"a"}
 
 
-def test_admin_rows_untouched(settings):
+def test_admin_rows_untouched(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     ScheduledTask.objects.create(
         name="a",
         source="a",
@@ -52,7 +61,9 @@ def test_admin_rows_untouched(settings):
     assert ScheduledTask.objects.filter(source="a", name="a").exists()
 
 
-def test_sync_writes_named_option_columns(settings):
+def test_sync_writes_named_option_columns(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     settings.TASKS = build_tasks(
         {
             "nightly": {
@@ -71,7 +82,9 @@ def test_sync_writes_named_option_columns(settings):
     assert row.max_attempts == 3
 
 
-def test_reconcile_splits_cancellation_into_columns(settings):
+def test_reconcile_splits_cancellation_into_columns(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     settings.TASKS = build_tasks(
         {"c": {"task": "tests.tasks.cancellable", "cron": "0 2 * * *"}}
     )
@@ -82,7 +95,9 @@ def test_reconcile_splits_cancellation_into_columns(settings):
     assert row.cancellation_max_delay is None
 
 
-def test_reconcile_splits_retry_strategy_into_columns(settings):
+def test_reconcile_splits_retry_strategy_into_columns(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     settings.TASKS = build_tasks(
         {"r": {"task": "tests.tasks.retrying", "cron": "0 2 * * *"}}
     )
@@ -93,7 +108,9 @@ def test_reconcile_splits_retry_strategy_into_columns(settings):
     assert row.retry_base_seconds == 2.0
 
 
-def test_sync_materializes_decorator_derived_columns(settings):
+def test_sync_materializes_decorator_derived_columns(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     settings.TASKS = build_tasks(
         {"full": {"task": "tests.tasks.fully_specced", "cron": "0 2 * * *"}}
     )

@@ -4,7 +4,7 @@ from django.db import connection
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
-def test_pg_cron_extension_available():
+def test_pg_cron_extension_available() -> None:
     with connection.cursor() as cur:
         cur.execute("select extversion from pg_extension where extname = 'pg_cron'")
         row = cur.fetchone()
@@ -13,7 +13,7 @@ def test_pg_cron_extension_available():
     assert (major, minor) >= (1, 4), f"pg_cron {row[0]} < 1.4"
 
 
-def test_can_schedule_and_unschedule():
+def test_can_schedule_and_unschedule() -> None:
     with connection.cursor() as cur:
         cur.execute(
             "select cron.schedule(%s, %s, %s)",

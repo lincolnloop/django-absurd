@@ -66,22 +66,24 @@ def reconcile_queue(backend: backends.AbsurdBackend, queue_name: str) -> SyncRes
     result = SyncResult()
     client = build_absurd_client(db)
     try:
-        row = Queue.objects.using(db).filter(queue_name=queue_name).first()
+        existing = Queue.objects.using(db).filter(queue_name=queue_name).first()
     except ProgrammingError as exc:
         msg = "Absurd schema is not installed. Run: manage.py migrate"
         raise ImproperlyConfigured(msg) from exc
-    if row is None:
+    if existing is None:
         client.create_queue(queue_name, **opts)
         result.created.append(queue_name)
     else:
-        mutable_opts = {k: v for k, v in opts.items() if k in MUTABLE_OPTION_KEYS}
-        if mutable_opts and check_mutable_options_drifted(db, mutable_opts, row):
+        mutable_opts: dict[str, t.Any] = {
+            k: v for k, v in opts.items() if k in MUTABLE_OPTION_KEYS
+        }
+        if mutable_opts and check_mutable_options_drifted(db, mutable_opts, existing):
             client.set_queue_policy(queue_name, **mutable_opts)
             result.reconciled.append(queue_name)
-        if "storage_mode" in opts and opts["storage_mode"] != row.storage_mode:
+        if "storage_mode" in opts and opts["storage_mode"] != existing.storage_mode:
             result.storage_warnings.append(
                 f"Queue '{queue_name}': storage_mode cannot be changed "
-                f"(existing: {row.storage_mode!r}, "
+                f"(existing: {existing.storage_mode!r}, "
                 f"declared: {opts['storage_mode']!r}); skipping."
             )
     return result
@@ -109,16 +111,18 @@ def provision_backend(backend: backends.AbsurdBackend) -> SyncResult:
 def parse_interval(using: str, interval_str: str) -> dt.timedelta:
     with connections[using].cursor() as cur:
         cur.execute("SELECT %s::interval", [interval_str])
-        return cur.fetchone()[0]
+        record: tuple[dt.timedelta, ...] = cur.fetchone()
+        return record[0]
 
 
 def check_mutable_options_drifted(
-    using: str, opts: dict[str, t.Any], row: Queue
+    using: str, opts: dict[str, t.Any], existing: Queue
 ) -> bool:
     for key, declared_value in opts.items():
-        db_value = getattr(row, key)
+        db_value = getattr(existing, key)
         if key in INTERVAL_OPTION_KEYS:
-            if parse_interval(using, declared_value) != db_value:
+            interval_str: str = declared_value
+            if parse_interval(using, interval_str) != db_value:
                 return True
         elif declared_value != db_value:
             return True

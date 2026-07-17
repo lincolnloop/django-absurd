@@ -1,9 +1,13 @@
+from collections.abc import Iterator
+
 import pytest
 from django.db import connection
 
 
 @pytest.fixture(autouse=True)
-def _clear_pg_cron_jobs(request):
+def _clear_pg_cron_jobs(
+    request: pytest.FixtureRequest,
+) -> Iterator[None]:
     """Unschedule every pg_cron job after the test — the test DB is ours, so blow the
     whole ``cron.job`` catalog away rather than namespacing to ``absurd:%``. Set-based
     via cron.unschedule (pg_cron's supported API — not a raw DELETE/TRUNCATE, which

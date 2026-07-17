@@ -30,7 +30,7 @@ EXPECTED_SDIST_TOP = {
 }
 
 
-def test_dist_ships_only_django_absurd(tmp_path):
+def test_dist_ships_only_django_absurd(tmp_path: Path) -> None:
     root = Path(__file__).resolve().parent.parent.parent
     shutil.rmtree(root / "build", ignore_errors=True)
     # --no-isolation builds with the dev venv (which has build + hatchling +
@@ -71,10 +71,10 @@ def test_dist_ships_only_django_absurd(tmp_path):
     assert {"django_absurd", "pyproject.toml", "README.md", "LICENSE"} <= sdist_top
 
 
-def test_agents_guide_discoverable_via_help():
+def test_agents_guide_discoverable_via_help() -> None:
     # help(django_absurd) renders the module docstring via pydoc; it must point an
     # agent at AGENTS.md...
     assert "AGENTS.md" in pydoc.render_doc(django_absurd)
-    # ...and the guide the docstring promises must actually be readable from the package.
+    # ...and the guide the docstring promises must be readable from the package.
     guide = files("django_absurd").joinpath("AGENTS.md").read_text()
     assert guide.strip()

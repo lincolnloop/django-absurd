@@ -1,16 +1,23 @@
-"""E008: SCHEDULER='pg_cron' requires the pg_cron app — genuine absence in this suite."""
+"""E008: SCHEDULER='pg_cron' requires pg_cron app — genuine absence in this suite."""
+
+import typing as t
 
 import pytest
+import pytest_django.fixtures
 from django.core.management import call_command
 from django.core.management.base import SystemCheckError
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
 ABSURD = "django_absurd.backends.AbsurdBackend"
-BASE_QUEUES: dict = {"default": {}, "other": {}, "reports": {}}
+BASE_QUEUES: dict[str, t.Any] = {"default": {}, "other": {}, "reports": {}}
 
 
-def run_check(capsys, settings, scheduler):
+def run_check(
+    capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
+    scheduler: str,
+) -> str:
     settings.TASKS = {
         "default": {
             "BACKEND": ABSURD,
@@ -26,7 +33,10 @@ def run_check(capsys, settings, scheduler):
     return cap.out + cap.err
 
 
-def test_pg_cron_scheduler_without_app_errors(capsys, settings):
+def test_pg_cron_scheduler_without_app_errors(
+    capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     out = run_check(capsys, settings, "pg_cron")
     assert "absurd.E008" in out
     assert (
@@ -38,7 +48,10 @@ def test_pg_cron_scheduler_without_app_errors(capsys, settings):
     )
 
 
-def test_beat_scheduler_without_app_clean(capsys, settings):
+def test_beat_scheduler_without_app_clean(
+    capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     out = run_check(capsys, settings, "beat")
     assert "absurd.E008" not in out
     assert "absurd.W003" not in out

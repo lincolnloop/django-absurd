@@ -59,7 +59,7 @@ def reconcile_crons_after_migrate(
     sender: AppConfig,
     *,
     verbosity: int = 1,
-    stdout: t.Any = None,
+    stdout: t.TextIO | None = None,
     **kwargs: object,
 ) -> None:
     from django_absurd.pg_cron.reconcile import (  # noqa: PLC0415

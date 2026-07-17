@@ -1,4 +1,6 @@
+import collections.abc
 import logging
+import typing as t
 from io import StringIO
 
 import pytest
@@ -10,6 +12,9 @@ from django_absurd.pg_cron.apps import reconcile_crons_after_migrate
 from django_absurd.pg_cron.models import ScheduledTask
 from django_absurd.queues import get_absurd_client
 from tests.pg_cron.utils import build_beat_tasks, build_pg_cron_tasks
+
+if t.TYPE_CHECKING:
+    import pytest_django.fixtures
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -23,12 +28,15 @@ def run_scheduled(source: str, alias: str, name: str) -> None:
 
 
 @pytest.fixture(params=["absurd_sync_crons", "migrate"])
-def run_cron_sync(request):
-    """Run a reconcile through each real entrypoint — the absurd_sync_crons command and a
-    full migrate (which fires post_migrate). Behavioral tests assert the same outcome for
-    both, so the pg_cron jobs stay correct however the reconcile is triggered."""
+def run_cron_sync(
+    request: pytest.FixtureRequest,
+) -> collections.abc.Callable[[], None]:
+    """Run reconcile through each real entrypoint — absurd_sync_crons command
+    and full migrate (which fires post_migrate). Behavioral tests assert the
+    same outcome for both, so pg_cron jobs stay correct however reconcile is
+    triggered."""
 
-    def run():
+    def run() -> None:
         if request.param == "migrate":
             call_command("migrate", verbosity=0)
         else:
@@ -37,7 +45,10 @@ def run_cron_sync(request):
     return run
 
 
-def test_reconcile_creates_owned_cron_jobs_under_pg_cron(settings, run_cron_sync):
+def test_reconcile_creates_owned_cron_jobs_under_pg_cron(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+    run_cron_sync: collections.abc.Callable[[], None],
+) -> None:
     settings.TASKS = build_pg_cron_tasks(
         {
             "a": {"task": "tests.tasks.add", "cron": "0 2 * * *"},
@@ -54,8 +65,9 @@ def test_reconcile_creates_owned_cron_jobs_under_pg_cron(settings, run_cron_sync
 
 
 def test_reconcile_emits_jobs_for_admin_rows_created_without_signal(
-    settings, run_cron_sync
-):
+    settings: "pytest_django.fixtures.SettingsWrapper",
+    run_cron_sync: collections.abc.Callable[[], None],
+) -> None:
     """A source="a" row created without firing post_save (a data migration's
     historical model, or bulk_create) has no pg_cron job; the reconcile re-emits it so
     pg_cron matches the rows."""
@@ -76,12 +88,17 @@ def test_reconcile_emits_jobs_for_admin_rows_created_without_signal(
 
     run_cron_sync()
 
-    _, schedule, _, active = ScheduledTask.pg_cron.get_job("default", "seeded", "a")
+    job = ScheduledTask.pg_cron.get_job("default", "seeded", "a")
+    assert job is not None
+    _, schedule, _, active = job
     assert schedule == "0 3 * * *"
     assert active is True
 
 
-def test_reconcile_admin_rows_is_idempotent(settings, run_cron_sync):
+def test_reconcile_admin_rows_is_idempotent(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+    run_cron_sync: collections.abc.Callable[[], None],
+) -> None:
     """Re-running the reconcile re-emits admin jobs harmlessly (cron.schedule is an
     upsert) — one row still maps to exactly one job, unchanged."""
     settings.TASKS = build_pg_cron_tasks({})
@@ -109,12 +126,13 @@ def test_reconcile_admin_rows_is_idempotent(settings, run_cron_sync):
 
 
 def test_reconcile_prunes_owned_settings_job_whose_row_vanished(
-    settings, run_cron_sync
-):
+    settings: "pytest_django.fixtures.SettingsWrapper",
+    run_cron_sync: collections.abc.Callable[[], None],
+) -> None:
     """A settings job with no backing row — its row was removed out-of-band (a
-    signal-less delete), so no post_delete unscheduled it — is orphaned; the reconcile
-    prunes it so cron.job reconverges to the declared state. Set up by scheduling from an
-    unsaved instance: a job with no row behind it."""
+    signal-less delete), so no post_delete unscheduled it — is orphaned; reconcile
+    prunes it so cron.job reconverges to declared state. Set up by scheduling from
+    an unsaved instance: a job with no row behind it."""
     settings.TASKS = build_pg_cron_tasks({})  # nothing declared
     ScheduledTask(
         source="s",
@@ -130,7 +148,10 @@ def test_reconcile_prunes_owned_settings_job_whose_row_vanished(
     assert ScheduledTask.pg_cron.get_job("default", "orphan", "s") is None
 
 
-def test_reconcile_prunes_admin_job_whose_row_vanished(settings, run_cron_sync):
+def test_reconcile_prunes_admin_job_whose_row_vanished(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+    run_cron_sync: collections.abc.Callable[[], None],
+) -> None:
     """An admin job with no backing row is orphaned; the reconcile prunes it (symmetric
     with the settings lane). Set up by scheduling from an unsaved instance."""
     settings.TASKS = build_pg_cron_tasks({})
@@ -148,11 +169,13 @@ def test_reconcile_prunes_admin_job_whose_row_vanished(settings, run_cron_sync):
     assert ScheduledTask.pg_cron.get_job("default", "orphan", "a") is None
 
 
-def test_reconcile_tears_down_when_scheduler_switches_to_beat(settings):
+def test_reconcile_tears_down_when_scheduler_switches_to_beat(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+) -> None:
     settings.TASKS = build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
-    reconcile_crons_after_migrate(sender=None)
+    reconcile_crons_after_migrate(sender=apps.get_app_config("django_absurd_pg_cron"))
     assert [r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()] == [
         "absurd:s:default:a"
     ]
@@ -160,17 +183,19 @@ def test_reconcile_tears_down_when_scheduler_switches_to_beat(settings):
     settings.TASKS = build_beat_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
-    reconcile_crons_after_migrate(sender=None)
+    reconcile_crons_after_migrate(sender=apps.get_app_config("django_absurd_pg_cron"))
 
     assert ScheduledTask.pg_cron.get_managed_jobs() == []
     assert not ScheduledTask.objects.filter(source="s", alias="default").exists()
 
 
-def test_reconcile_missing_row_fires_clean_noop(settings):
+def test_reconcile_missing_row_fires_clean_noop(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+) -> None:
     settings.TASKS = build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
-    reconcile_crons_after_migrate(sender=None)
+    reconcile_crons_after_migrate(sender=apps.get_app_config("django_absurd_pg_cron"))
 
     # Drop the backing row out-of-band; the committed cron.job wrapper must fire
     # as a clean no-op (the reconcile does not leave a firing job that errors).
@@ -179,7 +204,10 @@ def test_reconcile_missing_row_fires_clean_noop(settings):
     run_scheduled("s", "default", "a")  # no exception
 
 
-def test_reconcile_survives_missing_scheduledtask_table(settings, caplog):
+def test_reconcile_survives_missing_scheduledtask_table(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     settings.TASKS = build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
@@ -190,7 +218,9 @@ def test_reconcile_survives_missing_scheduledtask_table(settings, caplog):
         editor.delete_model(ScheduledTask)
     try:
         with caplog.at_level(logging.WARNING, logger="django_absurd"):
-            reconcile_crons_after_migrate(sender=None)
+            reconcile_crons_after_migrate(
+                sender=apps.get_app_config("django_absurd_pg_cron")
+            )
     finally:
         with connection.schema_editor() as editor:
             editor.create_model(ScheduledTask)
@@ -198,32 +228,42 @@ def test_reconcile_survives_missing_scheduledtask_table(settings, caplog):
     assert "skipped cron reconcile for backend 'default'" in caplog.text
 
 
-def test_reconcile_skips_on_malformed_schedule_spec(settings):
+def test_reconcile_skips_on_malformed_schedule_spec(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+) -> None:
     settings.TASKS = build_pg_cron_tasks({"broken": {}})  # no task/cron keys
 
-    reconcile_crons_after_migrate(sender=None)  # must NOT raise
+    reconcile_crons_after_migrate(
+        sender=apps.get_app_config("django_absurd_pg_cron")
+    )  # must NOT raise
 
     assert ScheduledTask.pg_cron.get_managed_jobs() == []
 
 
-def test_reconcile_skips_on_bad_dotted_path(settings):
+def test_reconcile_skips_on_bad_dotted_path(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+) -> None:
     settings.TASKS = build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.does_not_exist", "cron": "0 2 * * *"}}
     )
 
-    reconcile_crons_after_migrate(sender=None)  # must NOT raise
+    reconcile_crons_after_migrate(
+        sender=apps.get_app_config("django_absurd_pg_cron")
+    )  # must NOT raise
 
     assert ScheduledTask.pg_cron.get_managed_jobs() == []
 
 
-def test_pg_cron_app_registered_after_core():
+def test_pg_cron_app_registered_after_core() -> None:
     # post_migrate receivers fire in INSTALLED_APPS order; reconcile must run
     # after core queue provisioning, so the app must be listed after the core app.
     labels = [config.label for config in apps.get_app_configs()]
     assert labels.index("django_absurd") < labels.index("django_absurd_pg_cron")
 
 
-def test_migrate_provisions_queues_and_reconciles_crons(settings):
+def test_migrate_provisions_queues_and_reconciles_crons(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+) -> None:
     settings.TASKS = build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
@@ -237,72 +277,100 @@ def test_migrate_provisions_queues_and_reconciles_crons(settings):
     assert ScheduledTask.objects.filter(source="s", alias="default").count() == 1
 
 
-def test_reconcile_emits_migrate_stdout_on_sync(settings):
+def test_reconcile_emits_migrate_stdout_on_sync(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+) -> None:
     settings.TASKS = build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     buf = StringIO()
-    reconcile_crons_after_migrate(sender=None, verbosity=1, stdout=buf)
+    reconcile_crons_after_migrate(
+        sender=apps.get_app_config("django_absurd_pg_cron"), verbosity=1, stdout=buf
+    )
     out = buf.getvalue()
     assert "Reconciling pg_cron schedules (default):" in out
     assert "Scheduled 1" in out
 
 
-def test_reconcile_is_quiet_on_noop_migrate(settings):
+def test_reconcile_is_quiet_on_noop_migrate(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+) -> None:
     """A second migrate with an unchanged SCHEDULE creates and prunes nothing,
     so it must emit no reconcile output (parity with queue provisioning)."""
     settings.TASKS = build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
-    reconcile_crons_after_migrate(sender=None)  # first run creates the row + job
+    reconcile_crons_after_migrate(
+        sender=apps.get_app_config("django_absurd_pg_cron")
+    )  # first run creates the row + job
     buf = StringIO()
-    reconcile_crons_after_migrate(sender=None, verbosity=1, stdout=buf)
+    reconcile_crons_after_migrate(
+        sender=apps.get_app_config("django_absurd_pg_cron"), verbosity=1, stdout=buf
+    )
     assert buf.getvalue() == ""
 
 
-def test_reconcile_emits_prune_line_on_sync(settings):
+def test_reconcile_emits_prune_line_on_sync(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+) -> None:
     settings.TASKS = build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
-    reconcile_crons_after_migrate(sender=None)
+    reconcile_crons_after_migrate(sender=apps.get_app_config("django_absurd_pg_cron"))
     settings.TASKS = build_pg_cron_tasks({})
     buf = StringIO()
-    reconcile_crons_after_migrate(sender=None, verbosity=1, stdout=buf)
+    reconcile_crons_after_migrate(
+        sender=apps.get_app_config("django_absurd_pg_cron"), verbosity=1, stdout=buf
+    )
     out = buf.getvalue()
     assert "Reconciling pg_cron schedules (default):" in out
     assert "Pruned 1" in out
 
 
-def test_reconcile_emits_teardown_notice_when_backend_switches(settings):
+def test_reconcile_emits_teardown_notice_when_backend_switches(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+) -> None:
     settings.TASKS = build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
-    reconcile_crons_after_migrate(sender=None)
+    reconcile_crons_after_migrate(sender=apps.get_app_config("django_absurd_pg_cron"))
     settings.TASKS = build_beat_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     buf = StringIO()
-    reconcile_crons_after_migrate(sender=None, verbosity=1, stdout=buf)
+    reconcile_crons_after_migrate(
+        sender=apps.get_app_config("django_absurd_pg_cron"), verbosity=1, stdout=buf
+    )
     out = buf.getvalue()
     assert "Removed 1 pg_cron schedule(s)" in out
     assert 'no longer uses SCHEDULER="pg_cron"' in out
 
 
-def test_reconcile_warns_on_none_task_path(settings, caplog):
+def test_reconcile_warns_on_none_task_path(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     settings.TASKS = build_pg_cron_tasks({"x": {"task": None, "cron": "0 2 * * *"}})
     with caplog.at_level(logging.WARNING, logger="django_absurd"):
-        reconcile_crons_after_migrate(sender=None)
+        reconcile_crons_after_migrate(
+            sender=apps.get_app_config("django_absurd_pg_cron")
+        )
     warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
     assert len(warnings) == 1
     assert "skipped cron reconcile" in warnings[0].message
 
 
-def test_reconcile_warns_on_string_kwargs(settings, caplog):
+def test_reconcile_warns_on_string_kwargs(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     settings.TASKS = build_pg_cron_tasks(
         {"x": {"task": "tests.tasks.add", "cron": "0 2 * * *", "kwargs": "abc"}}
     )
     with caplog.at_level(logging.WARNING, logger="django_absurd"):
-        reconcile_crons_after_migrate(sender=None)
+        reconcile_crons_after_migrate(
+            sender=apps.get_app_config("django_absurd_pg_cron")
+        )
     warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
     assert len(warnings) == 1
     assert "skipped cron reconcile" in warnings[0].message

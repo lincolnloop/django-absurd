@@ -1,3 +1,5 @@
+import typing as t
+
 import pytest
 
 
@@ -10,7 +12,12 @@ import pytest
         ("kwargs", "kwargs is not JSON-serializable.", {"a": {1, 2}}),
     ],
 )
-def test_non_json_rejected(validate_check_and_model, field, message, value):
+def test_non_json_rejected(
+    validate_check_and_model: t.Callable[..., str | None],
+    field: str,
+    message: str,
+    value: t.Any,
+) -> None:
     result = validate_check_and_model(**{field: value})
     assert result
     assert message in result

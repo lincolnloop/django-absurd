@@ -11,11 +11,11 @@ from tests.tasks import capped, on_reports
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
-def test_capped_task_returns_sum():
+def test_capped_task_returns_sum() -> None:
     assert capped.func(3, 4) == 7
 
 
-def test_on_reports_task_returns_string():
+def test_on_reports_task_returns_string() -> None:
     assert on_reports.func() == "on_reports"
 
 

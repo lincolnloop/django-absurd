@@ -3,8 +3,12 @@ conftest.py; pg_cron catalog queries live on ``ScheduledTask.pg_cron``)."""
 
 import typing as t
 
-ABSURD_BACKEND = "django_absurd.backends.AbsurdBackend"
-DECLARED_QUEUES: dict = {"default": {}, "other": {}, "reports": {}}
+ABSURD_BACKEND: str = "django_absurd.backends.AbsurdBackend"
+DECLARED_QUEUES: dict[str, dict[str, t.Any]] = {
+    "default": {},
+    "other": {},
+    "reports": {},
+}
 
 
 def build_pg_cron_tasks(schedule: dict[str, t.Any]) -> dict[str, t.Any]:

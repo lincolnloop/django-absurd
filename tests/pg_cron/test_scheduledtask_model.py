@@ -1,10 +1,11 @@
 import pytest
 from django.db import IntegrityError, transaction
+from pytest_django.fixtures import SettingsWrapper
 
 from django_absurd.pg_cron.models import ScheduledTask
 
 
-def test_scheduledtask_has_explicit_option_columns():
+def test_scheduledtask_has_explicit_option_columns() -> None:
     task = ScheduledTask.objects.create(
         name="nightly",
         alias="default",
@@ -32,7 +33,7 @@ def test_scheduledtask_has_explicit_option_columns():
     assert str(task) == "s:default:nightly"
 
 
-def test_scheduledtask_option_columns_default_empty():
+def test_scheduledtask_option_columns_default_empty() -> None:
     task = ScheduledTask.objects.create(
         name="x", alias="default", task="demo.tasks.ping", cron="* * * * *"
     )
@@ -47,7 +48,9 @@ def test_scheduledtask_option_columns_default_empty():
     assert task.idempotency_key == ""
 
 
-def test_scheduledtask_max_attempts_default_bubbles_from_backend(settings):
+def test_scheduledtask_max_attempts_default_bubbles_from_backend(
+    settings: SettingsWrapper,
+) -> None:
     # the field default is the backend's DEFAULT_MAX_ATTEMPTS, not a hardcoded 5
     settings.TASKS = {
         "default": {
@@ -69,7 +72,7 @@ def test_scheduledtask_max_attempts_default_bubbles_from_backend(settings):
     assert task.max_attempts == 3
 
 
-def test_scheduledtask_max_attempts_none_means_infinite():
+def test_scheduledtask_max_attempts_none_means_infinite() -> None:
     # explicit None is allowed and kept — Absurd treats NULL max_attempts as unbounded
     # retries (a deliberate opt-in, distinct from "unset", which defaults to 5).
     task = ScheduledTask.objects.create(
@@ -84,7 +87,7 @@ def test_scheduledtask_max_attempts_none_means_infinite():
 
 
 @pytest.mark.django_db(transaction=True)
-def test_scheduledtask_max_attempts_below_one_violates_db_constraint():
+def test_scheduledtask_max_attempts_below_one_violates_db_constraint() -> None:
     # The DB CheckConstraint guards writes that skip full_clean (bulk_create, raw SQL):
     # Absurd's spawn_task rejects max_attempts < 1, so 0 must never reach the table.
     with transaction.atomic(), pytest.raises(IntegrityError):
@@ -102,7 +105,7 @@ def test_scheduledtask_max_attempts_below_one_violates_db_constraint():
 
 
 @pytest.mark.django_db(transaction=True)
-def test_scheduledtask_unique_per_source_alias_name():
+def test_scheduledtask_unique_per_source_alias_name() -> None:
     ScheduledTask.objects.create(
         name="dup",
         source="s",

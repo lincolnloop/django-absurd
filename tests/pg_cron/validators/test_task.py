@@ -1,3 +1,5 @@
+import typing as t
+
 import pytest
 
 
@@ -15,7 +17,11 @@ import pytest
         ),
     ],
 )
-def test_bad_task_rejected(validate, path, message):
+def test_bad_task_rejected(
+    validate: t.Callable[..., str | None],
+    path: str,
+    message: str,
+) -> None:
     # both subjects (model full_clean + core system check) via the fixture
     result = validate(task=path)
     assert result

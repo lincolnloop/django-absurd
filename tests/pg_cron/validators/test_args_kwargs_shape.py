@@ -1,4 +1,8 @@
+import collections.abc
+import typing as t
+
 import pytest
+import pytest_django.fixtures
 
 from tests.pg_cron.validators.utils import validate_from_model
 
@@ -13,7 +17,12 @@ from tests.pg_cron.validators.utils import validate_from_model
         ("kwargs", "kwargs must be a JSON object (dict).", [1, 2]),
     ],
 )
-def test_wrong_shape_rejected(validate, field, message, value):
+def test_wrong_shape_rejected(
+    validate: collections.abc.Callable[..., str | None],
+    field: str,
+    message: str,
+    value: t.Any,
+) -> None:
     result = validate(**{field: value})
     assert result
     assert message in result
@@ -21,11 +30,15 @@ def test_wrong_shape_rejected(validate, field, message, value):
 
 # headers is model/admin-only (not a SCHEDULE key), so the check subject can't express
 # it — validate it through full_clean. null is allowed; any other non-object is not.
-def test_headers_wrong_shape_rejected_by_model(settings):
+def test_headers_wrong_shape_rejected_by_model(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     result = validate_from_model(settings, headers=[1, 2])
     assert result
     assert "headers must be a JSON object (dict)." in result
 
 
-def test_headers_object_accepted_by_model(settings):
+def test_headers_object_accepted_by_model(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     assert validate_from_model(settings, headers={"x": "y"}) is None
