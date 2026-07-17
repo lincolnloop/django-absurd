@@ -6,6 +6,7 @@ import re
 import sys
 
 import pytest
+from django.contrib.auth.models import Group
 from django.core.management import call_command
 from django.db import connection
 from django.utils import timezone
@@ -242,3 +243,36 @@ def test_beat_isolates_failing_cleanup(settings, caplog):
     finally:
         call_command("migrate", "django_absurd", "zero", verbosity=0)
         call_command("migrate", verbosity=0)  # restore absurd schema
+
+
+def test_beat_fires_cleanup_and_task_same_slot(settings):
+    # A scheduled task and CLEANUP sharing a cron slot both fire in the one tick:
+    # the task enqueues (pending → survives cleanup) and cleanup deletes the aged row.
+    settings.TASKS = {
+        "default": {
+            "BACKEND": ABSURD,
+            "OPTIONS": {
+                "QUEUES": {"default": {"cleanup_ttl": "0 seconds"}},
+                "SCHEDULE": {
+                    "g": {
+                        "task": "tests.tasks.make_group",
+                        "cron": "*/1 * * * *",
+                        "args": ["fired"],
+                    }
+                },
+                "CLEANUP": {"schedule": "*/1 * * * *"},
+            },
+        }
+    }
+    call_command("absurd_sync_queues")
+    add.enqueue(2, 3)
+    drain()  # completed → aged-terminal, cleanup-eligible
+    backend = get_absurd_backends()["default"]
+    run_beat_until(backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC))
+    # cleanup fired this tick: the aged task is already gone (nothing left to delete)
+    assert cleanup_queues() == [
+        {"queue_name": "default", "tasks_deleted": 0, "events_deleted": 0}
+    ]
+    # the scheduled task fired the same tick: run it and assert its side effect
+    drain()
+    assert Group.objects.filter(name="fired").exists()

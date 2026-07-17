@@ -166,6 +166,29 @@ def test_beat_fires_each_due_slot(settings):
     assert Payload.objects.count() == expected_fires
 
 
+def test_beat_fires_multiple_schedules_due_same_slot(settings):
+    # Two distinct schedules sharing a cron slot both fire in the one tick pass.
+    settings.TASKS = make_tasks_setting(
+        {
+            "a": {
+                "task": "tests.tasks.make_group",
+                "cron": "*/1 * * * *",
+                "args": ["a"],
+            },
+            "b": {
+                "task": "tests.tasks.make_group",
+                "cron": "*/1 * * * *",
+                "args": ["b"],
+            },
+        }
+    )
+    backend = get_absurd_backends()["default"]
+    call_command("absurd_sync_queues")
+    run_beat_until(backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC))
+    call_command("absurd_worker", queue="default", burst=True)
+    assert set(Group.objects.values_list("name", flat=True)) == {"a", "b"}
+
+
 def test_beat_no_schedules_returns(settings):
     settings.TASKS = make_tasks_setting({})
     backend = get_absurd_backends()["default"]
