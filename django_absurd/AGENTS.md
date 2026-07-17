@@ -149,8 +149,8 @@ System check IDs:
 - `absurd.E008` — `SCHEDULER="pg_cron"` is configured but `"django_absurd.pg_cron"` is
   not in `INSTALLED_APPS`. See [pg_cron backend](#pg_cron-backend).
 - `absurd.E009` — `OPTIONS["DEFAULT_MAX_ATTEMPTS"]` is not an integer `>= 1`.
-- `absurd.E010` — invalid `CLEANUP` configuration (missing or invalid `schedule` cron
-  expression, or unknown keys).
+- `absurd.E010` — invalid `CLEANUP` configuration (not a `{"schedule": …}` map, or
+  unknown keys; cron grammar checked at `check` time for beat, at sync for pg_cron).
 - `absurd.W003` (Warning) — `"django_absurd.pg_cron"` is in `INSTALLED_APPS` but ordered
   before `"django_absurd"`, causing its `post_migrate` cron reconcile to run before
   queue provisioning. See [pg_cron backend](#pg_cron-backend).
@@ -506,8 +506,9 @@ TASKS = {
 
 This works under **either** scheduler: beat runs cleanup in-process on the declared
 cadence; pg_cron schedules a native database job (`django_absurd_cleanup_<alias>`).
-`manage.py check` reports `absurd.E010` for an invalid cron expression. Retention knobs
-(`cleanup_ttl`, `cleanup_limit`) remain per-queue policy — set them in
+`manage.py check` reports `absurd.E010` for a missing/malformed `CLEANUP` (the beat cron
+grammar is checked then too; pg_cron's is validated by the database at sync). Retention
+knobs (`cleanup_ttl`, `cleanup_limit`) remain per-queue policy — set them in
 `OPTIONS["QUEUES"]`.
 
 **Reset (destructive):** `manage.py absurd_flush` **deletes all task history** — it
