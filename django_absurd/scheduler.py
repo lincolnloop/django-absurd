@@ -1,5 +1,6 @@
 import dataclasses
 import datetime
+import functools
 import hashlib
 import logging
 import threading
@@ -97,7 +98,8 @@ def run_beat(
     validate_backend(backend.database)
     schedules = get_settings_schedules(backend)
     cleanup_cron = get_cleanup_schedule(backend)
-    if not schedules and cleanup_cron is None:
+    entries = build_beat_entries(backend, schedules, cleanup_cron, now())
+    if not entries:
         logger.info("django-absurd beat: no schedules declared")
         return
 
@@ -109,34 +111,54 @@ def run_beat(
     stop = stop or threading.Event()
     wait = wait or stop.wait
 
-    upcoming: dict[str, datetime.datetime] = {
-        s.name: get_next_datetime(s.cron, now()) for s in schedules
-    }
-    by_name = {s.name: s for s in schedules}
-    cleanup_due = (
-        get_next_datetime(cleanup_cron, now()) if cleanup_cron is not None else None
-    )
-
     while not stop.is_set():
-        earliest = min(
-            [*upcoming.values(), *([cleanup_due] if cleanup_due is not None else [])]
-        )
+        earliest = min(e.next_at for e in entries)
         delay = (earliest - now()).total_seconds()
         if delay > 0 and wait(delay):
             break
         current = now()
-        for name, due in list(upcoming.items()):
-            if due > current:
-                continue
-            fire_schedule(by_name[name], due)
-            upcoming[name] = get_next_datetime(by_name[name].cron, current)
-        if (
-            cleanup_cron is not None
-            and cleanup_due is not None
-            and cleanup_due <= current
-        ):
-            fire_cleanup(backend, cleanup_due)
-            cleanup_due = get_next_datetime(cleanup_cron, current)
+        for entry in entries:
+            if entry.next_at <= current:
+                entry.fire(entry.next_at)
+                entry.next_at = get_next_datetime(entry.cron, current)
+
+
+@dataclasses.dataclass
+class BeatEntry:
+    """One thing the beat loop fires on a cron cadence — a task schedule or cleanup.
+
+    Both kinds share one loop: ``fire`` is the callback for a due slot, ``next_at`` is
+    advanced after each firing.
+    """
+
+    cron: str
+    fire: t.Callable[[datetime.datetime], None]
+    next_at: datetime.datetime
+
+
+def build_beat_entries(
+    backend: AbsurdBackend,
+    schedules: list[Schedule],
+    cleanup_cron: str | None,
+    moment: datetime.datetime,
+) -> list[BeatEntry]:
+    entries = [
+        BeatEntry(
+            s.cron,
+            functools.partial(fire_schedule, s),
+            get_next_datetime(s.cron, moment),
+        )
+        for s in schedules
+    ]
+    if cleanup_cron is not None:
+        entries.append(
+            BeatEntry(
+                cleanup_cron,
+                functools.partial(fire_cleanup, backend),
+                get_next_datetime(cleanup_cron, moment),
+            )
+        )
+    return entries
 
 
 def fire_cleanup(backend: AbsurdBackend, slot: datetime.datetime) -> None:
