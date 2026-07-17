@@ -53,5 +53,16 @@
       "matchUpdateTypes": ["lockFileMaintenance"],
       "prPriority": -1
     }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Pin the PGDG postgresql-<major>-cron apt package in Dockerfile.pg_cron.",
+      "managerFilePatterns": ["/(^|/)Dockerfile\\.pg_cron$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+) versioning=(?<versioning>\\S+)[\\s\\S]*?=(?<currentValue>[0-9][^\\s\\\\;]+)"
+      ],
+      "registryUrlTemplate": "https://apt.postgresql.org/pub/repos/apt?suite=trixie-pgdg&components=main&binaryArch=amd64"
+    }
   ]
 }

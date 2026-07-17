@@ -1,6 +1,6 @@
 import asyncio
+import datetime as dt
 import logging
-from datetime import timedelta
 
 import psycopg
 import pytest
@@ -282,7 +282,7 @@ def test_worker_command_reconciles_changed_interval_option(settings, capsys):
     call_command("absurd_worker", queue="default", burst=True)
     out = capsys.readouterr().out
     assert out == "Reconciled: default\nStarted worker on queue 'default'.\n"
-    assert Queue.objects.get(queue_name="default").cleanup_ttl == timedelta(days=60)
+    assert Queue.objects.get(queue_name="default").cleanup_ttl == dt.timedelta(days=60)
 
 
 def test_worker_command_no_reconcile_when_unchanged(settings, capsys):

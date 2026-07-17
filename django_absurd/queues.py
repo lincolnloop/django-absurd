@@ -1,7 +1,7 @@
+import datetime as dt
 import typing as t
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import timedelta
 
 from absurd_sdk import Absurd, CreateQueueOptions
 from django.core.exceptions import ImproperlyConfigured
@@ -106,7 +106,7 @@ def provision_backend(backend: backends.AbsurdBackend) -> SyncResult:
     return result
 
 
-def parse_interval(using: str, interval_str: str) -> timedelta:
+def parse_interval(using: str, interval_str: str) -> dt.timedelta:
     with connections[using].cursor() as cur:
         cur.execute("SELECT %s::interval", [interval_str])
         return cur.fetchone()[0]

@@ -1,4 +1,4 @@
-from datetime import timedelta
+import datetime as dt
 
 import psycopg
 import pytest
@@ -62,7 +62,7 @@ def test_sync_creates_with_options_and_model_maps(settings):
     call_command("absurd_sync_queues")
     q = Queue.objects.get(queue_name="x")
     assert q.storage_mode == "partitioned"
-    assert q.cleanup_ttl == timedelta(days=90)
+    assert q.cleanup_ttl == dt.timedelta(days=90)
     assert table_exists("t_x")
 
 

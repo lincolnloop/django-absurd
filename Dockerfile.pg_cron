@@ -3,7 +3,8 @@
 # Alpine has no pg_cron package, so we use the Debian variant.
 FROM postgres:18
 
+# renovate: datasource=deb depName=postgresql-18-cron versioning=deb
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends postgresql-18-cron; \
+    apt-get install -y --no-install-recommends postgresql-18-cron=1.6.7-3.pgdg13+1; \
     rm -rf /var/lib/apt/lists/*

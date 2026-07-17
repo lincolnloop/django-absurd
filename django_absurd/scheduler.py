@@ -1,5 +1,5 @@
 import dataclasses
-import datetime
+import datetime as dt
 import functools
 import hashlib
 import logging
@@ -30,13 +30,13 @@ class Schedule:
     backend: str = "default"
 
 
-def get_next_datetime(cron: str, after: datetime.datetime) -> datetime.datetime:
+def get_next_datetime(cron: str, after: dt.datetime) -> dt.datetime:
     # second_at_beginning=True: a 6-field cron carries a LEADING seconds column, so
     # "*/30 * * * * *" means every 30 seconds. Without it croniter reads seconds as the
     # trailing field and the expression silently degrades to every-second firing.
     local_after = timezone.localtime(after)
     return croniter.croniter(cron, local_after, second_at_beginning=True).get_next(
-        datetime.datetime
+        dt.datetime
     )
 
 
@@ -56,15 +56,15 @@ def get_settings_schedules(backend: AbsurdBackend) -> list[Schedule]:
     ]
 
 
-def derive_idempotency_key(schedule: Schedule, slot: datetime.datetime) -> str:
+def derive_idempotency_key(schedule: Schedule, slot: dt.datetime) -> str:
     # Dedup key, anchored on the schedule name (not task/cron) so args/queue-varying
     # entries don't collide. https://earendil-works.github.io/absurd/patterns/cron/
-    utc_slot = slot.astimezone(datetime.UTC).isoformat(timespec="seconds")
+    utc_slot = slot.astimezone(dt.UTC).isoformat(timespec="seconds")
     raw = f"{schedule.backend}|{schedule.name}|{schedule.cron}|{utc_slot}"
     return "cron:" + hashlib.sha256(raw.encode()).hexdigest()[:24]
 
 
-def spawn_scheduled(schedule: Schedule, slot: datetime.datetime) -> None:
+def spawn_scheduled(schedule: Schedule, slot: dt.datetime) -> None:
     close_old_connections()
     try:
         task = import_string(schedule.task)
@@ -91,7 +91,7 @@ def get_cleanup_schedule(backend: AbsurdBackend) -> str | None:
 def run_beat(
     backend: AbsurdBackend,
     *,
-    now: t.Callable[[], datetime.datetime] = timezone.now,
+    now: t.Callable[[], dt.datetime] = timezone.now,
     stop: threading.Event | None = None,
     wait: t.Callable[[float], bool] | None = None,
 ) -> None:
@@ -132,15 +132,15 @@ class BeatEntry:
     """
 
     cron: str
-    fire: t.Callable[[datetime.datetime], None]
-    next_at: datetime.datetime
+    fire: t.Callable[[dt.datetime], None]
+    next_at: dt.datetime
 
 
 def build_beat_entries(
     backend: AbsurdBackend,
     schedules: list[Schedule],
     cleanup_cron: str | None,
-    moment: datetime.datetime,
+    moment: dt.datetime,
 ) -> list[BeatEntry]:
     entries = [
         BeatEntry(
@@ -161,7 +161,7 @@ def build_beat_entries(
     return entries
 
 
-def fire_cleanup(backend: AbsurdBackend, slot: datetime.datetime) -> None:
+def fire_cleanup(backend: AbsurdBackend, slot: dt.datetime) -> None:
     close_old_connections()
     try:
         counts = cleanup_queues()
@@ -170,14 +170,14 @@ def fire_cleanup(backend: AbsurdBackend, slot: datetime.datetime) -> None:
     else:
         logger.info(
             "django-absurd cleanup ran: slot=%s counts=%s",
-            slot.astimezone(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            slot.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
             counts,
         )
     finally:
         close_old_connections()
 
 
-def fire_schedule(schedule: Schedule, slot: datetime.datetime) -> None:
+def fire_schedule(schedule: Schedule, slot: dt.datetime) -> None:
     try:
         spawn_scheduled(schedule, slot)
     except Exception:
@@ -186,5 +186,5 @@ def fire_schedule(schedule: Schedule, slot: datetime.datetime) -> None:
         logger.info(
             "django-absurd schedule enqueued: name=%s slot=%s",
             schedule.name,
-            slot.astimezone(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            slot.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         )
