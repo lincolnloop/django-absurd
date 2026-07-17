@@ -216,7 +216,9 @@ are unsupported on purpose: Absurd has no notion of priority, and async/one-shot
 deferral aren't wired — we won't fake them behind a flag that implies otherwise.
 (Recurring scheduling is supported — see above.)
 
-A surface to enable Absurd's native pg_cron maintenance jobs (partition, retention, and
-detachment scheduling) is not built yet. That native scheduling is pg_cron-only, so
-until a project-facing surface exists those jobs are simply never created — which is why
-the shipped retention story is the application-level cleanup above.
+A surface to enable Absurd's native `enable_cron` partition + detach maintenance jobs is
+not built yet. That native scheduling is pg_cron-only, so until a project-facing surface
+exists those partition/detach jobs are simply never created. (Retention itself is
+already covered natively — the declarative `CLEANUP` job schedules a native database job
+under pg_cron, see above; only the partition/detach half of `enable_cron` remains
+unsurfaced.)

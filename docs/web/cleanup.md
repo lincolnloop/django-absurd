@@ -36,6 +36,10 @@ The same function is importable — `cleanup_queues()` for all queues, or
 `cleanup_queues(["reports", "emails"])` for specific ones — returning a list of
 per-queue count dicts.
 
+Passing an unknown queue name to `absurd_cleanup` (or `cleanup_queues([...])`) raises a
+database error — the queue must exist. This is deliberate: cleanup is a maintenance
+operation, so the raw error surfaces rather than being masked by a guard.
+
 ## Schedule recurring cleanup
 
 Add `OPTIONS["CLEANUP"] = {"schedule": "<cron>"}` to run cleanup automatically on
@@ -86,3 +90,7 @@ python manage.py absurd_flush --noinput  # drops without prompting
     This permanently deletes all task history across every queue. It leaves the Absurd
     schema and migrations untouched — re-provision your declared queues afterward with
     `migrate`, `absurd_sync_queues`, or by starting a worker.
+
+    Any existing scheduled jobs (pg_cron schedule jobs and beat schedules) survive the
+    flush and will **error on each fire** until the queues exist again — re-provision
+    promptly.

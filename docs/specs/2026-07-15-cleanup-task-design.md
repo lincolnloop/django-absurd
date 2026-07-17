@@ -160,3 +160,8 @@ Bookkeeping — where the shipped branch diverged from the design above:
   only. pg_cron deployments get Absurd's native maintenance surface (`enable_cron`:
   partitions/cleanup/detach) instead — deferred to #64 (django-absurd currently exposes
   no such surface).
+
+Superseded (same branch): the scheduling story above was replaced within this branch by
+declarative `OPTIONS["CLEANUP"]`, driving cleanup under both schedulers (see
+[`2026-07-16-declarative-cleanup-schedule-design.md`](2026-07-16-declarative-cleanup-schedule-design.md));
+the user-written `@task` wrapper and its docs/tests were removed.
