@@ -91,6 +91,12 @@ E007_HINT_SHAPE = (
 E007_HINT_QUEUE = "Declare the queue under OPTIONS['QUEUES'] or correct the queue name."
 E007_HINT_SCHEDULER = "Set SCHEDULER to 'beat' or 'pg_cron'."
 
+E008_MSG = (
+    "django-absurd: SCHEDULER is 'pg_cron' but 'django_absurd.pg_cron'"
+    " is not in INSTALLED_APPS."
+)
+E008_HINT = "Add 'django_absurd.pg_cron' to INSTALLED_APPS, after 'django_absurd'."
+
 E009_MSG = "django-absurd: OPTIONS['DEFAULT_MAX_ATTEMPTS'] must be an integer >= 1."
 E009_HINT = "Set DEFAULT_MAX_ATTEMPTS to a positive integer (Absurd rejects < 1)."
 
@@ -100,11 +106,6 @@ E010_HINT = (
     ' OPTIONS["CLEANUP"] = {"schedule": "<cron>"}.'
 )
 
-E008_MSG = (
-    "django-absurd: SCHEDULER is 'pg_cron' but 'django_absurd.pg_cron'"
-    " is not in INSTALLED_APPS."
-)
-E008_HINT = "Add 'django_absurd.pg_cron' to INSTALLED_APPS, after 'django_absurd'."
 W003_MSG = (
     "django-absurd: 'django_absurd.pg_cron' is ordered before 'django_absurd'"
     " in INSTALLED_APPS (its post_migrate cron reconcile runs before queue"

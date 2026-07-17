@@ -143,7 +143,11 @@ def fire_cleanup(backend: AbsurdBackend, slot: datetime.datetime) -> None:
     except Exception:
         logger.exception("django-absurd cleanup failed")
     else:
-        logger.info("django-absurd cleanup ran: counts=%s", counts)
+        logger.info(
+            "django-absurd cleanup ran: slot=%s counts=%s",
+            slot.astimezone(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            counts,
+        )
     finally:
         close_old_connections()
 
