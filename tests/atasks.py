@@ -5,6 +5,30 @@ from django.tasks import TaskContext, task
 
 from tests.models import Payload
 
+if t.TYPE_CHECKING:
+    from django_absurd.context import AsyncDurableContext
+
+DURABLE_STEP_CALLS: dict[str, int] = {"n": 0}
+
+
+@task(takes_context=True)  # type: ignore[arg-type]  # django-stubs types the ctx param as base TaskContext; the worker passes an AsyncDurableContext to coroutine tasks
+async def astep_echo(context: "AsyncDurableContext", value: str) -> str:
+    async def compute() -> str:
+        return value
+
+    return await context.step("echo", compute)
+
+
+@task(takes_context=True)  # type: ignore[arg-type]  # django-stubs types the ctx param as base TaskContext; the worker passes an AsyncDurableContext to coroutine tasks
+async def aheaders_tenant(context: "AsyncDurableContext") -> str | None:
+    return context.headers.get("tenant")
+
+
+@task(takes_context=True)  # type: ignore[arg-type]  # django-stubs types the ctx param as base TaskContext; the worker passes an AsyncDurableContext to coroutine tasks
+async def aheartbeat_then_return(context: "AsyncDurableContext", value: str) -> str:
+    await context.heartbeat()
+    return value
+
 
 @task
 async def aecho(value: t.Any) -> t.Any:
