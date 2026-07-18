@@ -29,9 +29,11 @@ def _reset_absurd_queues(_enable_db: None) -> None:
 
 @pytest.fixture
 def admin_user() -> User:
-    return User.objects.create_superuser("admin", "a@x.com", "pw")
+    # No password: tests log in via force_login (never checks it), and setting one
+    # runs the deliberately-slow PBKDF2 hasher on every fixture use.
+    return User.objects.create_superuser("admin", "a@x.com")
 
 
 @pytest.fixture
 def staff_user() -> User:
-    return User.objects.create_user("staff", "s@x.com", "pw", is_staff=True)
+    return User.objects.create_user("staff", "s@x.com", is_staff=True)
