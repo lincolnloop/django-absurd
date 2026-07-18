@@ -222,7 +222,7 @@ def test_worker_no_backend_errors(settings: SettingsWrapper) -> None:
     settings.TASKS = {
         "default": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}
     }
-    with pytest.raises(CommandError, match="No Absurd backend configured"):
+    with pytest.raises(CommandError, match="No Absurd backend configured\\."):
         call_command("absurd_worker", burst=True)
 
 

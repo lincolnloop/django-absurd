@@ -251,6 +251,10 @@ def test_two_absurd_backends_distinct_db_error(
     out = run_absurd_check(capsys)
     assert "absurd.E004" in out
     assert "django-absurd: more than one Absurd backend is configured." in out
+    assert (
+        "django-absurd uses a single Absurd backend per project"
+        " — configure exactly one AbsurdBackend in TASKS." in out
+    )
 
 
 def test_two_absurd_backends_same_db_error(
@@ -265,6 +269,10 @@ def test_two_absurd_backends_same_db_error(
     out = run_absurd_check(capsys, databases=["default"])
     assert "absurd.E004" in out
     assert "django-absurd: more than one Absurd backend is configured." in out
+    assert (
+        "django-absurd uses a single Absurd backend per project"
+        " — configure exactly one AbsurdBackend in TASKS." in out
+    )
 
 
 def test_plain_check_skips_db_state(

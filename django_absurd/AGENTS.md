@@ -139,7 +139,8 @@ System check IDs:
 - `absurd.E001` — backend/DB misconfiguration.
 - `absurd.E002` — `QUEUES` declared in both top-level and `OPTIONS`.
 - `absurd.E003` — invalid per-queue policy options.
-- `absurd.E004` — multiple Absurd backends targeting different databases.
+- `absurd.E004` — more than one Absurd backend is configured. django-absurd supports
+  exactly one Absurd backend per project.
 - `absurd.E005` — `AbsurdRouter` missing from `DATABASE_ROUTERS`.
 - `absurd.E006` — `ENABLE_ADMIN` is not a bool, or `ADMIN_SITE` paths don't resolve to
   `AdminSite` instances.

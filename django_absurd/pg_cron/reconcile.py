@@ -27,7 +27,7 @@ from django_absurd.scheduler import get_cleanup_schedule, get_settings_schedules
 # and removes it otherwise — including at migrate teardown / scheduler-flip even when
 # CLEANUP was never set — so a job created via ``absurdctl cron`` is reclaimed and
 # removed. Drive cleanup ONE way — OPTIONS["CLEANUP"] OR `absurdctl cron`, not both
-# (arbitration deferred to https://github.com/lincolnloop/django-absurd/issues/63).
+# (deferred: multi-manager cleanup-job arbitration is out of scope here).
 ABSURD_CLEANUP_JOB = "absurd_cleanup_all"
 CLEANUP_COMMAND = "select * from absurd.cleanup_all_queues(null::text);"
 
@@ -147,8 +147,8 @@ def reconcile_cleanup_job(cur: t.Any, backend: AbsurdBackend) -> None:
     is AUTHORITATIVE over this job: it schedules it from OPTIONS["CLEANUP"] and removes
     it otherwise — including at migrate teardown / scheduler-flip even when CLEANUP was
     never set — so a job created via ``absurdctl cron`` is reclaimed and removed. Drive
-    cleanup ONE way — OPTIONS["CLEANUP"] OR ``absurdctl cron``, not both (multi-manager
-    arbitration is deferred to https://github.com/lincolnloop/django-absurd/issues/63).
+    cleanup ONE way — OPTIONS["CLEANUP"] OR ``absurdctl cron``, not both
+    (deferred: multi-manager cleanup-job arbitration is out of scope here).
     Runs on the caller's already-locked cursor so it shares the reconcile's advisory
     lock and transaction.
     """
