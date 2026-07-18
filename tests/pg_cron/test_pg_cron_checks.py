@@ -129,9 +129,9 @@ def test_pg_cron_jobname_too_long_rejected(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Composed jobname exceeding 63 bytes rejected under pg_cron."""
-    # alias "default" + name long enough to push absurd:s:default:<name> > 63 bytes
-    # "absurd:s:default:" = 17 chars, so name needs > 46 chars
-    long_name = "a" * 47
+    # alias "default" + name long enough to push _dj:s:default:<name> > 63 bytes
+    # "_dj:s:default:" = 14 chars, so name needs > 49 chars
+    long_name = "a" * 50
     out = run_pg_cron_check(
         settings,
         capsys,

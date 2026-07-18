@@ -89,9 +89,9 @@ class PgCronManager(models.Manager["ScheduledTask"]):
 
     def get_managed_jobs(self, source: str | None = None) -> list[tuple[t.Any, ...]]:
         """The ``(jobname, schedule, command, active)`` rows for every job we manage
-        (all share the ``absurd:`` prefix), across aliases. Pass source to narrow to one
-        lane (``absurd:<source>:``)."""
-        prefix = f"absurd:{source}:" if source is not None else "absurd:"
+        (all share the ``_dj:`` prefix), across aliases. Pass source to narrow to one
+        lane (``_dj:<source>:``)."""
+        prefix = f"_dj:{source}:" if source is not None else "_dj:"
         with connections[resolve_absurd_database()].cursor() as cur:
             cur.execute(
                 "select jobname, schedule, command, active from cron.job "
@@ -105,7 +105,7 @@ class PgCronManager(models.Manager["ScheduledTask"]):
         self, alias: str, source: str, database: str | None = None
     ) -> None:
         """Unschedule every pg_cron job owned by one backend + source
-        (``absurd:<source>:<alias>:%``). Scoped to that exact prefix so tearing down one
+        (``_dj:<source>:<alias>:%``). Scoped to that exact prefix so tearing down one
         backend's lane never touches another backend's jobs."""
         with open_locked_cursor(database or resolve_absurd_database()) as cur:
             cur.execute(
@@ -121,7 +121,7 @@ class PgCronManager(models.Manager["ScheduledTask"]):
         keep_names: list[str],
         database: str | None = None,
     ) -> None:
-        """Unschedule owned jobs for a backend + source (``absurd:<source>:<alias>:%``)
+        """Unschedule owned jobs for a backend + source (``_dj:<source>:<alias>:%``)
         whose name isn't in keep_names — i.e. jobs with no backing row. Row deletion
         unschedules its own job via post_delete, but a row removed by a signal-less path
         (bulk delete, ``flush``, raw SQL) leaves its job orphaned — reconcile heals it
@@ -271,7 +271,7 @@ class ScheduledTask(models.Model):
         return ScheduledTask.pg_cron.get_job(self.alias, self.name, self.source)
 
     def schedule_pg_cron_job(self) -> None:
-        """(Re)schedule this row's pg_cron job (``absurd:<source>:<alias>:<name>``) and
+        """(Re)schedule this row's pg_cron job (``_dj:<source>:<alias>:<name>``) and
         arm it to its enabled state. Called by the post_save signal for every write; a
         no-op when the alias isn't a pg_cron backend."""
         if resolve_pg_cron_backend(self) is None:

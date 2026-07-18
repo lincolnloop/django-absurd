@@ -105,8 +105,8 @@ source of truth; a writable lane is a separate, deliberately deferred step.
 
 A future writable lane would author `source="admin"` rows, and the shape already
 anticipates it: `sync_crons` is scoped to `source="settings"` and never touches admin
-rows, the `absurd:settings:<alias>:<name>` / `absurd:admin:<alias>:<name>` job-name
-split gives `pg_cron`'s prune the same scoping, and the fire wrapper takes `source` as a
+rows, the `_dj:settings:<alias>:<name>` / `_dj:admin:<alias>:<name>` job-name split
+gives `pg_cron`'s prune the same scoping, and the fire wrapper takes `source` as a
 parameter — so admin-authored schedules fire through the same path with no fire-path
 change. It was deferred, not free: authoring is validation-heavy (the schedule rules
 that run at `check` time against settings must also run at row-save time), and a saved

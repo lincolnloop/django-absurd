@@ -21,7 +21,7 @@ from django_absurd.scheduler import get_cleanup_schedule, get_settings_schedules
 # Absurd's OWN global cleanup job: reconcile schedules/unschedules exactly this
 # identity — the same jobname and command that absurd.enable_cron / `absurdctl cron
 # --enable` use — so django-absurd and absurdctl reference one shared job rather than
-# forking a parallel one. It lives outside our managed ``absurd:`` (colon) namespace,
+# forking a parallel one. It lives outside our managed ``_dj:`` (colon) namespace,
 # so get_managed_jobs() never sweeps it. When ``django_absurd.pg_cron`` is installed,
 # django-absurd is AUTHORITATIVE over this job: it schedules it from OPTIONS["CLEANUP"]
 # and removes it otherwise — including at migrate teardown / scheduler-flip even when
@@ -199,9 +199,9 @@ def teardown_crons(backend: AbsurdBackend, include_admin: bool = False) -> int:
     """Remove pg_cron jobs and ScheduledTask rows owned by this backend alias.
 
     The migrate-time path (include_admin=False, a scheduler switch away from pg_cron)
-    unschedules absurd:s:<alias>:% jobs and deletes settings rows, leaving admin
+    unschedules _dj:s:<alias>:% jobs and deletes settings rows, leaving admin
     schedules (user data) untouched. The guarded absurd_sync_crons --teardown command
-    (include_admin=True) additionally clears absurd:a:<alias>:% jobs AND deletes their
+    (include_admin=True) additionally clears _dj:a:<alias>:% jobs AND deletes their
     rows — so the teardown is terminal, not undone by the next
     migrate's admin re-emit (that is why the command confirms first).
 

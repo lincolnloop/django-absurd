@@ -17,7 +17,7 @@ def test_can_schedule_and_unschedule() -> None:
     with connection.cursor() as cur:
         cur.execute(
             "select cron.schedule(%s, %s, %s)",
-            ["absurd:__probe__", "* * * * *", "select 1"],
+            ["_dj:__probe__", "* * * * *", "select 1"],
         )
         jobid = cur.fetchone()[0]
         cur.execute("select count(*) from cron.job where jobid = %s", [jobid])

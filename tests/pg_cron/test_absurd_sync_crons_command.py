@@ -37,8 +37,8 @@ def test_sync_crons_command_creates_cron_jobs(
     call_command("absurd_sync_crons")
 
     jobs = [r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()]
-    assert "absurd:s:default:a" in jobs
-    assert "absurd:s:default:b" in jobs
+    assert "_dj:s:default:a" in jobs
+    assert "_dj:s:default:b" in jobs
     assert len(jobs) == 2
 
     out = capsys.readouterr().out

@@ -166,7 +166,7 @@ sync for settings schedules, at save time for admin ones — so `manage.py check
 - schedule name containing characters outside `[A-Za-z0-9_-]`
 - backend alias containing characters outside `[A-Za-z0-9_-]` (pg_cron job names share
   the same charset restriction)
-- composed job name (`absurd:s:<alias>:<name>`) exceeding 63 bytes (Postgres silently
+- composed job name (`_dj:s:<alias>:<name>`) exceeding 63 bytes (Postgres silently
   truncates longer names)
 
 **Beat and pg_cron are mutually exclusive per backend.** Setting `SCHEDULER="pg_cron"`
@@ -222,7 +222,7 @@ schedules onto the absurd DB.) Writes that bypass `.save()` — a **data migrati
 historical model isn't the signal's sender), `bulk_create`, `QuerySet.update`, raw SQL —
 don't emit directly, but `migrate` (and `absurd_sync_crons`) reconciles admin rows, so
 their jobs materialize then. A settings schedule and an admin schedule **may** share the
-same name — they are distinct, source-namespaced jobs (`absurd:s:…` vs `absurd:a:…`, the
+same name — they are distinct, source-namespaced jobs (`_dj:s:…` vs `_dj:a:…`, the
 source abbreviated to keep the job name short).
 
 ### Timezone

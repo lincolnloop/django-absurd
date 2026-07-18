@@ -44,12 +44,12 @@ def validate_name_charset(value: t.Any) -> None:
 
 def build_jobname(alias: str, name: str, source: str = Source.SETTINGS) -> str:
     """Return the pg_cron job name for a scheduled task."""
-    return f"absurd:{source}:{alias}:{name}"
+    return f"_dj:{source}:{alias}:{name}"
 
 
 def build_jobname_prefix(alias: str, source: str = Source.SETTINGS) -> str:
     """Return the LIKE prefix used to prune pg_cron jobs for an alias + source."""
-    return f"absurd:{source}:{alias}:"
+    return f"_dj:{source}:{alias}:"
 
 
 def validate_jobname_length(source: str, alias: str, name: str) -> None:
@@ -104,7 +104,7 @@ def validate_pg_cron_cron(cron: str, database: str) -> None:
     """
     # Unique per call so concurrent probes never collide on the pg_cron job name
     # (each is rolled back, but a shared name would still contend on the same row).
-    probe_jobname = f"absurd:__probe__:{uuid.uuid4()}"
+    probe_jobname = f"_dj:__probe__:{uuid.uuid4()}"
     try:
         with transaction.atomic(using=database):
             with connections[database].cursor() as cur:
