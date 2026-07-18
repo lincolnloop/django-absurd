@@ -2,74 +2,110 @@
 
 **Goal:** expose Absurd's durable-execution primitives **Steps** + **Sleep** to
 django-absurd task functions. A `takes_context=True` task can checkpoint work (`step` —
-run once, persist result, replay from cache) and durably suspend
-(`sleep_for`/`sleep_until` — release the worker, resume later). Turns django-absurd from
-at-least-once fire-and-forget into a workflow engine.
+run, persist result, replay from cache) and durably suspend (`sleep_for`/`sleep_until` —
+release the worker, resume later). Turns django-absurd from at-least-once
+fire-and-forget into a workflow engine.
 
-Grounded in Absurd docs:
-[Concepts → Steps](https://earendil-works.github.io/absurd/concepts/#steps-checkpoints),
-[Concepts → Sleep](https://earendil-works.github.io/absurd/concepts/),
-[Python SDK](https://earendil-works.github.io/absurd/sdks/python/).
+Grounded in Absurd docs
+([Concepts → Steps](https://earendil-works.github.io/absurd/concepts/#steps-checkpoints),
+[Sleep](https://earendil-works.github.io/absurd/concepts/),
+[Python SDK](https://earendil-works.github.io/absurd/sdks/python/)) and the SDK source
+(`absurd_sdk/__init__.py`). Adversarially reviewed (Fable) before this revision — all
+findings folded in.
 
 ## Scope
 
-IN: `step`, `sleep_for`, `sleep_until`; fix `SuspendTask` mislogging; admin visibility
-(steps + pending suspensions under the task); replay-semantics docs + a runnable
-example.
+IN: expose ctx to `takes_context=True` tasks; `step`, `sleep_for`, `sleep_until`,
+`heartbeat`, `headers` (all on both sync + async variants); `run_step` (sync variant
+only — mirrors the SDK); fix `SuspendTask`/`CancelledTask`/`FailedTask` mislogging;
+admin visibility (steps under the task); replay-semantics docs + a runnable example.
 
-OUT (own future specs): **Events** pillar (`await_event` in-task + `app.emit_event`
-app-side emit surface); `await_task_result` (cross-queue child + same-queue-deadlock
-guard); `heartbeat`; sync-worker mode.
+OUT (own future specs): **Events** pillar (`await_event` + app-side `emit_event`, + the
+Waits admin inline it populates); `await_task_result` (cross-queue child + deadlock
+guard); sync-worker mode. Async worker + bridge cover both task kinds.
 
 ## Replay semantics (the load-bearing contract)
 
 Absurd durable execution: on every retry/resume the **whole task body re-runs
 top-to-bottom**. Completed `step(name, ...)` calls return their cached value instead of
-re-executing; a `step` never runs twice across restarts/retries/resumes. Sleep
-suspends + schedules a future run; on wake the same replay applies (checkpoints skip,
-sleep checkpoint records wake time so it doesn't re-sleep).
+re-executing. Sleep flips the run to `sleeping` + reschedules it + raises `SuspendTask`;
+on wake the same replay applies.
 
-Consequence (Absurd docs, verbatim): _"Code outside steps may execute multiple times
-across retries. Keep side-effects inside steps."_ This footgun is a first-class
-deliverable — must be taught loudly (see Docs), else users write double-charging tasks.
+**Steps are _effectively-once_, NOT exactly-once.** `step` = `begin_step` → run `fn()` →
+`complete_step` (persists the checkpoint _after_ `fn` returns), on the worker's
+dedicated autocommit connection — so it can never be atomic with the user's Django-ORM
+writes (different connection). A crash / claim-timeout between `fn`'s side effect and
+the persist re-executes the step. So: persisted-once, **executed at-least-once** in the
+crash window. Teaching an absolute "runs once" guarantee produces the exact wrong mental
+model.
+
+Docs must teach the full footgun set (see Docs): effectively-once; deterministic step
+naming/order; JSON-serializable step returns; don't swallow `SuspendTask`; long steps vs
+`claim_timeout`; ctx methods are absurd-only.
 
 ## Context exposure — extend Django `TaskContext`, match ctx to task kind
 
 Today worker hands `takes_context=True` tasks a plain Django `TaskContext`
-(`task_result` only); Absurd SDK `ctx` withheld (`worker.py:216`). Change: hand a
+(`task_result` only); Absurd SDK ctx withheld (`worker.py:216`). Change: hand a
 django-absurd context that **subclasses Django `TaskContext`** (keeps
-`.task_result`/`.attempt`) AND adds `.step`/`.sleep_for`/`.sleep_until` (delegating to
-the live Absurd ctx).
+`.task_result`/`.attempt`) AND adds the durable methods (delegating to the live Absurd
+ctx).
 
-Two variants, chosen by `inspect.iscoroutinefunction(task.func)` — mirrors SDK's own
-`TaskContext` (sync) vs `AsyncTaskContext` (async) split. Absurd's Python docs are
-sync-first, so sync tasks must feel native (no `await`):
+Two variants, chosen by `inspect.iscoroutinefunction(task.func)` — mirrors the SDK's own
+`TaskContext` (sync) vs `AsyncTaskContext` (async) split, including the SDK's own
+asymmetry (`run_step` is sync-only; everything else on both). Absurd's Python docs are
+sync-first, so sync tasks must feel native (no `await`).
+
+**Runtime-subscript trap (C1):** Django `TaskContext` is
+`@dataclass(frozen=True, slots=True, kw_only=True)` and is **NOT subscriptable at
+runtime** (`TaskContext[...]` → `TypeError`; the `Generic` params live only in
+django-stubs). So use the project's `TYPE_CHECKING` conditional-base alias (as
+`admin.py:29-32/79-82/336-339` already do), and make each subclass itself a frozen +
+slots + kw_only dataclass declaring its extra fields:
 
 ```python
-# sync variant — Absurd's primary Python style, no await
-class DurableContext(TaskContext[...]):
+if t.TYPE_CHECKING:
+    _TaskContextBase = TaskContext[t.Any, t.Any]
+else:
+    _TaskContextBase = TaskContext
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DurableContext(_TaskContextBase):        # sync — Absurd's primary style, no await
+    absurd_ctx: t.Any                          # live SDK AsyncTaskContext
+    loop: asyncio.AbstractEventLoop            # worker loop, for bridging
+    @property
+    def headers(self) -> Mapping[str, JsonValue]: ...
     def step(self, name: str, fn: Callable[[], R]) -> R: ...
+    def run_step(self, name_or_fn=None): ...   # decorator; sync-only, mirrors SDK
     def sleep_for(self, name: str, seconds: float) -> None: ...
     def sleep_until(self, name: str, when: datetime | int | float) -> None: ...
+    def heartbeat(self, seconds: int | None = None) -> None: ...
 
-# async variant
-class AsyncDurableContext(TaskContext[...]):
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AsyncDurableContext(_TaskContextBase):   # async
+    absurd_ctx: t.Any
+    @property
+    def headers(self) -> Mapping[str, JsonValue]: ...
     async def step(self, name: str, fn: Callable[[], Awaitable[R]]) -> R: ...
     async def sleep_for(self, name: str, seconds: float) -> None: ...
     async def sleep_until(self, name: str, when: datetime | int | float) -> None: ...
+    async def heartbeat(self, seconds: int | None = None) -> None: ...
+    # NO run_step — the decorator's run-at-decoration + rebind needs sync execution;
+    # async can't await at decoration. Matches the SDK omission.
 ```
 
-Names/args mirror the SDK 1:1 — no invented API, Absurd docs transfer verbatim. Both
-strict-typed + publicly exported so `ctx: DurableContext` yields autocomplete + mypy
-(incl. `step` generic return `R`). Names provisional (`DurableContext` /
-`AsyncDurableContext`) — settle at plan time.
+Names/args mirror the SDK 1:1 (no invented API; Absurd docs transfer). Step return `R`
+is a **JSON value** — persisted via `json.dumps` (see footguns). Both classes
+strict-typed. Live in a new `django_absurd/context.py`; public import
+`from django_absurd import DurableContext, AsyncDurableContext` (re-export in
+`__init__.py`). Names provisional — settle at plan time.
 
 Usage:
 
 ```python
 @task(takes_context=True)
 def workflow(ctx, order_id):
-    charge = ctx.step("charge", lambda: charge_card(order_id))  # once; cached on replay
+    charge = ctx.step("charge", lambda: charge_card(order_id))  # persisted; cached on replay
     ctx.sleep_for("cooldown", 5)                                # durable suspend + resume
     ctx.step("ship", lambda: ship(order_id))
 ```
@@ -94,51 +130,87 @@ public `begin_step`/`complete_step` (not the bundled `step`) so the user's `fn` 
 3. else `rv = fn()` — sync, this thread.
 4. `bridge(absurd_ctx.complete_step(handle, rv))` — async persist; return `rv`.
 
-`sleep_for`/`sleep_until`: bridge `absurd_ctx.sleep_until(...)`; coroutine raises
-`SuspendTask`, `.result()` re-raises into this thread → propagates out.
+`run_step` = the sync decorator sugar over `step` (mirrors SDK: run at decoration,
+rebind name to result). `sleep_for`/`sleep_until`/`heartbeat` bridge their async ctx op;
+sleep's coroutine raises `SuspendTask`, which `.result()` re-raises into this thread →
+propagates out. Bridge happy-path is deadlock-free (the loop is idle awaiting
+`run_in_executor`, so it services the bridged coroutine; the shared `AsyncConnection` is
+touched only from the loop — same invariant `drain_queue`'s `gather` already relies on).
+Plan detail: pass a generous timeout (or document accept) so a mid-op worker shutdown
+can't hang the thread.
 
-**`SuspendTask` logging fix** (`build_handler`, `worker.py:236`): `SuspendTask`
-subclasses `Exception`, so today it hits `except Exception` and is mislogged "task
-failed" (functionally suspend still works — SDK dispatch catches it, checkpoint already
-persisted + run rescheduled). Add earlier arm:
+**Logging fix — the whole control-flow trio (I1)** (`build_handler`, `worker.py:236`):
+`SuspendTask`/`CancelledTask`/`FailedTask` all subclass `Exception` and are treated as
+control flow by SDK dispatch (`except (SuspendTask, CancelledTask, FailedTask): pass`,
+`__init__.py:2302`). Pre-feature the handler never saw them (no ctx access); now any ctx
+DB op can raise `Cancelled`/`Failed` (sqlstate AB001/AB002 via
+`_task_state_exception_handling`). Add arms BEFORE `except Exception`, each re-raising
+so SDK dispatch handles them:
 
 ```python
 except SuspendTask:
-    logger.info("django-absurd task suspended: name=%s task_id=%s attempt=%d ...")
+    logger.info("django-absurd task suspended: name=%s task_id=%s ...")
+    raise
+except CancelledTask:
+    logger.info("django-absurd task cancelled: name=%s task_id=%s ...")
+    raise
+except FailedTask:
+    logger.warning("django-absurd task failed (explicit): name=%s task_id=%s ...")
     raise
 except Exception:
     logger.exception("django-absurd task failed: ...")
     raise
 ```
 
-Suspend = normal lifecycle event, not failure. Nothing else in the worker changes.
+Suspend/cancel = normal lifecycle, not crashes. Nothing else in the worker changes.
 
 ## Admin — steps under the task
 
 Steps ARE checkpoints (persisted rows). `checkpoints` admin entity already carries
 `task_id`, `checkpoint_name` (= step name), `state` (jsonb = cached return value),
-`owner_run_id`, `status`; sleep writes a checkpoint too (wake time as state). Today it's
-a standalone changelist only — Task detail inlines Runs only.
+`owner_run_id`, `status`; sleep writes a checkpoint too (wake time as ISO state —
+verified `sleep` = `_persist_checkpoint` + `schedule_run`, never a `w_`/waits row).
+Today it's a standalone changelist only — Task detail inlines Runs only.
 
-Add a read-only **Checkpoints inline** to Task detail, mirroring `ReadOnlyRunInline` +
-`build_run_inline` (`fk_name="task"`, read-only perms, `show_change_link`): shows each
-step (name + cached state + status) and the sleep checkpoint (wake time) under the task.
+**Checkpoints inline (new):** read-only, on Task detail, mirroring `ReadOnlyRunInline` +
+`build_run_inline`. Shows each step (name + cached state + status) and the sleep
+checkpoint (wake time). Prerequisite — give the synthetic `Checkpoint` model a `task`
+relation exactly as runs do (`admin_views.py:267-277`: FK `task`, `to_field="task_id"`,
+`db_column="task_id"`, `db_constraint=False`); converting the column renames the field
+to `task` (attname `task_id`), so the checkpoints `EntitySpec.search_fields` `"task_id"`
+→ `"task__task_id"` (runs did this), `list_display` `"task_id"` keeps working via
+attname. Specify the inline's fields/ordering/`related_name` at plan time.
 
-Prerequisite: give the synthetic `Checkpoint` admin model a `task` relation (join on
-`task_id`) so the inline binds — runs already have this; checkpoints currently expose
-only a `task_id` column.
-
-**Sleep-suspended state** is already visible via the existing **Runs inline** (the
-rescheduled future run shows the task is asleep + when it resumes) — no new surface
-needed. **No Waits inline here:** the `waits` entity (columns `event_name`/`timeout_at`)
-is populated by `await_event`, not by sleep — sleep only writes a checkpoint + calls
-`absurd.schedule_run`. The Waits inline belongs with the Events spec, where
-`await_event` actually fills it.
+**Sleeping-run resume time (I2):** `schedule_run` flips the **same** run to
+`state='sleeping'` + `available_at=wake_at` (not a new run) — `runs`/`sleeping` maps to
+Django status `RUNNING` (`backends.py:163`). Add `available_at` to `RUN_INLINE_FIELDS`
+so the existing Runs inline shows a suspended task + when it resumes. (No Waits inline
+here — `waits` rows come from `await_event`, deferred to the Events spec.)
 
 ## Docs (replay education = first-class)
 
 - **AGENTS.md** — new "Durable steps & sleep" section: both contexts, sync + async
-  examples, loud replay/"side-effects inside steps" callout.
+  examples, and the full footgun set:
+  - **effectively-once** — steps persist after `fn` returns on a separate connection;
+    executed at-least-once in a crash window; keep side effects idempotent where it
+    matters.
+  - **deterministic naming/order** — `_get_checkpoint_name` dedups by per-run call order
+    (`name`, `name#2`, …); branching/loops that change the number or order of same-named
+    `step`/`sleep` calls between runs bind cached values to the wrong sites. `step` and
+    `sleep` share one checkpoint namespace/counter.
+  - **JSON-serializable step returns** — persisted via `json.dumps`; a model/`datetime`/
+    `Decimal` raises at persist (after the side effect); `tuple` → `list` on replay
+    (type asymmetry: run 1 returns the live object, resume returns the JSON round-trip).
+  - **never swallow `SuspendTask`** — by the time it raises, the run is already
+    `sleeping`; a broad `except Exception` that eats it → `complete_run` on a sleeping
+    run → failure. Re-raise `SuspendTask`/`CancelledTask`.
+  - **long steps vs `claim_timeout`** — a step must finish within `claim_timeout`
+    (default 120s) or call `ctx.heartbeat()`, else the lease expires and the run runs
+    again concurrently.
+  - **absurd-only** — a `ctx.step` task is absurd-backend-only; under Django's
+    immediate/other backends `takes_context` yields a plain `TaskContext` →
+    `AttributeError`.
+  - sleep resume re-claims the **same** run — attempt does not increment.
 - **docs/web** — new "Durable workflows" page + `zensical.toml` nav entry; mirror
   AGENTS.md; build clean (`uvx zensical build`).
 - **README** — one link, no growth.
@@ -148,23 +220,33 @@ is populated by `await_event`, not by sleep — sleep only writes a checkpoint +
 
 ## Testing
 
-Behavioral, through real entrypoints (enqueue + `run_worker` burst), real DB, no mocks.
-Durable suspend reschedules + re-runs → `@pytest.mark.django_db(transaction=True)`.
-Parametrize sync `def` (bridge) and `async def` (direct) through the same scenarios.
+Behavioral, through real entrypoints (enqueue + `run_worker` burst), real DB, no mocks,
+no monkeypatch. Durable suspend reschedules + re-runs →
+`@pytest.mark.django_db(transaction=True)`. Parametrize sync `def` (bridge) and
+`async def` (direct) through the same scenarios.
 
-- **step caches across replay** — task: `step` (bumps module counter) → `sleep_for` tiny
-  duration → completes. Drain 1 suspends; after wake instant, drain 2 resumes → step
-  counter incremented **once** (cached), non-step body ran both attempts.
-- **sleep suspends then resumes** — not complete after drain 1 (rescheduled run
-  pending); completes with right result after drain 2 (`get_result`).
-- **SuspendTask logged "suspended", not "failed"** — `caplog` on `django_absurd`.
-- **admin** — HTTP-test the Task detail: log in, GET the task change page, assert the
+**Timing recipe (I6 — pins the flake window):** wake needs real wall-clock — the SDK
+compares Python `datetime.now(utc)` while claim uses DB `clock_timestamp()`, and
+`absurd.fake_now` is DB-side only (Python-side monkeypatch banned). So: `sleep_for` a
+duration long enough (~0.5–1s) that `drain_queue`'s claim loop empties and returns
+**before** wake; assert interim state; then real `time.sleep` past wake; then a second
+`drain_queue` resumes → completes.
+
+- **step caches across replay** — task: `step` (bumps a module counter) → `sleep_for` →
+  completes. After drain 1 (suspended) then drain 2 (resumed): counter incremented
+  **once** (cached), non-step body ran on both passes.
+- **sleep suspends then resumes** — after drain 1, `get_result` status is `RUNNING`
+  (sleeping maps to RUNNING; a distinct "suspended" status is not observable); after
+  drain 2, completes with the right result. Wording avoids "new run/attempt" — resume
+  re-claims the same run, attempt stays 1.
+- **trio logged as lifecycle, not crash** — `caplog` on `django_absurd`: suspend →
+  "suspended"; a genuine error still → "failed".
+- **admin** — HTTP-test the Task detail: log in, GET the task change page; assert the
   step (checkpoint_name + cached state) renders in the Checkpoints inline; assert the
-  rescheduled run shows in the Runs inline while suspended.
-- **typing** — mypy-in-CI covers exported contexts; add a typed usage snippet.
+  sleeping run's `available_at` renders in the Runs inline.
+- **typing** — mypy-in-CI covers the exported contexts; add a typed usage snippet.
 
 ## Out of scope (own future specs)
 
-Events pillar (`await_event` + app-side `emit_event`, + the **Waits admin inline** it
-populates); `await_task_result` (cross-queue child + deadlock guard); `heartbeat`;
-sync-worker mode. Async worker + bridge already cover both task kinds.
+Events pillar (`await_event` + app-side `emit_event`, + the Waits admin inline);
+`await_task_result` (cross-queue child + deadlock guard); sync-worker mode.
