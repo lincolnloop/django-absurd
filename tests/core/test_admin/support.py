@@ -7,12 +7,14 @@ from bs4 import BeautifulSoup, ResultSet, Tag
 from django.conf import settings
 from django.contrib import admin as djadmin
 from django.core.management import call_command
-from django.tasks import TaskResult
 from django.urls import clear_url_caches
 
 from django_absurd.admin import register_absurd_admin
 from django_absurd.params import AbsurdSpawnParams
 from tests.tasks import add, boom
+
+if t.TYPE_CHECKING:
+    from django.tasks import TaskResult
 
 BACKEND = "django_absurd.backends.AbsurdBackend"
 
@@ -41,7 +43,7 @@ def seed() -> None:
 
 
 def seed_mixed() -> tuple[
-    TaskResult[t.Any, t.Any], TaskResult[t.Any, t.Any], TaskResult[t.Any, t.Any]
+    "TaskResult[t.Any, t.Any]", "TaskResult[t.Any, t.Any]", "TaskResult[t.Any, t.Any]"
 ]:
     """Three default-queue tasks in distinct terminal/queued states."""
     call_command("absurd_sync_queues")

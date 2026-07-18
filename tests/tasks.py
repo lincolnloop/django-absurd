@@ -26,13 +26,13 @@ def boom() -> t.Never:
 
 
 @task(takes_context=True)
-def report_attempt(context: TaskContext[t.Any, t.Any]) -> int:
+def report_attempt(context: "TaskContext[t.Any, t.Any]") -> int:
     return context.attempt
 
 
 @task(takes_context=True)
 def report_args(
-    context: TaskContext[t.Any, t.Any], *args: t.Any, **kwargs: t.Any
+    context: "TaskContext[t.Any, t.Any]", *args: t.Any, **kwargs: t.Any
 ) -> list[t.Any]:
     return context.task_result.args
 

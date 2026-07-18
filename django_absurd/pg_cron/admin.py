@@ -182,7 +182,7 @@ class ScheduledTaskAdmin(_ScheduledTaskAdminBase):
         obj: ScheduledTask | None = None,
         change: bool = False,
         **kwargs: t.Any,
-    ) -> type[forms.ModelForm[ScheduledTask]]:
+    ) -> "type[forms.ModelForm[ScheduledTask]]":
         if obj is None:
             kwargs["form"] = ScheduledTaskCreateForm
         return super().get_form(request, obj, change=change, **kwargs)

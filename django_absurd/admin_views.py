@@ -258,7 +258,7 @@ def render_natural_key(self: t.Any) -> str:
 
 def build_model_field(
     spec: EntitySpec, col_name: str, col_type: str
-) -> tuple[str, models.Field[t.Any, t.Any]]:
+) -> "tuple[str, models.Field[t.Any, t.Any]]":
     # Tasks' task_id is the FK target for the Run inline, so it must be unique.
     if spec.name == "tasks" and col_name == "task_id":
         return "task_id", models.UUIDField(null=True, unique=True)
@@ -314,7 +314,7 @@ def build_queue_table_model(spec: EntitySpec, queue: str) -> type[models.Model]:
     return type(model_name, (models.Model,), fields)
 
 
-FIELD_TYPE_MAP: dict[str, type[models.Field[t.Any, t.Any]]] = {
+FIELD_TYPE_MAP: "dict[str, type[models.Field[t.Any, t.Any]]]" = {
     "uuid": models.UUIDField,
     "text": models.TextField,
     "int": models.IntegerField,
@@ -323,7 +323,7 @@ FIELD_TYPE_MAP: dict[str, type[models.Field[t.Any, t.Any]]] = {
 }
 
 
-def make_field(col_type: str) -> models.Field[t.Any, t.Any]:
+def make_field(col_type: str) -> "models.Field[t.Any, t.Any]":
     field_cls = FIELD_TYPE_MAP[col_type]
     return field_cls(null=True)
 

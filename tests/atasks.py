@@ -18,7 +18,7 @@ async def aboom() -> t.Never:
 
 
 @task(takes_context=True)
-async def areport_attempt(context: TaskContext[t.Any, t.Any]) -> int:
+async def areport_attempt(context: "TaskContext[t.Any, t.Any]") -> int:
     return context.attempt
 
 

@@ -4,7 +4,6 @@ import pytest
 from django.contrib.admin.utils import quote
 from django.contrib.auth.models import AbstractBaseUser, User
 from django.core.management import call_command
-from django.tasks import TaskResult
 from django.test import Client
 from django.urls import reverse, reverse_lazy
 
@@ -14,6 +13,7 @@ from tests.tasks import add
 
 if t.TYPE_CHECKING:
     from bs4 import Tag
+    from django.tasks import TaskResult
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -27,7 +27,7 @@ def change_url(pk: str) -> str:
 run_model: t.Any = Run
 
 
-def run_for(result: TaskResult[t.Any, t.Any]) -> t.Any:
+def run_for(result: "TaskResult[t.Any, t.Any]") -> t.Any:
     return run_model.objects.get(task_id=result.id.split(":", 1)[1])
 
 
