@@ -3,9 +3,8 @@
 Each raises `django.core.exceptions.ValidationError`. `ScheduledTask.clean()` +
 field `validators=[...]` enforce them model-first; the system checks call the
 same callables and wrap failures into `absurd.E007`. The field-level validators
-(name/alias charset, jobname length) are pure; the contextual ones
-(`validate_alias_is_pg_cron_backend`, `validate_pg_cron_cron`) read settings /
-the database.
+(name charset, jobname length) are pure; the contextual one
+(`validate_pg_cron_cron`) reads the database.
 """
 
 import typing as t
@@ -16,18 +15,10 @@ from django.core.validators import RegexValidator
 from django.db import DatabaseError, connections, transaction
 from django.utils.module_loading import import_string
 
-from django_absurd.backends import get_absurd_backends
 from django_absurd.pg_cron.choices import Source
 from django_absurd.validators import validate_task_path
 
 NAME_CHARSET_MESSAGE = "Schedule name contains characters other than [A-Za-z0-9_-]."
-
-# alias is always a string (a TextField, or the TASKS backend key), so the plain
-# built-in RegexValidator suffices.
-validate_alias_charset = RegexValidator(
-    r"^[A-Za-z0-9_-]+\Z",
-    message="Backend alias contains characters other than [A-Za-z0-9_-].",
-)
 
 # name can arrive as a non-str SCHEDULE key (e.g. an int); RegexValidator coerces
 # via str(), so guard first to reject it rather than silently pass.
@@ -42,18 +33,18 @@ def validate_name_charset(value: t.Any) -> None:
     NAME_CHARSET_VALIDATOR(value)
 
 
-def build_jobname(alias: str, name: str, source: str = Source.SETTINGS) -> str:
+def build_jobname(name: str, source: str = Source.SETTINGS) -> str:
     """Return the pg_cron job name for a scheduled task."""
-    return f"_dj:{source}:{alias}:{name}"
+    return f"_dj:{source}:{name}"
 
 
-def build_jobname_prefix(alias: str, source: str = Source.SETTINGS) -> str:
-    """Return the LIKE prefix used to prune pg_cron jobs for an alias + source."""
-    return f"_dj:{source}:{alias}:"
+def build_jobname_prefix(source: str = Source.SETTINGS) -> str:
+    """Return the LIKE prefix used to prune pg_cron jobs for a source lane."""
+    return f"_dj:{source}:"
 
 
-def validate_jobname_length(source: str, alias: str, name: str) -> None:
-    jobname = build_jobname(alias, name, source)
+def validate_jobname_length(source: str, name: str) -> None:
+    jobname = build_jobname(name, source)
     size = len(jobname.encode())
     if size > 63:
         msg = (
@@ -81,13 +72,6 @@ def validate_declared_queue(
         effective = import_string(task_path).queue_name
     if effective not in declared_queues:
         msg = f"queue {effective!r} is not declared."
-        raise ValidationError(msg)
-
-
-def validate_alias_is_pg_cron_backend(alias: str) -> None:
-    backend = get_absurd_backends().get(alias)
-    if backend is None or backend.scheduler != "pg_cron":
-        msg = f"backend {alias!r} is not a configured pg_cron backend."
         raise ValidationError(msg)
 
 

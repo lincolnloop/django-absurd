@@ -4,7 +4,6 @@
     "pk": 1,
     "fields": {
       "source": "a",
-      "alias": "default",
       "name": "loaded",
       "task": "tests.tasks.add",
       "queue": "default",

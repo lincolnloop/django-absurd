@@ -14,7 +14,6 @@ from django.contrib.admin.utils import flatten_fieldsets
 from django.core.exceptions import NON_FIELD_ERRORS, ValidationError
 
 from django_absurd.admin import resolve_admin_sites
-from django_absurd.backends import get_absurd_backends
 from django_absurd.pg_cron.models import ScheduledTask
 from django_absurd.pg_cron.reconcile import build_scheduled_fields
 from django_absurd.queues import get_absurd_backend
@@ -38,7 +37,6 @@ class ScheduledTaskForm(_ScheduledTaskFormBase):
         # source is admin-owned and read-only (set on the instance, never in the form);
         # its column type/choices/help live on the model.
         fields = (
-            "alias",
             "name",
             "task",
             "queue",
@@ -85,7 +83,7 @@ class ScheduledTaskCreateForm(ScheduledTaskForm):
         # The create step collects only identity + cron; every spawn column is
         # resolved from the task's decorators in clean(), and the row is created
         # disabled so the user reviews it on the change page before activating.
-        fields = ("alias", "name", "task", "cron")  # type: ignore[assignment]
+        fields = ("name", "task", "cron")  # type: ignore[assignment]
 
     def clean(self) -> dict[str, t.Any]:
         # Resolve every spawn column from the task's decorators and create the row
@@ -101,14 +99,14 @@ class ScheduledTaskCreateForm(ScheduledTaskForm):
         # which add_error re-homes onto the form.)
         cleaned = super().clean() or {}
         self.instance.enabled = False
-        if "alias" in cleaned and "task" in cleaned:
+        backend = get_absurd_backend()
+        if "task" in cleaned and backend is not None:
             task_path = cleaned["task"]
             try:
                 validate_task_path(task_path)
             except ValidationError as exc:
                 self.add_error("task", exc)
             else:
-                backend = get_absurd_backends()[cleaned["alias"]]
                 for field, value in build_scheduled_fields(backend, task_path).items():
                     setattr(self.instance, field, value)
         return cleaned
@@ -130,14 +128,11 @@ class ScheduledTaskCreateForm(ScheduledTaskForm):
 
 class ScheduledTaskAdmin(_ScheduledTaskAdminBase):
     form = ScheduledTaskForm
-    add_fieldsets: "_FieldsetSpec" = (
-        (None, {"fields": ("alias", "name", "task", "cron")}),
-    )
+    add_fieldsets: "_FieldsetSpec" = ((None, {"fields": ("name", "task", "cron")}),)
     save_on_top = True
-    ordering = ("alias", "name")
+    ordering = ("name",)
     list_display = (
         "name",
-        "alias",
         "task",
         "queue",
         "cron",
@@ -145,13 +140,13 @@ class ScheduledTaskAdmin(_ScheduledTaskAdminBase):
         "source",
         "updated_at",
     )
-    list_filter = ("alias", "enabled", "source", "queue")
+    list_filter = ("enabled", "source", "queue")
     search_fields = ("name", "task")
     fieldsets = (
         # Activation up top: the review step's one action is flipping a resolved,
         # disabled schedule on.
         ("Activation", {"fields": ("enabled",)}),
-        ("Identity", {"fields": ("source", "alias", "name")}),
+        ("Identity", {"fields": ("source", "name")}),
         ("Schedule", {"fields": ("task", "queue", "cron")}),
         (
             "Retry",
@@ -230,7 +225,7 @@ class ScheduledTaskAdmin(_ScheduledTaskAdminBase):
         if obj is not None and obj.source == ScheduledTask.Source.SETTINGS:
             return tuple(flatten_fieldsets(self.get_fieldsets(request, obj)))
         if obj is not None:
-            return ("alias", "created_at", "name", "source", "updated_at")
+            return ("created_at", "name", "source", "updated_at")
         return ("created_at", "source", "updated_at")
 
 

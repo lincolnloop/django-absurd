@@ -224,7 +224,17 @@ def test_invalid_storage_mode_literal_errors(
     assert "absurd.E003" in out
 
 
-def test_multiple_backends_distinct_db_errors(
+def test_single_absurd_backend_no_e004(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    settings.TASKS = build_tasks_setting({"q": {}})
+    assert "more than one Absurd backend" not in run_absurd_check(
+        capsys, databases=["default"]
+    )
+
+
+def test_two_absurd_backends_distinct_db_error(
     settings: "pytest_django.fixtures.SettingsWrapper",
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -240,6 +250,29 @@ def test_multiple_backends_distinct_db_errors(
     }
     out = run_absurd_check(capsys)
     assert "absurd.E004" in out
+    assert "django-absurd: more than one Absurd backend is configured." in out
+    assert (
+        "django-absurd uses a single Absurd backend per project"
+        " — configure exactly one AbsurdBackend in TASKS." in out
+    )
+
+
+def test_two_absurd_backends_same_db_error(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # https://github.com/lincolnloop/django-absurd/issues/63
+    settings.TASKS = {
+        "a": {"BACKEND": ABSURD, "OPTIONS": {"QUEUES": {}}},
+        "b": {"BACKEND": ABSURD, "OPTIONS": {"QUEUES": {}}},
+    }
+    out = run_absurd_check(capsys, databases=["default"])
+    assert "absurd.E004" in out
+    assert "django-absurd: more than one Absurd backend is configured." in out
+    assert (
+        "django-absurd uses a single Absurd backend per project"
+        " — configure exactly one AbsurdBackend in TASKS." in out
+    )
 
 
 def test_plain_check_skips_db_state(

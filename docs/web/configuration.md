@@ -85,7 +85,7 @@ wrong. Fix what it reports rather than silencing it:
 | `absurd.E001` | Backend / database misconfiguration.                                                                                                                                                       |
 | `absurd.E002` | `QUEUES` declared in both the top level and `OPTIONS`.                                                                                                                                     |
 | `absurd.E003` | Invalid per-queue policy options.                                                                                                                                                          |
-| `absurd.E004` | Multiple Absurd backends targeting different databases.                                                                                                                                    |
+| `absurd.E004` | More than one Absurd backend is configured. django-absurd supports exactly one Absurd backend per project.                                                                                 |
 | `absurd.E005` | `AbsurdRouter` missing from `DATABASE_ROUTERS`.                                                                                                                                            |
 | `absurd.E006` | `ENABLE_ADMIN` isn't a bool, or `ADMIN_SITE` doesn't resolve to `AdminSite`s.                                                                                                              |
 | `absurd.E007` | Invalid `SCHEDULE` entry (see [Cron Jobs](cron-jobs.md)).                                                                                                                                  |

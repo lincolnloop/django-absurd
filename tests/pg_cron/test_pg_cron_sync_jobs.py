@@ -42,9 +42,9 @@ def test_creates_job_with_schedule_and_constant_command(
     rows = ScheduledTask.pg_cron.get_managed_jobs()
     assert len(rows) == 1
     jobname, schedule, command, active = rows[0]
-    assert jobname == "_dj:s:default:a"
+    assert jobname == "_dj:s:a"
     assert schedule == "0 2 * * *"
-    assert command == "select public.django_absurd_run_scheduled('s', 'default', 'a')"
+    assert command == "select public.django_absurd_run_scheduled('s', 'a')"
     assert active is True
 
 
@@ -57,7 +57,7 @@ def test_sync_is_idempotent(settings: SettingsWrapper) -> None:
 
     rows = ScheduledTask.pg_cron.get_managed_jobs()
     assert len(rows) == 1
-    assert rows[0][0] == "_dj:s:default:a"
+    assert rows[0][0] == "_dj:s:a"
 
 
 def test_prune_removes_undeclared_job_but_keeps_foreign(
@@ -76,17 +76,15 @@ def test_prune_removes_undeclared_job_but_keeps_foreign(
     )
     sync_crons(get_absurd_backends()["default"])
     assert {r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()} == {
-        "_dj:s:default:a",
-        "_dj:s:default:b",
+        "_dj:s:a",
+        "_dj:s:b",
     }
 
     settings.TASKS = build_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     sync_crons(get_absurd_backends()["default"])
-    assert {r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()} == {
-        "_dj:s:default:a"
-    }
+    assert {r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()} == {"_dj:s:a"}
 
     with connection.cursor() as cur:
         cur.execute("select count(*) from cron.job where jobname = 'keepme'")
@@ -110,7 +108,7 @@ def test_prune_tolerates_already_unscheduled_job(
     with connection.cursor() as cur:
         cur.execute(
             "select jobid from cron.job where jobname = %s",
-            [build_jobname("default", "b")],
+            [build_jobname("b")],
         )
         jobid = cur.fetchone()[0]
         cur.execute("select cron.unschedule(%s)", [jobid])
@@ -120,9 +118,7 @@ def test_prune_tolerates_already_unscheduled_job(
     )
     sync_crons(get_absurd_backends()["default"])  # no exception
 
-    assert {r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()} == {
-        "_dj:s:default:a"
-    }
+    assert {r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()} == {"_dj:s:a"}
 
 
 def test_prune_swallows_job_vanished_after_stale_scan(
@@ -139,7 +135,7 @@ def test_prune_swallows_job_vanished_after_stale_scan(
     with connection.cursor() as cur:
         cur.execute(
             "select jobid from cron.job where jobname = %s",
-            [build_jobname("default", "a")],
+            [build_jobname("a")],
         )
         jobid = cur.fetchone()[0]
 
@@ -182,7 +178,7 @@ def test_rearm_reenables_disabled_job(settings: SettingsWrapper) -> None:
     with connection.cursor() as cur:
         cur.execute(
             "select jobid from cron.job where jobname = %s",
-            [build_jobname("default", "a")],
+            [build_jobname("a")],
         )
         jobid = cur.fetchone()[0]
         cur.execute("select cron.alter_job(%s, active := false)", [jobid])
@@ -215,10 +211,7 @@ def test_injection_args_are_quoted_and_schema_survives(
 
     rows = ScheduledTask.pg_cron.get_managed_jobs()
     assert len(rows) == 1
-    assert (
-        rows[0][2]
-        == "select public.django_absurd_run_scheduled('s', 'default', 'evil')"
-    )
+    assert rows[0][2] == "select public.django_absurd_run_scheduled('s', 'evil')"
 
     with connection.cursor() as cur:
         cur.execute("select to_regnamespace('absurd')")

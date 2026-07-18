@@ -52,7 +52,6 @@ def test_admin_rows_untouched(
     ScheduledTask.objects.create(
         name="a",
         source="a",
-        alias="default",
         task="tests.tasks.add",
         cron="0 2 * * *",
     )
@@ -76,7 +75,7 @@ def test_sync_writes_named_option_columns(
     )
     backend = get_absurd_backends()["default"]
     sync_crons(backend)
-    row = ScheduledTask.objects.get(source="s", alias="default", name="nightly")
+    row = ScheduledTask.objects.get(source="s", name="nightly")
     assert row.args == [1, 2]
     assert row.kwargs == {"k": "v"}
     assert row.max_attempts == 3
@@ -90,7 +89,7 @@ def test_reconcile_splits_cancellation_into_columns(
     )
     backend = get_absurd_backends()["default"]
     sync_crons(backend)
-    row = ScheduledTask.objects.get(source="s", alias="default", name="c")
+    row = ScheduledTask.objects.get(source="s", name="c")
     assert row.cancellation_max_duration == 30
     assert row.cancellation_max_delay is None
 
@@ -103,7 +102,7 @@ def test_reconcile_splits_retry_strategy_into_columns(
     )
     backend = get_absurd_backends()["default"]
     sync_crons(backend)
-    row = ScheduledTask.objects.get(source="s", alias="default", name="r")
+    row = ScheduledTask.objects.get(source="s", name="r")
     assert row.retry_kind == "exponential"
     assert row.retry_base_seconds == 2.0
 

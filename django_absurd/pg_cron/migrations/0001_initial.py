@@ -9,7 +9,7 @@ import django_absurd.validators
 # Reads the ScheduledTask row and rebuilds the retry_strategy / cancellation jsonb from
 # the typed sub-columns (omitting null keys) before PERFORM absurd.spawn_task.
 CREATE_FN = """
-CREATE OR REPLACE FUNCTION public.django_absurd_run_scheduled(p_source text, p_alias text, p_name text)
+CREATE OR REPLACE FUNCTION public.django_absurd_run_scheduled(p_source text, p_name text)
 RETURNS void
 LANGUAGE plpgsql
 SET search_path = pg_catalog
@@ -23,7 +23,6 @@ BEGIN
       INTO v
       FROM public.django_absurd_scheduledtask
      WHERE source = p_source
-       AND alias = p_alias
        AND name = p_name;
 
     IF NOT FOUND OR NOT v.enabled THEN
@@ -54,9 +53,7 @@ END;
 $$;
 """
 
-DROP_FN = (
-    "DROP FUNCTION IF EXISTS public.django_absurd_run_scheduled(text, text, text);"
-)
+DROP_FN = "DROP FUNCTION IF EXISTS public.django_absurd_run_scheduled(text, text);"
 
 
 class Migration(migrations.Migration):
@@ -94,13 +91,6 @@ class Migration(migrations.Migration):
                     "source",
                     models.CharField(
                         choices=[("s", "Settings"), ("a", "Admin")], default="s"
-                    ),
-                ),
-                (
-                    "alias",
-                    models.CharField(
-                        choices=django_absurd.pg_cron.models.get_pg_cron_alias_choices,
-                        help_text="Which Absurd pg_cron backend (its TASKS alias) runs this schedule.",
                     ),
                 ),
                 (
@@ -202,7 +192,7 @@ class Migration(migrations.Migration):
                         name="pg_cron_scheduledtask_max_attempts_positive",
                     )
                 ],
-                "unique_together": {("source", "alias", "name")},
+                "unique_together": {("source", "name")},
             },
         ),
         migrations.RunSQL(sql=CREATE_FN, reverse_sql=DROP_FN),

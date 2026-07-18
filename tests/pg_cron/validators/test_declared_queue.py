@@ -1,15 +1,11 @@
 import pytest
 import pytest_django.fixtures
-from django.core.exceptions import ValidationError
 
-from django_absurd.pg_cron.models import ScheduledTask
 from tests.pg_cron.validators.utils import (
     ValidateSubject,
     validate_from_model,
     validate_from_system_check,
 )
-
-ABSURD = "django_absurd.backends.AbsurdBackend"
 
 
 def test_undeclared_queue_override_rejected_by_check(
@@ -32,36 +28,6 @@ def test_undeclared_queue_override_rejected_by_model(
     result = validate_from_model(settings, queue="ghost")
     assert result
     assert "Value 'ghost' is not a valid choice." in result
-
-
-def test_explicit_queue_declared_only_by_another_backend_rejected(
-    settings: pytest_django.fixtures.SettingsWrapper,
-) -> None:
-    # The queue field's choices union queues across ALL pg_cron backends, so a queue
-    # declared only by a different backend passes field-choice validation; clean()
-    # must still reject it for the row's own backend (the queue doesn't exist there →
-    # every fire would fail).
-    settings.TASKS = {
-        "default": {
-            "BACKEND": ABSURD,
-            "OPTIONS": {"QUEUES": {"default": {}}, "SCHEDULER": "pg_cron"},
-        },
-        "second": {
-            "BACKEND": ABSURD,
-            "OPTIONS": {"QUEUES": {"reports": {}}, "SCHEDULER": "pg_cron"},
-        },
-    }
-    row = ScheduledTask(
-        source="a",
-        alias="default",
-        name="ok",
-        task="tests.tasks.add",
-        queue="reports",
-        cron="0 2 * * *",
-    )
-    with pytest.raises(ValidationError) as exc:
-        row.full_clean()
-    assert "queue 'reports' is not declared." in str(exc.value)
 
 
 # The form (admin POST) subject is omitted for the explicit-queue override case:

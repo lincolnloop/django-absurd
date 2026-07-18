@@ -320,6 +320,34 @@ def test_beat_routes_task_to_queue(
     assert Group.objects.filter(name="beat-routed").exists()
 
 
+def test_beat_routes_task_to_queue_non_default_alias(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
+    settings.TASKS = {
+        "second": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {
+                "QUEUES": {"default": {}, "other": {}},
+                "SCHEDULE": {
+                    "g": {
+                        "task": "tests.tasks.make_group",
+                        "cron": "*/1 * * * *",
+                        "queue": "other",
+                        "args": ["beat-non-default"],
+                    }
+                },
+            },
+        }
+    }
+    backend = get_absurd_backends()["second"]
+    call_command("absurd_sync_queues")
+    run_beat_until(backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC))
+    call_command("absurd_worker", queue="default", burst=True)
+    assert not Group.objects.filter(name="beat-non-default").exists()
+    call_command("absurd_worker", queue="other", burst=True)
+    assert Group.objects.filter(name="beat-non-default").exists()
+
+
 def test_derive_idempotency_key_stable_same_inputs() -> None:
     schedule = Schedule(name="nightly", task="tests.tasks.add", cron="0 2 * * *")
     slot = dt.datetime(2026, 1, 1, 2, 0, tzinfo=dt.UTC)
@@ -371,23 +399,16 @@ def test_settings_provider_sets_backend_alias(
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     settings.TASKS = {
-        "default": {
-            "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "OPTIONS": {
-                "QUEUES": {"default": {}},
-            },
-        },
         "second": {
             "BACKEND": "django_absurd.backends.AbsurdBackend",
             "OPTIONS": {
-                "DATABASE": "default",
                 "QUEUES": {"beat": {}},
                 "SCHEDULE": {
                     "g": {
                         "task": "tests.tasks.make_group",
                         "cron": "*/1 * * * *",
                         "queue": "beat",
-                        "args": ["cross-backend"],
+                        "args": ["non-default-alias"],
                     }
                 },
             },
@@ -396,39 +417,6 @@ def test_settings_provider_sets_backend_alias(
     backend = get_absurd_backends()["second"]
     (schedule,) = get_settings_schedules(backend)
     assert schedule.backend == "second"
-
-
-def test_beat_routes_task_to_nondefault_backend(
-    settings: pytest_django.fixtures.SettingsWrapper,
-) -> None:
-    settings.TASKS = {
-        "default": {
-            "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "OPTIONS": {
-                "QUEUES": {"default": {}},
-            },
-        },
-        "second": {
-            "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "OPTIONS": {
-                "DATABASE": "default",
-                "QUEUES": {"beat": {}},
-                "SCHEDULE": {
-                    "g": {
-                        "task": "tests.tasks.make_group",
-                        "cron": "*/1 * * * *",
-                        "queue": "beat",
-                        "args": ["cross-backend"],
-                    }
-                },
-            },
-        },
-    }
-    call_command("absurd_sync_queues")
-    backend = get_absurd_backends()["second"]
-    run_beat_until(backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC))
-    call_command("absurd_worker", alias="second", queue="beat", burst=True)
-    assert Group.objects.filter(name="cross-backend").exists()
 
 
 def test_idempotency_key_dedups_same_slot(
@@ -473,7 +461,7 @@ def test_absurd_beat_empty_schedule_runs_handle(
         signal.signal(signal.SIGTERM, prev_sigterm)
 
 
-def test_absurd_beat_valid_alias_and_signal_handler(
+def test_absurd_beat_valid_and_signal_handler(
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     # Covers base.py:15 (valid alias → backend = backends[alias]) and
@@ -506,7 +494,7 @@ def test_absurd_beat_valid_alias_and_signal_handler(
     killer = threading.Thread(target=fire_sigint, daemon=True)
     try:
         killer.start()
-        call_command("absurd_beat", alias="default")
+        call_command("absurd_beat")
     finally:
         killer.join(timeout=2)
         signal.signal(signal.SIGINT, prev_sigint)
@@ -550,31 +538,12 @@ def test_absurd_beat_startup_reports_cleanup(
     )
 
 
-def test_absurd_beat_unknown_alias_errors(
+def test_absurd_beat_rejects_alias_flag(
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
-    settings.TASKS = make_tasks_setting(
-        {"m": {"task": "tests.tasks.add", "cron": "*/5 * * * *"}}
-    )
-    with pytest.raises(CommandError, match="not an Absurd backend alias"):
-        call_command("absurd_beat", alias="nope")
-
-
-def test_absurd_beat_multiple_backends_requires_alias(
-    settings: pytest_django.fixtures.SettingsWrapper,
-) -> None:
-    settings.TASKS = {
-        "default": {
-            "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "QUEUES": ["default"],
-        },
-        "second": {
-            "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "OPTIONS": {"DATABASE": "default", "QUEUES": {"default": {}}},
-        },
-    }
-    with pytest.raises(CommandError, match="Use --alias"):
-        call_command("absurd_beat")
+    settings.TASKS = make_tasks_setting({})
+    with pytest.raises(CommandError):
+        call_command("absurd_beat", "--alias", "default")
 
 
 def test_worker_beat_rejects_burst(

@@ -81,14 +81,14 @@ reserves a `source` column so an admin lane can slot in later without rework.
 ### `pg_cron`: projection table + constant command
 
 The `pg_cron` command is a constant call —
-`select public.django_absurd_run_scheduled('settings', '<alias>', '<name>')` — not a
-dynamically assembled SQL string. Task data (args, kwargs, options) lives in a
-`ScheduledTask` projection table row; the wrapper function reads it at fire time and
-calls `absurd.spawn_task`. This removes the SQL-string-from-data injection surface
-entirely: there is no `format('%L')` over task arguments or kwargs, no escaped-string
-gymnastics, no injection path — the cron command is a literal of the schedule name only,
-and that name is charset-restricted by a static check. (`format('%L')` is used, but only
-over source/alias/name — fixed-charset identifiers, never free-form task data.)
+`select public.django_absurd_run_scheduled('<source>', '<name>')` — not a dynamically
+assembled SQL string. Task data (args, kwargs, options) lives in a `ScheduledTask`
+projection table row; the wrapper function reads it at fire time and calls
+`absurd.spawn_task`. This removes the SQL-string-from-data injection surface entirely:
+there is no `format('%L')` over task arguments or kwargs, no escaped-string gymnastics,
+no injection path — the cron command is a literal of the schedule name only, and that
+name is charset-restricted by a static check. (`format('%L')` is used, but only over
+source and name — fixed-charset identifiers, never free-form task data.)
 
 The wrapper is defined `SET search_path = pg_catalog` and fully schema-qualifies every
 object it touches. `pg_cron` fires each job as the stored role with that role's default
@@ -97,21 +97,21 @@ into `cron.job_run_details`. The search-path-safe definition is load-bearing.
 
 ### Settings as source of truth; admin lane reserved
 
-Settings is the single declaration source for both schedulers. The schedule admin is
-**read-only and `pg_cron`-only**: it surfaces the projection-table rows, and only
-`pg_cron` keeps a row per schedule — the beat declares nothing in the database, so there
-is nothing for an admin to show. It is read-only because settings, not the admin, is the
-source of truth; a writable lane is a separate, deliberately deferred step.
+Settings declares the settings lane for both schedulers; `pg_cron` additionally supports
+an admin-authored lane. The schedule admin is **`pg_cron`-only**: only `pg_cron` keeps a
+row per schedule, so there is a projection-table row to surface and edit — the beat
+declares nothing in the database, so there is nothing for an admin to show.
+Settings-lane rows stay read-only in the admin (settings, not the admin, is their source
+of truth); admin-authored `source="admin"` rows are writable.
 
-A future writable lane would author `source="admin"` rows, and the shape already
-anticipates it: `sync_crons` is scoped to `source="settings"` and never touches admin
-rows, the `_dj:settings:<alias>:<name>` / `_dj:admin:<alias>:<name>` job-name split
-gives `pg_cron`'s prune the same scoping, and the fire wrapper takes `source` as a
-parameter — so admin-authored schedules fire through the same path with no fire-path
-change. It was deferred, not free: authoring is validation-heavy (the schedule rules
-that run at `check` time against settings must also run at row-save time), and a saved
-row must (un)schedule its `pg_cron` job immediately rather than at the next migrate/sync
-— runtime job emission the settings lane never needed.
+The two lanes never clobber each other: `sync_crons` is scoped to `source="settings"`
+and never touches admin rows, and the `_dj:settings:<name>` / `_dj:admin:<name>`
+job-name split gives `pg_cron`'s prune the same scoping. The fire wrapper takes `source`
+as a parameter, so both lanes fire through one path. Admin authoring is validation-heavy
+by nature — the schedule rules that run at `check` time against settings also run at
+row-save time — and a saved row must (un)schedule its `pg_cron` job immediately rather
+than at the next migrate/sync, so emission is wired to save/delete signals (runtime job
+emission the settings lane never needed).
 
 ### Static checks, validate at sync
 
@@ -162,7 +162,7 @@ job (`absurd_cleanup_all`, the same identity `absurdctl cron` uses — not a par
 under pg_cron — the same declarative config works for both schedulers. When
 `OPTIONS["CLEANUP"]` is set, django-absurd is authoritative over that job (schedules and
 unschedules it), so cleanup is driven one way only — via `OPTIONS["CLEANUP"]` or
-`absurdctl cron`, not both (multi-manager arbitration deferred to #63).
+`absurdctl cron`, not both (multi-manager arbitration deferred).
 
 The first iteration shipped the retention logic and asked each project to wrap it in its
 own `@task` and register that task in `SCHEDULE`. That was a reasonable first step, but
@@ -211,6 +211,17 @@ The router claims only this app's models; it never dictates routing for the rest
 host project, and it is a no-op when the default database is used. Spreading the engine
 across more than one database is intentionally unsupported for now — the added surface
 and the cross-database atomicity questions aren't worth it yet.
+
+Exactly one Absurd backend per project is a deliberate design boundary, not a temporary
+limit: two backends pointing Absurd at the same database is nonsense (one schema, one
+queue set, split config = confusion), and distinct databases are the same deferred
+multi-DB boundary above. The backend is resolved by capability (is-an-`AbsurdBackend`),
+never by the `"default"` name, so it may live at any `TASKS` alias; more than one is a
+loud-but-liftable configuration error. The codebase already assumes a single Absurd
+system throughout (one cleanup authority, one `pg_cron` database, per-database
+migrations, cross-queue `UNION ALL` views) — enforcing one backend makes that assumption
+real rather than leaving a silent "pick the first / pick `default`" guess. Non-Absurd
+task backends coexist freely; the limit is on Absurd backends only.
 
 ## Deliberately not doing (yet)
 

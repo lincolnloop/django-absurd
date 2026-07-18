@@ -164,10 +164,8 @@ sync for settings schedules, at save time for admin ones — so `manage.py check
 **Naming.** `manage.py check` also reports `absurd.E007` for:
 
 - schedule name containing characters outside `[A-Za-z0-9_-]`
-- backend alias containing characters outside `[A-Za-z0-9_-]` (pg_cron job names share
-  the same charset restriction)
-- composed job name (`_dj:s:<alias>:<name>`) exceeding 63 bytes (Postgres silently
-  truncates longer names)
+- composed job name (`_dj:s:<name>`) exceeding 63 bytes (Postgres silently truncates
+  longer names)
 
 **Beat and pg_cron are mutually exclusive per backend.** Setting `SCHEDULER="pg_cron"`
 and running `absurd_beat` (or `absurd_worker --beat`) against the same backend raises a
@@ -194,36 +192,36 @@ the underlying database error.
 truth. Admins can additionally author `ScheduledTask.Source.ADMIN` schedules via a
 **two-step flow**:
 
-**Step 1 — Add form.** Fill only four fields: **Backend** (alias), **Name**, **Task**
-(dotted import path to a [`@task`](tasks.md#define-a-task)), and **Cron** expression. On
-save, the remaining [spawn options](tasks.md#retries-spawn-options) — queue,
-`max_attempts`, retry strategy, cancellation policy, `headers`, `idempotency_key` — are
-resolved from the task's `@task` / `@absurd_default_params` decorators and stored
-automatically. **Queue is required** — blank is rejected; it always resolves to a
-concrete declared queue. The row is created **disabled** (not yet firing). Resolution is
-frozen at create: later decorator edits do not change existing rows.
+**Step 1 — Add form.** Fill only three fields: **Name**, **Task** (dotted import path to
+a [`@task`](tasks.md#define-a-task)), and **Cron** expression. On save, the remaining
+[spawn options](tasks.md#retries-spawn-options) — queue, `max_attempts`, retry strategy,
+cancellation policy, `headers`, `idempotency_key` — are resolved from the task's `@task`
+/ `@absurd_default_params` decorators and stored automatically. **Queue is required** —
+blank is rejected; it always resolves to a concrete declared queue. The row is created
+**disabled** (not yet firing). Resolution is frozen at create: later decorator edits do
+not change existing rows.
 
 **Step 2 — Change form.** Review the resolved values, fill `args` / `kwargs` if the task
 needs them, and check **Enabled** to go live. Once enabled, saving or deleting the row
 **immediately** (un)schedules its `pg_cron` job.
 
-`alias` and `name` are fixed once created (they form the job's identity); the cron
-expression is validated by `pg_cron` itself on save, so `"30 seconds"` is accepted and
-an invalid expression comes back with `pg_cron`'s own message. **`max_attempts`**
-defaults to `5` (Absurd's default retry ceiling) and must be `≥ 1`; clearing it stores
-`NULL`, which Absurd treats as **retry forever** — a deliberate opt-in, so a mistyped
-schedule can't loop unbounded by accident. The row is the source of truth: any write
-that persists it (admin, ORM, or `loaddata`) keeps `pg_cron` in step (`cron.schedule` is
-an idempotent upsert). A write forced onto a **different** database
-(`loaddata --database=…`, `.using(…)`) raises `NotImplementedError` — schedules live
-only on the absurd DB. (When Absurd is on a **non-default** database, `loaddata`
-bypasses the router and targets `default`, so pass `--database=<alias>` to load
-schedules onto the absurd DB.) Writes that bypass `.save()` — a **data migration** (the
-historical model isn't the signal's sender), `bulk_create`, `QuerySet.update`, raw SQL —
-don't emit directly, but `migrate` (and `absurd_sync_crons`) reconciles admin rows, so
-their jobs materialize then. A settings schedule and an admin schedule **may** share the
-same name — they are distinct, source-namespaced jobs (`_dj:s:…` vs `_dj:a:…`, the
-source abbreviated to keep the job name short).
+`name` is fixed once created (it forms the job's identity); the cron expression is
+validated by `pg_cron` itself on save, so `"30 seconds"` is accepted and an invalid
+expression comes back with `pg_cron`'s own message. **`max_attempts`** defaults to `5`
+(Absurd's default retry ceiling) and must be `≥ 1`; clearing it stores `NULL`, which
+Absurd treats as **retry forever** — a deliberate opt-in, so a mistyped schedule can't
+loop unbounded by accident. The row is the source of truth: any write that persists it
+(admin, ORM, or `loaddata`) keeps `pg_cron` in step (`cron.schedule` is an idempotent
+upsert). A write forced onto a **different** database (`loaddata --database=…`,
+`.using(…)`) raises `NotImplementedError` — schedules live only on the absurd DB. (When
+Absurd is on a **non-default** database, `loaddata` bypasses the router and targets
+`default`, so pass `--database=<alias>` to load schedules onto the absurd DB.) Writes
+that bypass `.save()` — a **data migration** (the historical model isn't the signal's
+sender), `bulk_create`, `QuerySet.update`, raw SQL — don't emit directly, but `migrate`
+(and `absurd_sync_crons`) reconciles admin rows, so their jobs materialize then. A
+settings schedule and an admin schedule **may** share the same name — they are distinct,
+source-namespaced jobs (`_dj:s:…` vs `_dj:a:…`, the source abbreviated to keep the job
+name short).
 
 ### Timezone
 

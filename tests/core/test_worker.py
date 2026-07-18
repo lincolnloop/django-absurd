@@ -200,24 +200,51 @@ def test_unknown_queue_errors_listing_valid(settings: SettingsWrapper) -> None:
     assert "default" in message
 
 
-def test_ambiguous_alias_requires_flag(settings: SettingsWrapper) -> None:
+def test_worker_rejects_alias_flag(settings: SettingsWrapper) -> None:
+    with pytest.raises(CommandError):
+        call_command("absurd_worker", "--alias", "default", burst=True)
+
+
+def test_worker_uses_single_backend_at_nondefault_alias(
+    settings: SettingsWrapper, capsys: pytest.CaptureFixture[str]
+) -> None:
+    settings.TASKS = {
+        "myabsurd": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "QUEUES": ["default"],
+        }
+    }
+    call_command("absurd_worker", burst=True)
+    assert "Started worker on queue 'default'." in capsys.readouterr().out
+
+
+def test_worker_no_backend_errors(settings: SettingsWrapper) -> None:
+    settings.TASKS = {
+        "default": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}
+    }
+    with pytest.raises(CommandError, match="No Absurd backend configured\\."):
+        call_command("absurd_worker", burst=True)
+
+
+def test_worker_multiple_backends_errors(settings: SettingsWrapper) -> None:
+    # absurd.E004 is a system check, not a runtime guard, so a command run with
+    # two Absurd backends still reaches resolve_backend's defensive branch.
     settings.TASKS = {
         "a": {
             "BACKEND": "django_absurd.backends.AbsurdBackend",
             "QUEUES": ["default"],
-            "OPTIONS": {"DATABASE": "default"},
         },
         "b": {
             "BACKEND": "django_absurd.backends.AbsurdBackend",
             "QUEUES": ["default"],
-            "OPTIONS": {"DATABASE": "default"},
         },
     }
     with pytest.raises(CommandError) as exc:
-        call_command("absurd_worker", queue="default")
-    message = str(exc.value)
-    assert "a" in message
-    assert "b" in message
+        call_command("absurd_worker", burst=True)
+    assert str(exc.value) == (
+        "django-absurd supports one Absurd backend per project; "
+        "configure exactly one AbsurdBackend in TASKS."
+    )
 
 
 def test_command_parses_all_flags_with_defaults() -> None:
@@ -225,7 +252,6 @@ def test_command_parses_all_flags_with_defaults() -> None:
     parser = cmd.create_parser("manage.py", "absurd_worker")
     opts = vars(parser.parse_args([]))
     assert opts["queue"] == "default"  # --queue defaults to "default"
-    assert opts["alias"] is None
     assert opts["burst"] is False
     assert opts["concurrency"] == 1
     assert opts["claim_timeout"] == 120

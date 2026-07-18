@@ -37,8 +37,8 @@ def test_sync_crons_command_creates_cron_jobs(
     call_command("absurd_sync_crons")
 
     jobs = [r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()]
-    assert "_dj:s:default:a" in jobs
-    assert "_dj:s:default:b" in jobs
+    assert "_dj:s:a" in jobs
+    assert "_dj:s:b" in jobs
     assert len(jobs) == 2
 
     out = capsys.readouterr().out
@@ -98,7 +98,7 @@ def test_teardown_removes_owned_cron_jobs(
     call_command("absurd_sync_crons", teardown=True, no_input=True)
 
     assert ScheduledTask.pg_cron.get_managed_jobs() == []
-    assert not ScheduledTask.objects.filter(source="s", alias="default").exists()
+    assert not ScheduledTask.objects.filter(source="s").exists()
 
     out = capsys.readouterr().out
     assert (
@@ -129,12 +129,11 @@ def test_teardown_command_deletes_admin_job_and_row_after_confirmation(
     settings.TASKS = build_pg_cron_tasks({})
     ScheduledTask.objects.create(
         source="a",
-        alias="default",
         name="killme",
         task="tests.tasks.add",
         cron="0 2 * * *",
     )
-    assert ScheduledTask.pg_cron.get_job("default", "killme", "a") is not None
+    assert ScheduledTask.pg_cron.get_job("killme", "a") is not None
 
     original_stdin = sys.stdin
     sys.stdin = io.StringIO("yes\n")  # confirm the destructive teardown
@@ -143,7 +142,7 @@ def test_teardown_command_deletes_admin_job_and_row_after_confirmation(
     finally:
         sys.stdin = original_stdin
 
-    assert ScheduledTask.pg_cron.get_job("default", "killme", "a") is None
+    assert ScheduledTask.pg_cron.get_job("killme", "a") is None
     assert not ScheduledTask.objects.filter(source="a", name="killme").exists()
 
 
@@ -155,7 +154,6 @@ def test_teardown_admin_schedule_does_not_resurrect_on_next_sync(
     settings.TASKS = build_pg_cron_tasks({})
     ScheduledTask.objects.create(
         source="a",
-        alias="default",
         name="gone-for-good",
         task="tests.tasks.add",
         cron="0 2 * * *",
@@ -164,7 +162,7 @@ def test_teardown_admin_schedule_does_not_resurrect_on_next_sync(
     assert not ScheduledTask.objects.filter(source="a", name="gone-for-good").exists()
 
     call_command("absurd_sync_crons")  # reconcile + admin re-emit
-    assert ScheduledTask.pg_cron.get_job("default", "gone-for-good", "a") is None
+    assert ScheduledTask.pg_cron.get_job("gone-for-good", "a") is None
 
 
 @pytest.mark.parametrize("stdin_text", ["", "no\n"])
@@ -178,7 +176,6 @@ def test_teardown_command_aborts_without_confirmation(
     settings.TASKS = build_pg_cron_tasks({})
     ScheduledTask.objects.create(
         source="a",
-        alias="default",
         name="keepme",
         task="tests.tasks.add",
         cron="0 2 * * *",
@@ -191,4 +188,4 @@ def test_teardown_command_aborts_without_confirmation(
         sys.stdin = original_stdin
 
     assert "Aborted." in capsys.readouterr().out  # (stdout also holds input()'s prompt)
-    assert ScheduledTask.pg_cron.get_job("default", "keepme", "a") is not None
+    assert ScheduledTask.pg_cron.get_job("keepme", "a") is not None

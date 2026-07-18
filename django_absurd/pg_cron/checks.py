@@ -11,7 +11,6 @@ from django_absurd.backends import get_absurd_backends, get_declared_queues
 from django_absurd.checks import E007_HINT_QUEUE, E007_MSG
 from django_absurd.pg_cron.choices import Source
 from django_absurd.pg_cron.validators import (
-    validate_alias_charset,
     validate_declared_queue,
     validate_jobname_length,
     validate_name_charset,
@@ -20,12 +19,9 @@ from django_absurd.pg_cron.validators import (
 E007_HINT_PG_CRON_NAME = (
     "Schedule names must match [A-Za-z0-9_-]+ when using the pg_cron scheduler."
 )
-E007_HINT_PG_CRON_ALIAS = (
-    "Backend aliases must match [A-Za-z0-9_-]+ when using the pg_cron scheduler."
-)
 E007_HINT_PG_CRON_JOBNAME = (
-    "Shorten the schedule name or backend alias so the composed job name"
-    " (_dj:s:<alias>:<name>) fits within 63 bytes."
+    "Shorten the schedule name so the composed job name"
+    " (_dj:s:<name>) fits within 63 bytes."
 )
 
 
@@ -39,25 +35,18 @@ def check_pg_cron_schedules(
     for backend in get_absurd_backends().values():
         if backend.scheduler != "pg_cron":
             continue
-        # The alias (a TASKS key) is per-backend, so validate its charset once here —
-        # not inside the schedule loop, which would skip a backend that has only
-        # admin-authored rows (no settings SCHEDULE) and re-check it per schedule.
-        errors.extend(check_pg_cron_alias(backend.alias))
         declared_queues = set(get_declared_queues(backend))
         raw_schedule = backend.options.get("SCHEDULE", {})
         if not isinstance(raw_schedule, Mapping):
             continue  # core's check_absurd_schedule_config reports this
         for name, spec in raw_schedule.items():
-            errors.extend(
-                validate_pg_cron_schedule(name, spec, backend.alias, declared_queues)
-            )
+            errors.extend(validate_pg_cron_schedule(name, spec, declared_queues))
     return errors
 
 
 def validate_pg_cron_schedule(
     name: str,
     spec: t.Any,
-    alias: str,
     declared_queues: set[str],
 ) -> list[CheckMessage]:
     if not isinstance(spec, Mapping):
@@ -66,28 +55,14 @@ def validate_pg_cron_schedule(
     task_path = spec.get("task", "")
     queue_override = spec.get("queue")
     errors: list[CheckMessage] = []
-    errors.extend(check_pg_cron_name(name, alias))
+    errors.extend(check_pg_cron_name(name))
     errors.extend(
         check_pg_cron_effective_queue(name, task_path, queue_override, declared_queues)
     )
     return errors
 
 
-def check_pg_cron_alias(alias: str) -> list[CheckMessage]:
-    try:
-        validate_alias_charset(alias)
-    except ValidationError as exc:
-        return [
-            Error(
-                f"{E007_MSG} Backend {alias!r}: {exc.message}",
-                hint=E007_HINT_PG_CRON_ALIAS,
-                id="absurd.E007",
-            )
-        ]
-    return []
-
-
-def check_pg_cron_name(name: t.Any, alias: str) -> list[CheckMessage]:
+def check_pg_cron_name(name: t.Any) -> list[CheckMessage]:
     errors: list[CheckMessage] = []
     try:
         validate_name_charset(name)
@@ -99,11 +74,11 @@ def check_pg_cron_name(name: t.Any, alias: str) -> list[CheckMessage]:
                 id="absurd.E007",
             )
         )
-    # jobname length is composite (source:alias:name); only meaningful once the name
+    # jobname length is composite (source:name); only meaningful once the name
     # charset is clean, so skip it when the name is already flagged.
     if not errors:
         try:
-            validate_jobname_length(Source.SETTINGS, alias, name)
+            validate_jobname_length(Source.SETTINGS, name)
         except ValidationError as exc:
             errors.append(
                 Error(

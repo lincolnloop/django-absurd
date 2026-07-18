@@ -40,7 +40,6 @@ TASKS = {
 }
 
 CHANGE_PAYLOAD = {
-    "alias": "default",
     "task": "tests.tasks.add",
     "queue": "default",
     "cron": "0 3 * * *",
@@ -131,7 +130,6 @@ def test_create_resolves_all_spawn_options_and_is_disabled(
     response = client.post(
         ADD,
         {
-            "alias": "default",
             "name": "fromdecorators",
             "task": "tests.tasks.fully_specced",
             "cron": "0 2 * * *",
@@ -162,7 +160,6 @@ def test_create_with_save_and_add_another_returns_to_the_add_view(
     response = client.post(
         ADD,
         {
-            "alias": "default",
             "name": "another",
             "task": "tests.tasks.add",
             "cron": "0 2 * * *",
@@ -182,7 +179,7 @@ def test_add_view_renders_only_the_minimal_fields(
     client.force_login(admin_user)
     soup = BeautifulSoup(client.get(ADD).content, "html.parser")
     names = {i.get("name") for i in soup.select("#scheduledtask_form [name]")}
-    assert {"alias", "name", "task", "cron"} <= names
+    assert {"name", "task", "cron"} <= names
     assert "max_attempts" not in names
     assert "retry_kind" not in names
     assert "queue" not in names
@@ -222,7 +219,6 @@ def test_create_with_undeclared_resolved_queue_is_form_error_not_created(
     response = client.post(
         ADD,
         {
-            "alias": "default",
             "name": "undeclaredq",
             "task": "tests.tasks.on_reports",
             "cron": "0 2 * * *",
@@ -246,7 +242,6 @@ def test_create_with_unimportable_task_is_form_error_not_created(
     response = client.post(
         ADD,
         {
-            "alias": "default",
             "name": "bogus",
             "task": "tests.tasks.does_not_exist",
             "cron": "0 2 * * *",
@@ -271,7 +266,6 @@ def test_create_with_non_task_target_is_form_error_not_created(
     response = client.post(
         ADD,
         {
-            "alias": "default",
             "name": "notatask",
             "task": "os.getpid",
             "cron": "0 2 * * *",
@@ -293,7 +287,7 @@ def test_create_with_blank_task_skips_resolution_and_is_required_error(
     client.force_login(admin_user)
     response = client.post(
         ADD,
-        {"alias": "default", "name": "notask", "task": "", "cron": "0 2 * * *"},
+        {"name": "notask", "task": "", "cron": "0 2 * * *"},
     )
     assert response.status_code == 200
     assert "This field is required." in response.content.decode()
@@ -310,7 +304,6 @@ def test_create_with_bad_cron_is_form_error_not_created(
     response = client.post(
         ADD,
         {
-            "alias": "default",
             "name": "badcron",
             "task": "tests.tasks.add",
             "cron": "not a cron",
@@ -348,7 +341,6 @@ def test_create_and_sync_produce_identical_spawn_columns(
     client.post(
         ADD,
         {
-            "alias": "default",
             "name": "admin_specced",
             "task": "tests.tasks.fully_specced",
             "cron": "0 2 * * *",
@@ -387,39 +379,6 @@ def test_add_link_present_and_add_view_renders(
     assert add.status_code == 200
 
 
-def test_add_view_backend_field_offers_only_pg_cron_backends(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
-    admin_user: User,
-) -> None:
-    seed(settings)  # a single pg_cron backend "default"
-    client.force_login(admin_user)
-    response = client.get(ADD)
-    assert response.status_code == 200
-    soup = BeautifulSoup(response.content, "html.parser")
-    options = [
-        o.get("value")
-        for o in soup.select('select[name="alias"] option')
-        if o.get("value")
-    ]
-    assert options == ["default"]
-
-
-def test_add_view_alias_field_labeled_alias(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
-    admin_user: User,
-) -> None:
-    # The field is model-named "alias" everywhere; the add form must not relabel it to
-    # "Backend" — the readonly change view shows "Alias", so both must agree.
-    seed(settings)
-    client.force_login(admin_user)
-    soup = BeautifulSoup(client.get(ADD).content, "html.parser")
-    label = soup.select_one('label[for="id_alias"]')
-    assert label is not None
-    assert label.get_text(strip=True).rstrip(":") == "Alias"
-
-
 def test_add_view_cron_help_renders_pg_cron_link_as_html(
     settings: "pytest_django.fixtures.SettingsWrapper",
     client: Client,
@@ -446,7 +405,7 @@ def create_scheduled_task(
     cron: str = "0 3 * * *",
 ) -> t.Any:
     """Create source="admin" row through minimal create form; return its pk."""
-    client.post(ADD, {"alias": "default", "name": name, "task": task, "cron": cron})
+    client.post(ADD, {"name": name, "task": task, "cron": cron})
     return ScheduledTask.objects.get(name=name).pk
 
 
@@ -476,7 +435,7 @@ def test_posting_add_creates_admin_schedule_and_schedules_job(
     response = client.post(ADD, {**CHANGE_PAYLOAD, "name": "fromadmin"})
     assert response.status_code == 302
     assert ScheduledTask.objects.get(name="fromadmin").source == "a"
-    assert ScheduledTask.pg_cron.get_job("default", "fromadmin", "a") is not None
+    assert ScheduledTask.pg_cron.get_job("fromadmin", "a") is not None
 
 
 def test_posting_add_with_tampered_source_is_forced_to_admin(
@@ -505,7 +464,6 @@ def test_editing_over_long_name_row_is_form_error_not_500(
     client.force_login(admin_user)
     row = ScheduledTask.objects.create(
         source="a",
-        alias="default",
         name="x" * 60,
         task="tests.tasks.add",
         cron="0 3 * * *",
@@ -552,7 +510,7 @@ def test_posting_duplicate_admin_name_is_form_error_not_500(
     assert response.status_code == 200  # re-rendered with a form error, not HTTP 500
     assert ScheduledTask.objects.filter(source="a", name="dup").count() == 1
     assert (
-        "Scheduled task with this Source, Alias and Name already exists."
+        "Scheduled task with this Source and Name already exists."
         in response.content.decode()
     )
 
@@ -619,7 +577,7 @@ def test_posting_edit_reschedules_the_job_with_the_new_cron(
         {**CHANGE_PAYLOAD, "task": "tests.tasks.add", "cron": "30 6 * * *"},
     )
     assert response.status_code == 302
-    job = ScheduledTask.pg_cron.get_job("default", "reschedule", "a")
+    job = ScheduledTask.pg_cron.get_job("reschedule", "a")
     assert job is not None
     _, schedule, _, _ = job
     assert schedule == "30 6 * * *"
@@ -634,13 +592,13 @@ def test_deleting_admin_schedule_via_admin_unschedules_the_job(
     client.force_login(admin_user)
     client.post(ADD, {**CHANGE_PAYLOAD, "name": "deleteme"})
     pk = ScheduledTask.objects.get(name="deleteme").pk
-    assert ScheduledTask.pg_cron.get_job("default", "deleteme", "a") is not None
+    assert ScheduledTask.pg_cron.get_job("deleteme", "a") is not None
 
     delete_url = reverse("admin:django_absurd_pg_cron_scheduledtask_delete", args=[pk])
     response = client.post(delete_url, {"post": "yes"})
     assert response.status_code == 302
     assert not ScheduledTask.objects.filter(name="deleteme").exists()
-    assert ScheduledTask.pg_cron.get_job("default", "deleteme", "a") is None
+    assert ScheduledTask.pg_cron.get_job("deleteme", "a") is None
 
 
 def test_deleting_settings_schedule_via_admin_is_forbidden(
@@ -656,51 +614,6 @@ def test_deleting_settings_schedule_via_admin_is_forbidden(
     assert ScheduledTask.objects.filter(name="hourly").exists()
 
 
-def test_editing_admin_schedule_after_backend_flip_is_form_error_not_500(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
-    admin_user: User,
-) -> None:
-    # an admin row whose backend later switched off pg_cron must surface a form
-    # error on edit, not crash (the alias error routes to NON_FIELD_ERRORS since
-    # alias is a read-only field on the change form)
-    seed(settings)
-    client.force_login(admin_user)
-    client.post(ADD, {**CHANGE_PAYLOAD, "name": "flipme"})
-    pk = ScheduledTask.objects.get(name="flipme").pk
-
-    settings.TASKS = {
-        "default": {
-            "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "OPTIONS": {"QUEUES": {"default": {}}, "SCHEDULER": "beat"},
-        }
-    }
-    response = client.post(
-        get_change_url(pk),
-        {
-            "task": "tests.tasks.add",
-            "queue": "",
-            "cron": "0 4 * * *",
-            "enabled": "on",
-            "args": "[]",
-            "kwargs": "{}",
-            "max_attempts": "",
-            "retry_kind": "",
-            "retry_base_seconds": "",
-            "retry_factor": "",
-            "retry_max_seconds": "",
-            "headers": "",
-            "cancellation_max_duration": "",
-            "cancellation_max_delay": "",
-            "idempotency_key": "",
-        },
-    )
-    assert response.status_code == 200  # form error, not HTTP 500
-    assert "backend 'default' is not a configured pg_cron backend." in unescape(
-        response.content.decode()
-    )
-
-
 def test_change_form_rejects_a_blank_queue(
     settings: "pytest_django.fixtures.SettingsWrapper",
     client: Client,
@@ -711,7 +624,6 @@ def test_change_form_rejects_a_blank_queue(
     client.post(
         ADD,
         {
-            "alias": "default",
             "name": "needsqueue",
             "task": "tests.tasks.add",
             "cron": "0 3 * * *",

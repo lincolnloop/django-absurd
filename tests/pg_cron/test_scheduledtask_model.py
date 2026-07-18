@@ -5,10 +5,33 @@ from pytest_django.fixtures import SettingsWrapper
 from django_absurd.pg_cron.models import ScheduledTask
 
 
+def test_full_clean_skips_backend_validation_when_not_pg_cron(
+    settings: SettingsWrapper,
+) -> None:
+    # Under a non-pg_cron backend there is nothing to validate the queue/cron against,
+    # so full_clean must skip the pg_cron backend checks (and not raise) rather than
+    # reject an otherwise-valid row.
+    settings.TASKS = {
+        "default": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {
+                "QUEUES": {"default": {}, "other": {}, "reports": {}},
+                "SCHEDULER": "beat",
+            },
+        }
+    }
+    ScheduledTask(
+        source="a",
+        name="beatrow",
+        task="tests.tasks.add",
+        queue="default",
+        cron="0 2 * * *",
+    ).full_clean()
+
+
 def test_scheduledtask_has_explicit_option_columns() -> None:
     task = ScheduledTask.objects.create(
         name="nightly",
-        alias="default",
         task="demo.tasks.ping",
         cron="0 2 * * *",
         queue="default",
@@ -30,12 +53,12 @@ def test_scheduledtask_has_explicit_option_columns() -> None:
     assert task.cancellation_max_duration == 30
     assert task.cancellation_max_delay == 5
     assert task.idempotency_key == "abc"
-    assert str(task) == "s:default:nightly"
+    assert str(task) == "s:nightly"
 
 
 def test_scheduledtask_option_columns_default_empty() -> None:
     task = ScheduledTask.objects.create(
-        name="x", alias="default", task="demo.tasks.ping", cron="* * * * *"
+        name="x", task="demo.tasks.ping", cron="* * * * *"
     )
     task.refresh_from_db()
     assert task.args == []
@@ -64,7 +87,6 @@ def test_scheduledtask_max_attempts_default_bubbles_from_backend(
     }
     task = ScheduledTask.objects.create(
         source="a",
-        alias="default",
         name="bubble",
         task="demo.tasks.ping",
         cron="* * * * *",
@@ -77,7 +99,6 @@ def test_scheduledtask_max_attempts_none_means_infinite() -> None:
     # retries (a deliberate opt-in, distinct from "unset", which defaults to 5).
     task = ScheduledTask.objects.create(
         name="forever",
-        alias="default",
         task="demo.tasks.ping",
         cron="* * * * *",
         max_attempts=None,
@@ -95,7 +116,6 @@ def test_scheduledtask_max_attempts_below_one_violates_db_constraint() -> None:
             [
                 ScheduledTask(
                     name="zero",
-                    alias="default",
                     task="demo.tasks.ping",
                     cron="* * * * *",
                     max_attempts=0,
@@ -105,11 +125,10 @@ def test_scheduledtask_max_attempts_below_one_violates_db_constraint() -> None:
 
 
 @pytest.mark.django_db(transaction=True)
-def test_scheduledtask_unique_per_source_alias_name() -> None:
+def test_scheduledtask_unique_per_source_name() -> None:
     ScheduledTask.objects.create(
         name="dup",
         source="s",
-        alias="default",
         task="demo.tasks.ping",
         cron="* * * * *",
     )
@@ -117,16 +136,14 @@ def test_scheduledtask_unique_per_source_alias_name() -> None:
         ScheduledTask.objects.create(
             name="dup",
             source="s",
-            alias="default",
             task="demo.tasks.ping",
             cron="* * * * *",
         )
-    # but a different source with the same alias/name is allowed — settings and admin
+    # but a different source with the same name is allowed — settings and admin
     # schedules are distinct, source-namespaced jobs
     ScheduledTask.objects.create(
         name="dup",
         source="a",
-        alias="default",
         task="demo.tasks.ping",
         cron="* * * * *",
     )
