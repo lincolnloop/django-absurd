@@ -4,7 +4,7 @@ import typing as t
 from django.contrib import admin, messages
 from django.contrib.admin.sites import AdminSite
 from django.core.paginator import Paginator
-from django.db import connections
+from django.db import connections, models
 from django.db.utils import OperationalError, ProgrammingError
 from django.utils.module_loading import import_string
 
@@ -93,17 +93,17 @@ class ReadOnlyAdminBase(_ModelAdminBase):
         return False
 
     def has_change_permission(
-        self, request: "HttpRequest", obj: "t.Any | None" = None
+        self, request: "HttpRequest", obj: "models.Model | None" = None
     ) -> bool:
         return False
 
     def has_delete_permission(
-        self, request: "HttpRequest", obj: "t.Any | None" = None
+        self, request: "HttpRequest", obj: "models.Model | None" = None
     ) -> bool:
         return False
 
     def has_view_permission(
-        self, request: "HttpRequest", obj: "t.Any | None" = None
+        self, request: "HttpRequest", obj: "models.Model | None" = None
     ) -> bool:
         return True
 
@@ -111,7 +111,7 @@ class ReadOnlyAdminBase(_ModelAdminBase):
         return True
 
     def get_readonly_fields(
-        self, request: "HttpRequest", obj: "t.Any | None" = None
+        self, request: "HttpRequest", obj: "models.Model | None" = None
     ) -> tuple[str, ...]:
         model_fields = tuple(f.name for f in self.model._meta.get_fields())  # noqa: SLF001
         return tuple(self.readonly_fields) + model_fields
@@ -137,13 +137,14 @@ class ReadOnlyAbsurdAdmin(ReadOnlyAdminBase):
         request: "HttpRequest",
         object_id: str,
         from_field: str | None = None,
-    ) -> "t.Any | None":
+    ) -> "models.Model | None":
         queue = object_id.split(":", 1)[0]
         queryset = self.get_queryset(request).filter(queue=queue)
         try:
-            return queryset.get(pk=object_id)
+            obj: models.Model = queryset.get(pk=object_id)
         except self.model.DoesNotExist:
             return None
+        return obj
 
     def changelist_view(
         self,
@@ -231,11 +232,12 @@ def build_queue_admin(using: str) -> type[ReadOnlyAbsurdAdmin]:
         request: "HttpRequest",
         object_id: str,
         from_field: str | None = None,
-    ) -> "t.Any | None":
+    ) -> "models.Model | None":
         try:
-            return self.get_queryset(request).get(pk=object_id)
+            obj: models.Model = self.get_queryset(request).get(pk=object_id)
         except self.model.DoesNotExist:
             return None
+        return obj
 
     return type(
         "QueueAdmin",
@@ -347,22 +349,22 @@ class ReadOnlyRunInline(_TabularInlineBase):
     readonly_fields = RUN_INLINE_FIELDS
 
     def has_add_permission(
-        self, request: "HttpRequest", obj: "t.Any | None" = None
+        self, request: "HttpRequest", obj: "models.Model | None" = None
     ) -> bool:
         return False
 
     def has_change_permission(
-        self, request: "HttpRequest", obj: "t.Any | None" = None
+        self, request: "HttpRequest", obj: "models.Model | None" = None
     ) -> bool:
         return False
 
     def has_delete_permission(
-        self, request: "HttpRequest", obj: "t.Any | None" = None
+        self, request: "HttpRequest", obj: "models.Model | None" = None
     ) -> bool:
         return False
 
     def has_view_permission(
-        self, request: "HttpRequest", obj: "t.Any | None" = None
+        self, request: "HttpRequest", obj: "models.Model | None" = None
     ) -> bool:
         return True
 

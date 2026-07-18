@@ -247,7 +247,7 @@ def build_admin_model(spec: EntitySpec) -> type[models.Model]:
     return type(spec.model_name, (models.Model,), fields)
 
 
-def raise_view_read_only(self: object, *args: object, **kwargs: object) -> t.NoReturn:
+def raise_view_read_only(self: t.Any, *args: object, **kwargs: object) -> t.NoReturn:
     raise QueueReadOnlyError(ADMIN_VIEW_READONLY_MSG)
 
 

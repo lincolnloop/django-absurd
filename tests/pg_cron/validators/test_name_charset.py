@@ -1,6 +1,6 @@
-import collections.abc
-
 import pytest
+
+from tests.pg_cron.validators.utils import ValidateSubject
 
 NAME_MSG = "Schedule name contains characters other than [A-Za-z0-9_-]."
 BAD = ["dot.dot", "has space", "unicodé", "with/slash"]
@@ -13,7 +13,7 @@ GOOD = ["MixedCase123", "ok", "with-dash", "with_underscore"]
 # both still assert the complete message.
 @pytest.mark.parametrize("name", BAD)
 def test_bad_name_rejected(
-    validate_check_and_model: collections.abc.Callable[..., str | None],
+    validate_check_and_model: ValidateSubject,
     name: str,
 ) -> None:
     result = validate_check_and_model(name=name)
@@ -23,7 +23,7 @@ def test_bad_name_rejected(
 
 @pytest.mark.parametrize("name", GOOD)
 def test_good_name_accepted(
-    validate_check_and_model: collections.abc.Callable[..., str | None],
+    validate_check_and_model: ValidateSubject,
     name: str,
 ) -> None:
     result = validate_check_and_model(name=name)

@@ -5,6 +5,7 @@ import json
 import typing as t
 
 import pytest
+from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.core.management import call_command
 from django.core.management.base import SystemCheckError
@@ -13,6 +14,14 @@ from django.urls import reverse
 from pytest_django.fixtures import SettingsWrapper
 
 from django_absurd.pg_cron.models import ScheduledTask
+
+
+class ValidateSubject(t.Protocol):
+    """A validator-test subject: run field overrides through a real enforcing
+    entrypoint (system check / model full_clean / admin POST) and return the emitted
+    error text, or None when it validates."""
+
+    def __call__(self, **kwargs: t.Any) -> str | None: ...
 
 
 def get_change_url(pk: int) -> str:
@@ -108,7 +117,7 @@ def validate_from_system_check(
 
 def validate_from_admin_post(
     client: Client,
-    admin_user: t.Any,
+    admin_user: User,
     settings: SettingsWrapper,
     **kwargs: t.Any,
 ) -> str | None:

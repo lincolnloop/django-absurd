@@ -109,7 +109,6 @@ source = "vcs"
 
 [tool.mypy]
 exclude = [
-  "/migrations/",
   "^build/",
   "^dist/",
   "^\\.tox/",

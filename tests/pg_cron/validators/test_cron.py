@@ -1,6 +1,6 @@
-import collections.abc
-
 import pytest
+
+from tests.pg_cron.validators.utils import ValidateSubject
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -16,7 +16,7 @@ GOOD: list[str] = ["*/5 * * * *", "0 2 * * *", "30 seconds"]
 
 @pytest.mark.parametrize("cron", GOOD)
 def test_valid_pg_cron_expression_accepted(
-    validate_model_and_form: collections.abc.Callable[..., str | None],
+    validate_model_and_form: ValidateSubject,
     cron: str,
 ) -> None:
     assert validate_model_and_form(cron=cron) is None
@@ -24,7 +24,7 @@ def test_valid_pg_cron_expression_accepted(
 
 @pytest.mark.parametrize("cron", BAD)
 def test_invalid_pg_cron_expression_rejected(
-    validate_model_and_form: collections.abc.Callable[..., str | None],
+    validate_model_and_form: ValidateSubject,
     cron: str,
 ) -> None:
     result = validate_model_and_form(cron=cron)

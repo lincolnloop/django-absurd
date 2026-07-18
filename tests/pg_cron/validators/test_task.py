@@ -1,6 +1,6 @@
-import typing as t
-
 import pytest
+
+from tests.pg_cron.validators.utils import ValidateSubject
 
 
 @pytest.mark.parametrize(
@@ -18,7 +18,7 @@ import pytest
     ],
 )
 def test_bad_task_rejected(
-    validate: t.Callable[..., str | None],
+    validate: ValidateSubject,
     path: str,
     message: str,
 ) -> None:

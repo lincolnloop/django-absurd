@@ -20,9 +20,12 @@ stray row created out-of-band on another DB must stay deletable).
 
 import typing as t
 
+if t.TYPE_CHECKING:
+    from django_absurd.pg_cron.models import ScheduledTask
+
 
 def reject_cross_database_save(
-    sender: type, instance: t.Any, using: str | None = None, **kwargs: t.Any
+    sender: type, instance: "ScheduledTask", using: str | None = None, **kwargs: t.Any
 ) -> None:
     """pre_save: reject a write forced onto a non-absurd database before the INSERT, so
     no misplaced row is created. Cross-database schedules belong to the multi-Absurd-
@@ -36,14 +39,16 @@ def reject_cross_database_save(
         raise NotImplementedError(msg)
 
 
-def schedule_job_on_save(sender: type, instance: t.Any, **kwargs: t.Any) -> None:
+def schedule_job_on_save(
+    sender: type, instance: "ScheduledTask", **kwargs: t.Any
+) -> None:
     """post_save: (re)schedule the row's pg_cron job. Fires only for a write that
     reached the absurd DB — pre_save rejects a cross-database write before this."""
     instance.schedule_pg_cron_job()
 
 
 def unschedule_job_on_delete(
-    sender: type, instance: t.Any, using: str | None = None, **kwargs: t.Any
+    sender: type, instance: "ScheduledTask", using: str | None = None, **kwargs: t.Any
 ) -> None:
     """post_delete: remove the row's pg_cron job. Skips a row deleted from a foreign
     database — nothing of ours to unschedule there — so a stray row created out-of-band

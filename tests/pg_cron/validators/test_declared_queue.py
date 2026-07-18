@@ -1,11 +1,10 @@
-import collections.abc
-
 import pytest
 import pytest_django.fixtures
 from django.core.exceptions import ValidationError
 
 from django_absurd.pg_cron.models import ScheduledTask
 from tests.pg_cron.validators.utils import (
+    ValidateSubject,
     validate_from_model,
     validate_from_system_check,
 )
@@ -71,7 +70,7 @@ def test_explicit_queue_declared_only_by_another_backend_rejected(
 
 
 def test_bad_task_no_queue_reports_task_not_queue(
-    validate_check_and_model: collections.abc.Callable[..., str | None],
+    validate_check_and_model: ValidateSubject,
 ) -> None:
     # blank queue + unimportable/not-a-task path: validate_declared_queue must
     # SWALLOW the task error (reported by validate_task_path) and not mislabel it as

@@ -1,10 +1,9 @@
-import collections.abc
 import typing as t
 
 import pytest
 import pytest_django.fixtures
 
-from tests.pg_cron.validators.utils import validate_from_model
+from tests.pg_cron.validators.utils import ValidateSubject, validate_from_model
 
 
 # One rule per field, all real entrypoints: args must be a JSON array, kwargs a JSON
@@ -18,7 +17,7 @@ from tests.pg_cron.validators.utils import validate_from_model
     ],
 )
 def test_wrong_shape_rejected(
-    validate: collections.abc.Callable[..., str | None],
+    validate: ValidateSubject,
     field: str,
     message: str,
     value: t.Any,
