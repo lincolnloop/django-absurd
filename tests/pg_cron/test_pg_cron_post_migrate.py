@@ -183,6 +183,22 @@ def test_reconcile_tears_down_when_scheduler_switches_to_beat(
     assert not ScheduledTask.objects.filter(source="s").exists()
 
 
+def test_reconcile_is_noop_without_absurd_backend(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+) -> None:
+    """The pg_cron app is installed but no Absurd backend is configured: reconcile
+    returns early, touching no pg_cron jobs — migrate must not break just because the
+    app is present without an Absurd backend."""
+    settings.TASKS = {
+        "default": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}
+    }
+
+    # must NOT raise
+    reconcile_crons_after_migrate(sender=apps.get_app_config("django_absurd_pg_cron"))
+
+    assert ScheduledTask.pg_cron.get_managed_jobs() == []
+
+
 def test_reconcile_missing_row_fires_clean_noop(
     settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
