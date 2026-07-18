@@ -69,50 +69,50 @@ def reconcile_crons_after_migrate(
     )
 
     style = color_style()
-    for alias, backend in get_absurd_backends().items():
-        try:
-            if backend.scheduler == "pg_cron":
-                created, pruned = sync_crons(backend)
-                sync_admin_crons()
-                lines = []
-                if created:
-                    lines.append(f"  Scheduled {created}")
-                if pruned:
-                    lines.append(f"  Pruned {pruned}")
-                if lines and verbosity >= 1 and stdout is not None:
-                    stdout.write(
-                        style.MIGRATE_HEADING(
-                            f"Reconciling pg_cron schedules ({alias}):"
-                        )
-                    )
-                    for line in lines:
-                        stdout.write(line)
-            else:
-                removed = teardown_crons()
-                if removed > 0 and verbosity >= 1 and stdout is not None:
-                    stdout.write(
-                        f"  Removed {removed} pg_cron schedule(s)"
-                        f' — backend {alias!r} no longer uses SCHEDULER="pg_cron"'
-                    )
-        except (
-            ImproperlyConfigured,
-            OperationalError,
-            ProgrammingError,
-            InternalError,
-            ImportError,
-            TypeError,
-            KeyError,
-            AttributeError,
-            ValueError,
-        ):
-            # Best-effort: migrate must never break. Skip this backend on an
-            # unreachable DB, tables not yet present (faked/adopted migration, or
-            # a multi-DB migrate firing post_migrate before the Absurd DB is
-            # migrated), a bad dotted path in a schedule, a malformed SCHEDULE
-            # spec, or an unserializable arg.
-            logger.warning(
-                "django-absurd: skipped cron reconcile for backend %r",
-                alias,
-                exc_info=True,
-            )
-            continue
+    absurd_backends = get_absurd_backends()
+    if not absurd_backends:
+        return
+    alias, backend = next(iter(absurd_backends.items()))
+    try:
+        if backend.scheduler == "pg_cron":
+            created, pruned = sync_crons(backend)
+            sync_admin_crons()
+            lines = []
+            if created:
+                lines.append(f"  Scheduled {created}")
+            if pruned:
+                lines.append(f"  Pruned {pruned}")
+            if lines and verbosity >= 1 and stdout is not None:
+                stdout.write(
+                    style.MIGRATE_HEADING(f"Reconciling pg_cron schedules ({alias}):")
+                )
+                for line in lines:
+                    stdout.write(line)
+        else:
+            removed = teardown_crons()
+            if removed > 0 and verbosity >= 1 and stdout is not None:
+                stdout.write(
+                    f"  Removed {removed} pg_cron schedule(s)"
+                    f' — backend {alias!r} no longer uses SCHEDULER="pg_cron"'
+                )
+    except (
+        ImproperlyConfigured,
+        OperationalError,
+        ProgrammingError,
+        InternalError,
+        ImportError,
+        TypeError,
+        KeyError,
+        AttributeError,
+        ValueError,
+    ):
+        # Best-effort: migrate must never break. Skip this backend on an
+        # unreachable DB, tables not yet present (faked/adopted migration, or
+        # a multi-DB migrate firing post_migrate before the Absurd DB is
+        # migrated), a bad dotted path in a schedule, a malformed SCHEDULE
+        # spec, or an unserializable arg.
+        logger.warning(
+            "django-absurd: skipped cron reconcile for backend %r",
+            alias,
+            exc_info=True,
+        )

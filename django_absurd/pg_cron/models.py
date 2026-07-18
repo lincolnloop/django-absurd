@@ -10,10 +10,7 @@ if t.TYPE_CHECKING:
 
     from django_absurd.backends import AbsurdBackend
 
-from django_absurd.backends import (
-    get_declared_queues,
-    get_pg_cron_backends,
-)
+from django_absurd.backends import get_declared_queues
 from django_absurd.pg_cron.choices import RetryKind, Source
 from django_absurd.pg_cron.validators import (
     build_jobname,
@@ -51,12 +48,13 @@ def get_default_max_attempts() -> int:
 
 
 def get_declared_queue_choices() -> list[tuple[str, str]]:
-    """Declared queues across configured pg_cron backends, sorted, for use as field
+    """Declared queues for the configured pg_cron backend, sorted, for use as field
     choices. Falls back to [("default", "default")] when no queues are declared.
     Called at form-render / validation / migration-state time — import-safe."""
-    queues: set[str] = set()
-    for backend in get_pg_cron_backends().values():
-        queues.update(get_declared_queues(backend))
+    backend = get_absurd_backend()
+    if backend is None or backend.scheduler != "pg_cron":
+        return [("default", "default")]
+    queues = set(get_declared_queues(backend))
     if not queues:
         return [("default", "default")]
     return [(q, q) for q in sorted(queues)]
