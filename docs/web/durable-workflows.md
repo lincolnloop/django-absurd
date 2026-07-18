@@ -41,6 +41,9 @@ complete.
 
 ### Async
 
+The async `step`'s `fn` must return an awaitable — pass an `async def`, not a plain
+lambda (a sync lambda returns a non-awaitable and raises `TypeError`):
+
 ```python
 from django.tasks import task
 from django_absurd import AsyncDurableContext
@@ -48,9 +51,16 @@ from django_absurd import AsyncDurableContext
 
 @task(takes_context=True)
 async def process_order(context: AsyncDurableContext, order_id: int) -> None:
-    await context.step("charge", lambda: charge_card(order_id))
+    async def charge():
+        return await charge_card(order_id)
+
+    await context.step("charge", charge)
     await context.sleep_for("cooldown", 5)
-    await context.step("ship", lambda: ship(order_id))
+
+    async def ship_order():
+        return await ship(order_id)
+
+    await context.step("ship", ship_order)
 ```
 
 ## API
@@ -78,8 +88,8 @@ def process_order(context: DurableContext, order_id: int) -> None:
     context.sleep_for("cooldown", 5)
 
     @context.run_step("ship-item")        # explicit name
-    def ship():
-        ship(order_id)
+    def ship_item():
+        return ship(order_id)
 ```
 
 ### `sleep_until`
@@ -93,7 +103,11 @@ import datetime as dt
 async def send_reminder(context: AsyncDurableContext, user_id: int) -> None:
     wake_at = dt.datetime(2026, 1, 1, 9, 0, tzinfo=dt.timezone.utc)
     await context.sleep_until("wait-for-new-year", wake_at)
-    await context.step("send", lambda: send_email(user_id))
+
+    async def send():
+        return await send_email(user_id)
+
+    await context.step("send", send)
 ```
 
 `wake_at` may be a timezone-aware `datetime`, or a Unix timestamp (`int` or `float`).
@@ -205,7 +219,7 @@ resumes it — no external scheduler needed.
 ## Admin introspection
 
 Checkpoints are visible in Django admin under **Checkpoints** (one row per completed
-step). The **Runs** view shows the `available_at` column — a sleeping run's wake time —
-and the current state.
+step). The `available_at` column — a sleeping run's wake time — appears on the run
+detail page (Claim fieldset) and in the task detail's Runs inline.
 
 → [How it works — runs, retries & checkpoints](how-it-works.md#runs-retries-checkpoints)

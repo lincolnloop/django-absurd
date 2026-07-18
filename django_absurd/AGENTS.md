@@ -605,11 +605,14 @@ def process_order(context: DurableContext, order_id: int) -> None:
     context.sleep_for("cooldown", 5)
 
     @context.run_step("ship-item")             # explicit name
-    def ship():
-        ship(order_id)
+    def ship_item():
+        return ship(order_id)
 ```
 
 ### Async
+
+The async `step`'s `fn` must return an awaitable — pass an `async def`, not a plain
+lambda (a sync lambda returns a non-awaitable and raises `TypeError`):
 
 ```python
 from django.tasks import task
@@ -618,9 +621,16 @@ from django_absurd import AsyncDurableContext
 
 @task(takes_context=True)
 async def process_order(context: AsyncDurableContext, order_id: int) -> None:
-    await context.step("charge", lambda: charge_card(order_id))
+    async def charge():
+        return await charge_card(order_id)
+
+    await context.step("charge", charge)
     await context.sleep_for("cooldown", 5)
-    await context.step("ship", lambda: ship(order_id))
+
+    async def ship_order():
+        return await ship(order_id)
+
+    await context.step("ship", ship_order)
 ```
 
 ### Import
