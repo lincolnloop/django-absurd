@@ -36,8 +36,13 @@ asyncio.
   via a `if t.TYPE_CHECKING:` import + string annotation, so a RED step fails at runtime
   with `AttributeError`, not `ImportError`). `enqueue(absurd_spawn_params=…)` needs
   `# type: ignore[call-arg]` (matches every existing call site). No in-function imports
-  (PLC0415) — top-level only. No new ruff ignores/noqa beyond the established
-  `type: ignore[call-arg]`.
+  (PLC0415) — top-level only. **No new ruff ignores/noqa.** Authorized mypy
+  `type: ignore` (each needs an explanatory comment; stale django-stubs gaps, mypy-only,
+  runtime-correct): `[call-arg]` on `enqueue(absurd_spawn_params=…)`; `[misc]` on the
+  frozen/slots/kw_only `TaskContext` subclass (stubs omit `frozen=True` on the base);
+  `[arg-type]` on each `@task(takes_context=True)` whose `context` param is annotated
+  with the narrower durable context type (stubs type `@task` as
+  `Concatenate[TaskContext, …]`). No other suppressions.
 - Function-based pytest only; **no monkeypatch / unittest.mock / `responses` here**.
   `@pytest.mark.django_db(transaction=True)` for anything that runs the worker.
 - Behavioral tests through real entrypoints (`enqueue` + `absurd_worker` burst); assert
