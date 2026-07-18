@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 import psycopg
 import psycopg.errors
-from absurd_sdk import AsyncAbsurd
+from absurd_sdk import AsyncAbsurd, CancelledTask, FailedTask, SuspendTask
 from django.core.exceptions import ImproperlyConfigured
 from django.db import close_old_connections, connections
 from django.tasks import Task, TaskContext, TaskResult, TaskResultStatus
@@ -24,6 +24,12 @@ from django_absurd.context import AsyncDurableContext
 from django_absurd.scheduler import run_beat
 
 logger = logging.getLogger("django_absurd")
+
+LIFECYCLE_WORDS: dict[type, str] = {
+    SuspendTask: "suspended",
+    CancelledTask: "cancelled",
+    FailedTask: "failed",
+}
 
 
 @dataclass(frozen=True)
@@ -236,6 +242,15 @@ def build_handler(
                 result = await asyncio.get_running_loop().run_in_executor(
                     None, call_sync
                 )
+        except (SuspendTask, CancelledTask, FailedTask) as exc:
+            logger.info(
+                "django-absurd task %s: name=%s task_id=%s attempt=%d",
+                LIFECYCLE_WORDS[type(exc)],
+                task.module_path,
+                ctx.task_id,
+                attempt,
+            )
+            raise
         except Exception:
             duration = time.monotonic() - start
             logger.exception(

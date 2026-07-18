@@ -1,8 +1,18 @@
+import logging
+import time
+
 import pytest
 from django.core.management import call_command
 
 from django_absurd.params import AbsurdSpawnParams
-from tests.atasks import aheaders_tenant, aheartbeat_then_return, astep_echo
+from tests.atasks import (
+    DURABLE_STEP_CALLS,
+    aheaders_tenant,
+    aheartbeat_then_return,
+    asleep_for_once,
+    asleep_until_once,
+    astep_echo,
+)
 from tests.worker_support import get_task_result, run_absurd_worker
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -37,3 +47,51 @@ def test_async_heartbeat_is_callable() -> None:
     assert snap is not None
     assert snap.state == "completed"
     assert snap.result == "ok"
+
+
+def test_async_sleep_for_suspends_then_resumes_replaying_step() -> None:
+    call_command("absurd_sync_queues")
+    DURABLE_STEP_CALLS["n"] = 0
+    result = asleep_for_once.enqueue("k")
+
+    run_absurd_worker()  # drain 1: bump runs, then sleep -> suspend
+    suspended = get_task_result(result.id)
+    assert suspended is not None
+    assert suspended.state == "sleeping"
+
+    time.sleep(2)  # past wake (Python-clock wake vs DB-clock claim; wide margin)
+    run_absurd_worker()  # drain 2: body replays, bump cached, completes
+    done = get_task_result(result.id)
+    assert done is not None
+    assert done.state == "completed"
+    assert done.result == 1
+    assert DURABLE_STEP_CALLS["n"] == 1  # step body ran once across the replay
+
+
+def test_async_sleep_until_suspends_then_resumes() -> None:
+    call_command("absurd_sync_queues")
+    result = asleep_until_once.enqueue("k")
+    run_absurd_worker()
+    suspended = get_task_result(result.id)
+    assert suspended is not None
+    assert suspended.state == "sleeping"
+    time.sleep(2)
+    run_absurd_worker()
+    done = get_task_result(result.id)
+    assert done is not None
+    assert done.state == "completed"
+    assert done.result == "woke"
+
+
+def test_suspend_logged_as_lifecycle_not_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    call_command("absurd_sync_queues")
+    DURABLE_STEP_CALLS["n"] = 0
+    asleep_for_once.enqueue("k")
+    with caplog.at_level(logging.INFO, logger="django_absurd"):
+        run_absurd_worker()
+    assert (
+        "django-absurd task suspended: name=tests.atasks.asleep_for_once" in caplog.text
+    )
+    assert "task failed" not in caplog.text

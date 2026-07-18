@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from django.tasks import TaskContext
 
 if t.TYPE_CHECKING:
+    import datetime as dt
     from collections.abc import Awaitable, Callable, Mapping
 
     _TaskContextBase = TaskContext[t.Any, t.Any]
@@ -32,3 +33,11 @@ class AsyncDurableContext(_TaskContextBase):  # type: ignore[misc]  # django-stu
 
     async def heartbeat(self, seconds: int | None = None) -> None:
         await self.absurd_ctx.heartbeat(seconds)
+
+    async def sleep_for(self, step_name: str, duration: float) -> None:
+        await self.absurd_ctx.sleep_for(step_name, duration)
+
+    async def sleep_until(
+        self, step_name: str, wake_at: "dt.datetime | int | float"
+    ) -> None:
+        await self.absurd_ctx.sleep_until(step_name, wake_at)

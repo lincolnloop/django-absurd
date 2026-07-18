@@ -1,3 +1,4 @@
+import time
 import typing as t
 from asyncio import sleep as asleep
 
@@ -63,3 +64,20 @@ async def aread_payload(pk: int) -> t.Any:
 async def asleeper(seconds: float) -> str:
     await asleep(seconds)
     return "slept"
+
+
+@task(takes_context=True)  # type: ignore[arg-type]  # django-stubs types the ctx param as base TaskContext; the worker passes an AsyncDurableContext to coroutine tasks
+async def asleep_for_once(context: "AsyncDurableContext", key: str) -> int:
+    async def bump() -> int:
+        DURABLE_STEP_CALLS["n"] += 1
+        return DURABLE_STEP_CALLS["n"]
+
+    n = await context.step("bump", bump)
+    await context.sleep_for("nap", 1.5)
+    return n
+
+
+@task(takes_context=True)  # type: ignore[arg-type]  # django-stubs types the ctx param as base TaskContext; the worker passes an AsyncDurableContext to coroutine tasks
+async def asleep_until_once(context: "AsyncDurableContext", key: str) -> str:
+    await context.sleep_until("nap", time.time() + 1.5)
+    return "woke"
