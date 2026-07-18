@@ -1,5 +1,7 @@
 import pytest
 
+from tests.pg_cron.validators.utils import ValidateSubject
+
 
 @pytest.mark.parametrize(
     ("path", "message"),
@@ -15,7 +17,11 @@ import pytest
         ),
     ],
 )
-def test_bad_task_rejected(validate, path, message):
+def test_bad_task_rejected(
+    validate: ValidateSubject,
+    path: str,
+    message: str,
+) -> None:
     # both subjects (model full_clean + core system check) via the fixture
     result = validate(task=path)
     assert result

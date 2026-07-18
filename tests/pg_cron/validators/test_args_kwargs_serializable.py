@@ -1,4 +1,8 @@
+import typing as t
+
 import pytest
+
+from tests.pg_cron.validators.utils import ValidateSubject
 
 
 # One rule, both subjects: the check validates the raw settings dict; the model's
@@ -10,7 +14,12 @@ import pytest
         ("kwargs", "kwargs is not JSON-serializable.", {"a": {1, 2}}),
     ],
 )
-def test_non_json_rejected(validate_check_and_model, field, message, value):
+def test_non_json_rejected(
+    validate_check_and_model: ValidateSubject,
+    field: str,
+    message: str,
+    value: t.Any,
+) -> None:
     result = validate_check_and_model(**{field: value})
     assert result
     assert message in result

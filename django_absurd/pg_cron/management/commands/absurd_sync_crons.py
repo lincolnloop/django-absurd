@@ -9,11 +9,14 @@ from django_absurd.pg_cron.reconcile import (
     teardown_crons,
 )
 
+if t.TYPE_CHECKING:
+    from django.core.management.base import CommandParser
+
 
 class Command(BaseCommand):
     help = "Reconcile pg_cron jobs for all declared SCHEDULE entries."
 
-    def add_arguments(self, parser: t.Any) -> None:
+    def add_arguments(self, parser: "CommandParser") -> None:
         parser.add_argument(
             "--alias",
             default=None,
@@ -32,19 +35,19 @@ class Command(BaseCommand):
             help="Skip the teardown confirmation prompt.",
         )
 
-    def handle(self, *args: t.Any, **options: t.Any) -> None:
+    def handle(self, *args: t.Any, **options: t.Any) -> str | None:
         alias, backend = resolve_backend(options)
 
         if options["teardown"]:
             if not options["no_input"] and not self.confirm_teardown(alias):
                 self.stdout.write("Aborted.")
-                return
+                return None
             removed = teardown_crons(backend, include_admin=True)
             self.stdout.write(
                 f"Unscheduled all pg_cron jobs and removed {removed} schedule row(s) "
                 f"— backend '{alias}'."
             )
-            return
+            return None
 
         if backend.scheduler != "pg_cron":
             msg = (
@@ -65,6 +68,7 @@ class Command(BaseCommand):
         self.stdout.write(
             f"Synced {created} cron(s); pruned {pruned} — backend '{alias}'."
         )
+        return None
 
     def confirm_teardown(self, alias: str) -> bool:
         prompt = (

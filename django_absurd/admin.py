@@ -4,12 +4,16 @@ import typing as t
 from django.contrib import admin, messages
 from django.contrib.admin.sites import AdminSite
 from django.core.paginator import Paginator
-from django.db import connections
+from django.db import connections, models
 from django.db.utils import OperationalError, ProgrammingError
 from django.utils.module_loading import import_string
 
 if t.TYPE_CHECKING:
-    from django.db import models as db_models
+    from collections.abc import Iterable
+
+    from django.contrib.admin.filters import ListFilter
+    from django.db.models import Model, QuerySet
+    from django.http import HttpRequest, HttpResponse
 
 from django_absurd.admin_views import (
     ADMIN_ENTITY_SPECS,
@@ -22,14 +26,18 @@ from django_absurd.queues import get_absurd_backend, resolve_absurd_database
 
 ADMIN_COUNT_CAP = 1000
 
+if t.TYPE_CHECKING:
+    _PaginatorBase = Paginator[t.Any]
+else:
+    _PaginatorBase = Paginator
 
-class BoundedCountPaginator(Paginator):
+
+class BoundedCountPaginator(_PaginatorBase):
     @property
     def count(self) -> int:
-        qs = t.cast(
-            "db_models.QuerySet[t.Any]", self.object_list[: ADMIN_COUNT_CAP + 1]
-        )
-        return min(qs.count(), ADMIN_COUNT_CAP)
+        qs: t.Any = self.object_list[: ADMIN_COUNT_CAP + 1]
+        n: int = qs.count()
+        return min(n, ADMIN_COUNT_CAP)
 
 
 class AbsurdQueueListFilter(admin.SimpleListFilter):
@@ -38,51 +46,73 @@ class AbsurdQueueListFilter(admin.SimpleListFilter):
 
     def __init__(
         self,
-        request: t.Any,
-        params: t.Any,
-        model: t.Any,
+        request: "HttpRequest",
+        params: dict[str, list[str]],
+        model: "type[Model]",
         model_admin: "ReadOnlyAbsurdAdmin",
     ) -> None:
         self.using: str = getattr(model_admin, "using", resolve_absurd_database())
         super().__init__(request, params, model, model_admin)
 
-    def lookups(self, request: t.Any, model_admin: t.Any) -> list[tuple[str, str]]:
+    def lookups(
+        self,
+        request: "HttpRequest",
+        model_admin: "admin.ModelAdmin[t.Any]",
+    ) -> list[tuple[str, str]]:
         try:
             queues = fetch_catalog_queues(self.using)
         except (OperationalError, ProgrammingError):
             return []
         return [(q, q) for q in queues]
 
-    def queryset(self, request: t.Any, queryset: t.Any) -> t.Any:
+    def queryset(
+        self,
+        request: "HttpRequest",
+        queryset: "QuerySet[t.Any]",
+    ) -> "QuerySet[t.Any] | None":
         value = self.value()
         if value:
             return queryset.filter(queue=value)
         return queryset
 
 
-class ReadOnlyAdminBase(admin.ModelAdmin):
+if t.TYPE_CHECKING:
+    _ModelAdminBase = admin.ModelAdmin[t.Any]
+else:
+    _ModelAdminBase = admin.ModelAdmin
+
+
+class ReadOnlyAdminBase(_ModelAdminBase):
     """View-only admin: no add/change/delete, every model field read-only.
 
     Carries no queryset/ordering assumptions, so it suits both the UNION-view
     entity admins and plain-table admins (e.g. pg_cron's ScheduledTask).
     """
 
-    def has_add_permission(self, request: t.Any) -> bool:
+    def has_add_permission(self, request: "HttpRequest") -> bool:
         return False
 
-    def has_change_permission(self, request: t.Any, obj: t.Any = None) -> bool:
+    def has_change_permission(
+        self, request: "HttpRequest", obj: "models.Model | None" = None
+    ) -> bool:
         return False
 
-    def has_delete_permission(self, request: t.Any, obj: t.Any = None) -> bool:
+    def has_delete_permission(
+        self, request: "HttpRequest", obj: "models.Model | None" = None
+    ) -> bool:
         return False
 
-    def has_view_permission(self, request: t.Any, obj: t.Any = None) -> bool:
+    def has_view_permission(
+        self, request: "HttpRequest", obj: "models.Model | None" = None
+    ) -> bool:
         return True
 
-    def has_module_permission(self, request: t.Any) -> bool:
+    def has_module_permission(self, request: "HttpRequest") -> bool:
         return True
 
-    def get_readonly_fields(self, request: t.Any, obj: t.Any = None) -> tuple[str, ...]:
+    def get_readonly_fields(
+        self, request: "HttpRequest", obj: "models.Model | None" = None
+    ) -> tuple[str, ...]:
         model_fields = tuple(f.name for f in self.model._meta.get_fields())  # noqa: SLF001
         return tuple(self.readonly_fields) + model_fields
 
@@ -95,25 +125,32 @@ class ReadOnlyAbsurdAdmin(ReadOnlyAdminBase):
     show_full_result_count = False
     paginator = BoundedCountPaginator
 
-    def get_queryset(self, request: t.Any) -> t.Any:
+    def get_queryset(self, request: "HttpRequest") -> "QuerySet[t.Any]":
+        model: type[t.Any] = self.model
         if self.spec is not None and not view_exists(self.spec.view_name, self.using):
-            return self.model.objects.using(self.using).none()
-        return self.model.objects.using(self.using).all()
+            qs: QuerySet[t.Any] = model.objects.using(self.using).none()
+            return qs
+        return t.cast("QuerySet[t.Any]", model.objects.using(self.using).all())
 
     def get_object(
         self,
-        request: t.Any,
+        request: "HttpRequest",
         object_id: str,
-        from_field: t.Any = None,
-    ) -> t.Any:
+        from_field: str | None = None,
+    ) -> "models.Model | None":
         queue = object_id.split(":", 1)[0]
         queryset = self.get_queryset(request).filter(queue=queue)
         try:
-            return queryset.get(pk=object_id)
+            obj: models.Model = queryset.get(pk=object_id)
         except self.model.DoesNotExist:
             return None
+        return obj
 
-    def changelist_view(self, request: t.Any, extra_context: t.Any = None) -> t.Any:
+    def changelist_view(
+        self,
+        request: "HttpRequest",
+        extra_context: dict[str, t.Any] | None = None,
+    ) -> "HttpResponse":
         if self.spec is not None:
             try:
                 stale = find_unindexed_queues(self.using)
@@ -173,7 +210,7 @@ def resolve_admin_sites() -> list[AdminSite]:
     return sites
 
 
-def register_absurd_admin(sites: t.Iterable[AdminSite]) -> None:
+def register_absurd_admin(sites: "Iterable[AdminSite]") -> None:
     backend = get_absurd_backend()
     using = backend.database if backend is not None else resolve_absurd_database()
 
@@ -191,15 +228,16 @@ def register_absurd_admin(sites: t.Iterable[AdminSite]) -> None:
 
 def build_queue_admin(using: str) -> type[ReadOnlyAbsurdAdmin]:
     def get_object(
-        self: t.Any,
-        request: t.Any,
+        self: ReadOnlyAbsurdAdmin,
+        request: "HttpRequest",
         object_id: str,
-        from_field: t.Any = None,
-    ) -> t.Any:
+        from_field: str | None = None,
+    ) -> "models.Model | None":
         try:
-            return self.get_queryset(request).get(pk=object_id)
+            obj: models.Model = self.get_queryset(request).get(pk=object_id)
         except self.model.DoesNotExist:
             return None
+        return obj
 
     return type(
         "QueueAdmin",
@@ -218,9 +256,9 @@ def build_queue_admin(using: str) -> type[ReadOnlyAbsurdAdmin]:
 
 
 def build_entity_admin(
-    spec: EntitySpec, model: type, using: str
+    spec: EntitySpec, model: "type[Model]", using: str
 ) -> type[ReadOnlyAbsurdAdmin]:
-    list_filter: list[t.Any] = [AbsurdQueueListFilter]
+    list_filter: list[type[ListFilter] | str] = [AbsurdQueueListFilter]
     if spec.has_state:
         list_filter.append("state")
     if spec.has_status:
@@ -295,7 +333,13 @@ RUN_INLINE_FIELDS = (
 )
 
 
-class ReadOnlyRunInline(admin.TabularInline):
+if t.TYPE_CHECKING:
+    _TabularInlineBase = admin.TabularInline[t.Any, t.Any]
+else:
+    _TabularInlineBase = admin.TabularInline
+
+
+class ReadOnlyRunInline(_TabularInlineBase):
     fk_name = "task"
     extra = 0
     can_delete = False
@@ -304,20 +348,30 @@ class ReadOnlyRunInline(admin.TabularInline):
     fields = RUN_INLINE_FIELDS
     readonly_fields = RUN_INLINE_FIELDS
 
-    def has_add_permission(self, request: t.Any, obj: t.Any = None) -> bool:
+    def has_add_permission(
+        self, request: "HttpRequest", obj: "models.Model | None" = None
+    ) -> bool:
         return False
 
-    def has_change_permission(self, request: t.Any, obj: t.Any = None) -> bool:
+    def has_change_permission(
+        self, request: "HttpRequest", obj: "models.Model | None" = None
+    ) -> bool:
         return False
 
-    def has_delete_permission(self, request: t.Any, obj: t.Any = None) -> bool:
+    def has_delete_permission(
+        self, request: "HttpRequest", obj: "models.Model | None" = None
+    ) -> bool:
         return False
 
-    def has_view_permission(self, request: t.Any, obj: t.Any = None) -> bool:
+    def has_view_permission(
+        self, request: "HttpRequest", obj: "models.Model | None" = None
+    ) -> bool:
         return True
 
 
-def build_run_inline(run_model: type) -> type[admin.TabularInline]:
+def build_run_inline(
+    run_model: "type[Model]",
+) -> "type[admin.TabularInline[t.Any, t.Any]]":
     return type("RunInline", (ReadOnlyRunInline,), {"model": run_model})
 
 

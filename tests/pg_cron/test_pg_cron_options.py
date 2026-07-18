@@ -1,4 +1,7 @@
+import typing as t
+
 import pytest
+import pytest_django.fixtures
 
 from django_absurd.backends import get_absurd_backends
 from django_absurd.pg_cron.reconcile import resolve_spawn_options
@@ -9,10 +12,16 @@ pytestmark = pytest.mark.django_db(transaction=True)
 ABSURD = "django_absurd.backends.AbsurdBackend"
 
 
-BASE_QUEUES: dict[str, dict] = {"default": {}, "other": {}, "reports": {}}
+BASE_QUEUES: dict[str, dict[str, t.Any]] = {
+    "default": {},
+    "other": {},
+    "reports": {},
+}
 
 
-def test_max_attempts_from_decorator(settings):
+def test_max_attempts_from_decorator(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     settings.TASKS = {
         "default": {"BACKEND": ABSURD, "OPTIONS": {"QUEUES": BASE_QUEUES}}
     }
@@ -23,7 +32,9 @@ def test_max_attempts_from_decorator(settings):
     )  # capped => @absurd_default_params(max_attempts=3)
 
 
-def test_max_attempts_falls_back_to_backend_default(settings):
+def test_max_attempts_falls_back_to_backend_default(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     settings.TASKS = {
         "default": {
             "BACKEND": ABSURD,

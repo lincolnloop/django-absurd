@@ -34,7 +34,7 @@ class WorkerOptions:
     worker_id: str | None = None
 
 
-class LazyTaskRegistry(dict):
+class LazyTaskRegistry(dict[str, t.Any]):
     """dict subclass that resolves tasks by import_string on first claim.
 
     The SDK reads _registry.get(task_name) in both _execute_task (burst) and
@@ -171,27 +171,35 @@ async def drain_queue(
 
 
 def build_task_context(
-    task: Task, ctx: t.Any, args: t.Sequence[t.Any], kwargs: dict[str, t.Any]
-) -> TaskContext:
+    task: "Task[t.Any, t.Any]",
+    ctx: t.Any,
+    args: t.Sequence[t.Any],
+    kwargs: dict[str, t.Any],
+) -> "TaskContext[t.Any, t.Any]":
     attempt = read_sdk_attempt(ctx)
-    task_result: TaskResult[..., t.Any] = TaskResult(
-        task=task,
-        id=ctx.task_id,
-        status=TaskResultStatus.RUNNING,
-        enqueued_at=None,
-        started_at=timezone.now(),
-        finished_at=None,
-        last_attempted_at=None,
-        args=list(args),
-        kwargs=dict(kwargs),
-        backend=task.backend,
-        errors=[],
-        worker_ids=["absurd"] * attempt,
+    task_result = t.cast(
+        "TaskResult[t.Any, t.Any]",
+        TaskResult(
+            task=task,
+            id=ctx.task_id,
+            status=TaskResultStatus.RUNNING,
+            enqueued_at=None,
+            started_at=timezone.now(),
+            finished_at=None,
+            last_attempted_at=None,
+            args=list(args),
+            kwargs=dict(kwargs),
+            backend=task.backend,
+            errors=[],
+            worker_ids=["absurd"] * attempt,
+        ),
     )
     return TaskContext(task_result=task_result)
 
 
-def build_handler(task: Task) -> t.Callable[[t.Any, t.Any], t.Awaitable[t.Any]]:
+def build_handler(
+    task: "Task[t.Any, t.Any]",
+) -> t.Callable[[t.Any, t.Any], t.Awaitable[t.Any]]:
     async def handler(params: t.Any, ctx: t.Any) -> t.Any:
         args = params.get("args", [])
         kwargs = params.get("kwargs", {})
@@ -252,7 +260,8 @@ def build_handler(task: Task) -> t.Callable[[t.Any, t.Any], t.Awaitable[t.Any]]:
 
 
 def read_sdk_attempt(ctx: t.Any) -> int:
-    return ctx._task["attempt"]  # noqa: SLF001 -- SDK TaskContext has no public attempt property
+    attempt: int = ctx._task["attempt"]  # noqa: SLF001 -- SDK TaskContext has no public attempt property
+    return attempt
 
 
 async def run_blocking_worker(client: AsyncAbsurd, options: WorkerOptions) -> None:

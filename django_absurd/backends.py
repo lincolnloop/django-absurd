@@ -1,4 +1,6 @@
+import datetime as dt
 import typing as t
+import uuid
 
 import psycopg.errors
 from absurd_sdk import CreateQueueOptions
@@ -14,9 +16,36 @@ from django.utils.module_loading import import_string
 
 from django_absurd.admin_views import ADMIN_ENTITY_SPECS, build_queue_table_model
 from django_absurd.connection import build_absurd_client
+from django_absurd.params import AbsurdDefaultParams
 
 if t.TYPE_CHECKING:
     from django.tasks.base import Task
+
+
+class TaskModel(t.Protocol):
+    """The fields read off a per-queue Absurd task model instance.
+
+    These models are built dynamically per queue (build_queue_table_model), so
+    django-stubs cannot type their fields; this Protocol names the subset we read.
+    """
+
+    task_name: str
+    params: dict[str, t.Any]
+    enqueue_at: dt.datetime | None
+    first_started_at: dt.datetime | None
+    state: str
+    completed_payload: t.Any
+    cancelled_at: dt.datetime | None
+    last_attempt_run: uuid.UUID | None
+
+
+class RunModel(t.Protocol):
+    """The fields read off a per-queue Absurd run model instance."""
+
+    started_at: dt.datetime | None
+    completed_at: dt.datetime | None
+    failed_at: dt.datetime | None
+    failure_reason: dict[str, t.Any] | None
 
 
 class AbsurdBackendOptions(t.TypedDict, total=False):
@@ -26,8 +55,8 @@ class AbsurdBackendOptions(t.TypedDict, total=False):
     ENABLE_ADMIN: bool
     ADMIN_SITE: tuple[str, ...]
     SCHEDULER: str
-    SCHEDULE: dict[str, t.Any]
-    CLEANUP: dict[str, t.Any]
+    SCHEDULE: dict[str, dict[str, object]]
+    CLEANUP: dict[str, str]
 
 
 class AbsurdBackend(BaseTaskBackend):
@@ -46,8 +75,8 @@ class AbsurdBackend(BaseTaskBackend):
         self.scheduler: str = self.options.get("SCHEDULER", "beat")
 
     def enqueue(
-        self, task: "Task", args: list[t.Any], kwargs: dict[str, t.Any]
-    ) -> TaskResult:
+        self, task: "Task[t.Any, t.Any]", args: list[t.Any], kwargs: dict[str, t.Any]
+    ) -> "TaskResult[t.Any, t.Any]":
         self.validate_task(task)
         client = build_absurd_client(self.database)
         spawn_params = kwargs.pop("absurd_spawn_params", None)
@@ -111,14 +140,14 @@ class AbsurdBackend(BaseTaskBackend):
             worker_ids=[],
         )
 
-    def get_result(self, result_id: str) -> TaskResult:
+    def get_result(self, result_id: str) -> "TaskResult[t.Any, t.Any]":
         queue, task_id = decode_result_id(result_id)
         if queue not in self.queues:
             raise TaskResultDoesNotExist(result_id)
-        task_row, run_row, worker_ids = fetch_task_rows(
+        task, run, worker_ids = fetch_task_and_run(
             self.database, queue, task_id, result_id
         )
-        return build_task_result(self, result_id, task_row, run_row, worker_ids)
+        return build_task_result(self, result_id, task, run, worker_ids)
 
 
 def decode_result_id(result_id: str) -> tuple[str, str]:
@@ -142,30 +171,32 @@ def map_state_to_status(state: str) -> TaskResultStatus:
     return STATE_TO_STATUS.get(state, TaskResultStatus.READY)
 
 
-def fetch_task_rows(
+def fetch_task_and_run(
     database: str,
     queue: str,
     task_id: str,
     result_id: str,
-) -> tuple[t.Any, t.Any, list[str]]:
+) -> tuple[TaskModel, RunModel | None, list[str]]:
     tasks_spec = next(s for s in ADMIN_ENTITY_SPECS if s.name == "tasks")
     runs_spec = next(s for s in ADMIN_ENTITY_SPECS if s.name == "runs")
-    task_table = t.cast("t.Any", build_queue_table_model(tasks_spec, queue))
-    run_table = t.cast("t.Any", build_queue_table_model(runs_spec, queue))
+    task_model: type[t.Any] = build_queue_table_model(tasks_spec, queue)
+    run_model: type[t.Any] = build_queue_table_model(runs_spec, queue)
     try:
         with transaction.atomic(using=database, savepoint=True):
-            task_row = task_table.objects.using(database).filter(pk=task_id).first()
+            task: TaskModel | None = (
+                task_model.objects.using(database).filter(pk=task_id).first()
+            )
     except ProgrammingError:
         raise TaskResultDoesNotExist(result_id) from None
-    if task_row is None:
+    if task is None:
         raise TaskResultDoesNotExist(result_id)
-    run_row = None
-    if task_row.last_attempt_run is not None:
+    run: RunModel | None = None
+    if task.last_attempt_run is not None:
         try:
             with transaction.atomic(using=database, savepoint=True):
-                run_row = (
-                    run_table.objects.using(database)
-                    .filter(pk=task_row.last_attempt_run)
+                run = (
+                    run_model.objects.using(database)
+                    .filter(pk=task.last_attempt_run)
                     .first()
                 )
         except ProgrammingError:
@@ -173,35 +204,35 @@ def fetch_task_rows(
     try:
         with transaction.atomic(using=database, savepoint=True):
             worker_ids = list(
-                run_table.objects.using(database)
+                run_model.objects.using(database)
                 .filter(task_id=task_id, claimed_by__isnull=False)
                 .order_by("attempt")
                 .values_list("claimed_by", flat=True)
             )
     except ProgrammingError:
         raise TaskResultDoesNotExist(result_id) from None
-    return task_row, run_row, worker_ids
+    return task, run, worker_ids
 
 
 def build_task_result(
     backend: "AbsurdBackend",
     result_id: str,
-    task_row: t.Any,
-    run_row: t.Any,
+    task: TaskModel,
+    run: RunModel | None,
     worker_ids_list: list[str],
-) -> TaskResult:
+) -> "TaskResult[t.Any, t.Any]":
     queue, _ = decode_result_id(result_id)
-    task_name: str = task_row.task_name
-    params: dict[str, t.Any] = task_row.params
-    enqueue_at = task_row.enqueue_at
-    first_started_at = task_row.first_started_at
-    state: str = task_row.state
-    completed_payload = task_row.completed_payload
-    cancelled_at = task_row.cancelled_at
-    run_started = run_row.started_at if run_row is not None else None
-    completed_at = run_row.completed_at if run_row is not None else None
-    failed_at = run_row.failed_at if run_row is not None else None
-    failure_reason = run_row.failure_reason if run_row is not None else None
+    task_name: str = task.task_name
+    params: dict[str, t.Any] = task.params
+    enqueue_at = task.enqueue_at
+    first_started_at = task.first_started_at
+    state: str = task.state
+    completed_payload = task.completed_payload
+    cancelled_at = task.cancelled_at
+    run_started = run.started_at if run else None
+    completed_at = run.completed_at if run else None
+    failed_at = run.failed_at if run else None
+    failure_reason = run.failure_reason if run else None
     try:
         task_obj = import_string(task_name)
     except ImportError:
@@ -221,7 +252,7 @@ def build_task_result(
         ]
     finished_at = completed_at or failed_at or cancelled_at
     worker_ids: list[str] = worker_ids_list or []
-    result: TaskResult = TaskResult(
+    result: TaskResult[t.Any, t.Any] = TaskResult(
         task=task_obj,
         id=result_id,
         status=status,
@@ -240,10 +271,10 @@ def build_task_result(
     return result
 
 
-def get_declared_queues(backend: "AbsurdBackend") -> dict[str, dict]:
+def get_declared_queues(backend: "AbsurdBackend") -> dict[str, CreateQueueOptions]:
     if "QUEUES" in backend.options:
         return dict(backend.options["QUEUES"])
-    return {name: {} for name in backend.queues}
+    return {name: CreateQueueOptions() for name in backend.queues}
 
 
 def get_absurd_backends() -> dict[str, "AbsurdBackend"]:
@@ -263,7 +294,10 @@ def get_pg_cron_backends() -> dict[str, "AbsurdBackend"]:
     }
 
 
-def build_merged_spawn_options(defaults: t.Any, per_call: t.Any) -> dict[str, t.Any]:
+def build_merged_spawn_options(
+    defaults: AbsurdDefaultParams | None,
+    per_call: AbsurdDefaultParams | None,
+) -> dict[str, t.Any]:
     merged: dict[str, t.Any] = {}
     if defaults is not None:
         merged.update(defaults.to_kwargs())

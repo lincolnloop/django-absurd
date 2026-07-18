@@ -1,9 +1,11 @@
+import collections.abc
 import contextlib
 import datetime as dt
 import io
 import logging
 import re
 import sys
+import typing as t
 
 import pytest
 from django.contrib.auth.models import Group
@@ -13,10 +15,17 @@ from django.utils import timezone
 from freezegun import freeze_time
 
 from django_absurd.backends import get_absurd_backends
-from django_absurd.cleanup import cleanup_queues
+from django_absurd.cleanup import QueueCleanup, cleanup_queues
 from django_absurd.queues import get_absurd_client
 from django_absurd.scheduler import run_beat
 from tests.tasks import add, routed
+
+if t.TYPE_CHECKING:
+    import pytest_django.fixtures
+
+    import django_absurd.backends
+
+    CleanupCallable = t.Callable[..., list[QueueCleanup]]
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -24,12 +33,12 @@ ABSURD = "django_absurd.backends.AbsurdBackend"
 
 
 def sync_queue(
-    settings,
-    cleanup_ttl="0 seconds",
-    cleanup_limit=1000,
-    names=("default",),
-    cleanup=None,
-):
+    settings: "pytest_django.fixtures.SettingsWrapper",
+    cleanup_ttl: str = "0 seconds",
+    cleanup_limit: int = 1000,
+    names: tuple[str, ...] = ("default",),
+    cleanup: dict[str, t.Any] | None = None,
+) -> None:
     options = {
         "QUEUES": {
             name: {"cleanup_ttl": cleanup_ttl, "cleanup_limit": cleanup_limit}
@@ -42,17 +51,20 @@ def sync_queue(
     call_command("absurd_sync_queues")
 
 
-def drain(queue="default"):
+def drain(queue: str = "default") -> None:
     call_command("absurd_worker", queue=queue, burst=True)
 
 
 @pytest.fixture(params=["command", "direct"])
-def cleanup(request, capsys):
-    """Run cleanup through both entrypoints (management command + direct call), each
-    normalized to the per-queue count dicts, so behavioral tests cover both. The command
-    path parses its stdout back into dicts."""
+def cleanup(
+    request: pytest.FixtureRequest,
+    capsys: pytest.CaptureFixture[str],
+) -> "CleanupCallable":
+    """Run cleanup through both entrypoints (management command + direct call),
+    each normalized to the per-queue count dicts, so behavioral tests cover both.
+    The command path parses its stdout back into dicts."""
 
-    def run(queues=None):
+    def run(queues: list[str] | None = None) -> list[QueueCleanup]:
         if request.param == "direct":
             return cleanup_queues(queues)
         capsys.readouterr()  # discard any prior output
@@ -64,8 +76,9 @@ def cleanup(request, capsys):
     return run
 
 
-def parse_cleanup_line(line):
+def parse_cleanup_line(line: str) -> QueueCleanup:
     match = re.fullmatch(r"(.+): (\d+) tasks, (\d+) events deleted", line)
+    assert match is not None
     return {
         "queue_name": match[1],
         "tasks_deleted": int(match[2]),
@@ -74,7 +87,7 @@ def parse_cleanup_line(line):
 
 
 @contextlib.contextmanager
-def answer(text):
+def answer(text: str) -> collections.abc.Iterator[None]:
     """Feed a line to the next input() prompt via a real stdin (no mock)."""
     original = sys.stdin
     sys.stdin = io.StringIO(text)
@@ -84,7 +97,10 @@ def answer(text):
         sys.stdin = original
 
 
-def test_cleanup_deletes_aged_terminal_tasks(settings, cleanup):
+def test_cleanup_deletes_aged_terminal_tasks(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+    cleanup: "CleanupCallable",
+) -> None:
     sync_queue(settings)
     add.enqueue(2, 3)
     drain()
@@ -93,7 +109,10 @@ def test_cleanup_deletes_aged_terminal_tasks(settings, cleanup):
     ]
 
 
-def test_cleanup_skips_non_terminal_tasks(settings, cleanup):
+def test_cleanup_skips_non_terminal_tasks(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+    cleanup: "CleanupCallable",
+) -> None:
     sync_queue(settings)
     add.enqueue(2, 3)  # pending — worker not run, so not terminal
     assert cleanup() == [
@@ -105,7 +124,10 @@ def test_cleanup_skips_non_terminal_tasks(settings, cleanup):
     ]
 
 
-def test_cleanup_respects_batch_limit(settings, cleanup):
+def test_cleanup_respects_batch_limit(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+    cleanup: "CleanupCallable",
+) -> None:
     sync_queue(settings, cleanup_limit=2)
     for _ in range(3):
         add.enqueue(2, 3)
@@ -121,7 +143,10 @@ def test_cleanup_respects_batch_limit(settings, cleanup):
     ]
 
 
-def test_cleanup_targets_specific_queue(settings, cleanup):
+def test_cleanup_targets_specific_queue(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+    cleanup: "CleanupCallable",
+) -> None:
     sync_queue(settings, names=("default", "other"))
     add.enqueue(2, 3)  # default
     routed.enqueue()  # routed is @task(queue_name="other")
@@ -136,7 +161,10 @@ def test_cleanup_targets_specific_queue(settings, cleanup):
     ]
 
 
-def test_cleanup_command_reports_per_queue_counts(settings, capsys):
+def test_cleanup_command_reports_per_queue_counts(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     sync_queue(settings)
     add.enqueue(2, 3)
     drain()
@@ -145,24 +173,33 @@ def test_cleanup_command_reports_per_queue_counts(settings, capsys):
     assert capsys.readouterr().out == "default: 1 tasks, 0 events deleted\n"
 
 
-def test_cleanup_command_reports_no_backends(settings, capsys):
+def test_cleanup_command_reports_no_backends(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     settings.TASKS = {}
     call_command("absurd_cleanup")
     assert capsys.readouterr().out == "No Absurd task backends configured.\n"
 
 
-def test_flush_reports_no_backends(settings, capsys):
+def test_flush_reports_no_backends(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     settings.TASKS = {}
     call_command("absurd_flush")
     assert capsys.readouterr().out == "No Absurd task backends configured.\n"
 
 
-def test_flush_reports_no_queues(capsys):
+def test_flush_reports_no_queues(capsys: pytest.CaptureFixture[str]) -> None:
     call_command("absurd_flush")
     assert capsys.readouterr().out == "No queues to flush.\n"
 
 
-def test_flush_noinput_drops_all_queues(settings, capsys):
+def test_flush_noinput_drops_all_queues(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     sync_queue(settings, names=("default", "other"))
     capsys.readouterr()  # discard sync output
     call_command("absurd_flush", "--noinput")
@@ -170,7 +207,10 @@ def test_flush_noinput_drops_all_queues(settings, capsys):
     assert get_absurd_client().list_queues() == []
 
 
-def test_flush_interactive_yes_drops_all_queues(settings, capsys):
+def test_flush_interactive_yes_drops_all_queues(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     sync_queue(settings, names=("default", "other"))
     capsys.readouterr()  # discard sync output
     with answer("yes\n"):
@@ -183,7 +223,10 @@ def test_flush_interactive_yes_drops_all_queues(settings, capsys):
     assert get_absurd_client().list_queues() == []
 
 
-def test_flush_interactive_no_keeps_queues(settings, capsys):
+def test_flush_interactive_no_keeps_queues(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     sync_queue(settings, names=("default", "other"))
     capsys.readouterr()  # discard sync output
     with answer("no\n"):
@@ -196,7 +239,10 @@ def test_flush_interactive_no_keeps_queues(settings, capsys):
     assert sorted(get_absurd_client().list_queues()) == ["default", "other"]
 
 
-def test_flush_non_interactive_eof_keeps_queues(settings, capsys):
+def test_flush_non_interactive_eof_keeps_queues(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     sync_queue(settings, names=("default", "other"))
     capsys.readouterr()  # discard sync output
     with answer(""):  # empty stdin → input() raises EOFError
@@ -209,7 +255,10 @@ def test_flush_non_interactive_eof_keeps_queues(settings, capsys):
     assert sorted(get_absurd_client().list_queues()) == ["default", "other"]
 
 
-def run_beat_until(backend, cutoff):
+def run_beat_until(
+    backend: "django_absurd.backends.AbsurdBackend",
+    cutoff: dt.datetime,
+) -> None:
     with freeze_time("2026-01-01 00:00:00") as frozen:
 
         def fake_wait(timeout: float) -> bool:
@@ -219,7 +268,10 @@ def run_beat_until(backend, cutoff):
         run_beat(backend, wait=fake_wait)
 
 
-def test_beat_fires_cleanup_on_cadence(settings, cleanup):
+def test_beat_fires_cleanup_on_cadence(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+    cleanup: "CleanupCallable",
+) -> None:
     sync_queue(settings, cleanup={"schedule": "* * * * *"})
     backend = get_absurd_backends()["default"]
     add.enqueue(2, 3)
@@ -230,7 +282,10 @@ def test_beat_fires_cleanup_on_cadence(settings, cleanup):
     ]
 
 
-def test_beat_isolates_failing_cleanup(settings, caplog):
+def test_beat_isolates_failing_cleanup(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     sync_queue(settings, cleanup={"schedule": "* * * * *"})
     backend = get_absurd_backends()["default"]
     with connection.cursor() as cur:
@@ -245,7 +300,9 @@ def test_beat_isolates_failing_cleanup(settings, caplog):
         call_command("migrate", verbosity=0)  # restore absurd schema
 
 
-def test_beat_fires_cleanup_and_task_same_slot(settings):
+def test_beat_fires_cleanup_and_task_same_slot(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+) -> None:
     # A scheduled task and CLEANUP sharing a cron slot both fire in the one tick:
     # the task enqueues (pending → survives cleanup) and cleanup deletes the aged row.
     settings.TASKS = {

@@ -1,6 +1,9 @@
+import typing as t
+
 import pytest
 from django.core.management import call_command
 from django.core.management.base import SystemCheckError
+from pytest_django.fixtures import SettingsWrapper
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -10,8 +13,11 @@ E007_MSG = "django-absurd: invalid SCHEDULE entry."
 
 
 @pytest.fixture
-def run_check(capsys, settings):
-    def _run(schedule):
+def run_check(
+    capsys: pytest.CaptureFixture[str],
+    settings: SettingsWrapper,
+) -> t.Callable[[t.Any], str]:
+    def _run(schedule: t.Any) -> str:
         settings.TASKS = {
             "default": {
                 "BACKEND": ABSURD,
@@ -32,12 +38,12 @@ def run_check(capsys, settings):
     return _run
 
 
-def test_valid_schedule_no_error(run_check):
+def test_valid_schedule_no_error(run_check: t.Callable[[t.Any], str]) -> None:
     out = run_check({"ok": {"task": "tests.tasks.add", "cron": "0 2 * * *"}})
     assert "absurd.E007" not in out
 
 
-def test_unimportable_task(run_check):
+def test_unimportable_task(run_check: t.Callable[[t.Any], str]) -> None:
     out = run_check({"x": {"task": "tests.tasks.nope", "cron": "0 2 * * *"}})
     assert (
         f"{E007_MSG} Schedule 'x': task 'tests.tasks.nope' could not be imported"
@@ -45,31 +51,32 @@ def test_unimportable_task(run_check):
     assert "absurd.E007" in out
 
 
-def test_non_import_error_at_task_import(run_check):
+def test_non_import_error_at_task_import(run_check: t.Callable[[t.Any], str]) -> None:
     out = run_check(
         {"x": {"task": "tests.raises_on_import.anything", "cron": "0 2 * * *"}}
     )
     assert (
-        f"{E007_MSG} Schedule 'x': task 'tests.raises_on_import.anything' could not be imported"
+        f"{E007_MSG} Schedule 'x': task 'tests.raises_on_import.anything' "
+        "could not be imported"
     ) in out
     assert "RuntimeError" in out
     assert "boom at import" in out
     assert "absurd.E007" in out
 
 
-def test_schedule_not_a_mapping(run_check):
+def test_schedule_not_a_mapping(run_check: t.Callable[[t.Any], str]) -> None:
     out = run_check(["nightly"])
     assert 'OPTIONS["SCHEDULE"] must be a mapping of name -> spec' in out
     assert "absurd.E007" in out
 
 
-def test_schedule_entry_not_a_mapping(run_check):
+def test_schedule_entry_not_a_mapping(run_check: t.Callable[[t.Any], str]) -> None:
     out = run_check({"nightly": "0 2 * * *"})
     assert f"{E007_MSG} Schedule 'nightly' must be a mapping." in out
     assert "absurd.E007" in out
 
 
-def test_not_a_task(run_check):
+def test_not_a_task(run_check: t.Callable[[t.Any], str]) -> None:
     out = run_check({"x": {"task": "tests.tasks.Payload", "cron": "0 2 * * *"}})
     assert (
         f"{E007_MSG} Schedule 'x': 'tests.tasks.Payload' is not a Django task."
@@ -77,13 +84,13 @@ def test_not_a_task(run_check):
     assert "absurd.E007" in out
 
 
-def test_bad_cron(run_check):
+def test_bad_cron(run_check: t.Callable[[t.Any], str]) -> None:
     out = run_check({"x": {"task": "tests.tasks.add", "cron": "not-cron"}})
     assert (f"{E007_MSG} Schedule 'x': invalid cron expression 'not-cron'.") in out
     assert "absurd.E007" in out
 
 
-def test_non_string_cron(run_check):
+def test_non_string_cron(run_check: t.Callable[[t.Any], str]) -> None:
     # A non-string cron (e.g. forgot the quotes) must yield a clean E007, not an
     # AttributeError from croniter.is_valid — the check runs at worker/beat boot.
     out = run_check({"x": {"task": "tests.tasks.add", "cron": 300}})
@@ -91,20 +98,22 @@ def test_non_string_cron(run_check):
     assert "absurd.E007" in out
 
 
-def test_beat_rejects_pg_cron_interval_syntax(run_check):
+def test_beat_rejects_pg_cron_interval_syntax(
+    run_check: t.Callable[[t.Any], str],
+) -> None:
     # "[1-59] seconds" is pg_cron's grammar; under beat, croniter rejects it.
     out = run_check({"x": {"task": "tests.tasks.add", "cron": "30 seconds"}})
     assert (f"{E007_MSG} Schedule 'x': invalid cron expression '30 seconds'.") in out
     assert "absurd.E007" in out
 
 
-def test_unknown_key(run_check):
+def test_unknown_key(run_check: t.Callable[[t.Any], str]) -> None:
     out = run_check({"x": {"task": "tests.tasks.add", "cron": "0 2 * * *", "bogus": 1}})
     assert (f"{E007_MSG} Schedule 'x': unknown key 'bogus'.") in out
     assert "absurd.E007" in out
 
 
-def test_non_serializable_args(run_check):
+def test_non_serializable_args(run_check: t.Callable[[t.Any], str]) -> None:
     out = run_check(
         {"x": {"task": "tests.tasks.add", "cron": "0 2 * * *", "args": [object()]}}
     )
@@ -112,7 +121,7 @@ def test_non_serializable_args(run_check):
     assert "absurd.E007" in out
 
 
-def test_undeclared_queue(run_check):
+def test_undeclared_queue(run_check: t.Callable[[t.Any], str]) -> None:
     out = run_check(
         {"x": {"task": "tests.tasks.add", "cron": "0 2 * * *", "queue": "ghost"}}
     )
@@ -120,7 +129,7 @@ def test_undeclared_queue(run_check):
     assert "absurd.E007" in out
 
 
-def test_non_string_queue(run_check):
+def test_non_string_queue(run_check: t.Callable[[t.Any], str]) -> None:
     # A non-string queue (e.g. a list) must yield a clean E007, not a TypeError
     # from the `queue not in declared_queues` membership test.
     out = run_check(

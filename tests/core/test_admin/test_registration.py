@@ -1,6 +1,7 @@
 import pytest
 from django.contrib import admin as djadmin
-from django.test import override_settings
+from django.contrib.auth.models import User
+from django.test import Client, override_settings
 from django.urls import reverse_lazy
 
 from django_absurd.admin import (
@@ -16,16 +17,16 @@ LOGIN = reverse_lazy("admin:login")
 INDEX = reverse_lazy("admin:index")
 
 
-def test_login_page_renders(client):
+def test_login_page_renders(client: Client) -> None:
     assert client.get(LOGIN).status_code == 200
 
 
-def test_six_entries_registered_on_default_site():
+def test_six_entries_registered_on_default_site() -> None:
     registered = {m._meta.model_name for m in djadmin.site._registry}
     assert {"task", "run", "checkpoint", "event", "wait", "queue"} <= registered
 
 
-def test_staff_user_sees_entries_in_index(client, staff_user):
+def test_staff_user_sees_entries_in_index(client: Client, staff_user: User) -> None:
     client.force_login(staff_user)
     soup = parse_html(client.get(INDEX))
     assert soup.select_one('a[href$="/django_absurd/task/"]') is not None
@@ -40,7 +41,7 @@ def test_staff_user_sees_entries_in_index(client, staff_user):
         }
     }
 )
-def test_custom_site_registration():
+def test_custom_site_registration() -> None:
     from tests.admin import custom_site  # noqa: PLC0415
 
     register_absurd_admin(resolve_admin_sites())
@@ -56,7 +57,7 @@ def test_custom_site_registration():
         }
     }
 )
-def test_bad_admin_site_fails_soft():
+def test_bad_admin_site_fails_soft() -> None:
     assert resolve_admin_sites() == []
 
 
@@ -72,7 +73,7 @@ def test_bad_admin_site_fails_soft():
         }
     }
 )
-def test_admin_disabled_skips_registration():
+def test_admin_disabled_skips_registration() -> None:
     from tests.admin import gated_site  # noqa: PLC0415
 
     autoregister_admin()
@@ -104,7 +105,7 @@ def test_admin_disabled_skips_registration():
         }
     }
 )
-def test_admin_site_tuple_registers_on_all_sites():
+def test_admin_site_tuple_registers_on_all_sites() -> None:
     from tests.admin import custom_site, other_site  # noqa: PLC0415
 
     register_absurd_admin(resolve_admin_sites())

@@ -1,4 +1,9 @@
+import typing as t
+
 import pytest
+
+if t.TYPE_CHECKING:
+    from pytest_django.fixtures import SettingsWrapper
 
 from django_absurd.backends import get_absurd_backends
 from django_absurd.pg_cron.models import ScheduledTask
@@ -9,7 +14,9 @@ pytestmark = pytest.mark.django_db(transaction=True)
 ABSURD = "django_absurd.backends.AbsurdBackend"
 
 
-def build_tasks(schedule):
+def build_tasks(
+    schedule: dict[str, dict[str, str]],
+) -> dict[str, dict[str, t.Any]]:
     return {
         "default": {
             "BACKEND": ABSURD,
@@ -22,7 +29,9 @@ def build_tasks(schedule):
     }
 
 
-def test_teardown_removes_all_owned_cron_jobs_and_settings_rows(settings):
+def test_teardown_removes_all_owned_cron_jobs_and_settings_rows(
+    settings: "SettingsWrapper",
+) -> None:
     settings.TASKS = build_tasks(
         {
             "a": {"task": "tests.tasks.add", "cron": "0 2 * * *"},
@@ -41,7 +50,9 @@ def test_teardown_removes_all_owned_cron_jobs_and_settings_rows(settings):
     assert not ScheduledTask.objects.filter(source="s", alias="default").exists()
 
 
-def test_teardown_leaves_admin_rows_intact(settings):
+def test_teardown_leaves_admin_rows_intact(
+    settings: "SettingsWrapper",
+) -> None:
     ScheduledTask.objects.create(
         name="admin-job",
         source="a",
@@ -60,7 +71,7 @@ def test_teardown_leaves_admin_rows_intact(settings):
     assert ScheduledTask.objects.filter(source="a", name="admin-job").exists()
 
 
-def test_teardown_is_idempotent(settings):
+def test_teardown_is_idempotent(settings: "SettingsWrapper") -> None:
     settings.TASKS = build_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )

@@ -1,21 +1,36 @@
-"""W003: pg_cron app ordered before django_absurd — app genuinely present in this suite."""
+"""W003: pg_cron app ordered before django_absurd — app genuinely present in this
+suite."""
+
+import typing as t
 
 import pytest
+import pytest_django.fixtures
 from django.core.management import call_command
 from django.core.management.base import SystemCheckError
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
 ABSURD = "django_absurd.backends.AbsurdBackend"
-BASE_QUEUES: dict = {"default": {}, "other": {}, "reports": {}}
+BASE_QUEUES: dict[str, dict[str, t.Any]] = {
+    "default": {},
+    "other": {},
+    "reports": {},
+}
 
 
 def run_check(
-    capsys, settings, installed_apps=None, schedule=None, scheduler="pg_cron"
-):
+    capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
+    installed_apps: t.Sequence[str] | None = None,
+    schedule: dict[str, t.Any] | None = None,
+    scheduler: str = "pg_cron",
+) -> str:
     if installed_apps is not None:
         settings.INSTALLED_APPS = installed_apps
-    options: dict = {"SCHEDULER": scheduler, "QUEUES": BASE_QUEUES}
+    options: dict[str, t.Any] = {
+        "SCHEDULER": scheduler,
+        "QUEUES": BASE_QUEUES,
+    }
     if schedule is not None:
         options["SCHEDULE"] = schedule
     settings.TASKS = {
@@ -33,14 +48,19 @@ def run_check(
     return cap.out + cap.err
 
 
-def build_apps_with_pg_cron_first(settings):
+def build_apps_with_pg_cron_first(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> list[str]:
     apps_without = [
         app for app in settings.INSTALLED_APPS if app != "django_absurd.pg_cron"
     ]
     return ["django_absurd.pg_cron", *apps_without]
 
 
-def test_pg_cron_app_before_core_warns(capsys, settings):
+def test_pg_cron_app_before_core_warns(
+    capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     out = run_check(capsys, settings, build_apps_with_pg_cron_first(settings))
     assert "absurd.W003" in out
     assert (
@@ -53,7 +73,10 @@ def test_pg_cron_app_before_core_warns(capsys, settings):
     )
 
 
-def test_pg_cron_app_before_core_warns_under_beat(capsys, settings):
+def test_pg_cron_app_before_core_warns_under_beat(
+    capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     """W003 tracks INSTALLED_APPS ordering, not the active scheduler: a beat
     backend with the pg_cron app mis-ordered must still warn (the misordering
     bites the moment the backend switches to pg_cron)."""
@@ -66,13 +89,19 @@ def test_pg_cron_app_before_core_warns_under_beat(capsys, settings):
     assert "absurd.W003" in out
 
 
-def test_pg_cron_app_after_core_clean(capsys, settings):
+def test_pg_cron_app_after_core_clean(
+    capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     out = run_check(capsys, settings)
     assert "absurd.E008" not in out
     assert "absurd.W003" not in out
 
 
-def test_pg_cron_schedule_error_reported(capsys, settings):
+def test_pg_cron_schedule_error_reported(
+    capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     out = run_check(
         capsys,
         settings,
@@ -88,7 +117,10 @@ def test_pg_cron_schedule_error_reported(capsys, settings):
     assert "queue 'ghost' is not declared." in out
 
 
-def test_pg_cron_app_config_path_before_core_warns(capsys, settings):
+def test_pg_cron_app_config_path_before_core_warns(
+    capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     """Dotted AppConfig path for pg_cron listed before core must still trigger W003."""
     apps_with_config_path_first = [
         "django_absurd.pg_cron.apps.PgCronConfig",

@@ -5,6 +5,11 @@ from django.core.exceptions import NON_FIELD_ERRORS, ValidationError
 from django.core.validators import MinValueValidator
 from django.db import DatabaseError, InternalError, connections, models, transaction
 
+if t.TYPE_CHECKING:
+    from django.db.backends.utils import CursorWrapper
+
+    from django_absurd.backends import AbsurdBackend
+
 from django_absurd.backends import (
     get_absurd_backends,
     get_declared_queues,
@@ -64,14 +69,14 @@ def get_declared_queue_choices() -> list[tuple[str, str]]:
     return [(q, q) for q in sorted(queues)]
 
 
-class PgCronManager(models.Manager):
+class PgCronManager(models.Manager["ScheduledTask"]):
     """The pg_cron catalog (``cron.job``) operations for these schedules, kept off
     ``objects`` (which queries the ScheduledTask table). Every method defaults to the
     single absurd database (``resolve_absurd_database()``); pass ``database`` only to
     reuse an already-resolved value.
     """
 
-    def get_job(self, alias: str, name: str, source: str) -> tuple | None:
+    def get_job(self, alias: str, name: str, source: str) -> tuple[t.Any, ...] | None:
         """The ``(jobname, schedule, command, active)`` row for one schedule's job."""
         with connections[resolve_absurd_database()].cursor() as cur:
             cur.execute(
@@ -79,9 +84,10 @@ class PgCronManager(models.Manager):
                 "where jobname = %s",
                 [build_jobname(alias, name, source)],
             )
-            return cur.fetchone()
+            job: tuple[t.Any, ...] | None = cur.fetchone()
+            return job
 
-    def get_managed_jobs(self, source: str | None = None) -> list[tuple]:
+    def get_managed_jobs(self, source: str | None = None) -> list[tuple[t.Any, ...]]:
         """The ``(jobname, schedule, command, active)`` rows for every job we manage
         (all share the ``absurd:`` prefix), across aliases. Pass source to narrow to one
         lane (``absurd:<source>:``)."""
@@ -92,7 +98,8 @@ class PgCronManager(models.Manager):
                 "where starts_with(jobname, %s) order by jobname",
                 [prefix],
             )
-            return cur.fetchall()
+            jobs: list[tuple[t.Any, ...]] = cur.fetchall()
+            return jobs
 
     def unschedule_matching(
         self, alias: str, source: str, database: str | None = None
@@ -257,7 +264,7 @@ class ScheduledTask(models.Model):
             errors["cron"] = exc.messages
         return errors
 
-    def get_pg_cron_job(self) -> tuple | None:
+    def get_pg_cron_job(self) -> tuple[t.Any, ...] | None:
         """This row's own pg_cron job as ``(jobname, schedule, command, active)``, or
         None if it isn't scheduled. (The manager lives on the class — Django managers
         aren't accessible via instances.)"""
@@ -298,7 +305,7 @@ class ScheduledTask(models.Model):
             prune_pg_cron_jobs(cur, [jobid for (jobid,) in cur.fetchall()])
 
 
-def resolve_pg_cron_backend(scheduled_task: ScheduledTask) -> t.Any:
+def resolve_pg_cron_backend(scheduled_task: ScheduledTask) -> "AbsurdBackend | None":
     """The pg_cron backend for a schedule's alias, or None when the alias is not a
     configured pg_cron backend — nothing to schedule for such a row."""
     backend = get_absurd_backends().get(scheduled_task.alias)
@@ -308,7 +315,7 @@ def resolve_pg_cron_backend(scheduled_task: ScheduledTask) -> t.Any:
 
 
 @contextmanager
-def open_locked_cursor(database: str) -> t.Iterator[t.Any]:
+def open_locked_cursor(database: str) -> t.Iterator["CursorWrapper"]:
     """A cursor on ``database`` inside a transaction holding the shared advisory lock,
     so concurrent pg_cron job writers serialise."""
     advisory_lock_key = 0x616273_75726421  # "absurd!" as hex
@@ -317,7 +324,7 @@ def open_locked_cursor(database: str) -> t.Iterator[t.Any]:
         yield cur
 
 
-def prune_pg_cron_jobs(cur: t.Any, stale_jobids: list[int]) -> None:
+def prune_pg_cron_jobs(cur: "CursorWrapper", stale_jobids: list[int]) -> None:
     """Unschedule each jobid, tolerating already-removed rows.
 
     Each unschedule runs inside its own savepoint: if the cron.job row was removed

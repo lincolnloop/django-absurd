@@ -478,7 +478,8 @@ def check_absurd_queue_state(
 
 
 def validate_queue_policy(
-    queue_name: str, policy: dict[str, t.Any]
+    queue_name: str,
+    policy: CreateQueueOptions,
 ) -> list[CheckMessage]:
     errors: list[CheckMessage] = [
         Error(
@@ -490,19 +491,21 @@ def validate_queue_policy(
         if key not in VALID_QUEUE_OPTION_KEYS
     ]
     if "storage_mode" in policy and policy["storage_mode"] not in VALID_STORAGE_MODES:
-        mode = policy["storage_mode"]
+        storage_mode_value = policy["storage_mode"]
         errors.append(
             Error(
-                f"{E003_MSG} Queue '{queue_name}': invalid storage_mode '{mode}'.",
+                f"{E003_MSG} Queue '{queue_name}':"
+                f" invalid storage_mode '{storage_mode_value}'.",
                 hint=E003_HINT,
                 id="absurd.E003",
             )
         )
     if "detach_mode" in policy and policy["detach_mode"] not in VALID_DETACH_MODES:
-        mode = policy["detach_mode"]
+        detach_mode_value = policy["detach_mode"]
         errors.append(
             Error(
-                f"{E003_MSG} Queue '{queue_name}': invalid detach_mode '{mode}'.",
+                f"{E003_MSG} Queue '{queue_name}':"
+                f" invalid detach_mode '{detach_mode_value}'.",
                 hint=E003_HINT,
                 id="absurd.E003",
             )
@@ -519,7 +522,9 @@ def router_installed() -> bool:
     return False
 
 
-def query_queue_state(alias: str, declared: dict[str, dict]) -> list[CheckMessage]:
+def query_queue_state(
+    alias: str, declared: dict[str, CreateQueueOptions]
+) -> list[CheckMessage]:
     try:
         actual = {
             q.queue_name: q

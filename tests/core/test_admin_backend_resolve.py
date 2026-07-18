@@ -3,10 +3,10 @@ from django.test import override_settings
 from django_absurd.backends import AbsurdBackend
 from django_absurd.queues import get_absurd_backend
 
-BACKEND = "django_absurd.backends.AbsurdBackend"
+BACKEND: str = "django_absurd.backends.AbsurdBackend"
 
 
-def test_returns_single_backend():
+def test_returns_single_backend() -> None:
     be = get_absurd_backend()
     assert isinstance(be, AbsurdBackend)
 
@@ -21,14 +21,15 @@ def test_returns_single_backend():
         "b": {"BACKEND": BACKEND, "QUEUES": ["default"]},
     }
 )
-def test_first_in_order_wins_when_sharing_db():
+def test_first_in_order_wins_when_sharing_db() -> None:
     # both on "default" → first declared ("a") wins
     be = get_absurd_backend()
+    assert isinstance(be, AbsurdBackend)
     assert be.options.get("ENABLE_ADMIN") is False
 
 
 @override_settings(TASKS={"x": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}})
-def test_returns_none_without_absurd_backend():
+def test_returns_none_without_absurd_backend() -> None:
     assert get_absurd_backend() is None
 
 
@@ -42,7 +43,9 @@ def test_returns_none_without_absurd_backend():
         "b": {"BACKEND": BACKEND, "QUEUES": ["default"]},
     }
 )
-def test_skips_backend_not_on_resolved_database():
+def test_skips_backend_not_on_resolved_database() -> None:
     # two backends on different DBs → resolve picks "default"; the sqlite-backed "a"
     # is skipped before the default-backed "b" is returned
-    assert get_absurd_backend().database == "default"
+    be = get_absurd_backend()
+    assert isinstance(be, AbsurdBackend)
+    assert be.database == "default"

@@ -170,7 +170,10 @@ VIEW_NOT_PROVISIONED_MSG = (
 )
 
 
-class AbsurdViewQuerySet(models.QuerySet):
+AnyCallable = t.Callable[..., t.Any]
+
+
+class AbsurdViewQuerySet(models.QuerySet[models.Model]):
     def _fetch_all(self) -> None:
         try:
             super()._fetch_all()
@@ -178,18 +181,21 @@ class AbsurdViewQuerySet(models.QuerySet):
             raise ViewNotProvisionedError(VIEW_NOT_PROVISIONED_MSG) from exc
 
     def count(self) -> int:
-        return translate_view_errors(super().count)()
+        result: int = translate_view_errors(super().count)()
+        return result
 
     def exists(self) -> bool:
-        return translate_view_errors(super().exists)()
+        result: bool = translate_view_errors(super().exists)()
+        return result
 
     def aggregate(self, *args: t.Any, **kwargs: t.Any) -> dict[str, t.Any]:
-        return translate_view_errors(super().aggregate)(*args, **kwargs)
+        result: dict[str, t.Any] = translate_view_errors(super().aggregate)(
+            *args, **kwargs
+        )
+        return result
 
 
-def translate_view_errors(
-    fn: t.Callable[..., t.Any],
-) -> t.Callable[..., t.Any]:
+def translate_view_errors(fn: AnyCallable) -> AnyCallable:
     def wrapper(*args: t.Any, **kwargs: t.Any) -> t.Any:
         try:
             return fn(*args, **kwargs)
@@ -209,7 +215,7 @@ def build_admin_model(spec: EntitySpec) -> type[models.Model]:
     if existing is not None:
         return existing
 
-    fields: dict[str, t.Any] = {
+    fields: dict[str, object] = {
         "natural_key": models.TextField(primary_key=True),
         "queue": models.TextField(),
     }
@@ -246,12 +252,13 @@ def raise_view_read_only(self: t.Any, *args: object, **kwargs: object) -> t.NoRe
 
 
 def render_natural_key(self: t.Any) -> str:
-    return self.natural_key
+    key: str = self.natural_key
+    return key
 
 
 def build_model_field(
     spec: EntitySpec, col_name: str, col_type: str
-) -> tuple[str, models.Field]:
+) -> "tuple[str, models.Field[t.Any, t.Any]]":
     # Tasks' task_id is the FK target for the Run inline, so it must be unique.
     if spec.name == "tasks" and col_name == "task_id":
         return "task_id", models.UUIDField(null=True, unique=True)
@@ -279,7 +286,7 @@ def build_queue_table_model(spec: EntitySpec, queue: str) -> type[models.Model]:
         return existing
 
     pk_col_name = spec.columns[0][0]
-    fields: dict[str, t.Any] = {}
+    fields: dict[str, object] = {}
     for col_name, col_type in spec.columns:
         if col_name == pk_col_name:
             field_cls = FIELD_TYPE_MAP[col_type]
@@ -307,7 +314,7 @@ def build_queue_table_model(spec: EntitySpec, queue: str) -> type[models.Model]:
     return type(model_name, (models.Model,), fields)
 
 
-FIELD_TYPE_MAP: dict[str, type[models.Field]] = {
+FIELD_TYPE_MAP: "dict[str, type[models.Field[t.Any, t.Any]]]" = {
     "uuid": models.UUIDField,
     "text": models.TextField,
     "int": models.IntegerField,
@@ -316,7 +323,7 @@ FIELD_TYPE_MAP: dict[str, type[models.Field]] = {
 }
 
 
-def make_field(col_type: str) -> models.Field:
+def make_field(col_type: str) -> "models.Field[t.Any, t.Any]":
     field_cls = FIELD_TYPE_MAP[col_type]
     return field_cls(null=True)
 
@@ -324,7 +331,7 @@ def make_field(col_type: str) -> models.Field:
 def fetch_catalog_queues(using: str) -> list[str]:
     with connections[using].cursor() as cur:
         cur.execute("SELECT queue_name FROM absurd.queues ORDER BY queue_name")
-        return [row[0] for row in cur.fetchall()]
+        return [name for (name,) in cur.fetchall()]
 
 
 def build_union_view_sql(spec: EntitySpec, queues: list[str]) -> str:

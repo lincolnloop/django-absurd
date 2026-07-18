@@ -71,12 +71,12 @@ Homepage = "https://github.com/lincolnloop/django-absurd"
 Issues = "https://github.com/lincolnloop/django-absurd/issues"
 Repository = "https://github.com/lincolnloop/django-absurd"
 
+# exclude_also ADDS to coverage's built-in defaults (pragma: no cover, `...` stub
+# bodies, `if TYPE_CHECKING:`) rather than replacing them; keep the `t.`-prefixed
+# TYPE_CHECKING form explicit since the default only matches the bare name.
 [tool.coverage.report]
-exclude_lines = [
-  "if TYPE_CHECKING:",
+exclude_also = [
   "if t.TYPE_CHECKING:",
-  "pragma: no cover",
-  "raise NotImplementedError",
   # a `msg = "..."` line immediately followed by `raise NotImplementedError(msg)`
   # (the errmsg-lint idiom) — exclude the assignment too, not just the raise.
   'msg = [rf]?".*"\n\s*raise NotImplementedError\(msg\)',
@@ -115,6 +115,7 @@ exclude = [
   "^examples/",
 ]
 plugins = ["mypy_django_plugin.main"]
+strict = true
 
 [tool.pytest.ini_options]
 addopts = [
@@ -145,12 +146,20 @@ select = ["ALL"]
   "E501",  # Allow exceeded line length in migrations.
 ]
 "tests/**/*" = [
-  "ANN",  # No type annotations required in tests
-  "E501",  # Allow long lines in tests
   "S101",  # Allow use of asserts
   "S603",  # Allow subprocess calls in tests
   "SLF001",  # Allow private member access in tests (e.g. _meta)
 ]
+
+[tool.ruff.lint.flake8-import-conventions]
+banned-from = [
+  "datetime",  # Use `import datetime as dt`, not `from datetime import ...`
+  "typing",  # Use `import typing as t`, not `from typing import ...`
+]
+
+[tool.ruff.lint.flake8-import-conventions.extend-aliases]
+datetime = "dt"
+typing = "t"
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"

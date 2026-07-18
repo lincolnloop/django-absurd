@@ -1,7 +1,7 @@
 from django.apps import apps as global_apps
 
 
-def test_pg_cron_model_in_global_registry():
+def test_pg_cron_model_in_global_registry() -> None:
     pg_cron_names = {
         m.__name__
         for m in global_apps.get_models()

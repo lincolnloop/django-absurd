@@ -1,13 +1,20 @@
+import typing as t
+
 import pytest
 from django.core.management import call_command
 from django.core.management.base import SystemCheckError
+from pytest_django.fixtures import SettingsWrapper
 
 pytestmark = pytest.mark.django_db(databases=["default", "absurd"])
 
 ABSURD = "django_absurd.backends.AbsurdBackend"
 
 
-def run_absurd_check(capsys, *args, **kwargs):
+def run_absurd_check(
+    capsys: pytest.CaptureFixture[str],
+    *args: t.Any,
+    **kwargs: t.Any,
+) -> str:
     try:
         call_command("check", "django_absurd", *args, **kwargs)
     except SystemCheckError as exc:
@@ -17,7 +24,10 @@ def run_absurd_check(capsys, *args, **kwargs):
     return cap.out + cap.err
 
 
-def test_storage_mode_drift_detected_on_non_default_alias(settings, capsys):
+def test_storage_mode_drift_detected_on_non_default_alias(
+    settings: SettingsWrapper,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     # W002 now fires only on storage_mode drift (immutable; never self-heals). This
     # locks the alias threading through query_queue_state on a non-default database.
     settings.TASKS = {

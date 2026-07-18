@@ -31,7 +31,7 @@ def provision_queues_after_migrate(
     sender: AppConfig,
     *,
     verbosity: int = 1,
-    stdout: t.Any = None,
+    stdout: t.IO[str] | None = None,
     **kwargs: object,
 ) -> None:
     from django_absurd.queues import provision_backend  # noqa: PLC0415

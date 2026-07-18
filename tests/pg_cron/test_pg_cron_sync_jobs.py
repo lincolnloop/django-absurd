@@ -1,7 +1,10 @@
+import typing as t
+
 import psycopg
 import pytest
 from django.core.management import call_command
 from django.db import DatabaseError, connection, connections, transaction
+from pytest_django.fixtures import SettingsWrapper
 
 from django_absurd.backends import get_absurd_backends
 from django_absurd.pg_cron.models import ScheduledTask, prune_pg_cron_jobs
@@ -13,7 +16,9 @@ pytestmark = pytest.mark.django_db(transaction=True)
 ABSURD = "django_absurd.backends.AbsurdBackend"
 
 
-def build_tasks(schedule):
+def build_tasks(
+    schedule: t.Any,
+) -> dict[str, dict[str, str | dict[str, t.Any]]]:
     return {
         "default": {
             "BACKEND": ABSURD,
@@ -26,7 +31,9 @@ def build_tasks(schedule):
     }
 
 
-def test_creates_job_with_schedule_and_constant_command(settings):
+def test_creates_job_with_schedule_and_constant_command(
+    settings: SettingsWrapper,
+) -> None:
     settings.TASKS = build_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
@@ -41,7 +48,7 @@ def test_creates_job_with_schedule_and_constant_command(settings):
     assert active is True
 
 
-def test_sync_is_idempotent(settings):
+def test_sync_is_idempotent(settings: SettingsWrapper) -> None:
     settings.TASKS = build_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
@@ -53,7 +60,9 @@ def test_sync_is_idempotent(settings):
     assert rows[0][0] == "absurd:s:default:a"
 
 
-def test_prune_removes_undeclared_job_but_keeps_foreign(settings):
+def test_prune_removes_undeclared_job_but_keeps_foreign(
+    settings: SettingsWrapper,
+) -> None:
     with connection.cursor() as cur:
         cur.execute(
             "select cron.schedule(%s, %s, %s)", ["keepme", "* * * * *", "select 1"]
@@ -85,7 +94,9 @@ def test_prune_removes_undeclared_job_but_keeps_foreign(settings):
         cur.execute("select cron.unschedule('keepme')")  # don't leak the foreign job
 
 
-def test_prune_tolerates_already_unscheduled_job(settings):
+def test_prune_tolerates_already_unscheduled_job(
+    settings: SettingsWrapper,
+) -> None:
     settings.TASKS = build_tasks(
         {
             "a": {"task": "tests.tasks.add", "cron": "0 2 * * *"},
@@ -114,7 +125,9 @@ def test_prune_tolerates_already_unscheduled_job(settings):
     }
 
 
-def test_prune_swallows_job_vanished_after_stale_scan(settings):
+def test_prune_swallows_job_vanished_after_stale_scan(
+    settings: SettingsWrapper,
+) -> None:
     # The stale-id scan and the unschedule are separate steps; a concurrent actor
     # can remove a job's cron.job row in between. prune_pg_cron_jobs must swallow
     # the resulting "could not find" error and finish the reconcile.
@@ -145,17 +158,22 @@ def test_prune_swallows_job_vanished_after_stale_scan(settings):
     assert ScheduledTask.pg_cron.get_managed_jobs() == []
 
 
-def test_prune_reraises_unexpected_error(settings):
+def test_prune_reraises_unexpected_error(
+    settings: SettingsWrapper,
+) -> None:
     # A non-"could not find" DatabaseError (bad cast) is not swallowed.
     with (
         transaction.atomic(),
         connection.cursor() as cur,
         pytest.raises(DatabaseError),
     ):
-        prune_pg_cron_jobs(cur, [{"bad": "type"}])
+        prune_pg_cron_jobs(
+            cur,
+            [{"bad": "type"}],  # type: ignore[list-item]
+        )
 
 
-def test_rearm_reenables_disabled_job(settings):
+def test_rearm_reenables_disabled_job(settings: SettingsWrapper) -> None:
     settings.TASKS = build_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
@@ -176,7 +194,9 @@ def test_rearm_reenables_disabled_job(settings):
     assert rows[0][3] is True
 
 
-def test_injection_args_are_quoted_and_schema_survives(settings):
+def test_injection_args_are_quoted_and_schema_survives(
+    settings: SettingsWrapper,
+) -> None:
     call_command("absurd_sync_queues")
     with connection.cursor() as cur:
         cur.execute("select to_regnamespace('absurd')")

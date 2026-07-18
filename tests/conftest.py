@@ -1,5 +1,5 @@
 import pytest
-from django.contrib.auth import get_user_model
+from django.contrib.auth.models import User
 from django.core.exceptions import ImproperlyConfigured
 from django.db.utils import OperationalError, ProgrammingError
 
@@ -7,12 +7,12 @@ from django_absurd.queues import get_absurd_client
 
 
 @pytest.fixture(autouse=True)
-def _enable_db(db):
+def _enable_db(db: None) -> None:
     pass
 
 
 @pytest.fixture(autouse=True)
-def _reset_absurd_queues(_enable_db):
+def _reset_absurd_queues(_enable_db: None) -> None:
     """Drop all Absurd queues before each test.
 
     ``transaction=True`` tests create queues whose per-queue tables (DDL) and
@@ -28,10 +28,12 @@ def _reset_absurd_queues(_enable_db):
 
 
 @pytest.fixture
-def admin_user(_enable_db):
-    return get_user_model().objects.create_superuser("admin", "a@x.com", "pw")
+def admin_user() -> User:
+    # No password: tests log in via force_login (never checks it), and setting one
+    # runs the deliberately-slow PBKDF2 hasher on every fixture use.
+    return User.objects.create_superuser("admin", "a@x.com")
 
 
 @pytest.fixture
-def staff_user(_enable_db):
-    return get_user_model().objects.create_user("staff", "s@x.com", "pw", is_staff=True)
+def staff_user() -> User:
+    return User.objects.create_user("staff", "s@x.com", is_staff=True)
