@@ -91,6 +91,15 @@ entry's `queue`) picks which Absurd QUEUE the task runs on; independent of `alia
 - Run-wrapper: `django_absurd_run_scheduled(p_source, p_name)` fires the row's task on
   the right queue; per-source teardown still works.
 
+## Examples
+
+The `examples/` demos (`pg_cron`, `beat`, `web`) need no textual change: they configure
+a settings `SCHEDULE` (task + cron only) with the single backend at `"default"`, and no
+compose command passes `--alias`. But #63 changes resolution/commands/jobname
+underneath, so re-run the affected demos after the change to confirm they still exit 0
+(`docker compose up --build --abort-on-container-exit`). Also sync docs (AGENTS.md,
+docs/web, README) per the doc-audience map.
+
 ## Out of scope
 
 - Multiple Absurd backends / multi-Absurd-DB (deliberate deferred boundary; the soft
