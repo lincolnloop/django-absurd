@@ -1,3 +1,4 @@
+import time
 import typing as t
 
 from absurd_sdk import CancellationPolicy, RetryStrategy
@@ -6,6 +7,11 @@ from django.tasks import TaskContext, task
 
 from django_absurd.params import absurd_default_params
 from tests.models import Payload
+
+if t.TYPE_CHECKING:
+    from django_absurd.context import DurableContext
+
+SYNC_STEP_CALLS: dict[str, int] = {"n": 0}
 
 
 @task
@@ -93,3 +99,45 @@ def cancellable() -> t.Never:
 def fully_specced() -> t.Never:
     msg = "path-resolved for its decorator; never run"
     raise NotImplementedError(msg)
+
+
+@task(takes_context=True)  # type: ignore[arg-type]  # django-stubs types the ctx param as base TaskContext; the worker passes a DurableContext to sync tasks
+def sstep_echo(context: "DurableContext", value: str) -> str:
+    return context.step("echo", lambda: value)
+
+
+@task(takes_context=True)  # type: ignore[arg-type]  # django-stubs types the ctx param as base TaskContext; the worker passes a DurableContext to sync tasks
+def scoverage(context: "DurableContext") -> dict[str, t.Any]:
+    context.heartbeat()
+    tenant = context.headers.get("tenant")
+
+    @context.run_step
+    def bare() -> str:
+        return "bare-val"
+
+    @context.run_step()
+    def derived() -> str:
+        return "derived-val"
+
+    @context.run_step("custom")
+    def named() -> str:
+        return "named-val"
+
+    return {"tenant": tenant, "bare": bare, "derived": derived, "named": named}
+
+
+@task(takes_context=True)  # type: ignore[arg-type]  # django-stubs types the ctx param as base TaskContext; the worker passes a DurableContext to sync tasks
+def ssleep_for_once(context: "DurableContext", key: str) -> int:
+    def bump() -> int:
+        SYNC_STEP_CALLS["n"] += 1
+        return SYNC_STEP_CALLS["n"]
+
+    n = context.step("bump", bump)
+    context.sleep_for("nap", 1.5)
+    return n
+
+
+@task(takes_context=True)  # type: ignore[arg-type]  # django-stubs types the ctx param as base TaskContext; the worker passes a DurableContext to sync tasks
+def ssleep_until_once(context: "DurableContext", key: str) -> str:
+    context.sleep_until("nap", time.time() + 1.5)
+    return "woke"

@@ -13,6 +13,13 @@ from tests.atasks import (
     asleep_until_once,
     astep_echo,
 )
+from tests.tasks import (
+    SYNC_STEP_CALLS,
+    scoverage,
+    ssleep_for_once,
+    ssleep_until_once,
+    sstep_echo,
+)
 from tests.worker_support import get_task_result, run_absurd_worker
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -71,6 +78,65 @@ def test_async_sleep_for_suspends_then_resumes_replaying_step() -> None:
 def test_async_sleep_until_suspends_then_resumes() -> None:
     call_command("absurd_sync_queues")
     result = asleep_until_once.enqueue("k")
+    run_absurd_worker()
+    suspended = get_task_result(result.id)
+    assert suspended is not None
+    assert suspended.state == "sleeping"
+    time.sleep(2)
+    run_absurd_worker()
+    done = get_task_result(result.id)
+    assert done is not None
+    assert done.state == "completed"
+    assert done.result == "woke"
+
+
+def test_sync_step_runs_and_returns_value() -> None:
+    call_command("absurd_sync_queues")
+    result = sstep_echo.enqueue("hi")
+    run_absurd_worker()
+    snap = get_task_result(result.id)
+    assert snap is not None
+    assert snap.result == "hi"
+
+
+def test_sync_headers_heartbeat_and_run_step_forms() -> None:
+    call_command("absurd_sync_queues")
+    result = scoverage.enqueue(  # type: ignore[call-arg]
+        absurd_spawn_params=AbsurdSpawnParams(headers={"tenant": "acme"})
+    )
+    run_absurd_worker()
+    snap = get_task_result(result.id)
+    assert snap is not None
+    assert snap.result == {
+        "bare": "bare-val",
+        "derived": "derived-val",
+        "named": "named-val",
+        "tenant": "acme",
+    }
+
+
+def test_sync_sleep_for_suspends_then_resumes_replaying_step() -> None:
+    call_command("absurd_sync_queues")
+    SYNC_STEP_CALLS["n"] = 0
+    result = ssleep_for_once.enqueue("k")
+
+    run_absurd_worker()
+    suspended = get_task_result(result.id)
+    assert suspended is not None
+    assert suspended.state == "sleeping"
+
+    time.sleep(2)
+    run_absurd_worker()
+    done = get_task_result(result.id)
+    assert done is not None
+    assert done.state == "completed"
+    assert done.result == 1
+    assert SYNC_STEP_CALLS["n"] == 1
+
+
+def test_sync_sleep_until_suspends_then_resumes() -> None:
+    call_command("absurd_sync_queues")
+    result = ssleep_until_once.enqueue("k")
     run_absurd_worker()
     suspended = get_task_result(result.id)
     assert suspended is not None
