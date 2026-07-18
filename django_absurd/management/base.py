@@ -18,8 +18,10 @@ def resolve_backend() -> AbsurdBackend:
     if len(backends) == 0:
         msg = "No Absurd backend configured."
         raise CommandError(msg)
-    aliases = ", ".join(sorted(backends))
-    msg = f"Multiple Absurd backends found: {aliases}. Use --alias to select one."
+    msg = (
+        "django-absurd supports one Absurd backend per project; "
+        "configure exactly one AbsurdBackend in TASKS."
+    )
     raise CommandError(msg)
 
 

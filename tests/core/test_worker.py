@@ -226,6 +226,27 @@ def test_worker_no_backend_errors(settings: SettingsWrapper) -> None:
         call_command("absurd_worker", burst=True)
 
 
+def test_worker_multiple_backends_errors(settings: SettingsWrapper) -> None:
+    # absurd.E004 is a system check, not a runtime guard, so a command run with
+    # two Absurd backends still reaches resolve_backend's defensive branch.
+    settings.TASKS = {
+        "a": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "QUEUES": ["default"],
+        },
+        "b": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "QUEUES": ["default"],
+        },
+    }
+    with pytest.raises(CommandError) as exc:
+        call_command("absurd_worker", burst=True)
+    assert str(exc.value) == (
+        "django-absurd supports one Absurd backend per project; "
+        "configure exactly one AbsurdBackend in TASKS."
+    )
+
+
 def test_command_parses_all_flags_with_defaults() -> None:
     cmd = load_command_class("django_absurd", "absurd_worker")
     parser = cmd.create_parser("manage.py", "absurd_worker")
