@@ -30,11 +30,13 @@ asyncio.
 - `import typing as t`; `import datetime as dt`; absolute imports only; verb-named
   functions; no leading-underscore module constants/helpers; helpers below their caller.
 - **Tests are ruff `ALL` + mypy strict too** — every test task function AND helper is
-  fully annotated (params + return). Annotate the `ctx` param with the durable context
-  type via a `if t.TYPE_CHECKING:` import + string annotation (so a RED step fails at
-  runtime with `AttributeError`, not `ImportError`). `enqueue(absurd_spawn_params=…)`
-  needs `# type: ignore[call-arg]` (matches every existing call site). No in-function
-  imports (PLC0415) — top-level only. No new ruff ignores/noqa beyond the established
+  fully annotated (params + return). **Django's `validate_task` hard-requires the first
+  positional param of a `takes_context=True` task be literally named `context`** — use
+  `context`, never `ctx`, as the param name (annotate it with the durable context type
+  via a `if t.TYPE_CHECKING:` import + string annotation, so a RED step fails at runtime
+  with `AttributeError`, not `ImportError`). `enqueue(absurd_spawn_params=…)` needs
+  `# type: ignore[call-arg]` (matches every existing call site). No in-function imports
+  (PLC0415) — top-level only. No new ruff ignores/noqa beyond the established
   `type: ignore[call-arg]`.
 - Function-based pytest only; **no monkeypatch / unittest.mock / `responses` here**.
   `@pytest.mark.django_db(transaction=True)` for anything that runs the worker.
@@ -150,21 +152,21 @@ DURABLE_STEP_CALLS: dict[str, int] = {"n": 0}
 
 
 @task(takes_context=True)
-async def astep_echo(ctx: "AsyncDurableContext", value: str) -> str:
+async def astep_echo(context: "AsyncDurableContext", value: str) -> str:
     async def compute() -> str:
         return value
 
-    return await ctx.step("echo", compute)
+    return await context.step("echo", compute)
 
 
 @task(takes_context=True)
-async def aheaders_tenant(ctx: "AsyncDurableContext") -> str | None:
-    return ctx.headers.get("tenant")
+async def aheaders_tenant(context: "AsyncDurableContext") -> str | None:
+    return context.headers.get("tenant")
 
 
 @task(takes_context=True)
-async def aheartbeat_then_return(ctx: "AsyncDurableContext", value: str) -> str:
-    await ctx.heartbeat()
+async def aheartbeat_then_return(context: "AsyncDurableContext", value: str) -> str:
+    await context.heartbeat()
     return value
 ```
 
@@ -272,19 +274,19 @@ import time
 
 
 @task(takes_context=True)
-async def asleep_for_once(ctx: "AsyncDurableContext", key: str) -> int:
+async def asleep_for_once(context: "AsyncDurableContext", key: str) -> int:
     async def bump() -> int:
         DURABLE_STEP_CALLS["n"] += 1
         return DURABLE_STEP_CALLS["n"]
 
-    n = await ctx.step("bump", bump)
-    await ctx.sleep_for("nap", 1.5)
+    n = await context.step("bump", bump)
+    await context.sleep_for("nap", 1.5)
     return n
 
 
 @task(takes_context=True)
-async def asleep_until_once(ctx: "AsyncDurableContext", key: str) -> str:
-    await ctx.sleep_until("nap", time.time() + 1.5)
+async def asleep_until_once(context: "AsyncDurableContext", key: str) -> str:
+    await context.sleep_until("nap", time.time() + 1.5)
     return "woke"
 ```
 
@@ -414,24 +416,24 @@ SYNC_STEP_CALLS: dict[str, int] = {"n": 0}
 
 
 @task(takes_context=True)
-def sstep_echo(ctx: "DurableContext", value: str) -> str:
-    return ctx.step("echo", lambda: value)
+def sstep_echo(context: "DurableContext", value: str) -> str:
+    return context.step("echo", lambda: value)
 
 
 @task(takes_context=True)
-def scoverage(ctx: "DurableContext") -> dict[str, t.Any]:
-    ctx.heartbeat()
-    tenant = ctx.headers.get("tenant")
+def scoverage(context: "DurableContext") -> dict[str, t.Any]:
+    context.heartbeat()
+    tenant = context.headers.get("tenant")
 
-    @ctx.run_step
+    @context.run_step
     def bare() -> str:
         return "bare-val"
 
-    @ctx.run_step()
+    @context.run_step()
     def derived() -> str:
         return "derived-val"
 
-    @ctx.run_step("custom")
+    @context.run_step("custom")
     def named() -> str:
         return "named-val"
 
@@ -439,19 +441,19 @@ def scoverage(ctx: "DurableContext") -> dict[str, t.Any]:
 
 
 @task(takes_context=True)
-def ssleep_for_once(ctx: "DurableContext", key: str) -> int:
+def ssleep_for_once(context: "DurableContext", key: str) -> int:
     def bump() -> int:
         SYNC_STEP_CALLS["n"] += 1
         return SYNC_STEP_CALLS["n"]
 
-    n = ctx.step("bump", bump)
-    ctx.sleep_for("nap", 1.5)
+    n = context.step("bump", bump)
+    context.sleep_for("nap", 1.5)
     return n
 
 
 @task(takes_context=True)
-def ssleep_until_once(ctx: "DurableContext", key: str) -> str:
-    ctx.sleep_until("nap", time.time() + 1.5)
+def ssleep_until_once(context: "DurableContext", key: str) -> str:
+    context.sleep_until("nap", time.time() + 1.5)
     return "woke"
 ```
 
@@ -664,7 +666,7 @@ git commit -m "feat: admin inlines checkpoints + shows sleeping run available_at
 - [ ] **Step 1: Write AGENTS.md "Durable steps & sleep" section**
 
 Both variants (sync no-`await`, async `await`); a `step` + `sleep_for` example; a
-**typed** usage snippet (`async def workflow(ctx: AsyncDurableContext, …)`) showing
+**typed** usage snippet (`async def workflow(context: AsyncDurableContext, …)`) showing
 autocomplete/mypy value; and the **full footgun set** as an explicit list: (a)
 **effectively-once** — steps persist after `fn` returns on a separate connection,
 executed at-least-once in a crash window, keep side effects idempotent; (b)
@@ -672,8 +674,8 @@ executed at-least-once in a crash window, keep side effects idempotent; (b)
 `sleep` share one checkpoint namespace/counter; (c) **JSON-serializable step returns** —
 persisted via `json.dumps`; `tuple` → `list` on replay; (d) **never swallow
 `SuspendTask`** — re-raise it (and `CancelledTask`); (e) **long steps** — finish within
-`claim_timeout` (default 120s) or call `ctx.heartbeat()`; (f) **absurd-only** —
-`ctx.step` tasks fail under other Django backends; (g) sleep resume re-claims the
+`claim_timeout` (default 120s) or call `context.heartbeat()`; (f) **absurd-only** —
+`context.step` tasks fail under other Django backends; (g) sleep resume re-claims the
 **same** run — attempt does not increment.
 
 - [ ] **Step 2: Write the docs-site page + nav**
