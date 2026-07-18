@@ -242,7 +242,12 @@ def test_detail_inlines_checkpoints_and_run_available_at(
         cell.get_text(strip=True) for cell in soup.select(".field-checkpoint_name")
     }
     assert "bump" in names
-    assert soup.select_one(".field-state") is not None  # cached step state renders
+    checkpoint_group = next(
+        g for g in groups if g.select_one('a[href*="/django_absurd/checkpoint/"]')
+    )
+    checkpoint_state = checkpoint_group.select_one(".field-state")
+    assert checkpoint_state is not None
+    assert checkpoint_state.get_text(strip=True) != ""
     available = soup.select_one(".field-available_at")
     assert available is not None
     assert available.get_text(strip=True) != ""  # sleeping run has a wake time
