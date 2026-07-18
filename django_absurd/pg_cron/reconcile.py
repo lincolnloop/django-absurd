@@ -89,7 +89,7 @@ def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:
 
     Opens a transaction on the absurd database and acquires an advisory lock to
     serialise concurrent reconcilers. Upserts one row per declared schedule
-    (source="settings"), then prunes undeclared settings rows for this alias. The
+    (source="settings"), then prunes undeclared settings rows. The
     source="admin" scope is never touched. The pg_cron jobs follow: each row upsert
     fires post_save → schedule; each pruned row fires post_delete → unschedule. Finally
     it prunes any owned settings job whose row was removed out-of-band (signal-less
@@ -110,7 +110,6 @@ def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:
             )
             _, was_created = ScheduledTask.objects.using(database).update_or_create(
                 source=Source.SETTINGS,
-                alias=backend.alias,
                 name=schedule.name,
                 defaults={
                     "task": schedule.task,
@@ -125,13 +124,11 @@ def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:
 
         pruned, _ = (
             ScheduledTask.objects.using(database)
-            .filter(source=Source.SETTINGS, alias=backend.alias)
+            .filter(source=Source.SETTINGS)
             .exclude(name__in=declared_names)
             .delete()
         )
-        ScheduledTask.pg_cron.prune_jobs_without_rows(
-            backend.alias, Source.SETTINGS, declared_names
-        )
+        ScheduledTask.pg_cron.prune_jobs_without_rows(Source.SETTINGS, declared_names)
         reconcile_cleanup_job(cur, backend)
 
     return created, pruned
@@ -171,8 +168,8 @@ def unschedule_cleanup_job(cur: t.Any) -> None:
     prune_pg_cron_jobs(cur, [jobid for (jobid,) in cur.fetchall()])
 
 
-def sync_admin_crons(backend: AbsurdBackend) -> None:
-    """Re-emit the pg_cron jobs for this backend's source="admin" rows (idempotent).
+def sync_admin_crons() -> None:
+    """Re-emit the pg_cron jobs for the source="admin" rows (idempotent).
 
     Admin schedules are authored through the ORM/admin, whose post_save signal emits
     the job. But a row created by a data migration goes through the historical model
@@ -186,38 +183,34 @@ def sync_admin_crons(backend: AbsurdBackend) -> None:
     with open_locked_cursor(database):
         names = []
         for scheduled_task in ScheduledTask.objects.using(database).filter(
-            source=Source.ADMIN, alias=backend.alias
+            source=Source.ADMIN
         ):
             scheduled_task.schedule_pg_cron_job()
             names.append(scheduled_task.name)
-        ScheduledTask.pg_cron.prune_jobs_without_rows(
-            backend.alias, Source.ADMIN, names
-        )
+        ScheduledTask.pg_cron.prune_jobs_without_rows(Source.ADMIN, names)
 
 
-def teardown_crons(backend: AbsurdBackend, include_admin: bool = False) -> int:
-    """Remove pg_cron jobs and ScheduledTask rows owned by this backend alias.
+def teardown_crons(include_admin: bool = False) -> int:
+    """Remove pg_cron jobs and ScheduledTask rows.
 
     The migrate-time path (include_admin=False, a scheduler switch away from pg_cron)
-    unschedules _dj:s:<alias>:% jobs and deletes settings rows, leaving admin
-    schedules (user data) untouched. The guarded absurd_sync_crons --teardown command
-    (include_admin=True) additionally clears _dj:a:<alias>:% jobs AND deletes their
-    rows — so the teardown is terminal, not undone by the next
-    migrate's admin re-emit (that is why the command confirms first).
+    unschedules _dj:s:% jobs and deletes settings rows, leaving admin schedules (user
+    data) untouched. The guarded absurd_sync_crons --teardown command
+    (include_admin=True) additionally clears _dj:a:% jobs AND deletes their rows — so
+    the teardown is terminal, not undone by the next migrate's admin re-emit (that is
+    why the command confirms first).
 
     Idempotent. Returns removed: count of ScheduledTask rows deleted.
     """
     database = resolve_absurd_database()
     sources = [Source.SETTINGS, Source.ADMIN] if include_admin else [Source.SETTINGS]
     for source in sources:
-        ScheduledTask.pg_cron.unschedule_matching(backend.alias, source)
+        ScheduledTask.pg_cron.unschedule_matching(source)
 
     with open_locked_cursor(database) as cur:
         unschedule_cleanup_job(cur)
 
     removed, _ = (
-        ScheduledTask.objects.using(database)
-        .filter(source__in=sources, alias=backend.alias)
-        .delete()
+        ScheduledTask.objects.using(database).filter(source__in=sources).delete()
     )
     return removed

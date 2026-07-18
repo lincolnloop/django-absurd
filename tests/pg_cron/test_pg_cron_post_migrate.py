@@ -19,11 +19,11 @@ if t.TYPE_CHECKING:
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
-def run_scheduled(source: str, alias: str, name: str) -> None:
+def run_scheduled(source: str, name: str) -> None:
     with connection.cursor() as cur:
         cur.execute(
-            "select public.django_absurd_run_scheduled(%s, %s, %s)",
-            [source, alias, name],
+            "select public.django_absurd_run_scheduled(%s, %s)",
+            [source, name],
         )
 
 
@@ -58,10 +58,10 @@ def test_reconcile_creates_owned_cron_jobs_under_pg_cron(
     run_cron_sync()
 
     assert [r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()] == [
-        "_dj:s:default:a",
-        "_dj:s:default:b",
+        "_dj:s:a",
+        "_dj:s:b",
     ]
-    assert ScheduledTask.objects.filter(source="s", alias="default").count() == 2
+    assert ScheduledTask.objects.filter(source="s").count() == 2
 
 
 def test_reconcile_emits_jobs_for_admin_rows_created_without_signal(
@@ -76,7 +76,6 @@ def test_reconcile_emits_jobs_for_admin_rows_created_without_signal(
         [
             ScheduledTask(
                 source="a",
-                alias="default",
                 name="seeded",
                 task="tests.tasks.add",
                 cron="0 3 * * *",
@@ -84,11 +83,11 @@ def test_reconcile_emits_jobs_for_admin_rows_created_without_signal(
             )
         ]
     )
-    assert ScheduledTask.pg_cron.get_job("default", "seeded", "a") is None
+    assert ScheduledTask.pg_cron.get_job("seeded", "a") is None
 
     run_cron_sync()
 
-    job = ScheduledTask.pg_cron.get_job("default", "seeded", "a")
+    job = ScheduledTask.pg_cron.get_job("seeded", "a")
     assert job is not None
     _, schedule, _, active = job
     assert schedule == "0 3 * * *"
@@ -106,7 +105,6 @@ def test_reconcile_admin_rows_is_idempotent(
         [
             ScheduledTask(
                 source="a",
-                alias="default",
                 name="seeded",
                 task="tests.tasks.add",
                 cron="0 3 * * *",
@@ -120,7 +118,7 @@ def test_reconcile_admin_rows_is_idempotent(
     jobs = ScheduledTask.pg_cron.get_managed_jobs(source="a")
     assert len(jobs) == 1
     jobname, schedule, _, active = jobs[0]
-    assert jobname == "_dj:a:default:seeded"
+    assert jobname == "_dj:a:seeded"
     assert schedule == "0 3 * * *"
     assert active is True
 
@@ -136,16 +134,15 @@ def test_reconcile_prunes_owned_settings_job_whose_row_vanished(
     settings.TASKS = build_pg_cron_tasks({})  # nothing declared
     ScheduledTask(
         source="s",
-        alias="default",
         name="orphan",
         task="tests.tasks.add",
         cron="0 2 * * *",
     ).schedule_pg_cron_job()
-    assert ScheduledTask.pg_cron.get_job("default", "orphan", "s") is not None
+    assert ScheduledTask.pg_cron.get_job("orphan", "s") is not None
 
     run_cron_sync()
 
-    assert ScheduledTask.pg_cron.get_job("default", "orphan", "s") is None
+    assert ScheduledTask.pg_cron.get_job("orphan", "s") is None
 
 
 def test_reconcile_prunes_admin_job_whose_row_vanished(
@@ -157,16 +154,15 @@ def test_reconcile_prunes_admin_job_whose_row_vanished(
     settings.TASKS = build_pg_cron_tasks({})
     ScheduledTask(
         source="a",
-        alias="default",
         name="orphan",
         task="tests.tasks.add",
         cron="0 3 * * *",
     ).schedule_pg_cron_job()
-    assert ScheduledTask.pg_cron.get_job("default", "orphan", "a") is not None
+    assert ScheduledTask.pg_cron.get_job("orphan", "a") is not None
 
     run_cron_sync()
 
-    assert ScheduledTask.pg_cron.get_job("default", "orphan", "a") is None
+    assert ScheduledTask.pg_cron.get_job("orphan", "a") is None
 
 
 def test_reconcile_tears_down_when_scheduler_switches_to_beat(
@@ -176,9 +172,7 @@ def test_reconcile_tears_down_when_scheduler_switches_to_beat(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     reconcile_crons_after_migrate(sender=apps.get_app_config("django_absurd_pg_cron"))
-    assert [r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()] == [
-        "_dj:s:default:a"
-    ]
+    assert [r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()] == ["_dj:s:a"]
 
     settings.TASKS = build_beat_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
@@ -186,7 +180,7 @@ def test_reconcile_tears_down_when_scheduler_switches_to_beat(
     reconcile_crons_after_migrate(sender=apps.get_app_config("django_absurd_pg_cron"))
 
     assert ScheduledTask.pg_cron.get_managed_jobs() == []
-    assert not ScheduledTask.objects.filter(source="s", alias="default").exists()
+    assert not ScheduledTask.objects.filter(source="s").exists()
 
 
 def test_reconcile_missing_row_fires_clean_noop(
@@ -199,9 +193,9 @@ def test_reconcile_missing_row_fires_clean_noop(
 
     # Drop the backing row out-of-band; the committed cron.job wrapper must fire
     # as a clean no-op (the reconcile does not leave a firing job that errors).
-    ScheduledTask.objects.filter(source="s", alias="default", name="a").delete()
+    ScheduledTask.objects.filter(source="s", name="a").delete()
 
-    run_scheduled("s", "default", "a")  # no exception
+    run_scheduled("s", "a")  # no exception
 
 
 def test_reconcile_survives_missing_scheduledtask_table(
@@ -271,10 +265,8 @@ def test_migrate_provisions_queues_and_reconciles_crons(
     call_command("migrate", verbosity=0)
 
     assert set(get_absurd_client().list_queues()) == {"default", "other", "reports"}
-    assert [r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()] == [
-        "_dj:s:default:a"
-    ]
-    assert ScheduledTask.objects.filter(source="s", alias="default").count() == 1
+    assert [r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()] == ["_dj:s:a"]
+    assert ScheduledTask.objects.filter(source="s").count() == 1
 
 
 def test_reconcile_emits_migrate_stdout_on_sync(

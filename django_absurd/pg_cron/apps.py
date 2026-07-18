@@ -73,7 +73,7 @@ def reconcile_crons_after_migrate(
         try:
             if backend.scheduler == "pg_cron":
                 created, pruned = sync_crons(backend)
-                sync_admin_crons(backend)
+                sync_admin_crons()
                 lines = []
                 if created:
                     lines.append(f"  Scheduled {created}")
@@ -88,7 +88,7 @@ def reconcile_crons_after_migrate(
                     for line in lines:
                         stdout.write(line)
             else:
-                removed = teardown_crons(backend)
+                removed = teardown_crons()
                 if removed > 0 and verbosity >= 1 and stdout is not None:
                     stdout.write(
                         f"  Removed {removed} pg_cron schedule(s)"

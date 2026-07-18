@@ -44,8 +44,8 @@ def test_e2e_sync_fire_worker_assert_payload(
 
     with connection.cursor() as cur:
         cur.execute(
-            "select public.django_absurd_run_scheduled(%s, %s, %s)",
-            ["s", "default", "e"],
+            "select public.django_absurd_run_scheduled(%s, %s)",
+            ["s", "e"],
         )
 
     call_command("absurd_worker", queue="default", burst=True)

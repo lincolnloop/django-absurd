@@ -38,7 +38,6 @@ QUEUES: dict[str, dict[str, t.Any]] = {
 # Valid baseline: every field passes, so a single override isolates one rule.
 VALID: dict[str, t.Any] = {
     "source": "a",
-    "alias": "default",
     "name": "ok",
     "task": "tests.tasks.add",
     "queue": "default",
@@ -53,8 +52,8 @@ def configure_pg_cron_backend(
     settings: SettingsWrapper,
     schedule: dict[str, t.Any] | None = None,
 ) -> None:
-    """A pg_cron 'default' backend so model clean() resolves it (declared queues,
-    alias-is-pg_cron-backend), and the check has a SCHEDULE to validate."""
+    """A pg_cron 'default' backend so model clean() resolves it (declared queues),
+    and the check has a SCHEDULE to validate."""
     settings.TASKS = {
         "default": {
             "BACKEND": BACKEND,
@@ -127,15 +126,14 @@ def validate_from_admin_post(
     The two-step create form collects only identity + cron and resolves every spawn
     column from the task, so it can't express rules about args/kwargs/queue/retry/
     cancellation. The change form exposes those fields, so drive validation there:
-    seed a baseline admin row, then POST the overrides to its editable fields. alias
-    and name are read-only on the change form; rules on those move to the
+    seed a baseline admin row, then POST the overrides to its editable fields. name
+    is read-only on the change form; rules on it move to the
     check + model subjects."""
     configure_pg_cron_backend(settings)
     client.force_login(admin_user)
     fields = {**VALID, **kwargs}
     scheduled_task = ScheduledTask.objects.create(
         source="a",
-        alias=t.cast("str", VALID["alias"]),
         name=t.cast("str", VALID["name"]),
         task=t.cast("str", VALID["task"]),
         queue="default",

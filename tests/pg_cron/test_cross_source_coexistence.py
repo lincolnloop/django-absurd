@@ -11,24 +11,22 @@ def test_settings_and_admin_schedule_may_share_a_name(
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     """Namespaced by source, a settings and an admin schedule with the same
-    (alias, name) coexist as two distinct pg_cron jobs — no clash, no double-fire."""
+    name coexist as two distinct pg_cron jobs — no clash, no double-fire."""
     settings.TASKS = build_pg_cron_tasks({})
     ScheduledTask.objects.create(
         source="s",
-        alias="default",
         name="nightly",
         task="tests.tasks.add",
         cron="0 2 * * *",
     )
     ScheduledTask.objects.create(
         source="a",
-        alias="default",
         name="nightly",
         task="tests.tasks.add",
         cron="0 3 * * *",
     )
-    assert ScheduledTask.pg_cron.get_job("default", "nightly", "s") is not None
-    assert ScheduledTask.pg_cron.get_job("default", "nightly", "a") is not None
+    assert ScheduledTask.pg_cron.get_job("nightly", "s") is not None
+    assert ScheduledTask.pg_cron.get_job("nightly", "a") is not None
 
 
 def test_revalidating_a_saved_admin_schedule_does_not_self_clash(
@@ -39,7 +37,6 @@ def test_revalidating_a_saved_admin_schedule_does_not_self_clash(
     settings.TASKS = build_pg_cron_tasks({})
     scheduled_task = ScheduledTask.objects.create(
         source="a",
-        alias="default",
         name="nightly",
         task="tests.tasks.add",
         queue="default",

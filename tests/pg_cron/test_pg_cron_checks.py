@@ -30,11 +30,10 @@ def run_pg_cron_check(
 ) -> str:
     """Drive check with given scheduler/queues/schedule and return output.
 
-    options keys: scheduler, alias (default "default"), queues, schedule.
+    options keys: scheduler, queues, schedule.
     """
-    alias = options.get("alias", "default")
     settings.TASKS = {
-        alias: {
+        "default": {
             "BACKEND": ABSURD,
             "OPTIONS": {
                 "SCHEDULER": options["scheduler"],
@@ -129,9 +128,9 @@ def test_pg_cron_jobname_too_long_rejected(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Composed jobname exceeding 63 bytes rejected under pg_cron."""
-    # alias "default" + name long enough to push _dj:s:default:<name> > 63 bytes
-    # "_dj:s:default:" = 14 chars, so name needs > 49 chars
-    long_name = "a" * 50
+    # name long enough to push _dj:s:<name> > 63 bytes
+    # "_dj:s:" = 6 chars, so name needs > 57 chars
+    long_name = "a" * 58
     out = run_pg_cron_check(
         settings,
         capsys,
@@ -233,52 +232,6 @@ def test_pg_cron_non_mapping_entry_single_error(
         },
     )
     assert out.count("Schedule 'nightly' must be a mapping.") == 1
-
-
-def test_pg_cron_bad_alias_charset_rejected(
-    settings: pytest_django.fixtures.SettingsWrapper,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """Backend alias with chars outside [A-Za-z0-9_-] rejected."""
-    out = run_pg_cron_check(
-        settings,
-        capsys,
-        {
-            "scheduler": "pg_cron",
-            "alias": "bad.alias",
-            "queues": BASE_QUEUES,
-            "schedule": {
-                "nightly": {
-                    "task": "tests.tasks.add",
-                    "cron": "0 2 * * *",
-                }
-            },
-        },
-    )
-    assert "absurd.E007" in out
-    assert "Backend alias contains characters other than [A-Za-z0-9_-]." in out
-
-
-def test_pg_cron_bad_alias_charset_rejected_without_settings_schedule(
-    settings: pytest_django.fixtures.SettingsWrapper,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """Alias charset validated per-backend.
-
-    Bad alias caught even when backend has no settings SCHEDULE (admin-only).
-    """
-    out = run_pg_cron_check(
-        settings,
-        capsys,
-        {
-            "scheduler": "pg_cron",
-            "alias": "bad.alias",
-            "queues": BASE_QUEUES,
-            "schedule": {},
-        },
-    )
-    assert "absurd.E007" in out
-    assert "Backend alias contains characters other than [A-Za-z0-9_-]." in out
 
 
 def test_pg_cron_missing_task_no_queue_error(

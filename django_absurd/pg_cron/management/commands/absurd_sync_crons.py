@@ -37,7 +37,7 @@ class Command(BaseCommand):
             if not options["no_input"] and not self.confirm_teardown(backend.alias):
                 self.stdout.write("Aborted.")
                 return None
-            removed = teardown_crons(backend, include_admin=True)
+            removed = teardown_crons(include_admin=True)
             self.stdout.write(
                 f"Unscheduled all pg_cron jobs and removed {removed} schedule row(s) "
                 f"— backend '{backend.alias}'."
@@ -53,7 +53,7 @@ class Command(BaseCommand):
 
         try:
             created, pruned = sync_crons(backend)
-            sync_admin_crons(backend)
+            sync_admin_crons()
         except KeyError as exc:
             msg = (
                 f"SCHEDULE entry is missing required key {exc} — "
