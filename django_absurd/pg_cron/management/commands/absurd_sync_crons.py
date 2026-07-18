@@ -18,11 +18,6 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser: "CommandParser") -> None:
         parser.add_argument(
-            "--alias",
-            default=None,
-            help="Absurd backend alias (required when multiple Absurd backends exist).",
-        )
-        parser.add_argument(
             "--teardown",
             action="store_true",
             help="Remove all owned pg_cron jobs and settings ScheduledTask rows.",
@@ -36,16 +31,16 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args: t.Any, **options: t.Any) -> str | None:
-        alias, backend = resolve_backend(options)
+        backend = resolve_backend()
 
         if options["teardown"]:
-            if not options["no_input"] and not self.confirm_teardown(alias):
+            if not options["no_input"] and not self.confirm_teardown(backend.alias):
                 self.stdout.write("Aborted.")
                 return None
             removed = teardown_crons(backend, include_admin=True)
             self.stdout.write(
                 f"Unscheduled all pg_cron jobs and removed {removed} schedule row(s) "
-                f"— backend '{alias}'."
+                f"— backend '{backend.alias}'."
             )
             return None
 
@@ -66,7 +61,7 @@ class Command(BaseCommand):
             )
             raise CommandError(msg) from exc
         self.stdout.write(
-            f"Synced {created} cron(s); pruned {pruned} — backend '{alias}'."
+            f"Synced {created} cron(s); pruned {pruned} — backend '{backend.alias}'."
         )
         return None
 

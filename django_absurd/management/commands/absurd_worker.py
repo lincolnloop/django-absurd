@@ -25,11 +25,6 @@ class Command(AbsurdReportCommand):
             help="Queue name to consume (default: 'default').",
         )
         parser.add_argument(
-            "--alias",
-            default=None,
-            help="Absurd backend alias (required when multiple Absurd backends exist).",
-        )
-        parser.add_argument(
             "--burst",
             action="store_true",
             help="Drain the queue then exit (no persistent blocking loop).",
@@ -76,7 +71,7 @@ class Command(AbsurdReportCommand):
         )
 
     def handle(self, *args: t.Any, **options: t.Any) -> None:
-        alias, backend = resolve_backend(options)
+        backend = resolve_backend()
         queue = options["queue"]
 
         if options["burst"] and options["beat"]:
@@ -89,7 +84,7 @@ class Command(AbsurdReportCommand):
         if queue not in backend.queues:
             valid = ", ".join(sorted(backend.queues))
             msg = (
-                f"Queue '{queue}' is not declared for backend '{alias}'."
+                f"Queue '{queue}' is not declared for backend '{backend.alias}'."
                 f" Valid queues: {valid}"
             )
             raise CommandError(msg)

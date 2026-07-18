@@ -3,7 +3,7 @@ import threading
 import typing as t
 from types import FrameType
 
-from django.core.management.base import BaseCommand, CommandError, CommandParser
+from django.core.management.base import BaseCommand, CommandError
 
 from django_absurd.management.base import BEAT_DISABLED_UNDER_PG_CRON, resolve_backend
 from django_absurd.scheduler import get_settings_schedules, run_beat
@@ -12,15 +12,8 @@ from django_absurd.scheduler import get_settings_schedules, run_beat
 class Command(BaseCommand):
     help = "Start the Absurd beat scheduler."
 
-    def add_arguments(self, parser: CommandParser) -> None:
-        parser.add_argument(
-            "--alias",
-            default=None,
-            help="Absurd backend alias (required when multiple Absurd backends exist).",
-        )
-
     def handle(self, *args: t.Any, **options: t.Any) -> None:
-        _, backend = resolve_backend(options)
+        backend = resolve_backend()
 
         if backend.scheduler == "pg_cron":
             raise CommandError(BEAT_DISABLED_UNDER_PG_CRON)

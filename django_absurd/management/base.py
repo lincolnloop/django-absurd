@@ -1,5 +1,3 @@
-import typing as t
-
 from django.core.management.base import BaseCommand, CommandError
 
 from django_absurd.backends import AbsurdBackend, get_absurd_backends
@@ -13,22 +11,16 @@ BEAT_DISABLED_UNDER_PG_CRON = (
 )
 
 
-def resolve_backend(options: dict[str, t.Any]) -> tuple[str, AbsurdBackend]:
+def resolve_backend() -> AbsurdBackend:
     backends = get_absurd_backends()
-    alias = options["alias"]
-    if alias is not None:
-        if alias not in backends:
-            valid = ", ".join(sorted(backends))
-            msg = f"'{alias}' is not an Absurd backend alias. Valid aliases: {valid}"
-            raise CommandError(msg)
-        backend = backends[alias]
-    elif len(backends) == 1:
-        alias, backend = next(iter(backends.items()))
-    else:
-        aliases = ", ".join(sorted(backends))
-        msg = f"Multiple Absurd backends found: {aliases}. Use --alias to select one."
+    if len(backends) == 1:
+        return next(iter(backends.values()))
+    if len(backends) == 0:
+        msg = "No Absurd backend configured."
         raise CommandError(msg)
-    return alias, backend
+    aliases = ", ".join(sorted(backends))
+    msg = f"Multiple Absurd backends found: {aliases}. Use --alias to select one."
+    raise CommandError(msg)
 
 
 class AbsurdReportCommand(BaseCommand):
