@@ -26,10 +26,8 @@ pytestmark = pytest.mark.django_db(transaction=True)
 def view_oid(name: str) -> int | None:
     with connections["default"].cursor() as cur:
         cur.execute("SELECT to_regclass(%s)::oid", [f"absurd.{name}"])
-        row = cur.fetchone()
-        if row is None:
-            return None
-        return t.cast("int", row[0])
+        row = t.cast("tuple[int | None]", cur.fetchone())
+        return row[0]
 
 
 def test_rebuild_views_builds_all_five() -> None:
@@ -47,6 +45,8 @@ def test_read_path_does_no_ddl() -> None:
     task_model: t.Any = build_admin_model(spec)
     list(task_model.objects.all())
     list(task_model.objects.filter(state="completed"))
+    task_model.objects.exists()
+    task_model.objects.aggregate(models.Count("natural_key"))
     assert view_oid(spec.view_name) == before
 
 

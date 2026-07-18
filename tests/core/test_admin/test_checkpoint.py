@@ -11,6 +11,9 @@ from django.urls import reverse, reverse_lazy
 
 from tests.core.test_admin.support import parse_html, result_rows
 
+if t.TYPE_CHECKING:
+    from bs4 import Tag
+
 pytestmark = pytest.mark.django_db(transaction=True)
 
 CHANGELIST = reverse_lazy("admin:django_absurd_checkpoint_changelist")
@@ -35,11 +38,10 @@ def test_changelist(client: Client, admin_user: AbstractBaseUser) -> None:
     client.force_login(t.cast("User", admin_user))
     response = client.get(CHANGELIST)
     soup = parse_html(response)
-    names: set[str] = set()
-    for r in result_rows(soup):
-        name_elem = r.select_one(".field-checkpoint_name")
-        if name_elem is not None:
-            names.add(name_elem.get_text(strip=True))
+    names = {
+        t.cast("Tag", r.select_one(".field-checkpoint_name")).get_text(strip=True)
+        for r in result_rows(soup)
+    }
     assert "cp1" in names
 
 

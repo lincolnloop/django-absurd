@@ -71,12 +71,12 @@ Homepage = "https://github.com/lincolnloop/django-absurd"
 Issues = "https://github.com/lincolnloop/django-absurd/issues"
 Repository = "https://github.com/lincolnloop/django-absurd"
 
+# exclude_also ADDS to coverage's built-in defaults (pragma: no cover, `...` stub
+# bodies, `if TYPE_CHECKING:`) rather than replacing them; keep the `t.`-prefixed
+# TYPE_CHECKING form explicit since the default only matches the bare name.
 [tool.coverage.report]
-exclude_lines = [
-  "if TYPE_CHECKING:",
+exclude_also = [
   "if t.TYPE_CHECKING:",
-  "pragma: no cover",
-  "raise NotImplementedError",
   # a `msg = "..."` line immediately followed by `raise NotImplementedError(msg)`
   # (the errmsg-lint idiom) — exclude the assignment too, not just the raise.
   'msg = [rf]?".*"\n\s*raise NotImplementedError\(msg\)',

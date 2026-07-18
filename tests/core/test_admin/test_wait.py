@@ -11,6 +11,9 @@ from django.urls import reverse, reverse_lazy
 
 from tests.core.test_admin.support import parse_html, result_rows
 
+if t.TYPE_CHECKING:
+    from bs4 import Tag
+
 pytestmark = pytest.mark.django_db(transaction=True)
 
 CHANGELIST = reverse_lazy("admin:django_absurd_wait_changelist")
@@ -34,11 +37,10 @@ def test_changelist_and_composite_detail(
     client.force_login(t.cast("User", admin_user))
     response = client.get(CHANGELIST)
     soup = parse_html(response)
-    steps: set[str] = set()
-    for r in result_rows(soup):
-        step_elem = r.select_one(".field-step_name")
-        if step_elem is not None:
-            steps.add(step_elem.get_text(strip=True))
+    steps = {
+        t.cast("Tag", r.select_one(".field-step_name")).get_text(strip=True)
+        for r in result_rows(soup)
+    }
     assert "wait/step:1" in steps
 
     # composite-PK detail (queue:run_id:step_name) with a nasty step_name

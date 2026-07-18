@@ -21,6 +21,7 @@ from tests.core.test_admin.support import (
 from tests.tasks import add
 
 if t.TYPE_CHECKING:
+    from bs4 import Tag
     from pytest_django.plugin import DjangoDbBlocker
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -46,12 +47,7 @@ def find_task(queue: str, task_name: str) -> t.Any:
 
 def extract_field_texts(rows: t.Any, field: str) -> set[str]:
     """Extract text from field elements in result rows."""
-    result: set[str] = set()
-    for r in rows:
-        elem = r.select_one(f".{field}")
-        if elem is not None:
-            result.add(elem.get_text(strip=True))
-    return result
+    return {t.cast("Tag", r.select_one(f".{field}")).get_text(strip=True) for r in rows}
 
 
 def test_changelist_unions_and_filters(client: Client, admin_user: User) -> None:

@@ -103,6 +103,24 @@ def test_storage_mode_drift_warns(
     assert "q" in out
 
 
+def test_invalid_policy_modes_error(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    settings.TASKS = build_tasks_setting(
+        {"q": {"storage_mode": "bogus", "detach_mode": "nope"}}
+    )
+    out = run_absurd_check(capsys, databases=["default"])
+    assert (
+        "django-absurd: invalid per-queue policy options. Queue 'q':"
+        " invalid storage_mode 'bogus'." in out
+    )
+    assert (
+        "django-absurd: invalid per-queue policy options. Queue 'q':"
+        " invalid detach_mode 'nope'." in out
+    )
+
+
 def test_schema_absent_check_is_silent(
     settings: "pytest_django.fixtures.SettingsWrapper",
     capsys: pytest.CaptureFixture[str],

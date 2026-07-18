@@ -1,5 +1,6 @@
 import importlib
 import re
+import typing as t
 from pathlib import Path
 
 from django.apps import apps
@@ -20,10 +21,6 @@ def test_schema_version_is_concrete_semver() -> None:
 def test_models_imports_without_cycle() -> None:
     # admin_views must NOT import models (would cycle once models imports the factory)
     module = importlib.import_module("django_absurd.admin_views")
-    module_file: str | None = module.__file__
-    if module_file is None:
-        msg = "Module file path is None"
-        raise RuntimeError(msg)
-    src = Path(module_file)
+    src = Path(t.cast("str", module.__file__))
     assert "from django_absurd.models import" not in src.read_text()
     assert QueueReadOnlyError is ReExportedQueueReadOnlyError
