@@ -51,11 +51,11 @@ E003_HINT = (
     "Remove unknown keys and ensure storage_mode/detach_mode values"
     " are valid SDK literals."
 )
-E004_MSG = (
-    "django-absurd: multiple Absurd backends are configured with distinct"
-    " DATABASE values."
+E004_MSG = "django-absurd: more than one Absurd backend is configured."
+E004_HINT = (
+    "django-absurd uses a single Absurd backend per project"
+    " — configure exactly one AbsurdBackend in TASKS."
 )
-E004_HINT = "Use a single DATABASE across all Absurd backends."
 
 VALID_QUEUE_OPTION_KEYS = set(CreateQueueOptions.__annotations__)
 VALID_STORAGE_MODES = set(t.get_args(QueueStorageMode))
@@ -418,13 +418,15 @@ def check_absurd_config(
     if not backends:
         return []
 
+    # https://github.com/lincolnloop/django-absurd/issues/63
+    if len(backends) > 1:
+        return [Error(E004_MSG, hint=E004_HINT, id="absurd.E004")]
+
     errors: list[CheckMessage] = []
-    databases: set[str] = set()
     e005_emitted = False
 
     for backend in backends.values():
         db = get_absurd_database(backend)
-        databases.add(db)
 
         if backend.has_top_level_queues and "QUEUES" in backend.options:
             errors.append(Error(E002_MSG, hint=E002_HINT, id="absurd.E002"))
@@ -443,9 +445,6 @@ def check_absurd_config(
             pass
         except ImproperlyConfigured:
             errors.append(Error(E001_MSG, id="absurd.E001"))
-
-    if len(databases) > 1:
-        errors.append(Error(E004_MSG, hint=E004_HINT, id="absurd.E004"))
 
     return errors
 
