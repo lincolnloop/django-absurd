@@ -440,9 +440,9 @@ schedules onto the absurd DB.) Writes that bypass `.save()` — a **data migrati
 historical model isn't the signal's sender), `bulk_create`, `QuerySet.update`, raw SQL —
 don't emit directly, but `migrate` (and `absurd_sync_crons`) reconciles admin rows, so
 their jobs materialize then. A settings schedule and an admin schedule **may** share a
-name: they are distinct, source-namespaced jobs (`absurd:s:…` vs `absurd:a:…`, the
-source abbreviated to keep the job name short). Removing admin-authored jobs at teardown
-is a guarded action (see Reconcile).
+name: they are distinct, source-namespaced jobs (`_dj:s:…` vs `_dj:a:…`, the source
+abbreviated to keep the job name short). Removing admin-authored jobs at teardown is a
+guarded action (see Reconcile).
 
 ### Validate
 
@@ -459,7 +459,7 @@ is a guarded action (see Reconcile).
 - an unknown `SCHEDULER` value
 - (`pg_cron` only) schedule name or backend alias containing characters outside
   `[A-Za-z0-9_-]`
-- (`pg_cron` only) composed job name (`absurd:s:<alias>:<name>`) exceeding 63 bytes
+- (`pg_cron` only) composed job name (`_dj:s:<alias>:<name>`) exceeding 63 bytes
 
 Fix everything `absurd.E007` reports before relying on the schedule in production.
 

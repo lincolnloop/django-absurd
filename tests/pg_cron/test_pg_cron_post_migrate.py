@@ -58,8 +58,8 @@ def test_reconcile_creates_owned_cron_jobs_under_pg_cron(
     run_cron_sync()
 
     assert [r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()] == [
-        "absurd:s:default:a",
-        "absurd:s:default:b",
+        "_dj:s:default:a",
+        "_dj:s:default:b",
     ]
     assert ScheduledTask.objects.filter(source="s", alias="default").count() == 2
 
@@ -120,7 +120,7 @@ def test_reconcile_admin_rows_is_idempotent(
     jobs = ScheduledTask.pg_cron.get_managed_jobs(source="a")
     assert len(jobs) == 1
     jobname, schedule, _, active = jobs[0]
-    assert jobname == "absurd:a:default:seeded"
+    assert jobname == "_dj:a:default:seeded"
     assert schedule == "0 3 * * *"
     assert active is True
 
@@ -177,7 +177,7 @@ def test_reconcile_tears_down_when_scheduler_switches_to_beat(
     )
     reconcile_crons_after_migrate(sender=apps.get_app_config("django_absurd_pg_cron"))
     assert [r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()] == [
-        "absurd:s:default:a"
+        "_dj:s:default:a"
     ]
 
     settings.TASKS = build_beat_tasks(
@@ -272,7 +272,7 @@ def test_migrate_provisions_queues_and_reconciles_crons(
 
     assert set(get_absurd_client().list_queues()) == {"default", "other", "reports"}
     assert [r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()] == [
-        "absurd:s:default:a"
+        "_dj:s:default:a"
     ]
     assert ScheduledTask.objects.filter(source="s", alias="default").count() == 1
 

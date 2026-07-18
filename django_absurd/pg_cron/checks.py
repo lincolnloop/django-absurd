@@ -25,7 +25,7 @@ E007_HINT_PG_CRON_ALIAS = (
 )
 E007_HINT_PG_CRON_JOBNAME = (
     "Shorten the schedule name or backend alias so the composed job name"
-    " (absurd:s:<alias>:<name>) fits within 63 bytes."
+    " (_dj:s:<alias>:<name>) fits within 63 bytes."
 )
 
 

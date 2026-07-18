@@ -9,7 +9,7 @@ def _clear_pg_cron_jobs(
     request: pytest.FixtureRequest,
 ) -> Iterator[None]:
     """Unschedule every pg_cron job after the test — the test DB is ours, so blow the
-    whole ``cron.job`` catalog away rather than namespacing to ``absurd:%``. Set-based
+    whole ``cron.job`` catalog away rather than namespacing to ``_dj:%``. Set-based
     via cron.unschedule (pg_cron's supported API — not a raw DELETE/TRUNCATE, which
     would desync the launcher). Skips tests without the ``django_db`` marker (they
     can't commit cron jobs, so there is nothing to unschedule).
