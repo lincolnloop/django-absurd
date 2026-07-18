@@ -273,7 +273,13 @@ def build_entity_admin(
         run_model = build_admin_model(
             next(s for s in ADMIN_ENTITY_SPECS if s.name == "runs")
         )
-        extra["inlines"] = [build_run_inline(run_model)]
+        checkpoint_model = build_admin_model(
+            next(s for s in ADMIN_ENTITY_SPECS if s.name == "checkpoints")
+        )
+        extra["inlines"] = [
+            build_run_inline(run_model),
+            build_checkpoint_inline(checkpoint_model),
+        ]
         extra["fieldsets"] = TASK_FIELDSETS
         # Most recently active first: by run start, then enqueue time (both real
         # datetime columns, so the changelist shows the sort indicator and sorts on
@@ -327,9 +333,17 @@ RUN_INLINE_FIELDS = (
     "attempt",
     "state",
     "claimed_by",
+    "available_at",
     "started_at",
     "completed_at",
     "failed_at",
+)
+
+CHECKPOINT_INLINE_FIELDS = (
+    "checkpoint_name",
+    "status",
+    "state",
+    "updated_at",
 )
 
 
@@ -373,6 +387,44 @@ def build_run_inline(
     run_model: "type[Model]",
 ) -> "type[admin.TabularInline[t.Any, t.Any]]":
     return type("RunInline", (ReadOnlyRunInline,), {"model": run_model})
+
+
+class ReadOnlyCheckpointInline(_TabularInlineBase):
+    fk_name = "task"
+    extra = 0
+    can_delete = False
+    show_change_link = True  # drill into the full checkpoint detail
+    ordering = ("checkpoint_name",)
+    fields = CHECKPOINT_INLINE_FIELDS
+    readonly_fields = CHECKPOINT_INLINE_FIELDS
+
+    def has_add_permission(
+        self, request: "HttpRequest", obj: "models.Model | None" = None
+    ) -> bool:
+        return False
+
+    def has_change_permission(
+        self, request: "HttpRequest", obj: "models.Model | None" = None
+    ) -> bool:
+        return False
+
+    def has_delete_permission(
+        self, request: "HttpRequest", obj: "models.Model | None" = None
+    ) -> bool:
+        return False
+
+    def has_view_permission(
+        self, request: "HttpRequest", obj: "models.Model | None" = None
+    ) -> bool:
+        return True
+
+
+def build_checkpoint_inline(
+    checkpoint_model: "type[Model]",
+) -> "type[admin.TabularInline[t.Any, t.Any]]":
+    return type(
+        "CheckpointInline", (ReadOnlyCheckpointInline,), {"model": checkpoint_model}
+    )
 
 
 def autoregister_admin() -> None:

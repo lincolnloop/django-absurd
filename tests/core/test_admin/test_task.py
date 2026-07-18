@@ -11,6 +11,7 @@ from django.urls import reverse, reverse_lazy
 
 from django_absurd.admin_views import ADMIN_ENTITY_SPECS, build_admin_model
 from django_absurd.queues import get_absurd_client
+from tests.atasks import DURABLE_STEP_CALLS, asleep_for_once
 from tests.core.test_admin.support import (
     BACKEND,
     parse_html,
@@ -219,6 +220,32 @@ def test_detail_groups_fields_and_inlines_runs(
     assert href is not None
     assert isinstance(href, str)
     assert href.endswith("/change/")
+
+
+def test_detail_inlines_checkpoints_and_run_available_at(
+    client: Client, admin_user: User
+) -> None:
+    call_command("absurd_sync_queues")
+    DURABLE_STEP_CALLS["n"] = 0
+    asleep_for_once.enqueue("admin-k")
+    call_command("absurd_worker", queue="default", burst=True)  # suspends
+    client.force_login(admin_user)
+
+    task = find_task("default", "tests.atasks.asleep_for_once")
+    assert task is not None
+    soup = parse_html(client.get(change_url(task.natural_key)))
+
+    groups = soup.select(".inline-group")
+    assert len(groups) >= 2  # runs + checkpoints
+    assert soup.select_one('a[href*="/django_absurd/checkpoint/"]') is not None
+    names = {
+        cell.get_text(strip=True) for cell in soup.select(".field-checkpoint_name")
+    }
+    assert "bump" in names
+    assert soup.select_one(".field-state") is not None  # cached step state renders
+    available = soup.select_one(".field-available_at")
+    assert available is not None
+    assert available.get_text(strip=True) != ""  # sleeping run has a wake time
 
 
 def test_detail_renders_read_only(client: Client, admin_user: User) -> None:
