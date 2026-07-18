@@ -32,7 +32,7 @@ from django_absurd import DurableContext
 @task(takes_context=True)
 def process_order(context: DurableContext, order_id: int) -> None:
     context.step("charge", lambda: charge_card(order_id))
-    context.sleep_for("cooldown", 30)          # suspend for 30 seconds
+    context.sleep_for("cooldown", 5)           # suspend for ~5 seconds
     context.step("ship", lambda: ship(order_id))
 ```
 
@@ -49,7 +49,7 @@ from django_absurd import AsyncDurableContext
 @task(takes_context=True)
 async def process_order(context: AsyncDurableContext, order_id: int) -> None:
     await context.step("charge", lambda: charge_card(order_id))
-    await context.sleep_for("cooldown", 30)
+    await context.sleep_for("cooldown", 5)
     await context.step("ship", lambda: ship(order_id))
 ```
 
@@ -75,7 +75,7 @@ def process_order(context: DurableContext, order_id: int) -> None:
     def charge():
         return charge_card(order_id)
 
-    context.sleep_for("cooldown", 30)
+    context.sleep_for("cooldown", 5)
 
     @context.run_step("ship-item")        # explicit name
     def ship():
@@ -96,7 +96,9 @@ async def send_reminder(context: AsyncDurableContext, user_id: int) -> None:
     await context.step("send", lambda: send_email(user_id))
 ```
 
-`wake_at` may be a `datetime`, a Unix timestamp (`int` or `float`).
+`wake_at` may be a timezone-aware `datetime`, or a Unix timestamp (`int` or `float`).
+Pass a timezone-aware `datetime` — a naive `datetime` raises when compared against
+Absurd's timezone-aware clock.
 
 ### Reading headers
 

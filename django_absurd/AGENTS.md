@@ -642,6 +642,23 @@ from django_absurd import DurableContext, AsyncDurableContext
 | `headers`                         | yes  | yes     | Read-only mapping of headers passed at enqueue time       |
 | `run_step([name])` (decorator)    | yes  | —       | Convenience wrapper around `step`; derives name from `fn` |
 
+`sleep_until` `wake_at`: pass a timezone-aware `datetime` — a naive `datetime` raises
+when compared against Absurd's timezone-aware clock. A Unix timestamp (`int` or `float`)
+is always unambiguous.
+
+Annotating the context parameter unlocks editor autocomplete and mypy checking across
+all durable methods:
+
+```python
+from django_absurd import AsyncDurableContext
+
+
+@task(takes_context=True)
+async def workflow(context: AsyncDurableContext, order_id: int) -> None:
+    # editor autocompletes context.step / .sleep_for / .sleep_until; mypy checks them
+    await context.step("charge", charge)
+```
+
 ### Footguns
 
 **(a) Effectively-once, not exactly-once.** A step's result is persisted to the database
