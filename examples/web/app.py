@@ -3,9 +3,12 @@
 Enqueue add(a, b) from a form; the worker runs it; watch the result page and
 browse the read-only queue tables in the admin (auto-registered by django-absurd).
 
+Also demonstrates durable steps + sleep: enqueue a two-step workflow that
+suspends for ~5 seconds between steps.
+
     docker compose up
-    http://localhost:8000/         enqueue add(a, b)
-    http://localhost:8000/admin/   Tasks / Runs / … (superuser: admin / admin)
+    http://localhost:8000/         enqueue add(a, b) or a durable workflow
+    http://localhost:8000/admin/   Tasks / Runs / Checkpoints / … (admin / admin)
 
 psycopg (v3) backend required — DATABASES is overridden (nanodjango defaults to sqlite).
 """
@@ -23,6 +26,8 @@ from django.shortcuts import redirect
 from django.tasks import TaskResultStatus, default_task_backend, task
 from django.tasks.exceptions import TaskResultDoesNotExist
 from nanodjango import Django
+
+from django_absurd import DurableContext
 
 app = Django(
     ADMIN_URL="admin/",
@@ -61,9 +66,25 @@ def add(a: str, b: str) -> float:
     return float(a) + float(b)
 
 
+@task(takes_context=True)
+def durable_workflow(context: DurableContext, message: str) -> str:
+    """Two-step durable task: run a step, sleep 5s, run another step.
+
+    Demonstrates checkpoint persistence and durable sleep: check the admin's
+    Checkpoints and Runs pages to see the steps and the suspended state.
+    """
+    step1_result = context.step("prepare", lambda: f"prepared: {message}")
+    context.sleep_for("pause", 5)
+    return context.step("finish", lambda: f"done: {step1_result}")
+
+
 class AddForm(forms.Form):
     a = forms.CharField(label="A")
     b = forms.CharField(label="B")
+
+
+class WorkflowForm(forms.Form):
+    message = forms.CharField(label="Message", initial="hello")
 
 
 @app.route("/")
@@ -83,7 +104,37 @@ def index(request: HttpRequest) -> HttpResponse | str:
           {form.as_p()}
           <button type="submit">Add</button>
         </form>
+        <p>
+          <a href="/workflow/">Try the durable workflow</a>
+          — two checkpointed steps with a 5-second sleep between them.
+        </p>
         <p><a href="/admin/">Browse the queues in the admin</a> (admin / admin)</p>
+    """
+
+
+@app.route("/workflow/")
+def workflow_view(request: HttpRequest) -> HttpResponse | str:
+    if request.method == "POST":
+        form = WorkflowForm(request.POST)
+        if form.is_valid():
+            result = durable_workflow.enqueue(**form.cleaned_data)
+            return redirect(f"/tasks/{result.id}/")
+    else:
+        form = WorkflowForm()
+    return f"""
+        <h1>Durable workflow</h1>
+        <p>
+          Enqueues a two-step workflow: <em>prepare</em>, sleep 5s,
+          <em>finish</em>. While sleeping, check
+          <a href="/admin/django_absurd/run/">Runs</a> and
+          <a href="/admin/django_absurd/checkpoint/">Checkpoints</a> in the admin.
+        </p>
+        <form method="post">
+          <input type="hidden" name="csrfmiddlewaretoken" value="{get_token(request)}">
+          {form.as_p()}
+          <button type="submit">Run workflow</button>
+        </form>
+        <p><a href="/">Back</a></p>
     """
 
 

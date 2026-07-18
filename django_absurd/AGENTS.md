@@ -572,6 +572,137 @@ checking it. Only do this when the existing `absurd` schema exactly matches the 
 django-absurd targets (`django_absurd.ABSURD_SCHEMA_VERSION`) — a mismatch causes
 runtime failures Django cannot detect. Verify the versions line up before faking.
 
+## Durable steps & sleep
+
+Use `takes_context=True` to receive a `DurableContext` (sync) or `AsyncDurableContext`
+(async) in your task. Both expose the Absurd SDK's durable primitives: `step`,
+`sleep_for`, `sleep_until`, and `heartbeat`. The first parameter of a
+`takes_context=True` task must be named `context` (Django requirement).
+
+### Sync
+
+```python
+from django.tasks import task
+from django_absurd import DurableContext
+
+
+@task(takes_context=True)
+def process_order(context: DurableContext, order_id: int) -> None:
+    context.step("charge", lambda: charge_card(order_id))
+    context.sleep_for("cooldown", 5)          # suspend for 5 seconds
+    context.step("ship", lambda: ship(order_id))
+```
+
+`context.run_step` is a convenience decorator alternative to `context.step`:
+
+```python
+@task(takes_context=True)
+def process_order(context: DurableContext, order_id: int) -> None:
+    @context.run_step
+    def charge():
+        return charge_card(order_id)           # step name derived from function name
+
+    context.sleep_for("cooldown", 5)
+
+    @context.run_step("ship-item")             # explicit name
+    def ship():
+        ship(order_id)
+```
+
+### Async
+
+```python
+from django.tasks import task
+from django_absurd import AsyncDurableContext
+
+
+@task(takes_context=True)
+async def process_order(context: AsyncDurableContext, order_id: int) -> None:
+    await context.step("charge", lambda: charge_card(order_id))
+    await context.sleep_for("cooldown", 5)
+    await context.step("ship", lambda: ship(order_id))
+```
+
+### Import
+
+Both context classes are exported from the package root:
+
+```python
+from django_absurd import DurableContext, AsyncDurableContext
+```
+
+### API reference
+
+| Method / property                 | Sync | Async   | What it does                                              |
+| --------------------------------- | ---- | ------- | --------------------------------------------------------- |
+| `step(name, fn)`                  | yes  | `await` | Run `fn()`, checkpoint the result; skip on replay         |
+| `sleep_for(step_name, duration)`  | yes  | `await` | Suspend the task for `duration` seconds                   |
+| `sleep_until(step_name, wake_at)` | yes  | `await` | Suspend until a `datetime`, Unix timestamp, or float      |
+| `heartbeat(seconds=None)`         | yes  | `await` | Extend the claim timeout (keep the run alive)             |
+| `headers`                         | yes  | yes     | Read-only mapping of headers passed at enqueue time       |
+| `run_step([name])` (decorator)    | yes  | —       | Convenience wrapper around `step`; derives name from `fn` |
+
+### Footguns
+
+**(a) Effectively-once, not exactly-once.** A step's result is persisted to the database
+after `fn` returns, on a separate connection. In the window between `fn` completing and
+the checkpoint being written, a crash re-runs the step. Design side effects to be
+idempotent (for example, use `idempotency_key` on downstream enqueues, or make database
+writes upserts).
+
+**(b) Deterministic naming and order.** Step names and the order of `step`/`sleep` calls
+must be **stable across replays** — Absurd uses them to locate the right checkpoint on
+resume. `step` and `sleep_for`/`sleep_until` share one checkpoint namespace and counter;
+inserting, removing, or reordering calls to either corrupts the replay. Deploy
+incompatible changes by retiring the old task and introducing a new one.
+
+**(c) JSON-serializable step returns.** Step results are persisted with `json.dumps`.
+Arbitrary Python objects (sets, custom classes, `datetime`) cannot round-trip. `tuple`
+values become `list` on replay — do not pattern-match on type.
+
+**(d) Never swallow `SuspendTask` or `CancelledTask`.** Absurd uses these exceptions
+internally to suspend and cancel runs. If you have a bare `except Exception` (or
+broader) inside a step's `fn`, re-raise them:
+
+```python
+from absurd_sdk import SuspendTask, CancelledTask
+
+
+def my_fn():
+    try:
+        ...
+    except (SuspendTask, CancelledTask):
+        raise
+    except Exception:
+        ...
+```
+
+**(e) Long steps must beat `claim_timeout`.** By default a run must complete within
+`claim_timeout` seconds (default 120). A step that runs longer than that causes the run
+to be re-claimed and replayed from the last checkpoint. Either keep steps short (break
+long work into smaller named steps) or call `context.heartbeat()` periodically inside
+long-running steps to extend the claim:
+
+```python
+@task(takes_context=True)
+def process_batch(context: DurableContext, batch_id: int) -> None:
+    def long_fn():
+        for row in big_result_set:
+            process(row)
+            context.heartbeat()   # extend the claim on each iteration
+
+    context.step("process", long_fn)
+```
+
+**(f) Absurd backend only.** `context.step`, `sleep_for`, and `sleep_until` are
+Absurd-specific. A `takes_context=True` task using these methods will raise at runtime
+under any other Django task backend that does not provide a `DurableContext` /
+`AsyncDurableContext`.
+
+**(g) Sleep resume re-claims the same run.** When a sleeping task wakes, Absurd
+re-claims the original run — the attempt counter does **not** increment. The wake is not
+a retry.
+
 ## Notes
 
 - Migrations are offline — the schema comes only from the pinned Absurd version shipped
