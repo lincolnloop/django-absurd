@@ -394,7 +394,7 @@ class ReadOnlyCheckpointInline(_TabularInlineBase):
     extra = 0
     can_delete = False
     show_change_link = True  # drill into the full checkpoint detail
-    ordering = ("checkpoint_name",)
+    ordering = ("updated_at",)  # completion order — matches the task's code/step order
     fields = CHECKPOINT_INLINE_FIELDS
     readonly_fields = CHECKPOINT_INLINE_FIELDS
 
