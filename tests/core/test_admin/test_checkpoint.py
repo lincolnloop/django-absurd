@@ -9,7 +9,7 @@ from django.db import connections
 from django.test import Client
 from django.urls import reverse, reverse_lazy
 
-from tests.core.test_admin.support import parse_html, result_rows
+from tests.core.test_admin.utils import parse_html, result_rows
 
 if t.TYPE_CHECKING:
     from bs4 import Tag

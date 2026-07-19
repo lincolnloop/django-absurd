@@ -16,9 +16,9 @@ from tests.atasks import (
     areport_attempt,
     asleeper,
 )
-from tests.core.test_worker import get_task_result, run_absurd_worker
 from tests.models import Payload
 from tests.tasks import create_payload, echo  # sync ORM task + sync echo
+from tests.utils import get_task_result, run_absurd_worker
 
 pytestmark = pytest.mark.django_db(transaction=True)
 

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 import psycopg
 import psycopg.errors
-from absurd_sdk import AsyncAbsurd
+from absurd_sdk import AsyncAbsurd, CancelledTask, FailedTask, SuspendTask
 from django.core.exceptions import ImproperlyConfigured
 from django.db import close_old_connections, connections
 from django.tasks import Task, TaskContext, TaskResult, TaskResultStatus
@@ -20,6 +20,7 @@ from django.utils.module_loading import import_string
 
 from django_absurd.backends import AbsurdBackend
 from django_absurd.connection import register_jsonb_loader, validate_backend
+from django_absurd.context import WORKER_LOOP
 from django_absurd.scheduler import run_beat
 
 logger = logging.getLogger("django_absurd")
@@ -201,6 +202,7 @@ def build_handler(
     task: "Task[t.Any, t.Any]",
 ) -> t.Callable[[t.Any, t.Any], t.Awaitable[t.Any]]:
     async def handler(params: t.Any, ctx: t.Any) -> t.Any:
+        WORKER_LOOP.set(asyncio.get_running_loop())
         args = params.get("args", [])
         kwargs = params.get("kwargs", {})
         attempt = read_sdk_attempt(ctx)
@@ -230,9 +232,16 @@ def build_handler(
                     finally:
                         close_old_connections()
 
-                result = await asyncio.get_running_loop().run_in_executor(
-                    None, call_sync
-                )
+                result = await asyncio.to_thread(call_sync)
+        except (SuspendTask, CancelledTask, FailedTask) as exc:
+            logger.info(
+                "django-absurd task received %s: name=%s task_id=%s attempt=%d",
+                type(exc).__name__,
+                task.module_path,
+                ctx.task_id,
+                attempt,
+            )
+            raise
         except Exception:
             duration = time.monotonic() - start
             logger.exception(

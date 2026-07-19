@@ -47,6 +47,34 @@ is at-least-once by design — there is no atomicity between a handler's own wri
 Absurd marking the run complete — so handlers must tolerate re-execution (idempotency
 keys exist for this).
 
+## Durable execution: steps & sleep
+
+Absurd's durable primitives — checkpointed steps and durable sleep (a task suspends and
+resumes later, replaying from its last checkpoint) — are reached through an
+**accessor**, not by enriching the context object the task framework hands the task. The
+tempting shape (subclass the framework's task-context and add the durable methods) was
+tried and rejected: the framework's typed contract promises the handler a _base_
+context, and substituting a narrower subtype is unsound — it forces a permanent
+type-suppression on every typed task and quietly steps outside the framework's contract.
+Instead the durable context is fetched on demand from the SDK's own current-context
+handle, leaving the framework's context exactly as the framework defines it. Nothing to
+reconcile, nothing to suppress.
+
+There are two accessors — one sync, one async — and that split is a direct consequence
+of running **one async worker that also serves synchronous tasks**. A sync task runs off
+the event loop (in a thread), so it can't await the async engine context; its durable
+calls bridge back to the loop. Native, bridge-free durable calls for both task kinds
+would require two workers (one sync, one async) with the tasks routed between them —
+deliberate operational cost we declined. One async worker plus a contained bridge keeps
+deployment to a single process; the bridge is an internal detail users never see.
+
+Steps are **effectively-once, not exactly-once**: a step's checkpoint is persisted
+_after_ its function returns, on a connection that can never be atomic with the task's
+own writes, so a crash between the side effect and the checkpoint re-runs that step.
+This is the load-bearing thing a task author must know — side effects inside steps still
+need to tolerate re-execution. Teaching an absolute "runs once" guarantee would breed
+exactly the wrong code.
+
 ## Recurring scheduling
 
 Recurring tasks are declared in settings and driven by an in-process beat that wakes on

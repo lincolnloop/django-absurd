@@ -8,7 +8,7 @@ from django.test import Client
 from django.urls import reverse, reverse_lazy
 
 from django_absurd.models import Run
-from tests.core.test_admin.support import parse_html, result_rows, seed_mixed
+from tests.core.test_admin.utils import parse_html, result_rows, seed_mixed
 from tests.tasks import add
 
 if t.TYPE_CHECKING:

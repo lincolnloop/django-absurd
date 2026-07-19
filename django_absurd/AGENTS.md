@@ -572,6 +572,149 @@ checking it. Only do this when the existing `absurd` schema exactly matches the 
 django-absurd targets (`django_absurd.ABSURD_SCHEMA_VERSION`) — a mismatch causes
 runtime failures Django cannot detect. Verify the versions line up before faking.
 
+## Workflows
+
+Absurd calls these primitives **Steps (Checkpoints)** and **Sleep** — see
+[Absurd — Concepts](https://earendil-works.github.io/absurd/concepts/). Call the
+matching accessor **inside** a running task to reach them. Both are orthogonal to
+Django's `TaskContext` — you do **not** need `takes_context=True` (add that only if you
+also want `context.task_result`/`.attempt`).
+
+```python
+from django_absurd import aget_absurd_context, get_absurd_context
+```
+
+Pick the accessor by task kind — each returns one concrete, fully-typed context, so
+there is no cast and no union to narrow:
+
+- **Sync task → `get_absurd_context()`** returns `django_absurd.AbsurdTaskContext`, a
+  thin bridge mirroring the SDK's sync signatures (no `await`); it also carries
+  `run_step` (sync only).
+- **Async task → `aget_absurd_context()`** returns the SDK's own
+  `absurd_sdk.AsyncTaskContext` (a py.typed object) — pure passthrough, you `await` its
+  methods.
+
+Called outside a running Absurd task, either accessor raises `RuntimeError`.
+
+### Steps (checkpoints)
+
+`context.step(name, fn)` runs `fn()`, persists the result as a checkpoint, and skips it
+on replay — the core of durable execution. Step names must be deterministic and stable
+across replays; Absurd uses them to locate the right checkpoint on resume.
+
+→
+[Absurd — Concepts: Steps (Checkpoints)](https://earendil-works.github.io/absurd/concepts/#steps-checkpoints)
+
+```python
+from django.tasks import task
+from django_absurd import get_absurd_context
+
+
+@task
+def process_order(order_id: int) -> None:
+    context = get_absurd_context()
+    context.step("charge", lambda: charge_card(order_id))
+    context.step("ship", lambda: ship(order_id))
+```
+
+`context.run_step` is a convenience decorator alternative to `context.step` (sync only):
+
+```python
+@task
+def process_order(order_id: int) -> None:
+    context = get_absurd_context()
+
+    @context.run_step
+    def charge():
+        return charge_card(order_id)           # step name derived from function name
+
+    @context.run_step("ship-item")             # explicit name
+    def ship_item():
+        return ship(order_id)
+```
+
+The async `step`'s `fn` must return an awaitable — pass an `async def`, not a plain
+lambda (a sync lambda returns a non-awaitable and raises `TypeError`):
+
+```python
+from django.tasks import task
+from django_absurd import aget_absurd_context
+
+
+@task
+async def process_order(order_id: int) -> None:
+    context = aget_absurd_context()
+
+    async def charge():
+        return await charge_card(order_id)
+
+    await context.step("charge", charge)
+
+    async def ship_order():
+        return await ship(order_id)
+
+    await context.step("ship", ship_order)
+```
+
+For long-running steps, call `context.heartbeat()` periodically to extend the claim
+timeout and keep the run alive.
+
+### Sleep
+
+`context.sleep_for(step_name, duration)` suspends the task for `duration` seconds.
+`context.sleep_until(step_name, wake_at)` suspends until a specific moment. Both are
+checkpointed steps — the step name is required and must be stable across replays.
+
+→ [Absurd — Concepts: Sleep](https://earendil-works.github.io/absurd/concepts/#sleep)
+
+```python
+@task
+def process_order(order_id: int) -> None:
+    context = get_absurd_context()
+    context.step("charge", lambda: charge_card(order_id))
+    context.sleep_for("cooldown", 5)          # suspend for 5 seconds
+    context.step("ship", lambda: ship(order_id))
+```
+
+`sleep_until` `wake_at`: pass a timezone-aware `datetime` — a naive `datetime` raises
+when compared against Absurd's timezone-aware clock. A Unix timestamp (`int` or `float`)
+is always unambiguous. Sleep resume re-claims the same run — the attempt counter does
+not increment.
+
+### API reference
+
+| Method / property                 | Sync | Async   | What it does                                              |
+| --------------------------------- | ---- | ------- | --------------------------------------------------------- |
+| `step(name, fn)`                  | yes  | `await` | Run `fn()`, checkpoint the result; skip on replay         |
+| `sleep_for(step_name, duration)`  | yes  | `await` | Suspend the task for `duration` seconds                   |
+| `sleep_until(step_name, wake_at)` | yes  | `await` | Suspend until a `datetime`, Unix timestamp, or float      |
+| `heartbeat(seconds=None)`         | yes  | `await` | Extend the claim timeout (keep the run alive)             |
+| `headers`                         | yes  | yes     | Read-only mapping of headers passed at enqueue time       |
+| `run_step([name])` (decorator)    | yes  | —       | Convenience wrapper around `step`; derives name from `fn` |
+
+### Caveats
+
+**Effectively-once, not exactly-once.** A step's result is persisted to the database
+after `fn` returns, on a separate connection. In the window between `fn` completing and
+the checkpoint being written, a crash re-runs the step. Design side effects to be
+idempotent (for example, use `idempotency_key` on downstream enqueues, or make database
+writes upserts).
+
+**Don't catch-all `except` in a task.** Absurd suspends and cancels runs via
+control-flow exceptions raised inside `step`/`sleep_for`/`sleep_until`. A bare `except:`
+or `except Exception:` around a durable call swallows them and silently breaks
+suspension — let them propagate.
+
+**Absurd backend only.** `get_absurd_context()` / `aget_absurd_context()` (and
+`step`/`sleep_for`/`sleep_until` on the returned context) are Absurd-specific. Calling
+them under any other Django task backend — where the Absurd runtime context is never set
+— raises `RuntimeError`.
+
+Absurd's durable-execution rules also apply — deterministic step naming/order,
+JSON-serializable step return values, and finishing a step within `claim_timeout` (or
+calling `context.heartbeat()`); see
+[Absurd — Concepts](https://earendil-works.github.io/absurd/concepts/).
+
 ## Notes
 
 - Migrations are offline — the schema comes only from the pinned Absurd version shipped

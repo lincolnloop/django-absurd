@@ -4,6 +4,9 @@ Demonstrates enqueue + result with django-absurd and nanodjango.
 
 - Submit `add(a, b)` via a form; the worker picks it up and stores the result.
 - Watch the task status page auto-refresh until the result appears.
+- Run an order-fulfillment workflow mirroring
+  [Absurd's headline example](https://github.com/earendil-works/absurd#readme) (charge →
+  reserve inventory → wait → notify) to see Steps (checkpoints) and Sleep.
 - Browse queue tables in the auto-registered admin.
 
 django-absurd is installed from the local checkout so the demo runs against this

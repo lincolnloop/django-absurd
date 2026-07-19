@@ -35,6 +35,9 @@ duplicate that material here.
 ## Testing conventions
 
 - pytest, **function-based only** (never class-based).
+- **Non-fixture test helpers live in a `utils.py`** module (never `support.py` or other
+  invented names) — e.g. `tests/utils.py`, `tests/core/test_admin/utils.py`,
+  `tests/pg_cron/utils.py`. Import the module (`from tests import utils`) and qualify.
 - **Shared fixtures live in the parent `tests/conftest.py`**, inherited by all three
   suites via `--confcutdir=..` in each suite's `pytest.toml` (each suite's rootdir is
   its own dir, so without `confcutdir` a parent conftest isn't discovered). Do NOT

@@ -1,11 +1,15 @@
+import time
 import typing as t
 
 from absurd_sdk import CancellationPolicy, RetryStrategy
 from django.contrib.auth.models import Group
 from django.tasks import TaskContext, task
 
+from django_absurd import get_absurd_context
 from django_absurd.params import absurd_default_params
 from tests.models import Payload
+
+SYNC_STEP_CALLS: dict[str, int] = {"n": 0}
 
 
 @task
@@ -93,3 +97,48 @@ def cancellable() -> t.Never:
 def fully_specced() -> t.Never:
     msg = "path-resolved for its decorator; never run"
     raise NotImplementedError(msg)
+
+
+@task
+def sstep_echo(value: str) -> str:
+    return get_absurd_context().step("echo", lambda: value)
+
+
+@task
+def scoverage() -> dict[str, t.Any]:
+    context = get_absurd_context()
+    context.heartbeat()
+    tenant = context.headers.get("tenant")
+
+    @context.run_step
+    def bare() -> str:
+        return "bare-val"
+
+    @context.run_step()
+    def derived() -> str:
+        return "derived-val"
+
+    @context.run_step("custom")
+    def named() -> str:
+        return "named-val"
+
+    return {"tenant": tenant, "bare": bare, "derived": derived, "named": named}
+
+
+@task
+def ssleep_for_once(key: str) -> int:
+    context = get_absurd_context()
+
+    def bump() -> int:
+        SYNC_STEP_CALLS["n"] += 1
+        return SYNC_STEP_CALLS["n"]
+
+    n = context.step("bump", bump)
+    context.sleep_for("nap", 1.5)
+    return n
+
+
+@task
+def ssleep_until_once(key: str) -> str:
+    get_absurd_context().sleep_until("nap", time.time() + 1.5)
+    return "woke"

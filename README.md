@@ -59,12 +59,11 @@ result = add.enqueue(2, 3)  # returns a TaskResult; the worker runs it
 
 ## Documentation
 
-- **[Integration guide](django_absurd/AGENTS.md)** — full configuration and `OPTIONS`,
-  workers, task parameters, retrieving results, admin introspection, querying queue
-  state with the ORM, deployment notes, and adopting an existing Absurd database.
-  Includes
-  [scheduling recurring tasks](django_absurd/AGENTS.md#scheduling-recurring-tasks) (beat
-  and pg_cron schedulers).
+- **[Documentation](docs/web/index.md)** — full configuration and `OPTIONS`, workers,
+  task parameters, retrieving results, admin introspection, querying queue state with
+  the ORM, deployment notes, and adopting an existing Absurd database. Includes
+  [scheduling recurring tasks](docs/web/cron-jobs.md) (beat and pg_cron schedulers) and
+  [Steps (checkpoints) & Sleep](docs/web/workflows.md).
 - **[Runnable examples](examples/)** — three dockerized nanodjango demos (`web`
   enqueue+result, `beat`, and `pg_cron`), each with one `docker compose up`.
 

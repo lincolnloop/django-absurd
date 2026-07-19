@@ -1,26 +1,23 @@
 import asyncio
 import datetime as dt
 import logging
-import typing as t
 
-import psycopg
 import pytest
-from absurd_sdk import Absurd, TaskResultSnapshot
 from django.contrib.auth.models import Group
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command, load_command_class
 from django.core.management.base import CommandError
-from django.db import connection, connections
+from django.db import connection
 from pytest_django.fixtures import SettingsWrapper
 
 from django_absurd.backends import AbsurdBackend, get_absurd_backends
-from django_absurd.connection import register_jsonb_loader
 from django_absurd.models import Queue
 from django_absurd.queues import get_absurd_client
 from django_absurd.worker import WorkerOptions, aworker_client, run_blocking_worker
 from tests.atasks import aecho
 from tests.jobs import record_from_jobs
 from tests.tasks import boom, make_group, report_args, report_attempt, routed
+from tests.utils import get_task_result, run_absurd_worker
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -28,25 +25,6 @@ pytestmark = pytest.mark.django_db(transaction=True)
 def backend() -> AbsurdBackend:
     backends = get_absurd_backends()
     return backends["default"]
-
-
-def run_absurd_worker(queue: str = "default", concurrency: int = 1) -> None:
-    """Run the absurd_worker management command in burst mode (drain then exit)."""
-    call_command("absurd_worker", queue=queue, burst=True, concurrency=concurrency)
-
-
-def get_task_result(
-    task_id: t.Any,
-    queue: str = "default",
-) -> TaskResultSnapshot | None:
-    raw_task_id = str(task_id).rsplit(":", 1)[-1]
-    params = connections["default"].get_connection_params()
-    conn = psycopg.connect(**params, autocommit=True)
-    try:
-        register_jsonb_loader(conn)
-        return Absurd(conn).fetch_task_result(raw_task_id, queue)
-    finally:
-        conn.close()
 
 
 def test_worker_client_uses_dedicated_connection() -> None:

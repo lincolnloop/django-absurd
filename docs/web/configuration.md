@@ -23,23 +23,23 @@ TASKS = {
 
 You declare queues in **one** place — never both:
 
-`QUEUES` (list) : Just the names. Use this when queues need no special policy.
+**`QUEUES` (list)** — just the names. Use this when queues need no special policy.
 
-    ```python
-    "QUEUES": ["default", "reports", "emails"]
-    ```
+```python
+"QUEUES": ["default", "reports", "emails"]
+```
 
-`OPTIONS["QUEUES"]` (map) : Names → per-queue policy
+**`OPTIONS["QUEUES"]` (map)** — names → per-queue policy
 ([`absurd_sdk.CreateQueueOptions`](https://earendil-works.github.io/absurd/sdks/python/)).
 Use this to set [retention](https://earendil-works.github.io/absurd/storage/)
 (`cleanup_ttl` / `cleanup_limit`).
 
-    ```python
-    "OPTIONS": {"QUEUES": {
-        "default": {},
-        "reports": {"cleanup_ttl": "7 days"},
-    }}
-    ```
+```python
+"OPTIONS": {"QUEUES": {
+    "default": {},
+    "reports": {"cleanup_ttl": "7 days"},
+}}
+```
 
 !!! note
 
