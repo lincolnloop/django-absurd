@@ -44,14 +44,10 @@ class CountStub:
         return self.n
 
 
-def make_count_stub(n: int) -> CountStub:
-    return CountStub(n)
-
-
 def test_bounded_paginator_clamps_count_to_cap() -> None:
-    over = BoundedCountPaginator(make_count_stub(ADMIN_COUNT_CAP + 500), per_page=20)
+    over = BoundedCountPaginator(CountStub(ADMIN_COUNT_CAP + 500), per_page=20)
     assert over.count == ADMIN_COUNT_CAP
-    under = BoundedCountPaginator(make_count_stub(7), per_page=20)
+    under = BoundedCountPaginator(CountStub(7), per_page=20)
     assert under.count == 7
 
 

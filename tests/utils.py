@@ -45,7 +45,7 @@ def make_tasks_settings(
     override for tests exercising a different catalog (e.g. an undeclared queue).
     """
     options: dict[str, t.Any] = {
-        "QUEUES": DECLARED_QUEUES if queues is None else queues,
+        "QUEUES": dict(DECLARED_QUEUES if queues is None else queues),
     }
     if schedule is not None:
         options["SCHEDULE"] = schedule

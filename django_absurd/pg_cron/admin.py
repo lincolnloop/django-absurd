@@ -140,6 +140,10 @@ class ScheduledTaskCreateForm(ScheduledTaskForm):
                 rehomed.setdefault(key, []).extend(messages)
             error = ValidationError(rehomed)
         if isinstance(error, t.Mapping):
+            # error carries per-field errors for multiple fields; BaseForm.add_error's
+            # own contract requires field=None here — pass the literal, not field
+            # (a caller passing both a field name and a Mapping error violates that
+            # contract; letting Django's own add_error raise on it isn't our job here).
             super().add_error(None, error)
         else:
             super().add_error(field, error)

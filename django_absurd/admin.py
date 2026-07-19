@@ -36,7 +36,8 @@ class BoundedCountPaginator(_PaginatorBase):
     @property
     def count(self) -> int:
         # Paginator.object_list is typed as a generic Protocol with no .count(); the
-        # admin always passes a QuerySet here.
+        # admin always passes something with a real .count() (a QuerySet in
+        # production; tests may stub it, per _SupportsPagination's own shape).
         qs = t.cast("QuerySet[t.Any]", self.object_list[: ADMIN_COUNT_CAP + 1])
         n: int = qs.count()
         return min(n, ADMIN_COUNT_CAP)
