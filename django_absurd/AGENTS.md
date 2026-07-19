@@ -147,8 +147,6 @@ System check IDs:
 - `absurd.E007` — invalid `SCHEDULE` entry (bad task path, bad cron expression, unknown
   key, non-serializable or wrong-shaped args/kwargs, or undeclared queue). See
   [Scheduling recurring tasks](#scheduling-recurring-tasks).
-- `absurd.E008` — `SCHEDULER="pg_cron"` is configured but `"django_absurd.pg_cron"` is
-  not in `INSTALLED_APPS`. See [pg_cron backend](#pg_cron-backend).
 - `absurd.E009` — `OPTIONS["DEFAULT_MAX_ATTEMPTS"]` is not an integer `>= 1`.
 - `absurd.E010` — invalid `CLEANUP` configuration (not a `{"schedule": …}` map, or
   unknown keys; cron grammar checked at `check` time for beat, at sync for pg_cron).
@@ -216,12 +214,13 @@ whole catalog, not just the served queue — and reports to stdout.
 
 ## Scheduling recurring tasks
 
-django-absurd supports two schedulers, selected per backend with `OPTIONS["SCHEDULER"]`:
+django-absurd supports two schedulers, selected by whether `"django_absurd.pg_cron"` is
+in `INSTALLED_APPS`:
 
-| Value       | Default | Description                                                      |
-| ----------- | ------- | ---------------------------------------------------------------- |
-| `"beat"`    | yes     | In-process beat; evaluates cron and enqueues via the normal path |
-| `"pg_cron"` | no      | Database-side; Postgres fires jobs directly via `pg_cron`        |
+| State                               | Scheduler   | Description                                                      |
+| ----------------------------------- | ----------- | ---------------------------------------------------------------- |
+| app absent (default)                | `"beat"`    | In-process beat; evaluates cron and enqueues via the normal path |
+| `"django_absurd.pg_cron"` installed | `"pg_cron"` | Database-side; Postgres fires jobs directly via `pg_cron`        |
 
 ### Declare schedules
 
@@ -232,7 +231,6 @@ TASKS = {
     "default": {
         "BACKEND": "django_absurd.backends.AbsurdBackend",
         "OPTIONS": {
-            # "SCHEDULER": "beat",   # default; omit for beat
             "SCHEDULE": {
                 "nightly-report": {
                     "task": "myapp.tasks.generate_report",  # dotted import path
@@ -300,8 +298,8 @@ scheduled time passes, that firing is skipped; the next firing proceeds on sched
 
 ### pg_cron backend
 
-Set `SCHEDULER = "pg_cron"` to let Postgres fire schedules directly — no beat process
-needed.
+Install `"django_absurd.pg_cron"` to let Postgres fire schedules directly — no beat
+process needed.
 
 **Prerequisites (operator-side — a migration cannot do these):**
 
@@ -321,10 +319,10 @@ extension as a superuser first so the migration no-ops cleanly. (Reversing it ru
 **Enabling:**
 
 Add `"django_absurd.pg_cron"` to `INSTALLED_APPS` **after** `"django_absurd"` — the
-opt-in app owns the projection table and wrapper function migrations and reconciles the
-`SCHEDULE` on `post_migrate`. Running `manage.py check` reports `absurd.E008` if
-`SCHEDULER="pg_cron"` is set but the app is absent, and `absurd.W003` if the app is
-present but ordered before `"django_absurd"`.
+opt-in app owns the projection table and wrapper function migrations, switches the
+backend's scheduler to `"pg_cron"`, and reconciles the `SCHEDULE` on `post_migrate`.
+Running `manage.py check` reports `absurd.W003` if the app is present but ordered before
+`"django_absurd"`.
 
 ```python
 INSTALLED_APPS = [
@@ -338,7 +336,6 @@ Then configure the scheduler:
 
 ```python
 OPTIONS = {
-    "SCHEDULER": "pg_cron",
     "SCHEDULE": {
         "nightly-report": {"task": "myapp.tasks.send_report", "cron": "0 2 * * *"},
     },
@@ -351,9 +348,8 @@ OPTIONS = {
 accept. This grammar is validated by the database (at sync for settings schedules, at
 save time for admin ones), not by `check`.
 
-Beat and pg_cron are **mutually exclusive** per backend: running `absurd_beat` or
-`absurd_worker --beat` against a backend with `SCHEDULER="pg_cron"` raises
-`CommandError`.
+Beat and pg_cron are **mutually exclusive**: running `absurd_beat` or
+`absurd_worker --beat` while `django_absurd.pg_cron` is installed raises `CommandError`.
 
 **Reconcile:**
 
@@ -455,7 +451,6 @@ Reconcile).
 - `args`/`kwargs` values that are not JSON-serializable
 - an `args` that is not a JSON array, or a `kwargs` that is not a JSON object
 - a `queue` that is not declared in `OPTIONS["QUEUES"]`
-- an unknown `SCHEDULER` value
 - (`pg_cron` only) schedule name containing characters outside `[A-Za-z0-9_-]`
 - (`pg_cron` only) composed job name (`_dj:s:<name>`) exceeding 63 bytes
 

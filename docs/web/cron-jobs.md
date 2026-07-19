@@ -76,8 +76,8 @@ skipped; on start it computes the next slot from _now_.
 
 ## Database-side: pg_cron
 
-With `SCHEDULER="pg_cron"`, Postgres fires the schedule directly — no beat process to
-run. django-absurd materialises each declared schedule into a
+Installing the `django_absurd.pg_cron` app makes Postgres fire the schedule directly —
+no beat process to run. django-absurd materialises each declared schedule into a
 [pg_cron](https://github.com/citusdata/pg_cron) job; your existing
 [workers](how-it-works.md#workers) pick up and run the tasks as usual.
 
@@ -93,7 +93,8 @@ pg_cron extension on your database is pg_cron's own concern — see
 INSTALLED_APPS = [
     # ...
     "django_absurd",
-    "django_absurd.pg_cron",   # must come after "django_absurd"
+    "django_absurd.pg_cron",   # must come after "django_absurd" — scheduling becomes
+                                # pg_cron the moment this app is installed
 ]
 ```
 
@@ -103,14 +104,13 @@ This app owns the projection table + wrapper-function migrations and reconciles 
 create it**; if it's already there (managed Postgres, or a superuser installed it) that
 step is a no-op and needs no special rights.
 
-**2. Point the backend at the pg_cron scheduler:**
+**2. Declare your `SCHEDULE`:**
 
 ```python title="settings.py"
 TASKS = {
     "default": {
         "BACKEND": "django_absurd.backends.AbsurdBackend",
         "OPTIONS": {
-            "SCHEDULER": "pg_cron",   # default is "beat"
             "SCHEDULE": {
                 "nightly-report": {
                     "task": "myapp.tasks.send_report",
@@ -142,9 +142,8 @@ that reconciles your `SCHEDULE` into pg_cron jobs. A settings-only `SCHEDULE` ch
 new migration file) is picked up on the next `migrate`, so "migrate on deploy" is all
 you need.
 
-Run `manage.py check` to catch misconfiguration early: `absurd.E008` if
-`SCHEDULER="pg_cron"` but `"django_absurd.pg_cron"` is missing from `INSTALLED_APPS`;
-`absurd.W003` if the app is ordered before `"django_absurd"`.
+Run `manage.py check` to catch misconfiguration early: `absurd.W003` if the app is
+ordered before `"django_absurd"`.
 
 Prefer to see it end-to-end first? The runnable
 [`examples/pg_cron/`](https://github.com/lincolnloop/django-absurd/tree/main/examples/pg_cron)
@@ -154,12 +153,12 @@ demos the beat scheduler).
 
 ### Schedule constraints
 
-**Cron grammar is pg_cron's own.** Under `SCHEDULER="pg_cron"` an expression is either a
-5-field cron **or** the interval form `<n> seconds` (1-59) — so sub-minute cadence works
-via `"30 seconds"`. This differs from beat's 6-field leading-seconds croniter syntax,
-which `pg_cron` does not accept. `pg_cron` (the database) validates the grammar — at
-sync for settings schedules, at save time for admin ones — so `manage.py check` does
-**not** grammar-check pg_cron entries.
+**Cron grammar is pg_cron's own.** Once `django_absurd.pg_cron` is installed, an
+expression is either a 5-field cron **or** the interval form `<n> seconds` (1-59) — so
+sub-minute cadence works via `"30 seconds"`. This differs from beat's 6-field
+leading-seconds croniter syntax, which `pg_cron` does not accept. `pg_cron` (the
+database) validates the grammar — at sync for settings schedules, at save time for admin
+ones — so `manage.py check` does **not** grammar-check pg_cron entries.
 
 **Naming.** `manage.py check` also reports `absurd.E007` for:
 
@@ -167,9 +166,9 @@ sync for settings schedules, at save time for admin ones — so `manage.py check
 - composed job name (`_dj:s:<name>`) exceeding 63 bytes (Postgres silently truncates
   longer names)
 
-**Beat and pg_cron are mutually exclusive per backend.** Setting `SCHEDULER="pg_cron"`
-and running `absurd_beat` (or `absurd_worker --beat`) against the same backend raises a
-`CommandError` — use one or the other.
+**Beat and pg_cron are mutually exclusive.** Running `absurd_beat` (or
+`absurd_worker --beat`) while `django_absurd.pg_cron` is installed raises a
+`CommandError` — install the app, or run beat, not both.
 
 ### Reconcile explicitly
 
@@ -181,9 +180,14 @@ python manage.py absurd_sync_crons
 ```
 
 The command is loud: it reports synced/pruned counts, and fails with a non-zero exit on
-error — a wrong `SCHEDULER` or a malformed `SCHEDULE` entry (missing `task`/`cron`)
-raises `CommandError`, while a missing extension or insufficient privilege surfaces as
-the underlying database error.
+error — a malformed `SCHEDULE` entry (missing `task`/`cron`) raises `CommandError`,
+while a missing extension or insufficient privilege surfaces as the underlying database
+error.
+
+**Uninstalling pg_cron.** If you remove `"django_absurd.pg_cron"` from `INSTALLED_APPS`,
+its `post_migrate` reconcile no longer runs, so nothing tears down existing jobs
+automatically. Run `manage.py absurd_sync_crons --teardown --noinput` **before**
+removing the app — not after — so it can still see and remove them.
 
 ### Authoring schedules in the admin
 

@@ -89,7 +89,6 @@ wrong. Fix what it reports rather than silencing it:
 | `absurd.E005` | `AbsurdRouter` missing from `DATABASE_ROUTERS`.                                                                                                                                            |
 | `absurd.E006` | `ENABLE_ADMIN` isn't a bool, or `ADMIN_SITE` doesn't resolve to `AdminSite`s.                                                                                                              |
 | `absurd.E007` | Invalid `SCHEDULE` entry (see [Cron Jobs](cron-jobs.md)).                                                                                                                                  |
-| `absurd.E008` | `SCHEDULER` is `pg_cron` but `django_absurd.pg_cron` is not in `INSTALLED_APPS` (see [Cron Jobs](cron-jobs.md)).                                                                           |
 | `absurd.E009` | `OPTIONS["DEFAULT_MAX_ATTEMPTS"]` is not an integer `>= 1`.                                                                                                                                |
 | `absurd.E010` | Invalid `CLEANUP` configuration (not a `{"schedule": …}` map, or unknown keys; cron grammar checked for beat, at sync for pg_cron) (see [Cleanup](cleanup.md#schedule-recurring-cleanup)). |
 | `absurd.W003` | (Warning) `django_absurd.pg_cron` is ordered before `django_absurd` in `INSTALLED_APPS` (see [Cron Jobs](cron-jobs.md)).                                                                   |
