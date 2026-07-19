@@ -1,4 +1,4 @@
-import typing as t
+import uuid
 
 import psycopg
 from absurd_sdk import Absurd, TaskResultSnapshot
@@ -13,8 +13,11 @@ def run_absurd_worker(queue: str = "default", concurrency: int = 1) -> None:
 
 
 def get_task_result(
-    task_id: t.Any, queue: str = "default"
+    task_id: str | uuid.UUID, queue: str = "default"
 ) -> TaskResultSnapshot | None:
+    # task_id is either a TaskResult.id ("queue:uuid" string) or a raw SpawnResult
+    # ["task_id"] — the latter is typed str by absurd_sdk's stub, but psycopg
+    # deserializes the uuid column to a real uuid.UUID at runtime.
     raw_task_id = str(task_id).rsplit(":", 1)[-1]
     params = connections["default"].get_connection_params()
     conn = psycopg.connect(**params, autocommit=True)

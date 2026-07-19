@@ -19,7 +19,14 @@ if t.TYPE_CHECKING:
 BACKEND = "django_absurd.backends.AbsurdBackend"
 
 
-def parse_html(response: t.Any) -> BeautifulSoup:
+class HasContent(t.Protocol):
+    """What parse_html actually needs — matches both django.http.HttpResponse and
+    the test client's private ``_MonkeyPatchedWSGIResponse``."""
+
+    content: bytes
+
+
+def parse_html(response: HasContent) -> BeautifulSoup:
     return BeautifulSoup(response.content, "html.parser")
 
 

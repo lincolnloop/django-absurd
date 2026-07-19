@@ -5,6 +5,7 @@ import json
 import typing as t
 
 import pytest
+from absurd_sdk import CreateQueueOptions
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.core.management import call_command
@@ -29,7 +30,7 @@ def get_change_url(pk: int) -> str:
 
 
 BACKEND = "django_absurd.backends.AbsurdBackend"
-QUEUES: dict[str, dict[str, t.Any]] = {
+QUEUES: dict[str, CreateQueueOptions] = {
     "default": {},
     "other": {},
     "reports": {},
@@ -50,7 +51,7 @@ VALID: dict[str, t.Any] = {
 
 def configure_pg_cron_backend(
     settings: SettingsWrapper,
-    schedule: dict[str, t.Any] | None = None,
+    schedule: dict[str, dict[str, object]] | None = None,
 ) -> None:
     """A pg_cron 'default' backend so model clean() resolves it (declared queues),
     and the check has a SCHEDULE to validate."""
@@ -93,7 +94,7 @@ def validate_from_system_check(
     """Subject: the system check over a pg_cron SCHEDULE. Return captured text or
     None."""
     fields = {**VALID, **kwargs}
-    entry: dict[str, t.Any] = {
+    entry: dict[str, object] = {
         "cron": fields["cron"],
         "task": fields["task"],
     }
@@ -138,7 +139,7 @@ def validate_from_admin_post(
         queue="default",
         cron=t.cast("str", VALID["cron"]),
     )
-    payload: dict[str, t.Any] = {
+    payload: dict[str, str] = {
         "task": fields["task"],
         "queue": fields["queue"],
         "cron": fields["cron"],
