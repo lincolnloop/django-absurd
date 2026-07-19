@@ -3,7 +3,7 @@ import typing as t
 import uuid
 
 import psycopg.errors
-from absurd_sdk import CreateQueueOptions
+from absurd_sdk import CreateQueueOptions, JsonValue
 from django.apps import apps
 from django.core.exceptions import ImproperlyConfigured
 from django.db import transaction
@@ -17,12 +17,31 @@ from django.utils.module_loading import import_string
 
 from django_absurd.admin_views import ADMIN_ENTITY_SPECS, build_queue_table_model
 from django_absurd.connection import build_absurd_client
-from django_absurd.params import AbsurdDefaultParams
+from django_absurd.params import AbsurdDefaultParams, SpawnKwargs
 
 if t.TYPE_CHECKING:
     from django.tasks.base import Task
 
 PG_CRON_APP_NAME = "django_absurd.pg_cron"
+
+
+class TaskParams(t.TypedDict):
+    """The positional/keyword args a task was enqueued with (JSON-serializable)."""
+
+    args: list[t.Any]
+    kwargs: dict[str, t.Any]
+
+
+class FailureReason(t.TypedDict):
+    """A failed run's serialized error, shaped by absurd_sdk's _serialize_error.
+
+    ``message`` is always present; ``name``/``traceback`` are only set when the
+    original error was an Exception (vs. e.g. a plain cancellation).
+    """
+
+    message: str
+    name: t.NotRequired[str]
+    traceback: t.NotRequired[str | None]
 
 
 class TaskModel(t.Protocol):
@@ -33,11 +52,11 @@ class TaskModel(t.Protocol):
     """
 
     task_name: str
-    params: dict[str, t.Any]
+    params: TaskParams
     enqueue_at: dt.datetime | None
     first_started_at: dt.datetime | None
     state: str
-    completed_payload: t.Any
+    completed_payload: JsonValue
     cancelled_at: dt.datetime | None
     last_attempt_run: uuid.UUID | None
 
@@ -48,7 +67,7 @@ class RunModel(t.Protocol):
     started_at: dt.datetime | None
     completed_at: dt.datetime | None
     failed_at: dt.datetime | None
-    failure_reason: dict[str, t.Any] | None
+    failure_reason: FailureReason | None
 
 
 class AbsurdBackendOptions(t.TypedDict, total=False):
@@ -86,7 +105,7 @@ class AbsurdBackend(BaseTaskBackend):
         spawn_params = kwargs.pop("absurd_spawn_params", None)
         defaults = getattr(task.func, "absurd_default_params", None)
         merged = build_merged_spawn_options(defaults, spawn_params)
-        max_attempts: int = merged.pop("max_attempts", self.default_max_attempts)
+        merged["max_attempts"] = merged.pop("max_attempts", self.default_max_attempts)
         try:
             # Savepoint so a misconfig DB error (below) rolls back only the spawn,
             # leaving an enclosing transaction.atomic() block usable.
@@ -95,7 +114,6 @@ class AbsurdBackend(BaseTaskBackend):
                     task.module_path,
                     {"args": list(args), "kwargs": dict(kwargs)},
                     queue=task.queue_name,
-                    max_attempts=max_attempts,
                     **merged,
                 )
         except (
@@ -126,7 +144,6 @@ class AbsurdBackend(BaseTaskBackend):
                     task.module_path,
                     {"args": list(args), "kwargs": dict(kwargs)},
                     queue=task.queue_name,
-                    max_attempts=max_attempts,
                     **merged,
                 )
         return TaskResult(
@@ -227,7 +244,7 @@ def build_task_result(
 ) -> "TaskResult[t.Any, t.Any]":
     queue, _ = decode_result_id(result_id)
     task_name: str = task.task_name
-    params: dict[str, t.Any] = task.params
+    params: TaskParams = task.params
     enqueue_at = task.enqueue_at
     first_started_at = task.first_started_at
     state: str = task.state
@@ -292,8 +309,8 @@ def get_absurd_backends() -> dict[str, "AbsurdBackend"]:
 def build_merged_spawn_options(
     defaults: AbsurdDefaultParams | None,
     per_call: AbsurdDefaultParams | None,
-) -> dict[str, t.Any]:
-    merged: dict[str, t.Any] = {}
+) -> SpawnKwargs:
+    merged: SpawnKwargs = {}
     if defaults is not None:
         merged.update(defaults.to_kwargs())
     if per_call is not None:

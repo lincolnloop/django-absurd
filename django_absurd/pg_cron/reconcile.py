@@ -6,6 +6,7 @@ ScheduledTask model."""
 
 import typing as t
 
+from absurd_sdk import CancellationPolicy, JsonObject, RetryStrategy
 from django.utils.module_loading import import_string
 
 from django_absurd.backends import AbsurdBackend, build_merged_spawn_options
@@ -17,6 +18,9 @@ from django_absurd.pg_cron.models import (
 )
 from django_absurd.queues import resolve_absurd_database
 from django_absurd.scheduler import get_cleanup_schedule, get_settings_schedules
+
+if t.TYPE_CHECKING:
+    from django.db.backends.utils import CursorWrapper
 
 # Absurd's OWN global cleanup job: reconcile schedules/unschedules exactly this
 # identity — the same jobname and command that absurd.enable_cron / `absurdctl cron
@@ -32,7 +36,7 @@ ABSURD_CLEANUP_JOB = "absurd_cleanup_all"
 CLEANUP_COMMAND = "select * from absurd.cleanup_all_queues(null::text);"
 
 
-def resolve_spawn_options(backend: AbsurdBackend, task_path: str) -> dict[str, t.Any]:
+def resolve_spawn_options(backend: AbsurdBackend, task_path: str) -> JsonObject:
     """Return the normalised spawn options dict for a scheduled task.
 
     Reproduces the enqueue path's option resolution exactly: task-decorator
@@ -68,17 +72,17 @@ def build_scheduled_fields(
     task = import_string(task_path)
     queue = queue_override or task.queue_name
     opts = resolve_spawn_options(backend, task_path)
+    retry_strategy = t.cast("RetryStrategy | None", opts.get("retry_strategy")) or {}
+    cancellation = t.cast("CancellationPolicy | None", opts.get("cancellation")) or {}
     return {
         "queue": queue,
         "max_attempts": opts.get("max_attempts"),
-        "retry_kind": (opts.get("retry_strategy") or {}).get("kind") or "",
-        "retry_base_seconds": (opts.get("retry_strategy") or {}).get("base_seconds"),
-        "retry_factor": (opts.get("retry_strategy") or {}).get("factor"),
-        "retry_max_seconds": (opts.get("retry_strategy") or {}).get("max_seconds"),
-        "cancellation_max_duration": (opts.get("cancellation") or {}).get(
-            "max_duration"
-        ),
-        "cancellation_max_delay": (opts.get("cancellation") or {}).get("max_delay"),
+        "retry_kind": retry_strategy.get("kind") or "",
+        "retry_base_seconds": retry_strategy.get("base_seconds"),
+        "retry_factor": retry_strategy.get("factor"),
+        "retry_max_seconds": retry_strategy.get("max_seconds"),
+        "cancellation_max_duration": cancellation.get("max_duration"),
+        "cancellation_max_delay": cancellation.get("max_delay"),
         "headers": opts.get("headers"),
         "idempotency_key": opts.get("idempotency_key") or "",
     }
@@ -134,7 +138,7 @@ def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:
     return created, pruned
 
 
-def reconcile_cleanup_job(cur: t.Any, backend: AbsurdBackend) -> None:
+def reconcile_cleanup_job(cur: "CursorWrapper", backend: AbsurdBackend) -> None:
     """Schedule or unschedule Absurd's global cleanup job from OPTIONS["CLEANUP"].
 
     Stateless (no ScheduledTask row). This targets Absurd's OWN global cleanup job —
@@ -162,7 +166,7 @@ def reconcile_cleanup_job(cur: t.Any, backend: AbsurdBackend) -> None:
         unschedule_cleanup_job(cur)
 
 
-def unschedule_cleanup_job(cur: t.Any) -> None:
+def unschedule_cleanup_job(cur: "CursorWrapper") -> None:
     """Remove Absurd's global cleanup job, tolerating an already-gone job."""
     cur.execute("select jobid from cron.job where jobname = %s", [ABSURD_CLEANUP_JOB])
     prune_pg_cron_jobs(cur, [jobid for (jobid,) in cur.fetchall()])
