@@ -572,14 +572,32 @@ checking it. Only do this when the existing `absurd` schema exactly matches the 
 django-absurd targets (`django_absurd.ABSURD_SCHEMA_VERSION`) — a mismatch causes
 runtime failures Django cannot detect. Verify the versions line up before faking.
 
-## Durable steps & sleep
+## Durable workflows
 
-Use `takes_context=True` to receive a `AbsurdTaskContext` (sync) or
-`AsyncAbsurdTaskContext` (async) in your task. Both expose the Absurd SDK's durable
-primitives: `step`, `sleep_for`, `sleep_until`, and `heartbeat`. The first parameter of
-a `takes_context=True` task must be named `context` (Django requirement).
+Use `takes_context=True` to receive an `AbsurdTaskContext` (sync) or
+`AsyncAbsurdTaskContext` (async) in your task. The first parameter of a
+`takes_context=True` task must be named `context` (Django requirement).
 
-### Sync
+Both context classes are exported from the package root:
+
+```python
+from django_absurd import AbsurdTaskContext, AsyncAbsurdTaskContext
+```
+
+Annotating the context parameter unlocks editor autocomplete and mypy checking across
+all durable methods. Strict-mypy users who annotate `context: AbsurdTaskContext` add
+`# type: ignore[arg-type]` on the `@task` decorator — a django-stubs limitation
+(function-param contravariance: the stub types `@task` as passing a base `TaskContext`),
+not a bug.
+
+### Steps (checkpoints)
+
+`context.step(name, fn)` runs `fn()`, persists the result as a checkpoint, and skips it
+on replay — the core of durable execution. Step names must be deterministic and stable
+across replays; Absurd uses them to locate the right checkpoint on resume.
+
+→
+[Absurd — Concepts: Steps (Checkpoints)](https://earendil-works.github.io/absurd/concepts/#steps-checkpoints)
 
 ```python
 from django.tasks import task
@@ -589,11 +607,10 @@ from django_absurd import AbsurdTaskContext
 @task(takes_context=True)
 def process_order(context: AbsurdTaskContext, order_id: int) -> None:
     context.step("charge", lambda: charge_card(order_id))
-    context.sleep_for("cooldown", 5)          # suspend for 5 seconds
     context.step("ship", lambda: ship(order_id))
 ```
 
-`context.run_step` is a convenience decorator alternative to `context.step`:
+`context.run_step` is a convenience decorator alternative to `context.step` (sync only):
 
 ```python
 @task(takes_context=True)
@@ -602,14 +619,10 @@ def process_order(context: AbsurdTaskContext, order_id: int) -> None:
     def charge():
         return charge_card(order_id)           # step name derived from function name
 
-    context.sleep_for("cooldown", 5)
-
     @context.run_step("ship-item")             # explicit name
     def ship_item():
         return ship(order_id)
 ```
-
-### Async
 
 The async `step`'s `fn` must return an awaitable — pass an `async def`, not a plain
 lambda (a sync lambda returns a non-awaitable and raises `TypeError`):
@@ -625,7 +638,6 @@ async def process_order(context: AsyncAbsurdTaskContext, order_id: int) -> None:
         return await charge_card(order_id)
 
     await context.step("charge", charge)
-    await context.sleep_for("cooldown", 5)
 
     async def ship_order():
         return await ship(order_id)
@@ -633,13 +645,29 @@ async def process_order(context: AsyncAbsurdTaskContext, order_id: int) -> None:
     await context.step("ship", ship_order)
 ```
 
-### Import
+For long-running steps, call `context.heartbeat()` periodically to extend the claim
+timeout and keep the run alive.
 
-Both context classes are exported from the package root:
+### Sleep
+
+`context.sleep_for(step_name, duration)` suspends the task for `duration` seconds.
+`context.sleep_until(step_name, wake_at)` suspends until a specific moment. Both are
+checkpointed steps — the step name is required and must be stable across replays.
+
+→ [Absurd — Concepts: Sleep](https://earendil-works.github.io/absurd/concepts/#sleep)
 
 ```python
-from django_absurd import AbsurdTaskContext, AsyncAbsurdTaskContext
+@task(takes_context=True)
+def process_order(context: AbsurdTaskContext, order_id: int) -> None:
+    context.step("charge", lambda: charge_card(order_id))
+    context.sleep_for("cooldown", 5)          # suspend for 5 seconds
+    context.step("ship", lambda: ship(order_id))
 ```
+
+`sleep_until` `wake_at`: pass a timezone-aware `datetime` — a naive `datetime` raises
+when compared against Absurd's timezone-aware clock. A Unix timestamp (`int` or `float`)
+is always unambiguous. Sleep resume re-claims the same run — the attempt counter does
+not increment.
 
 ### API reference
 
@@ -651,23 +679,6 @@ from django_absurd import AbsurdTaskContext, AsyncAbsurdTaskContext
 | `heartbeat(seconds=None)`         | yes  | `await` | Extend the claim timeout (keep the run alive)             |
 | `headers`                         | yes  | yes     | Read-only mapping of headers passed at enqueue time       |
 | `run_step([name])` (decorator)    | yes  | —       | Convenience wrapper around `step`; derives name from `fn` |
-
-`sleep_until` `wake_at`: pass a timezone-aware `datetime` — a naive `datetime` raises
-when compared against Absurd's timezone-aware clock. A Unix timestamp (`int` or `float`)
-is always unambiguous.
-
-Annotating the context parameter unlocks editor autocomplete and mypy checking across
-all durable methods:
-
-```python
-from django_absurd import AsyncAbsurdTaskContext
-
-
-@task(takes_context=True)
-async def workflow(context: AsyncAbsurdTaskContext, order_id: int) -> None:
-    # editor autocompletes context.step / .sleep_for / .sleep_until; mypy checks them
-    await context.step("charge", charge)
-```
 
 ### Footguns
 
@@ -697,8 +708,6 @@ def my_fn():
 **(f) Absurd backend only.** `context.step`, `sleep_for`, and `sleep_until` are
 Absurd-specific. A `takes_context=True` task using these methods will raise at runtime
 under any other Django task backend.
-
-**(g) Sleep resume re-claims the same run** — the attempt counter does not increment.
 
 Absurd's durable-execution rules also apply — deterministic step naming/order,
 JSON-serializable step return values, and finishing a step within `claim_timeout` (or
