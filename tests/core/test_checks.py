@@ -8,6 +8,8 @@ from django.db import connection, connections
 if t.TYPE_CHECKING:
     import pytest_django.fixtures
 
+from django_absurd.backends import get_absurd_backends
+
 pytestmark = pytest.mark.django_db(transaction=True)
 
 ABSURD = "django_absurd.backends.AbsurdBackend"
@@ -372,6 +374,15 @@ def test_invalid_cleanup_errors(
     assert E010_MSG in out
     assert E010_HINT in out
     assert "absurd.E010" in out
+
+
+def test_scheduler_defaults_to_beat(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+) -> None:
+    settings.TASKS = {
+        "default": {"BACKEND": ABSURD, "OPTIONS": {"QUEUES": {"default": {}}}}
+    }
+    assert get_absurd_backends()["default"].scheduler == "beat"
 
 
 @pytest.mark.parametrize("scheduler", ["beat", "pg_cron"])
