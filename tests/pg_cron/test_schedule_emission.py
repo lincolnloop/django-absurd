@@ -5,7 +5,7 @@ import pytest_django.fixtures
 from django.core.management import call_command
 
 from django_absurd.pg_cron.models import ScheduledTask
-from tests.pg_cron.utils import build_beat_tasks, build_pg_cron_tasks
+from tests.pg_cron.utils import build_pg_cron_tasks
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -78,19 +78,21 @@ def test_deleting_admin_schedule_unschedules_the_job(
     assert ScheduledTask.pg_cron.get_job("gone", "a") is None
 
 
-def test_saving_non_pg_cron_backend_schedule_is_a_noop(
+def test_saving_schedule_without_absurd_backend_is_a_noop(
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
-    """A row whose backend isn't pg_cron has no job to (un)schedule — save and delete
-    are clean no-ops (the signal skips it)."""
-    settings.TASKS = build_beat_tasks({})
+    """No Absurd backend configured at all: (un)schedule are clean no-ops — the
+    only surviving no-op condition once the scheduler-specific guard collapses."""
+    settings.TASKS = {
+        "default": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}
+    }
     scheduled_task = ScheduledTask.objects.create(
         source="s",
-        name="beat_row",
+        name="orphan_row",
         task="tests.tasks.add",
         cron="0 2 * * *",
     )
-    assert ScheduledTask.pg_cron.get_job("beat_row", "s") is None
+    assert ScheduledTask.pg_cron.get_job("orphan_row", "s") is None
     scheduled_task.delete()  # unschedule no-op, no error
 
 
