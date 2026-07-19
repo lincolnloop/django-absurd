@@ -13,7 +13,7 @@ ABSURD = "django_absurd.backends.AbsurdBackend"
 
 
 def build_tasks(
-    schedule: dict[str, t.Any],
+    schedule: dict[str, dict[str, object]],
 ) -> dict[str, dict[str, t.Any]]:
     return {
         "default": {

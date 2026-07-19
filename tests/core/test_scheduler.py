@@ -14,7 +14,7 @@ from django.core.management.base import CommandError
 from django.utils import timezone
 from freezegun import freeze_time
 
-from django_absurd.backends import get_absurd_backends
+from django_absurd.backends import AbsurdBackend, get_absurd_backends
 from django_absurd.scheduler import (
     Schedule,
     derive_idempotency_key,
@@ -30,8 +30,8 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 
 def make_tasks_setting(
-    schedule: dict[str, t.Any],
-    cleanup: dict[str, t.Any] | None = None,
+    schedule: dict[str, dict[str, object]],
+    cleanup: dict[str, str] | None = None,
 ) -> dict[str, dict[str, t.Any]]:
     options: dict[str, t.Any] = {
         "QUEUES": {"default": {}, "other": {}, "reports": {}},
@@ -152,7 +152,7 @@ def test_get_next_datetime_six_field_zero_seconds() -> None:
 # because a real threading.Event.wait can't be fast-forwarded by freezegun;
 # the command path is not deterministic enough for exact multi-slot counts.
 def run_beat_until(
-    backend: t.Any,
+    backend: AbsurdBackend,
     cutoff: dt.datetime,
 ) -> None:
     with freeze_time("2026-01-01 00:00:00") as frozen:

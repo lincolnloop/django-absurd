@@ -4,6 +4,7 @@ import typing as t
 
 import pytest
 import pytest_django.fixtures
+from absurd_sdk import CreateQueueOptions
 from django.core.management import call_command
 from django.core.management.base import SystemCheckError
 
@@ -16,7 +17,7 @@ E007_MSG = "django-absurd: invalid SCHEDULE entry."
 # at module level; importing any task from that module validates those queue names
 # against the current backend. All tests that import from tests.tasks must
 # therefore declare at least "other" and "reports" alongside "default".
-BASE_QUEUES: dict[str, dict[str, t.Any]] = {
+BASE_QUEUES: dict[str, CreateQueueOptions] = {
     "default": {},
     "other": {},
     "reports": {},
@@ -53,7 +54,7 @@ def run_pg_cron_check(
 def run_pg_cron_cleanup_check(
     settings: pytest_django.fixtures.SettingsWrapper,
     capsys: pytest.CaptureFixture[str],
-    cleanup: dict[str, t.Any],
+    cleanup: dict[str, str],
 ) -> str:
     settings.TASKS = {
         "default": {

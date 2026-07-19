@@ -1,6 +1,7 @@
 import typing as t
 
 import pytest
+from absurd_sdk import CreateQueueOptions
 from django.core.management import call_command
 from django.core.management.base import SystemCheckError
 from django.db import connection, connections
@@ -16,7 +17,7 @@ ABSURD = "django_absurd.backends.AbsurdBackend"
 
 
 def build_tasks_setting(
-    queues: dict[str, dict[str, t.Any]], database: str = "default"
+    queues: dict[str, CreateQueueOptions], database: str = "default"
 ) -> dict[str, dict[str, t.Any]]:
     return {
         "default": {
@@ -83,7 +84,7 @@ def test_db_unreachable_is_silent(
 def test_self_healing_drift_no_longer_warns(
     settings: "pytest_django.fixtures.SettingsWrapper",
     capsys: pytest.CaptureFixture[str],
-    after: dict[str, dict[str, t.Any]],
+    after: dict[str, CreateQueueOptions],
 ) -> None:
     settings.TASKS = build_tasks_setting({"synced": {}})
     call_command("absurd_sync_queues")
@@ -109,9 +110,13 @@ def test_invalid_policy_modes_error(
     settings: "pytest_django.fixtures.SettingsWrapper",
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    settings.TASKS = build_tasks_setting(
-        {"q": {"storage_mode": "bogus", "detach_mode": "nope"}}
+    # Deliberately invalid values, to exercise the check's own rejection at
+    # runtime — CreateQueueOptions' Literal fields don't allow this statically.
+    invalid_queues = t.cast(
+        "dict[str, CreateQueueOptions]",
+        {"q": {"storage_mode": "bogus", "detach_mode": "nope"}},
     )
+    settings.TASKS = build_tasks_setting(invalid_queues)
     out = run_absurd_check(capsys, databases=["default"])
     assert (
         "django-absurd: invalid per-queue policy options. Queue 'q':"

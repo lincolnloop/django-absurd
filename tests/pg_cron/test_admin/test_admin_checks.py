@@ -7,6 +7,9 @@ from django.core import checks
 from django_absurd.pg_cron.admin import ScheduledTaskAdmin
 from django_absurd.pg_cron.models import ScheduledTask
 
+if t.TYPE_CHECKING:
+    from django.core.checks import CheckMessage
+
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
@@ -21,7 +24,7 @@ def test_scheduledtask_admin_has_no_config_errors() -> None:
     fields — Django surfaces a typo only as admin.E0* under the check framework,
     and registration happens under contextlib.suppress at import, so without this
     guard a bad field name would ship silently."""
-    admin_errors: list[t.Any] = [
+    admin_errors: list[CheckMessage] = [
         e
         for e in checks.run_checks(tags=["admin"])
         if e.id is not None and e.id.startswith("admin.E")

@@ -22,7 +22,7 @@ from tests.core.test_admin.utils import (
 from tests.tasks import add
 
 if t.TYPE_CHECKING:
-    from bs4 import Tag
+    from bs4 import ResultSet, Tag
     from pytest_django.plugin import DjangoDbBlocker
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -46,7 +46,7 @@ def find_task(queue: str, task_name: str) -> t.Any:
     return model.objects.filter(queue=queue, task_name=task_name).first()
 
 
-def extract_field_texts(rows: t.Any, field: str) -> set[str]:
+def extract_field_texts(rows: "ResultSet[Tag]", field: str) -> set[str]:
     """Extract text from field elements in result rows."""
     return {t.cast("Tag", r.select_one(f".{field}")).get_text(strip=True) for r in rows}
 

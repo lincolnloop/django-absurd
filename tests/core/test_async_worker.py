@@ -3,6 +3,7 @@ import time
 import typing as t
 
 import pytest
+from absurd_sdk import JsonValue
 from django.core.management import call_command
 from django.tasks import TaskResultStatus
 
@@ -27,7 +28,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
     "value",
     [None, 0, False, "", [], {}, {"nested": [1, 2, {"a": None, "b": "ünïçødé"}]}],
 )
-def test_async_return_value_round_trips(value: t.Any) -> None:
+def test_async_return_value_round_trips(value: JsonValue) -> None:
     call_command("absurd_sync_queues")
     r = aecho.enqueue(value)
     run_absurd_worker()

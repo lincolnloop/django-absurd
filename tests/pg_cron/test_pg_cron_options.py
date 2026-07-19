@@ -1,7 +1,6 @@
-import typing as t
-
 import pytest
 import pytest_django.fixtures
+from absurd_sdk import CreateQueueOptions
 
 from django_absurd.backends import get_absurd_backends
 from django_absurd.pg_cron.reconcile import resolve_spawn_options
@@ -12,7 +11,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 ABSURD = "django_absurd.backends.AbsurdBackend"
 
 
-BASE_QUEUES: dict[str, dict[str, t.Any]] = {
+BASE_QUEUES: dict[str, CreateQueueOptions] = {
     "default": {},
     "other": {},
     "reports": {},

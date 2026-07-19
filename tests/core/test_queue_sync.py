@@ -3,6 +3,7 @@ import typing as t
 
 import psycopg
 import pytest
+from absurd_sdk import CreateQueueOptions
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command
 from django.db import connection
@@ -17,7 +18,7 @@ ABSURD = "django_absurd.backends.AbsurdBackend"
 
 
 def build_tasks_setting(
-    queues: dict[str, dict[str, t.Any]],
+    queues: dict[str, CreateQueueOptions],
     database: str = "default",
 ) -> dict[str, dict[str, t.Any]]:
     return {

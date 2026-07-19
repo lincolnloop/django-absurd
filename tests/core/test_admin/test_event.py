@@ -1,7 +1,6 @@
-import typing as t
-
 import pytest
 from django.contrib.admin.utils import quote
+from django.contrib.auth.models import User
 from django.core.management import call_command
 from django.db import connections
 from django.test import Client
@@ -18,7 +17,7 @@ def change_url(pk: str) -> str:
     return reverse("admin:django_absurd_event_change", args=[quote(pk)])
 
 
-def test_changelist_and_detail(client: Client, admin_user: t.Any) -> None:
+def test_changelist_and_detail(client: Client, admin_user: User) -> None:
     call_command("absurd_sync_queues")
     with connections["default"].cursor() as cur:
         cur.execute(

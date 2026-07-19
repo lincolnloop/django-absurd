@@ -19,15 +19,33 @@ from tests.tasks import add
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
-def make_count_stub(n: int) -> t.Any:
-    class CountStub:
-        def __getitem__(self, item: t.Any) -> "CountStub":
-            return self
+class CountStub:
+    """A minimal object_list stand-in — only .count() after a slice matters here,
+    but Paginator.object_list's _SupportsPagination protocol also needs
+    __len__/__iter__/int-indexing to satisfy structurally."""
 
-        def count(self) -> int:
-            return n
+    def __init__(self, n: int) -> None:
+        self.n = n
 
-    return CountStub()
+    def __len__(self) -> int:
+        return self.n
+
+    def __iter__(self) -> t.Iterator[object]:
+        return iter(range(self.n))
+
+    @t.overload
+    def __getitem__(self, index: int) -> object: ...
+    @t.overload
+    def __getitem__(self, index: slice) -> "CountStub": ...
+    def __getitem__(self, index: int | slice) -> "object | CountStub":
+        return self if isinstance(index, slice) else object()
+
+    def count(self) -> int:
+        return self.n
+
+
+def make_count_stub(n: int) -> CountStub:
+    return CountStub(n)
 
 
 def test_bounded_paginator_clamps_count_to_cap() -> None:

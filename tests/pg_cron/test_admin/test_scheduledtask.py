@@ -2,8 +2,7 @@ import typing as t
 from html import unescape
 
 import pytest
-from bs4 import BeautifulSoup
-from bs4.element import ResultSet
+from bs4 import BeautifulSoup, Tag
 from django.contrib.auth.models import Permission, User
 from django.core.management import call_command
 from django.test import Client
@@ -11,6 +10,7 @@ from django.urls import reverse, reverse_lazy
 
 if t.TYPE_CHECKING:
     import pytest_django.fixtures
+    from bs4.element import ResultSet
 
 from django_absurd.backends import get_absurd_backends
 from django_absurd.pg_cron.models import ScheduledTask
@@ -63,12 +63,19 @@ def seed(settings: "pytest_django.fixtures.SettingsWrapper") -> None:
     sync_crons(get_absurd_backends()["default"])
 
 
-def rows(response: t.Any) -> ResultSet[t.Any]:
+class HasContent(t.Protocol):
+    """What rows() actually needs — matches both django.http.HttpResponse and the
+    test client's private ``_MonkeyPatchedWSGIResponse``."""
+
+    content: bytes
+
+
+def rows(response: HasContent) -> "ResultSet[Tag]":
     soup = BeautifulSoup(response.content, "html.parser")
     return soup.select("#result_list tbody tr")
 
 
-def get_change_url(pk: t.Any) -> str:
+def get_change_url(pk: int) -> str:
     return reverse("admin:django_absurd_pg_cron_scheduledtask_change", args=[pk])
 
 
@@ -401,7 +408,7 @@ def create_scheduled_task(
     name: str,
     task: str = "tests.tasks.add",
     cron: str = "0 3 * * *",
-) -> t.Any:
+) -> int:
     """Create source="admin" row through minimal create form; return its pk."""
     client.post(ADD, {"name": name, "task": task, "cron": cron})
     return ScheduledTask.objects.get(name=name).pk

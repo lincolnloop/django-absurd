@@ -15,8 +15,8 @@ ABSURD = "django_absurd.backends.AbsurdBackend"
 
 
 def build_pg_cron_tasks(
-    schedule: dict[str, t.Any] | None = None,
-) -> dict[str, t.Any]:
+    schedule: dict[str, dict[str, object]] | None = None,
+) -> dict[str, dict[str, t.Any]]:
     return {
         "default": {
             "BACKEND": ABSURD,

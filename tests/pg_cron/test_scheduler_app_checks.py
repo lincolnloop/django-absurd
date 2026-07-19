@@ -5,13 +5,14 @@ import typing as t
 
 import pytest
 import pytest_django.fixtures
+from absurd_sdk import CreateQueueOptions
 from django.core.management import call_command
 from django.core.management.base import SystemCheckError
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
 ABSURD = "django_absurd.backends.AbsurdBackend"
-BASE_QUEUES: dict[str, dict[str, t.Any]] = {
+BASE_QUEUES: dict[str, CreateQueueOptions] = {
     "default": {},
     "other": {},
     "reports": {},
@@ -22,7 +23,7 @@ def run_check(
     capsys: pytest.CaptureFixture[str],
     settings: pytest_django.fixtures.SettingsWrapper,
     installed_apps: t.Sequence[str] | None = None,
-    schedule: dict[str, t.Any] | None = None,
+    schedule: dict[str, dict[str, object]] | None = None,
 ) -> str:
     if installed_apps is not None:
         settings.INSTALLED_APPS = installed_apps

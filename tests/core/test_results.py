@@ -1,9 +1,9 @@
 import asyncio
 import datetime as dt
-import typing as t
 import uuid
 
 import pytest
+from absurd_sdk import JsonValue
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command
 from django.db import connections, transaction
@@ -186,7 +186,7 @@ def test_enqueue_does_not_poison_jsonfield_reads() -> None:
         {"nested": [1, 2, {"a": None, "b": "ünïçødé"}]},
     ],
 )
-def test_echo_return_value_round_trips(value: t.Any) -> None:
+def test_echo_return_value_round_trips(value: JsonValue) -> None:
     call_command("absurd_sync_queues")
     r = echo.enqueue(value)
     run_absurd_worker()
