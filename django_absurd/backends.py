@@ -4,6 +4,7 @@ import uuid
 
 import psycopg.errors
 from absurd_sdk import CreateQueueOptions
+from django.apps import apps
 from django.core.exceptions import ImproperlyConfigured
 from django.db import transaction
 from django.db.utils import ProgrammingError
@@ -20,6 +21,8 @@ from django_absurd.params import AbsurdDefaultParams
 
 if t.TYPE_CHECKING:
     from django.tasks.base import Task
+
+PG_CRON_APP_NAME = "django_absurd.pg_cron"
 
 
 class TaskModel(t.Protocol):
@@ -54,7 +57,6 @@ class AbsurdBackendOptions(t.TypedDict, total=False):
     QUEUES: dict[str, CreateQueueOptions]
     ENABLE_ADMIN: bool
     ADMIN_SITE: tuple[str, ...]
-    SCHEDULER: str
     SCHEDULE: dict[str, dict[str, object]]
     CLEANUP: dict[str, str]
 
@@ -72,7 +74,9 @@ class AbsurdBackend(BaseTaskBackend):
             self.queues = set(self.options["QUEUES"])  # type: ignore[assignment]
         self.database: str = self.options.get("DATABASE", "default")
         self.default_max_attempts: int = self.options.get("DEFAULT_MAX_ATTEMPTS", 5)
-        self.scheduler: str = self.options.get("SCHEDULER", "beat")
+        self.scheduler: str = (
+            "pg_cron" if apps.is_installed(PG_CRON_APP_NAME) else "beat"
+        )
 
     def enqueue(
         self, task: "Task[t.Any, t.Any]", args: list[t.Any], kwargs: dict[str, t.Any]

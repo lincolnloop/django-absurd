@@ -7,6 +7,8 @@ import pytest_django.fixtures
 from django.core.management import call_command
 from django.core.management.base import SystemCheckError
 
+from django_absurd.backends import get_absurd_backends
+
 pytestmark = pytest.mark.django_db(transaction=True)
 
 ABSURD = "django_absurd.backends.AbsurdBackend"
@@ -55,3 +57,12 @@ def test_beat_scheduler_without_app_clean(
     out = run_check(capsys, settings, "beat")
     assert "absurd.E008" not in out
     assert "absurd.W003" not in out
+
+
+def test_scheduler_defaults_to_beat(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
+    settings.TASKS = {
+        "default": {"BACKEND": ABSURD, "OPTIONS": {"QUEUES": BASE_QUEUES}}
+    }
+    assert get_absurd_backends()["default"].scheduler == "beat"
