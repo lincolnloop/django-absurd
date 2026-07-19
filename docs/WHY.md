@@ -53,8 +53,9 @@ Recurring tasks are declared in settings and driven by an in-process beat that w
 cadence and enqueues through the normal path. The beat is the default because it needs
 nothing beyond Postgres; the database-side alternative (`pg_cron`) requires an extension
 and privileges that aren't available everywhere, so it is a deliberate opt-in rather
-than the default. Cron is evaluated in Django's configured timezone, not UTC, so an
-operator who writes "2am" gets local 2am.
+than the default — expressed by installing `django_absurd.pg_cron`, not a separate
+settings flag (see the static-checks section below for why). Cron is evaluated in
+Django's configured timezone, not UTC, so an operator who writes "2am" gets local 2am.
 
 The beat only ever fires forward: a slot missed while it was down is skipped, never
 backfilled. This matches the database-side scheduler (so the two stay consistent) and
@@ -117,12 +118,16 @@ emission the settings lane never needed).
 
 `manage.py check` stays DB-free. Grammar, privilege, and extension facts are validated
 by the real `cron.schedule` at sync time — loud in the command, skip-with-log at
-migrate. A DB-probe variant of `absurd.E008` (verifying the extension is present at
-check time) was considered and dropped: a connectivity error at `check` time is not a
-scheduling problem and should not block deployments. The shipped `absurd.E008` is a
-static configuration check — it fires when `SCHEDULER="pg_cron"` but
-`django_absurd.pg_cron` is absent from `INSTALLED_APPS`, which is knowable without any
-DB connection.
+migrate. A DB-probe variant of a scheduler-misconfiguration check (verifying the
+extension is present at check time) was considered and dropped: a connectivity error at
+`check` time is not a scheduling problem and should not block deployments.
+
+Scheduler selection itself is derived, not a separate setting: `AbsurdBackend.scheduler`
+reads `INSTALLED_APPS` (`django_absurd.pg_cron` present → `"pg_cron"`, absent →
+`"beat"`) rather than a user-set `OPTIONS["SCHEDULER"]` key. The original design had a
+static `absurd.E008` check catching `SCHEDULER="pg_cron"` set without the app installed;
+deriving scheduler from app presence makes that misconfiguration unrepresentable, so
+both the option and the check it needed are gone.
 
 ### pg_cron cron grammar is DB-authoritative (croniter is beat-only)
 
