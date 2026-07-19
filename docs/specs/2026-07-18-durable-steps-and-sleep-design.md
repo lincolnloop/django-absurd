@@ -250,3 +250,56 @@ duration long enough (~0.5–1s) that `drain_queue`'s claim loop empties and ret
 
 Events pillar (`await_event` + app-side `emit_event`, + the Waits admin inline);
 `await_task_result` (cross-queue child + deadlock guard); sync-worker mode.
+
+## AMENDMENT (post-review): accessor-based exposure — respect Django's contract
+
+Original design subclassed Django `TaskContext` + handed it as the `takes_context` arg.
+Rejected in final review: substituting a narrower subtype violates Django's typed
+contract (`@task` promises the handler a base `TaskContext`) — forces a permanent
+`[arg-type]` on every typed handler + a `[misc]` on the frozen subclass, and conflates
+Django's result-context with Absurd's runtime. **Replaced with an accessor**; no
+`TaskContext` subclass.
+
+**New shape.** The Absurd SDK stashes the live ctx in a contextvar the worker sets at
+dispatch, exposed by the SDK's PUBLIC `get_current_context()` (in its `__all__`).
+Durable access is a django-absurd accessor `durable_context()`, orthogonal to the (now
+plain, unmodified) Django `TaskContext`:
+
+```python
+from django_absurd import durable_context
+
+@task                                  # or takes_context=True for a plain .task_result
+async def workflow(order_id: int) -> None:
+    await durable_context().step("charge", charge)
+```
+
+- **Async task → pure delegation, no wrapper.** `durable_context()` returns the SDK's
+  own `AsyncTaskContext` (`get_current_context()`); user calls `await context.step(...)`
+  on Absurd's own py.typed object. We define no class, mirror no signatures — and get
+  the future primitives (events, `await_task_result`) for free. No `run_step` (SDK omits
+  it on async).
+- **Sync task → thin bridge wrapper (unavoidable).** Worker is `AsyncAbsurd`, so the
+  live ctx is always `AsyncTaskContext` (async methods); a sync `def` can't `await`, and
+  the SDK's sync `TaskContext` needs its own sync connection we don't have. So sync
+  tasks get a small wrapper mirroring the SDK sync signatures 1:1, bridging each call to
+  the async ctx via `run_coroutine_threadsafe(coro, loop)`. Keeps `run_step` (all three
+  forms) — the sync-only asymmetry matches the SDK.
+- `durable_context()` **auto-selects**: called on the loop (async task) → SDK ctx
+  passthrough; called from the executor thread (sync task) → the bridge wrapper (using
+  the stashed worker loop). Outside a task → `get_current_context()` is `None` → raise a
+  clear error.
+
+**Worker.** `build_task_context` no longer injects our type — `takes_context` tasks get
+a plain Django `TaskContext` (built as today for `.task_result`/`.attempt`). Sync-task
+context propagation into the executor thread via **`asyncio.to_thread`** (copies the
+contextvar per call — so `get_current_context()` resolves in-thread) + a stashed worker
+loop for the bridge. Thread-safety unchanged: all DB ops still run on the loop (one
+shared `AsyncConnection`, serialized); contextvars isolate per asyncio-Task + per
+to_thread copy; a missing propagation fails loud (`None`), never silently races.
+
+**Gone:** `TaskContext` subclass, `[misc]`, `[arg-type]`, the Django-contract violation.
+**Kept identical:** step/sleep/heartbeat/headers/run_step behavior, effectively-once
+semantics, admin (Checkpoints inline + `available_at` — untouched by this pivot), docs
+footgun set. **Tests:** behavioral assertions unchanged (they validate the refactor);
+only the test-task call sites re-point to `durable_context()` + drop narrowed
+annotations; add a `durable_context()`-outside-a-task guard test.
