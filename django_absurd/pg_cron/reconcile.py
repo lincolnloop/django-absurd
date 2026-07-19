@@ -1,8 +1,8 @@
 """pg_cron reconcile engine: materialize declared SCHEDULE entries into
 ScheduledTask rows (the rows' post_save signal emits the pg_cron jobs), prune
-undeclared ones, and tear down on scheduler switch — plus the spawn-option
-resolution they depend on. Per-row pg_cron job emission lives on the ScheduledTask
-model."""
+undeclared ones, and tear down via the explicit ``--teardown`` command — plus the
+spawn-option resolution they depend on. Per-row pg_cron job emission lives on the
+ScheduledTask model."""
 
 import typing as t
 
@@ -24,7 +24,7 @@ from django_absurd.scheduler import get_cleanup_schedule, get_settings_schedules
 # forking a parallel one. It lives outside our managed ``_dj:`` (colon) namespace,
 # so get_managed_jobs() never sweeps it. When ``django_absurd.pg_cron`` is installed,
 # django-absurd is AUTHORITATIVE over this job: it schedules it from OPTIONS["CLEANUP"]
-# and removes it otherwise — including at migrate teardown / scheduler-flip even when
+# and removes it otherwise — including at explicit teardown (--teardown) even when
 # CLEANUP was never set — so a job created via ``absurdctl cron`` is reclaimed and
 # removed. Drive cleanup ONE way — OPTIONS["CLEANUP"] OR `absurdctl cron`, not both
 # (deferred: multi-manager cleanup-job arbitration is out of scope here).
@@ -145,7 +145,7 @@ def reconcile_cleanup_job(cur: t.Any, backend: AbsurdBackend) -> None:
     (cron.schedule is an idempotent upsert); an absent one → unschedule it (tolerating
     an already-gone job). Because ``django_absurd.pg_cron`` is installed, django-absurd
     is AUTHORITATIVE over this job: it schedules it from OPTIONS["CLEANUP"] and removes
-    it otherwise — including at migrate teardown / scheduler-flip even when CLEANUP was
+    it otherwise — including at explicit teardown (``--teardown``) even when CLEANUP was
     never set — so a job created via ``absurdctl cron`` is reclaimed and removed. Drive
     cleanup ONE way — OPTIONS["CLEANUP"] OR ``absurdctl cron``, not both
     (deferred: multi-manager cleanup-job arbitration is out of scope here).
@@ -176,8 +176,8 @@ def sync_admin_crons() -> None:
     and never fires that signal — so its job is missing. This reconciles every admin
     row at migrate, restoring the row⇔job invariant regardless of how the row arrived.
     cron.schedule is an upsert, so re-emitting an already-scheduled job is harmless.
-    It then prunes any admin job whose row is gone (a backend flipped off pg_cron then
-    the row deleted, or a signal-less row delete), symmetric with the settings lane.
+    It then prunes any admin job whose row is gone (a signal-less row delete — bulk
+    operations, direct SQL), symmetric with the settings lane.
     """
     database = resolve_absurd_database()
     with open_locked_cursor(database):
@@ -193,12 +193,12 @@ def sync_admin_crons() -> None:
 def teardown_crons(include_admin: bool = False) -> int:
     """Remove pg_cron jobs and ScheduledTask rows.
 
-    The migrate-time path (include_admin=False, a scheduler switch away from pg_cron)
-    unschedules _dj:s:% jobs and deletes settings rows, leaving admin schedules (user
-    data) untouched. The guarded absurd_sync_crons --teardown command
-    (include_admin=True) additionally clears _dj:a:% jobs AND deletes their rows — so
-    the teardown is terminal, not undone by the next migrate's admin re-emit (that is
-    why the command confirms first).
+    Without include_admin, unschedules _dj:s:% jobs and deletes settings rows only,
+    leaving admin schedules (user data) untouched — a narrower, general-purpose form.
+    The guarded absurd_sync_crons --teardown command always passes include_admin=True,
+    additionally clearing _dj:a:% jobs AND deleting their rows — so that teardown is
+    terminal, not undone by the next migrate's admin re-emit (that is why the command
+    confirms first).
 
     Idempotent. Returns removed: count of ScheduledTask rows deleted.
     """
