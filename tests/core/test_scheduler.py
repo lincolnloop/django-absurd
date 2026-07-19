@@ -25,6 +25,7 @@ from django_absurd.scheduler import (
 )
 from tests.models import Payload
 from tests.tasks import make_group as make_group_task
+from tests.utils import make_tasks_settings
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -33,18 +34,7 @@ def make_tasks_setting(
     schedule: dict[str, dict[str, object]],
     cleanup: dict[str, str] | None = None,
 ) -> dict[str, dict[str, t.Any]]:
-    options: dict[str, t.Any] = {
-        "QUEUES": {"default": {}, "other": {}, "reports": {}},
-        "SCHEDULE": schedule,
-    }
-    if cleanup is not None:
-        options["CLEANUP"] = cleanup
-    return {
-        "default": {
-            "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "OPTIONS": options,
-        }
-    }
+    return make_tasks_settings(schedule=schedule, cleanup=cleanup)
 
 
 def test_settings_provider_reads_entries(

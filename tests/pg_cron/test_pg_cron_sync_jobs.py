@@ -1,5 +1,3 @@
-import typing as t
-
 import psycopg
 import pytest
 from django.core.management import call_command
@@ -10,31 +8,16 @@ from django_absurd.backends import get_absurd_backends
 from django_absurd.pg_cron.models import ScheduledTask, prune_pg_cron_jobs
 from django_absurd.pg_cron.reconcile import sync_crons
 from django_absurd.pg_cron.validators import build_jobname
+from tests.utils import make_tasks_settings
 
 pytestmark = pytest.mark.django_db(transaction=True)
-
-ABSURD = "django_absurd.backends.AbsurdBackend"
-
-
-def build_tasks(
-    schedule: dict[str, dict[str, object]],
-) -> dict[str, dict[str, t.Any]]:
-    return {
-        "default": {
-            "BACKEND": ABSURD,
-            "OPTIONS": {
-                "QUEUES": {"default": {}, "other": {}, "reports": {}},
-                "SCHEDULE": schedule,
-            },
-        }
-    }
 
 
 def test_creates_job_with_schedule_and_constant_command(
     settings: SettingsWrapper,
 ) -> None:
-    settings.TASKS = build_tasks(
-        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
+    settings.TASKS = make_tasks_settings(
+        schedule={"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     sync_crons(get_absurd_backends()["default"])
 
@@ -48,8 +31,8 @@ def test_creates_job_with_schedule_and_constant_command(
 
 
 def test_sync_is_idempotent(settings: SettingsWrapper) -> None:
-    settings.TASKS = build_tasks(
-        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
+    settings.TASKS = make_tasks_settings(
+        schedule={"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     sync_crons(get_absurd_backends()["default"])
     sync_crons(get_absurd_backends()["default"])
@@ -67,8 +50,8 @@ def test_prune_removes_undeclared_job_but_keeps_foreign(
             "select cron.schedule(%s, %s, %s)", ["keepme", "* * * * *", "select 1"]
         )
 
-    settings.TASKS = build_tasks(
-        {
+    settings.TASKS = make_tasks_settings(
+        schedule={
             "a": {"task": "tests.tasks.add", "cron": "0 2 * * *"},
             "b": {"task": "tests.tasks.add", "cron": "0 3 * * *"},
         }
@@ -79,8 +62,8 @@ def test_prune_removes_undeclared_job_but_keeps_foreign(
         "_dj:s:b",
     }
 
-    settings.TASKS = build_tasks(
-        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
+    settings.TASKS = make_tasks_settings(
+        schedule={"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     sync_crons(get_absurd_backends()["default"])
     assert {r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()} == {"_dj:s:a"}
@@ -94,8 +77,8 @@ def test_prune_removes_undeclared_job_but_keeps_foreign(
 def test_prune_tolerates_already_unscheduled_job(
     settings: SettingsWrapper,
 ) -> None:
-    settings.TASKS = build_tasks(
-        {
+    settings.TASKS = make_tasks_settings(
+        schedule={
             "a": {"task": "tests.tasks.add", "cron": "0 2 * * *"},
             "b": {"task": "tests.tasks.add", "cron": "0 3 * * *"},
         }
@@ -112,8 +95,8 @@ def test_prune_tolerates_already_unscheduled_job(
         jobid = cur.fetchone()[0]
         cur.execute("select cron.unschedule(%s)", [jobid])
 
-    settings.TASKS = build_tasks(
-        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
+    settings.TASKS = make_tasks_settings(
+        schedule={"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     sync_crons(get_absurd_backends()["default"])  # no exception
 
@@ -126,8 +109,8 @@ def test_prune_swallows_job_vanished_after_stale_scan(
     # The stale-id scan and the unschedule are separate steps; a concurrent actor
     # can remove a job's cron.job row in between. prune_pg_cron_jobs must swallow
     # the resulting "could not find" error and finish the reconcile.
-    settings.TASKS = build_tasks(
-        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
+    settings.TASKS = make_tasks_settings(
+        schedule={"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     sync_crons(get_absurd_backends()["default"])
 
@@ -169,8 +152,8 @@ def test_prune_reraises_unexpected_error(
 
 
 def test_rearm_reenables_disabled_job(settings: SettingsWrapper) -> None:
-    settings.TASKS = build_tasks(
-        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
+    settings.TASKS = make_tasks_settings(
+        schedule={"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     sync_crons(get_absurd_backends()["default"])
 
@@ -197,8 +180,8 @@ def test_injection_args_are_quoted_and_schema_survives(
         cur.execute("select to_regnamespace('absurd')")
         assert cur.fetchone()[0] is not None
 
-    settings.TASKS = build_tasks(
-        {
+    settings.TASKS = make_tasks_settings(
+        schedule={
             "evil": {
                 "task": "tests.tasks.add",
                 "cron": "* * * * *",

@@ -11,6 +11,7 @@ from pytest_django.fixtures import SettingsWrapper
 
 from django_absurd.models import Queue
 from django_absurd.queues import get_absurd_client, resolve_absurd_database
+from tests.utils import make_tasks_settings
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -21,12 +22,7 @@ def build_tasks_setting(
     queues: dict[str, CreateQueueOptions],
     database: str = "default",
 ) -> dict[str, dict[str, t.Any]]:
-    return {
-        "default": {
-            "BACKEND": ABSURD,
-            "OPTIONS": {"DATABASE": database, "QUEUES": queues},
-        }
-    }
+    return make_tasks_settings(queues=queues, database=database)
 
 
 def table_exists(name: str) -> bool:

@@ -12,18 +12,12 @@ from django.urls import clear_url_caches
 from django_absurd.admin import register_absurd_admin
 from django_absurd.params import AbsurdSpawnParams
 from tests.tasks import add, boom
+from tests.utils import HasContent
 
 if t.TYPE_CHECKING:
     from django.tasks import TaskResult
 
 BACKEND = "django_absurd.backends.AbsurdBackend"
-
-
-class HasContent(t.Protocol):
-    """What parse_html actually needs — matches both django.http.HttpResponse and
-    the test client's private ``_MonkeyPatchedWSGIResponse``."""
-
-    content: bytes
 
 
 def parse_html(response: HasContent) -> BeautifulSoup:

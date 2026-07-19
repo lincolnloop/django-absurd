@@ -10,6 +10,7 @@ if t.TYPE_CHECKING:
     import pytest_django.fixtures
 
 from django_absurd.backends import get_absurd_backends
+from tests.utils import make_tasks_settings
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -19,12 +20,7 @@ ABSURD = "django_absurd.backends.AbsurdBackend"
 def build_tasks_setting(
     queues: dict[str, CreateQueueOptions], database: str = "default"
 ) -> dict[str, dict[str, t.Any]]:
-    return {
-        "default": {
-            "BACKEND": ABSURD,
-            "OPTIONS": {"DATABASE": database, "QUEUES": queues},
-        }
-    }
+    return make_tasks_settings(queues=queues, database=database)
 
 
 def run_absurd_check(

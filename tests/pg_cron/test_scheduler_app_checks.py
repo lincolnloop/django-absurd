@@ -5,18 +5,12 @@ import typing as t
 
 import pytest
 import pytest_django.fixtures
-from absurd_sdk import CreateQueueOptions
 from django.core.management import call_command
 from django.core.management.base import SystemCheckError
 
-pytestmark = pytest.mark.django_db(transaction=True)
+from tests.utils import make_tasks_settings
 
-ABSURD = "django_absurd.backends.AbsurdBackend"
-BASE_QUEUES: dict[str, CreateQueueOptions] = {
-    "default": {},
-    "other": {},
-    "reports": {},
-}
+pytestmark = pytest.mark.django_db(transaction=True)
 
 
 def run_check(
@@ -27,15 +21,7 @@ def run_check(
 ) -> str:
     if installed_apps is not None:
         settings.INSTALLED_APPS = installed_apps
-    options: dict[str, t.Any] = {"QUEUES": BASE_QUEUES}
-    if schedule is not None:
-        options["SCHEDULE"] = schedule
-    settings.TASKS = {
-        "default": {
-            "BACKEND": ABSURD,
-            "OPTIONS": options,
-        }
-    }
+    settings.TASKS = make_tasks_settings(schedule=schedule)
     try:
         call_command("check", "django_absurd")
     except SystemCheckError as exc:

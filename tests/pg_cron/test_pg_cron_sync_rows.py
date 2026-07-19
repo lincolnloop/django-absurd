@@ -1,36 +1,19 @@
-import typing as t
-
 import pytest
 import pytest_django.fixtures
 
 from django_absurd.backends import get_absurd_backends
 from django_absurd.pg_cron.models import ScheduledTask
 from django_absurd.pg_cron.reconcile import sync_crons
+from tests.utils import make_tasks_settings
 
 pytestmark = pytest.mark.django_db(transaction=True)
-
-ABSURD = "django_absurd.backends.AbsurdBackend"
-
-
-def build_tasks(
-    schedule: dict[str, dict[str, object]],
-) -> dict[str, dict[str, t.Any]]:
-    return {
-        "default": {
-            "BACKEND": ABSURD,
-            "OPTIONS": {
-                "QUEUES": {"default": {}, "other": {}, "reports": {}},
-                "SCHEDULE": schedule,
-            },
-        }
-    }
 
 
 def test_upsert_and_prune_settings_rows(
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
-    settings.TASKS = build_tasks(
-        {
+    settings.TASKS = make_tasks_settings(
+        schedule={
             "a": {"task": "tests.tasks.add", "cron": "0 2 * * *"},
             "b": {"task": "tests.tasks.add", "cron": "0 3 * * *"},
         }
@@ -38,8 +21,8 @@ def test_upsert_and_prune_settings_rows(
     be = get_absurd_backends()["default"]
     sync_crons(be)
     assert set(ScheduledTask.objects.values_list("name", flat=True)) == {"a", "b"}
-    settings.TASKS = build_tasks(
-        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
+    settings.TASKS = make_tasks_settings(
+        schedule={"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     sync_crons(get_absurd_backends()["default"])
     assert set(ScheduledTask.objects.values_list("name", flat=True)) == {"a"}
@@ -54,7 +37,7 @@ def test_admin_rows_untouched(
         task="tests.tasks.add",
         cron="0 2 * * *",
     )
-    settings.TASKS = build_tasks({})
+    settings.TASKS = make_tasks_settings(schedule={})
     sync_crons(get_absurd_backends()["default"])
     assert ScheduledTask.objects.filter(source="a", name="a").exists()
 
@@ -62,8 +45,8 @@ def test_admin_rows_untouched(
 def test_sync_writes_named_option_columns(
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
-    settings.TASKS = build_tasks(
-        {
+    settings.TASKS = make_tasks_settings(
+        schedule={
             "nightly": {
                 "task": "tests.tasks.capped",  # decorated max_attempts=3
                 "cron": "0 2 * * *",
@@ -83,8 +66,8 @@ def test_sync_writes_named_option_columns(
 def test_reconcile_splits_cancellation_into_columns(
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
-    settings.TASKS = build_tasks(
-        {"c": {"task": "tests.tasks.cancellable", "cron": "0 2 * * *"}}
+    settings.TASKS = make_tasks_settings(
+        schedule={"c": {"task": "tests.tasks.cancellable", "cron": "0 2 * * *"}}
     )
     backend = get_absurd_backends()["default"]
     sync_crons(backend)
@@ -96,8 +79,8 @@ def test_reconcile_splits_cancellation_into_columns(
 def test_reconcile_splits_retry_strategy_into_columns(
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
-    settings.TASKS = build_tasks(
-        {"r": {"task": "tests.tasks.retrying", "cron": "0 2 * * *"}}
+    settings.TASKS = make_tasks_settings(
+        schedule={"r": {"task": "tests.tasks.retrying", "cron": "0 2 * * *"}}
     )
     backend = get_absurd_backends()["default"]
     sync_crons(backend)
@@ -109,8 +92,8 @@ def test_reconcile_splits_retry_strategy_into_columns(
 def test_sync_materializes_decorator_derived_columns(
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
-    settings.TASKS = build_tasks(
-        {"full": {"task": "tests.tasks.fully_specced", "cron": "0 2 * * *"}}
+    settings.TASKS = make_tasks_settings(
+        schedule={"full": {"task": "tests.tasks.fully_specced", "cron": "0 2 * * *"}}
     )
     sync_crons(get_absurd_backends()["default"])
     row = ScheduledTask.objects.get(source="s", name="full")

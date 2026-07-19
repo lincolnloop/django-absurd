@@ -15,6 +15,7 @@ if t.TYPE_CHECKING:
 from django_absurd.backends import get_absurd_backends
 from django_absurd.pg_cron.models import ScheduledTask
 from django_absurd.pg_cron.reconcile import sync_crons
+from tests.utils import HasContent
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -61,13 +62,6 @@ def seed(settings: "pytest_django.fixtures.SettingsWrapper") -> None:
     settings.TASKS = TASKS
     call_command("absurd_sync_queues")
     sync_crons(get_absurd_backends()["default"])
-
-
-class HasContent(t.Protocol):
-    """What rows() actually needs — matches both django.http.HttpResponse and the
-    test client's private ``_MonkeyPatchedWSGIResponse``."""
-
-    content: bytes
 
 
 def rows(response: HasContent) -> "ResultSet[Tag]":

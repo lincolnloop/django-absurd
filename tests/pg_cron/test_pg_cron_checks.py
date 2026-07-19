@@ -8,9 +8,10 @@ from absurd_sdk import CreateQueueOptions
 from django.core.management import call_command
 from django.core.management.base import SystemCheckError
 
+from tests.utils import make_tasks_settings
+
 pytestmark = pytest.mark.django_db(transaction=True)
 
-ABSURD = "django_absurd.backends.AbsurdBackend"
 E007_MSG = "django-absurd: invalid SCHEDULE entry."
 
 # tests/tasks.py declares @task(queue_name="other") and @task(queue_name="reports")
@@ -33,15 +34,9 @@ def run_pg_cron_check(
 
     options keys: queues, schedule.
     """
-    settings.TASKS = {
-        "default": {
-            "BACKEND": ABSURD,
-            "OPTIONS": {
-                "QUEUES": options["queues"],
-                "SCHEDULE": options["schedule"],
-            },
-        }
-    }
+    settings.TASKS = make_tasks_settings(
+        queues=options["queues"], schedule=options["schedule"]
+    )
     try:
         call_command("check", "django_absurd")
     except SystemCheckError as exc:
@@ -56,12 +51,7 @@ def run_pg_cron_cleanup_check(
     capsys: pytest.CaptureFixture[str],
     cleanup: dict[str, str],
 ) -> str:
-    settings.TASKS = {
-        "default": {
-            "BACKEND": ABSURD,
-            "OPTIONS": {"QUEUES": BASE_QUEUES, "CLEANUP": cleanup},
-        }
-    }
+    settings.TASKS = make_tasks_settings(queues=BASE_QUEUES, cleanup=cleanup)
     try:
         call_command("check", "django_absurd")
     except SystemCheckError as exc:
