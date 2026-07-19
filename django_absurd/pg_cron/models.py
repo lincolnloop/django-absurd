@@ -48,11 +48,11 @@ def get_default_max_attempts() -> int:
 
 
 def get_declared_queue_choices() -> list[tuple[str, str]]:
-    """Declared queues for the configured pg_cron backend, sorted, for use as field
+    """Declared queues for the configured Absurd backend, sorted, for use as field
     choices. Falls back to [("default", "default")] when no queues are declared.
     Called at form-render / validation / migration-state time — import-safe."""
     backend = get_absurd_backend()
-    if backend is None or backend.scheduler != "pg_cron":
+    if backend is None:
         return [("default", "default")]
     queues = set(get_declared_queues(backend))
     if not queues:
@@ -205,7 +205,7 @@ class ScheduledTask(models.Model):
             errors.setdefault(NON_FIELD_ERRORS, []).extend(exc.messages)
 
         backend = get_absurd_backend()
-        if backend is not None and backend.scheduler == "pg_cron":
+        if backend is not None:
             errors.update(self.validate_against_backend(backend))
 
         retry_timing_fields = (
@@ -252,8 +252,8 @@ class ScheduledTask(models.Model):
     def schedule_pg_cron_job(self) -> None:
         """(Re)schedule this row's pg_cron job (``_dj:<source>:<name>``) and arm it to
         its enabled state. Called by the post_save signal for every write; a no-op when
-        no pg_cron backend is configured."""
-        if resolve_pg_cron_backend() is None:
+        no Absurd backend is configured."""
+        if get_absurd_backend() is None:
             return
         jobname = build_jobname(self.name, self.source)
         # cron.schedule is a pg_cron catalog function (not the Absurd SDK). psycopg
@@ -273,24 +273,15 @@ class ScheduledTask(models.Model):
 
     def unschedule_pg_cron_job(self) -> None:
         """Remove this row's pg_cron job, tolerating an already-gone job. Called by the
-        post_delete signal for every deletion; a no-op when no pg_cron backend is
+        post_delete signal for every deletion; a no-op when no Absurd backend is
         configured (symmetric with schedule_pg_cron_job) — so deletes don't error on a
-        DB without pg_cron."""
-        if resolve_pg_cron_backend() is None:
+        DB without one."""
+        if get_absurd_backend() is None:
             return
         jobname = build_jobname(self.name, self.source)
         with open_locked_cursor(resolve_absurd_database()) as cur:
             cur.execute("select jobid from cron.job where jobname = %s", [jobname])
             prune_pg_cron_jobs(cur, [jobid for (jobid,) in cur.fetchall()])
-
-
-def resolve_pg_cron_backend() -> "AbsurdBackend | None":
-    """The configured pg_cron backend, or None when the single backend is not a pg_cron
-    backend — nothing to schedule for such a row."""
-    backend = get_absurd_backend()
-    if backend is None or backend.scheduler != "pg_cron":
-        return None
-    return backend
 
 
 @contextmanager
