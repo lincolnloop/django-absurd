@@ -2,6 +2,7 @@ import time
 import typing as t
 from asyncio import sleep as asleep
 
+from absurd_sdk import JsonValue
 from django.tasks import TaskContext, task
 
 from django_absurd import aget_absurd_context
@@ -47,16 +48,16 @@ async def areport_attempt(context: "TaskContext[t.Any, t.Any]") -> int:
 
 
 @task
-async def acreate_payload(data: t.Any) -> int:
+async def acreate_payload(data: JsonValue) -> int:
     obj = await Payload.objects.acreate(data=data)
     return obj.pk
 
 
 @task
-async def aread_payload(pk: int) -> t.Any:
+async def aread_payload(pk: int) -> JsonValue:
     # async QUERY: read a row back via Django async ORM, return its jsonb
     obj = await Payload.objects.aget(pk=pk)
-    return obj.data
+    return t.cast("JsonValue", obj.data)
 
 
 @task
