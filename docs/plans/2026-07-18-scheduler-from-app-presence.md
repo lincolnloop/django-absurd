@@ -239,6 +239,10 @@ backend-defaults assertions:
 git rm tests/core/test_scheduler_app_checks.py
 ```
 
+(requires Task 1 to have committed its own edit to this file first — `git rm` refuses a
+file with uncommitted local modifications without `-f`. If Task 1's commit was skipped,
+commit or stash that change before running this.)
+
 Add this to `tests/core/test_checks.py` (near its other backend/scheduler-adjacent tests
 — anywhere in the file works, ordering isn't asserted):
 
@@ -341,11 +345,20 @@ def run_pg_cron_check(
 (the `try:`-onward body below that line is unchanged — only the `settings.TASKS =`
 assignment and the docstring change.)
 
-- Strip every `"scheduler": "pg_cron",` line from the 17 call-site option dicts (all
-  byte-identical, 12-space indented):
+- Strip every `"scheduler": "pg_cron",` line from the 16 call-site option dicts (all
+  byte-identical, 12-space indented — a 17th call site uses `"scheduler": "pgcron"`, the
+  deliberate typo inside `test_unknown_scheduler_value_rejected`, already deleted above,
+  so this sed correctly leaves it alone):
 
 ```bash
 sed -i '' '/^            "scheduler": "pg_cron",$/d' tests/pg_cron/test_pg_cron_checks.py
+```
+
+Also fix the module docstring (line 1) — it still names the removed option, and Task 9
+adds CLEANUP (`absurd.E010`) tests to this same file, so make it general:
+
+```python
+"""Static system-check tests against a real pg_cron backend."""
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -538,14 +551,40 @@ git commit -m "Collapse dead scheduler guard in check_pg_cron_schedules"
   `backend is None or backend.scheduler != "pg_cron"` → `backend is None`, so the whole
   function became `return get_absurd_backend()`).
 
-- [ ] **Step 1: Write the failing test / delete the now-invalid one**
+- [ ] **Step 1: Write the failing test / rework the now-invalid one**
 
-In `tests/pg_cron/test_scheduledtask_model.py`, delete
-`test_full_clean_skips_backend_validation_when_not_pg_cron` (lines ~8-29) — its entire
-premise is a `"SCHEDULER": "beat"` backend inside the pg_cron suite (app installed),
-which is unrepresentable post-change; `ScheduledTask.clean()`'s collapsed condition
-means validation ALWAYS runs once a backend resolves (which it always does in this
-suite), so "skips validation" is no longer true.
+In `tests/pg_cron/test_scheduledtask_model.py`,
+`test_full_clean_skips_backend_validation_when_not_pg_cron` (lines ~8-29) has an
+unrepresentable premise post-change — a `"SCHEDULER": "beat"` backend inside the pg_cron
+suite (app installed) can no longer exist, since `ScheduledTask.clean()`'s collapsed
+condition means validation runs whenever ANY backend resolves, not just a pg_cron one.
+Don't just delete it — **replace its premise with the one surviving no-op condition**
+(no `AbsurdBackend` at all), otherwise `clean()`'s `backend is not None` skip branch
+loses its only test:
+
+```python
+def test_full_clean_skips_backend_validation_when_no_backend_configured(
+    settings: SettingsWrapper,
+) -> None:
+    # With no Absurd backend configured at all, there is nothing to validate the
+    # queue/cron against, so full_clean must skip cleanly (and not raise) rather
+    # than reject an otherwise-valid row.
+    settings.TASKS = {
+        "default": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}
+    }
+    ScheduledTask(
+        source="a",
+        name="beatrow",
+        task="tests.tasks.add",
+        queue="default",
+        cron="0 2 * * *",
+    ).full_clean()
+```
+
+(`queue="default"` still validates fine here — `get_declared_queue_choices()` collapses
+to the same `backend is None` condition in this same task and falls back to
+`[("default", "default")]` when no backend is configured, so the field's own
+choices-validator accepts it independently of `clean()`'s skip.)
 
 Strip the now-dead `"SCHEDULER": "pg_cron"` line from
 `test_scheduledtask_max_attempts_default_bubbles_from_backend` (~line 83):
@@ -887,12 +926,37 @@ git commit -m "Collapse dead scheduler-mismatch guard in absurd_sync_crons"
 
 **Interfaces:** none new.
 
-- [ ] **Step 1: Delete the now-invalid test and its helper**
+- [ ] **Step 1: Rework the now-invalid test and delete its helper import**
 
-In `tests/pg_cron/test_schedule_emission.py`, delete
-`test_saving_non_pg_cron_backend_schedule_is_a_noop` (lines 81-94) — "a row whose
-backend isn't pg_cron" is unrepresentable once the app being installed means
-`resolve_absurd_backend()`-driven scheduling always applies. Update the import line:
+In `tests/pg_cron/test_schedule_emission.py`,
+`test_saving_non_pg_cron_backend_schedule_is_a_noop` (lines 81-94) has an
+unrepresentable premise post-change — "a row whose backend isn't pg_cron" (via
+`build_beat_tasks`) can no longer exist once scheduling derives from app presence. Don't
+just delete it: it was also the only test hitting `unschedule_pg_cron_job`'s
+`get_absurd_backend() is None` no-op branch (Task 4's collapse) via its
+`scheduled_task.delete()` call — replace its premise with the one surviving no-op
+condition (no `AbsurdBackend` configured at all):
+
+```python
+def test_saving_schedule_without_absurd_backend_is_a_noop(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
+    """No Absurd backend configured at all: (un)schedule are clean no-ops — the
+    only surviving no-op condition once the scheduler-specific guard collapses."""
+    settings.TASKS = {
+        "default": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}
+    }
+    scheduled_task = ScheduledTask.objects.create(
+        source="s",
+        name="orphan_row",
+        task="tests.tasks.add",
+        cron="0 2 * * *",
+    )
+    assert ScheduledTask.pg_cron.get_job("orphan_row", "s") is None
+    scheduled_task.delete()  # unschedule no-op, no error
+```
+
+Update the import line — `build_beat_tasks` is no longer used in this file:
 
 ```python
 from tests.pg_cron.utils import build_pg_cron_tasks
@@ -974,17 +1038,20 @@ def configure_pg_cron_backend(
 ```
 
 In `tests/pg_cron/test_admin/test_scheduledtask.py`, strip all three occurrences (the
-module-level `TASKS` dict at line 29, the inline `narrow_to_default_queue_only` dict at
-line 200, and the inline dict in `test_create_and_sync_produce_identical_spawn_columns`
-at line 328):
+module-level `TASKS` dict at line 29 — 12-space indent, the inline
+`narrow_to_default_queue_only` dict at line 200 — single-line, and the inline dict in
+`test_create_and_sync_produce_identical_spawn_columns` at line 328 — **16-space indent,
+different from line 29**):
 
 ```bash
 sed -i '' '/^            "SCHEDULER": "pg_cron",$/d' tests/pg_cron/test_admin/test_scheduledtask.py
+sed -i '' '/^                "SCHEDULER": "pg_cron",$/d' tests/pg_cron/test_admin/test_scheduledtask.py
 sed -i '' 's/"OPTIONS": {"QUEUES": {"default": {}}, "SCHEDULER": "pg_cron"}/"OPTIONS": {"QUEUES": {"default": {}}}/' tests/pg_cron/test_admin/test_scheduledtask.py
 ```
 
-(the first `sed` handles the two multi-line dict occurrences at lines 29 and 328; the
-second handles the single-line dict at line 200 — run both, order doesn't matter.)
+(first `sed`: 12-space line 29; second `sed`: 16-space line 328 — these are two distinct
+indentation levels, both required; third `sed` handles the single-line dict at line 200
+— run all three, order doesn't matter.)
 
 - [ ] **Step 3: Verify the sweep is complete**
 
@@ -992,12 +1059,13 @@ second handles the single-line dict at line 200 — run both, order doesn't matt
 grep -rln "SCHEDULER" --include="*.py" tests/ django_absurd/
 ```
 
-Expected output: only files that legitimately still mention `SCHEDULER` as prose (not a
-settable key) — at this point that should be none in `tests/`, and none in
-`django_absurd/` either (Tasks 1-6 already removed every code reference). If anything
-unexpected appears, read it before proceeding — it's either a doc-string mentioning the
-old option name (fine to leave for Task 10's docs pass, but flag it here) or a missed
-test.
+Expected output: **no matches at all** in `tests/` or `django_absurd/` (Tasks 1-6
+removed every code reference; Task 2 already fixed
+`tests/pg_cron/test_pg_cron_checks.py`'s module docstring, the one doc-string mention
+that would otherwise have shown up here). `docs/` and `AGENTS.md` still legitimately
+mention it until Task 10 — this grep is scoped to `tests/` and `django_absurd/` only, so
+it should already be silent. If anything appears, it's a missed test — stop and fix it
+before proceeding.
 
 - [ ] **Step 4: Run the full pg_cron suite**
 
@@ -1256,13 +1324,19 @@ In `examples/pg_cron/app.py`, remove the `"SCHEDULER": "pg_cron"` line (this exa
 
 - [ ] **Step 2: Update `docs/web/configuration.md`**
 
-Delete the `absurd.E008` row from the check-messages table:
+Delete the `absurd.E008` row from the check-messages table. The table is padding-aligned
+(trailing spaces before the closing `|`), so don't rely on an exact string match against
+the quoted row below — find and delete the line by its stable content instead:
 
-```
-| `absurd.E008` | `SCHEDULER` is `pg_cron` but `django_absurd.pg_cron` is not in `INSTALLED_APPS` (see [Cron Jobs](cron-jobs.md)). |
+```bash
+grep -n '`absurd.E008`' docs/web/configuration.md
 ```
 
-Delete this row entirely — no replacement row (the misconfig is unrepresentable).
+Delete that exact line number (it reads, ignoring alignment padding:
+``| `absurd.E008` | `SCHEDULER` is `pg_cron` but `django_absurd.pg_cron` is not in `INSTALLED_APPS` (see [Cron Jobs](cron-jobs.md)). |``).
+Delete the row entirely — no replacement row (the misconfig is unrepresentable). Table
+columns don't need re-padding — Prettier reformats the table alignment on the next
+commit's pre-commit run regardless.
 
 - [ ] **Step 3: Update `docs/web/cron-jobs.md`**
 
