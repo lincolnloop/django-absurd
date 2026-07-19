@@ -3,7 +3,7 @@ import typing as t
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from absurd_sdk import Absurd, CreateQueueOptions
+from absurd_sdk import Absurd, CreateQueueOptions, QueuePolicyOptions
 from django.core.exceptions import ImproperlyConfigured
 from django.db import connections
 from django.db.utils import ProgrammingError
@@ -74,9 +74,12 @@ def reconcile_queue(backend: backends.AbsurdBackend, queue_name: str) -> SyncRes
         client.create_queue(queue_name, **opts)
         result.created.append(queue_name)
     else:
-        mutable_opts: dict[str, t.Any] = {
-            k: v for k, v in opts.items() if k in MUTABLE_OPTION_KEYS
-        }
+        # MUTABLE_OPTION_KEYS mirrors QueuePolicyOptions's fields exactly; the cast is
+        # safe by construction.
+        mutable_opts = t.cast(
+            "QueuePolicyOptions",
+            {k: v for k, v in opts.items() if k in MUTABLE_OPTION_KEYS},
+        )
         if mutable_opts and check_mutable_options_drifted(db, mutable_opts, existing):
             client.set_queue_policy(queue_name, **mutable_opts)
             result.reconciled.append(queue_name)
@@ -116,12 +119,13 @@ def parse_interval(using: str, interval_str: str) -> dt.timedelta:
 
 
 def check_mutable_options_drifted(
-    using: str, opts: dict[str, t.Any], existing: Queue
+    using: str, opts: QueuePolicyOptions, existing: Queue
 ) -> bool:
     for key, declared_value in opts.items():
         db_value = getattr(existing, key)
         if key in INTERVAL_OPTION_KEYS:
-            interval_str: str = declared_value
+            # Every INTERVAL_OPTION_KEYS member is a str field on QueuePolicyOptions.
+            interval_str = t.cast("str", declared_value)
             if parse_interval(using, interval_str) != db_value:
                 return True
         elif declared_value != db_value:
