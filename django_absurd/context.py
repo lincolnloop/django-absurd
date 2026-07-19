@@ -82,8 +82,8 @@ class AbsurdTaskContext:
     loop: asyncio.AbstractEventLoop
 
     @property
-    def headers(self) -> "Mapping[str, t.Any]":
-        headers: Mapping[str, t.Any] = self.absurd_ctx.headers
+    def headers(self) -> "Mapping[str, absurd_sdk.JsonValue]":
+        headers: Mapping[str, absurd_sdk.JsonValue] = self.absurd_ctx.headers
         return headers
 
     def step(self, name: str, fn: "Callable[[], R]") -> R:
