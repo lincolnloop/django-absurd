@@ -7,7 +7,7 @@ icon: lucide/git-branch
 Absurd's durable primitives let a task break its work into **checkpointed steps** and
 **sleep** between them — persisting progress so retries and resumes pick up where they
 left off, never redoing completed steps. This page covers the django-absurd surface:
-`DurableContext` (sync) and `AsyncDurableContext` (async).
+`AbsurdTaskContext` (sync) and `AsyncAbsurdTaskContext` (async).
 
 → [Absurd: Concepts](https://earendil-works.github.io/absurd/concepts/) (steps,
 checkpoints, durable execution)
@@ -15,22 +15,22 @@ checkpoints, durable execution)
 ## Basics
 
 Add `takes_context=True` to `@task` and type the first parameter (which **must** be
-named `context`) as `DurableContext` or `AsyncDurableContext`. Both are exported from
-the package root:
+named `context`) as `AbsurdTaskContext` or `AsyncAbsurdTaskContext`. Both are exported
+from the package root:
 
 ```python
-from django_absurd import DurableContext, AsyncDurableContext
+from django_absurd import AbsurdTaskContext, AsyncAbsurdTaskContext
 ```
 
 ### Sync
 
 ```python
 from django.tasks import task
-from django_absurd import DurableContext
+from django_absurd import AbsurdTaskContext
 
 
 @task(takes_context=True)
-def process_order(context: DurableContext, order_id: int) -> None:
+def process_order(context: AbsurdTaskContext, order_id: int) -> None:
     context.step("charge", lambda: charge_card(order_id))
     context.sleep_for("cooldown", 5)           # suspend for ~5 seconds
     context.step("ship", lambda: ship(order_id))
@@ -46,11 +46,11 @@ lambda (a sync lambda returns a non-awaitable and raises `TypeError`):
 
 ```python
 from django.tasks import task
-from django_absurd import AsyncDurableContext
+from django_absurd import AsyncAbsurdTaskContext
 
 
 @task(takes_context=True)
-async def process_order(context: AsyncDurableContext, order_id: int) -> None:
+async def process_order(context: AsyncAbsurdTaskContext, order_id: int) -> None:
     async def charge():
         return await charge_card(order_id)
 
@@ -80,7 +80,7 @@ An alternative to `context.step` for cases where wrapping a lambda is awkward:
 
 ```python
 @task(takes_context=True)
-def process_order(context: DurableContext, order_id: int) -> None:
+def process_order(context: AbsurdTaskContext, order_id: int) -> None:
     @context.run_step                     # name = "charge"
     def charge():
         return charge_card(order_id)
@@ -100,7 +100,7 @@ Sleep until a specific moment rather than a duration:
 import datetime as dt
 
 @task(takes_context=True)
-async def send_reminder(context: AsyncDurableContext, user_id: int) -> None:
+async def send_reminder(context: AsyncAbsurdTaskContext, user_id: int) -> None:
     wake_at = dt.datetime(2026, 1, 1, 9, 0, tzinfo=dt.timezone.utc)
     await context.sleep_until("wait-for-new-year", wake_at)
 
@@ -120,7 +120,7 @@ Headers passed at enqueue time are available on `context.headers`:
 
 ```python
 @task(takes_context=True)
-def process_order(context: DurableContext, order_id: int) -> None:
+def process_order(context: AbsurdTaskContext, order_id: int) -> None:
     tenant = context.headers.get("tenant")
     context.step("charge", lambda: charge_card(order_id, tenant=tenant))
 ```
@@ -183,7 +183,7 @@ Either keep steps short or call `context.heartbeat()` periodically:
 
 ```python
 @task(takes_context=True)
-def process_batch(context: DurableContext, batch_id: int) -> None:
+def process_batch(context: AbsurdTaskContext, batch_id: int) -> None:
     def process():
         for row in big_result_set:
             process_row(row)

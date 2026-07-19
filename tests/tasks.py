@@ -9,7 +9,7 @@ from django_absurd.params import absurd_default_params
 from tests.models import Payload
 
 if t.TYPE_CHECKING:
-    from django_absurd.context import DurableContext
+    from django_absurd.context import AbsurdTaskContext
 
 SYNC_STEP_CALLS: dict[str, int] = {"n": 0}
 
@@ -101,13 +101,13 @@ def fully_specced() -> t.Never:
     raise NotImplementedError(msg)
 
 
-@task(takes_context=True)  # type: ignore[arg-type]  # django-stubs types the ctx param as base TaskContext; the worker passes a DurableContext to sync tasks
-def sstep_echo(context: "DurableContext", value: str) -> str:
+@task(takes_context=True)  # type: ignore[arg-type]  # django-stubs types the ctx param as base TaskContext; the worker passes a AbsurdTaskContext to sync tasks
+def sstep_echo(context: "AbsurdTaskContext", value: str) -> str:
     return context.step("echo", lambda: value)
 
 
-@task(takes_context=True)  # type: ignore[arg-type]  # django-stubs types the ctx param as base TaskContext; the worker passes a DurableContext to sync tasks
-def scoverage(context: "DurableContext") -> dict[str, t.Any]:
+@task(takes_context=True)  # type: ignore[arg-type]  # django-stubs types the ctx param as base TaskContext; the worker passes a AbsurdTaskContext to sync tasks
+def scoverage(context: "AbsurdTaskContext") -> dict[str, t.Any]:
     context.heartbeat()
     tenant = context.headers.get("tenant")
 
@@ -126,8 +126,8 @@ def scoverage(context: "DurableContext") -> dict[str, t.Any]:
     return {"tenant": tenant, "bare": bare, "derived": derived, "named": named}
 
 
-@task(takes_context=True)  # type: ignore[arg-type]  # django-stubs types the ctx param as base TaskContext; the worker passes a DurableContext to sync tasks
-def ssleep_for_once(context: "DurableContext", key: str) -> int:
+@task(takes_context=True)  # type: ignore[arg-type]  # django-stubs types the ctx param as base TaskContext; the worker passes a AbsurdTaskContext to sync tasks
+def ssleep_for_once(context: "AbsurdTaskContext", key: str) -> int:
     def bump() -> int:
         SYNC_STEP_CALLS["n"] += 1
         return SYNC_STEP_CALLS["n"]
@@ -137,7 +137,7 @@ def ssleep_for_once(context: "DurableContext", key: str) -> int:
     return n
 
 
-@task(takes_context=True)  # type: ignore[arg-type]  # django-stubs types the ctx param as base TaskContext; the worker passes a DurableContext to sync tasks
-def ssleep_until_once(context: "DurableContext", key: str) -> str:
+@task(takes_context=True)  # type: ignore[arg-type]  # django-stubs types the ctx param as base TaskContext; the worker passes a AbsurdTaskContext to sync tasks
+def ssleep_until_once(context: "AbsurdTaskContext", key: str) -> str:
     context.sleep_until("nap", time.time() + 1.5)
     return "woke"

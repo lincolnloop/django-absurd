@@ -9,8 +9,8 @@ functions, so a `takes_context=True` task can `step` (checkpoint/replay) and
 `sleep_for`/`sleep_until` (durable suspend/resume).
 
 **Architecture:** a new `django_absurd/context.py` defines two context classes extending
-Django's `TaskContext` and wrapping the live Absurd SDK ctx — `AsyncDurableContext`
-(async tasks, methods delegate straight) and `DurableContext` (sync tasks, methods
+Django's `TaskContext` and wrapping the live Absurd SDK ctx — `AsyncAbsurdTaskContext`
+(async tasks, methods delegate straight) and `AbsurdTaskContext` (sync tasks, methods
 bridge to the worker loop via `run_coroutine_threadsafe`). `worker.build_task_context`
 picks the variant by `inspect.iscoroutinefunction`; `build_handler` stops mislogging the
 SDK's control-flow exceptions. Admin gains a Checkpoints inline under the task. Docs
@@ -66,8 +66,8 @@ asyncio.
 
 ## File Structure
 
-- **Create** `django_absurd/context.py` — `AsyncDurableContext`, `DurableContext`, the
-  `_TaskContextBase` conditional alias, the `R` TypeVar. One responsibility: durable
+- **Create** `django_absurd/context.py` — `AsyncAbsurdTaskContext`, `AbsurdTaskContext`,
+  the `_TaskContextBase` conditional alias, the `R` TypeVar. One responsibility: durable
   context surface + the sync→loop bridge.
 - **Modify** `django_absurd/worker.py` — `build_task_context` picks the variant;
   `build_handler` gains one control-flow-exception arm; module-level `LIFECYCLE_WORDS`.
@@ -98,14 +98,14 @@ asyncio.
 
 **Interfaces:**
 
-- Produces: `django_absurd.context.AsyncDurableContext` — a
+- Produces: `django_absurd.context.AsyncAbsurdTaskContext` — a
   `@dataclass(frozen=True, slots=True, kw_only=True)` subclass of Django `TaskContext`,
   field `absurd_ctx: t.Any`; `headers` property (`-> Mapping[str, t.Any]`);
   `async def step(self, name: str, fn: Callable[[], Awaitable[R]]) -> R`;
   `async def heartbeat(self, seconds: int | None = None) -> None`.
 - Produces: `tests/worker_support.py` `run_absurd_worker(queue="default") -> None` and
   `get_task_result(task_id, queue="default") -> TaskResultSnapshot | None`.
-- Produces: `build_task_context` returns `AsyncDurableContext` for a coroutine
+- Produces: `build_task_context` returns `AsyncAbsurdTaskContext` for a coroutine
   `task.func` (plain `TaskContext` otherwise — unchanged for now).
 
 - [ ] **Step 1: Write the failing tests + shared helpers**
@@ -151,13 +151,13 @@ Add async durable tasks to `tests/atasks.py` (module already imports `task`; add
 import typing as t
 
 if t.TYPE_CHECKING:
-    from django_absurd.context import AsyncDurableContext
+    from django_absurd.context import AsyncAbsurdTaskContext
 
 DURABLE_STEP_CALLS: dict[str, int] = {"n": 0}
 
 
 @task(takes_context=True)
-async def astep_echo(context: "AsyncDurableContext", value: str) -> str:
+async def astep_echo(context: "AsyncAbsurdTaskContext", value: str) -> str:
     async def compute() -> str:
         return value
 
@@ -165,12 +165,12 @@ async def astep_echo(context: "AsyncDurableContext", value: str) -> str:
 
 
 @task(takes_context=True)
-async def aheaders_tenant(context: "AsyncDurableContext") -> str | None:
+async def aheaders_tenant(context: "AsyncAbsurdTaskContext") -> str | None:
     return context.headers.get("tenant")
 
 
 @task(takes_context=True)
-async def aheartbeat_then_return(context: "AsyncDurableContext", value: str) -> str:
+async def aheartbeat_then_return(context: "AsyncAbsurdTaskContext", value: str) -> str:
     await context.heartbeat()
     return value
 ```
@@ -230,13 +230,14 @@ exist.
 Create `django_absurd/context.py`: a `TYPE_CHECKING` conditional-base alias
 `_TaskContextBase` (`TaskContext[t.Any, t.Any]` under `TYPE_CHECKING`, else plain
 `TaskContext` — mirror `admin.py:29-32`); `R = t.TypeVar("R")`. Define
-`AsyncDurableContext` as a `@dataclass(frozen=True, slots=True, kw_only=True)` subclass
-adding `absurd_ctx: t.Any`; `headers` property returns `self.absurd_ctx.headers`;
-`step`/`heartbeat` await the matching `self.absurd_ctx` methods (`step(name, fn)`
-mirrors the SDK arg name). In `worker.build_task_context`, build `task_result` as today,
-then return `AsyncDurableContext(task_result=…, absurd_ctx=ctx)` when
+`AsyncAbsurdTaskContext` as a `@dataclass(frozen=True, slots=True, kw_only=True)`
+subclass adding `absurd_ctx: t.Any`; `headers` property returns
+`self.absurd_ctx.headers`; `step`/`heartbeat` await the matching `self.absurd_ctx`
+methods (`step(name, fn)` mirrors the SDK arg name). In `worker.build_task_context`,
+build `task_result` as today, then return
+`AsyncAbsurdTaskContext(task_result=…, absurd_ctx=ctx)` when
 `inspect.iscoroutinefunction(task.func)`, else the plain `TaskContext`. Re-export
-`AsyncDurableContext` from `django_absurd/__init__.py`.
+`AsyncAbsurdTaskContext` from `django_absurd/__init__.py`.
 
 - [ ] **Step 4: Run the full core suite**
 
@@ -256,13 +257,13 @@ git commit -m "feat: expose async durable ctx (step/headers/heartbeat) to tasks"
 
 **Files:**
 
-- Modify: `django_absurd/context.py` (`AsyncDurableContext`), `django_absurd/worker.py`
-  (`build_handler`, `LIFECYCLE_WORDS`), `tests/atasks.py`
+- Modify: `django_absurd/context.py` (`AsyncAbsurdTaskContext`),
+  `django_absurd/worker.py` (`build_handler`, `LIFECYCLE_WORDS`), `tests/atasks.py`
 - Test: `tests/core/test_durable.py`
 
 **Interfaces:**
 
-- Produces: `AsyncDurableContext.sleep_for(step_name, duration)` /
+- Produces: `AsyncAbsurdTaskContext.sleep_for(step_name, duration)` /
   `sleep_until(step_name, wake_at)` (`wake_at: datetime | int | float`), delegating to
   `self.absurd_ctx`.
 - Produces: `worker.LIFECYCLE_WORDS: dict[type, str]` =
@@ -279,7 +280,7 @@ import time
 
 
 @task(takes_context=True)
-async def asleep_for_once(context: "AsyncDurableContext", key: str) -> int:
+async def asleep_for_once(context: "AsyncAbsurdTaskContext", key: str) -> int:
     async def bump() -> int:
         DURABLE_STEP_CALLS["n"] += 1
         return DURABLE_STEP_CALLS["n"]
@@ -290,7 +291,7 @@ async def asleep_for_once(context: "AsyncDurableContext", key: str) -> int:
 
 
 @task(takes_context=True)
-async def asleep_until_once(context: "AsyncDurableContext", key: str) -> str:
+async def asleep_until_once(context: "AsyncAbsurdTaskContext", key: str) -> str:
     await context.sleep_until("nap", time.time() + 1.5)
     return "woke"
 ```
@@ -363,7 +364,7 @@ Run: `uv run pytest tests/core/test_durable.py -k "sleep or suspend" -v` Expecte
 - [ ] **Step 3: Implement (prose — minimal)**
 
 Add `sleep_for(step_name, duration)` + `sleep_until(step_name, wake_at)` to
-`AsyncDurableContext`, awaiting the matching `self.absurd_ctx` methods (delegate
+`AsyncAbsurdTaskContext`, awaiting the matching `self.absurd_ctx` methods (delegate
 directly; `sleep_for` does NOT route through our `sleep_until`). In `worker.py`, add
 module-level
 `LIFECYCLE_WORDS = {SuspendTask: "suspended", CancelledTask: "cancelled", FailedTask: "failed"}`
@@ -390,19 +391,19 @@ git commit -m "feat: async durable sleep + single control-flow logging arm"
 
 **Files:**
 
-- Modify: `django_absurd/context.py` (`DurableContext`), `django_absurd/worker.py`
+- Modify: `django_absurd/context.py` (`AbsurdTaskContext`), `django_absurd/worker.py`
   (`build_task_context`), `django_absurd/__init__.py`, `tests/tasks.py`
 - Test: `tests/core/test_durable.py`
 
 **Interfaces:**
 
-- Produces: `django_absurd.context.DurableContext` — a
+- Produces: `django_absurd.context.AbsurdTaskContext` — a
   `@dataclass(frozen=True, slots=True, kw_only=True)` `TaskContext` subclass, fields
   `absurd_ctx: t.Any` + `loop: asyncio.AbstractEventLoop`; sync methods
   `step(name, fn: Callable[[], R]) -> R`, `sleep_for(step_name, duration)`,
   `sleep_until(step_name, wake_at)`, `heartbeat(seconds=None)`, a `headers` property,
   and `run_step(name_or_fn=None)` (decorator, sync-only, all three SDK forms).
-- Produces: `build_task_context` returns `DurableContext` for a non-coroutine
+- Produces: `build_task_context` returns `AbsurdTaskContext` for a non-coroutine
   `takes_context` task, capturing `asyncio.get_running_loop()`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -415,18 +416,18 @@ import time
 import typing as t
 
 if t.TYPE_CHECKING:
-    from django_absurd.context import DurableContext
+    from django_absurd.context import AbsurdTaskContext
 
 SYNC_STEP_CALLS: dict[str, int] = {"n": 0}
 
 
 @task(takes_context=True)
-def sstep_echo(context: "DurableContext", value: str) -> str:
+def sstep_echo(context: "AbsurdTaskContext", value: str) -> str:
     return context.step("echo", lambda: value)
 
 
 @task(takes_context=True)
-def scoverage(context: "DurableContext") -> dict[str, t.Any]:
+def scoverage(context: "AbsurdTaskContext") -> dict[str, t.Any]:
     context.heartbeat()
     tenant = context.headers.get("tenant")
 
@@ -446,7 +447,7 @@ def scoverage(context: "DurableContext") -> dict[str, t.Any]:
 
 
 @task(takes_context=True)
-def ssleep_for_once(context: "DurableContext", key: str) -> int:
+def ssleep_for_once(context: "AbsurdTaskContext", key: str) -> int:
     def bump() -> int:
         SYNC_STEP_CALLS["n"] += 1
         return SYNC_STEP_CALLS["n"]
@@ -457,7 +458,7 @@ def ssleep_for_once(context: "DurableContext", key: str) -> int:
 
 
 @task(takes_context=True)
-def ssleep_until_once(context: "DurableContext", key: str) -> str:
+def ssleep_until_once(context: "AbsurdTaskContext", key: str) -> str:
     context.sleep_until("nap", time.time() + 1.5)
     return "woke"
 ```
@@ -540,7 +541,7 @@ Run: `uv run pytest tests/core/test_durable.py -k sync -v` Expected: FAIL — sy
 
 - [ ] **Step 3: Implement (prose — minimal)**
 
-Add `DurableContext` to `context.py`: same conditional base; fields `absurd_ctx` +
+Add `AbsurdTaskContext` to `context.py`: same conditional base; fields `absurd_ctx` +
 `loop`. Each async ctx op bridges with
 `run_coroutine_threadsafe(coro, self.loop).result(timeout=…)` (generous timeout so a
 mid-op worker shutdown can't hang the thread). `step`: bridge `begin_step(name)`; if the
@@ -553,8 +554,8 @@ propagates out through `call_sync`). `run_step(name_or_fn=None)`: mirror the SDK
 → step named by `fn.__name__`), `@ctx.run_step()` (derive name),
 `@ctx.run_step("custom")`. `headers` property proxies `self.absurd_ctx.headers`. In
 `build_task_context`, the non-coroutine branch now returns
-`DurableContext(task_result=…, absurd_ctx=ctx, loop=asyncio.get_running_loop())`.
-Re-export `DurableContext` from `__init__.py`.
+`AbsurdTaskContext(task_result=…, absurd_ctx=ctx, loop=asyncio.get_running_loop())`.
+Re-export `AbsurdTaskContext` from `__init__.py`.
 
 - [ ] **Step 4: Run the full core suite**
 
@@ -671,8 +672,8 @@ git commit -m "feat: admin inlines checkpoints + shows sleeping run available_at
 - [ ] **Step 1: Write AGENTS.md "Durable steps & sleep" section**
 
 Both variants (sync no-`await`, async `await`); a `step` + `sleep_for` example; a
-**typed** usage snippet (`async def workflow(context: AsyncDurableContext, …)`) showing
-autocomplete/mypy value; and the **full footgun set** as an explicit list: (a)
+**typed** usage snippet (`async def workflow(context: AsyncAbsurdTaskContext, …)`)
+showing autocomplete/mypy value; and the **full footgun set** as an explicit list: (a)
 **effectively-once** — steps persist after `fn` returns on a separate connection,
 executed at-least-once in a crash window, keep side effects idempotent; (b)
 **deterministic naming/order** — step call order/names stable across replays; `step` and
@@ -728,7 +729,7 @@ three worded arms) — same observable text per type, one covered branch, no fra
 self-cancel/external-fail tests. Sync/async scenarios are separate one-off tests (not
 `parametrize`) for readable failures. Both keep the behavior the spec requires.
 
-**Type consistency:** `AsyncDurableContext`/`DurableContext` fields (`absurd_ctx`,
+**Type consistency:** `AsyncAbsurdTaskContext`/`AbsurdTaskContext` fields (`absurd_ctx`,
 `loop`)
 
 - SDK-verbatim signatures (`step(name, fn)`, `sleep_for(step_name, duration)`,

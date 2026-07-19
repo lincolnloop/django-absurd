@@ -70,7 +70,7 @@ else:
     _TaskContextBase = TaskContext
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class DurableContext(_TaskContextBase):        # sync — Absurd's primary style, no await
+class AbsurdTaskContext(_TaskContextBase):        # sync — Absurd's primary style, no await
     absurd_ctx: t.Any                          # live SDK AsyncTaskContext
     loop: asyncio.AbstractEventLoop            # worker loop, for bridging
     @property
@@ -82,7 +82,7 @@ class DurableContext(_TaskContextBase):        # sync — Absurd's primary style
     def heartbeat(self, seconds: int | None = None) -> None: ...
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class AsyncDurableContext(_TaskContextBase):   # async
+class AsyncAbsurdTaskContext(_TaskContextBase):   # async
     absurd_ctx: t.Any
     @property
     def headers(self) -> Mapping[str, JsonValue]: ...
@@ -97,7 +97,7 @@ class AsyncDurableContext(_TaskContextBase):   # async
 Names/args mirror the SDK 1:1 (no invented API; Absurd docs transfer). Step return `R`
 is a **JSON value** — persisted via `json.dumps` (see footguns). Both classes
 strict-typed. Live in a new `django_absurd/context.py`; public import
-`from django_absurd import DurableContext, AsyncDurableContext` (re-export in
+`from django_absurd import AbsurdTaskContext, AsyncAbsurdTaskContext` (re-export in
 `__init__.py`). Names provisional — settle at plan time.
 
 Usage:

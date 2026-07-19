@@ -27,7 +27,7 @@ from django.tasks import TaskResultStatus, default_task_backend, task
 from django.tasks.exceptions import TaskResultDoesNotExist
 from nanodjango import Django
 
-from django_absurd import DurableContext
+from django_absurd import AbsurdTaskContext
 
 app = Django(
     ADMIN_URL="admin/",
@@ -67,7 +67,7 @@ def add(a: str, b: str) -> float:
 
 
 @task(takes_context=True)
-def durable_workflow(context: DurableContext, message: str) -> str:
+def durable_workflow(context: AbsurdTaskContext, message: str) -> str:
     """Two-step durable task: run a step, sleep 5s, run another step.
 
     Demonstrates checkpoint persistence and durable sleep: check the admin's

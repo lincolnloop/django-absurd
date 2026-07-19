@@ -20,7 +20,7 @@ BRIDGE_TIMEOUT = 300.0
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class AsyncDurableContext(_TaskContextBase):  # type: ignore[misc]  # django-stubs omits frozen=True on TaskContext; the runtime dataclass IS frozen, so a frozen subclass is correct
+class AsyncAbsurdTaskContext(_TaskContextBase):  # type: ignore[misc]  # django-stubs omits frozen=True on TaskContext; the runtime dataclass IS frozen, so a frozen subclass is correct
     """``TaskContext`` wrapping the live Absurd SDK ctx for async durable tasks."""
 
     absurd_ctx: t.Any
@@ -47,7 +47,7 @@ class AsyncDurableContext(_TaskContextBase):  # type: ignore[misc]  # django-stu
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class DurableContext(_TaskContextBase):  # type: ignore[misc]  # django-stubs omits frozen=True on TaskContext; the runtime dataclass IS frozen, so a frozen subclass is correct
+class AbsurdTaskContext(_TaskContextBase):  # type: ignore[misc]  # django-stubs omits frozen=True on TaskContext; the runtime dataclass IS frozen, so a frozen subclass is correct
     """``TaskContext`` for sync durable tasks, bridging to the worker event loop.
 
     Sync ``def`` tasks run in the worker's threadpool executor, so each durable

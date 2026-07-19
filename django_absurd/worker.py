@@ -20,7 +20,7 @@ from django.utils.module_loading import import_string
 
 from django_absurd.backends import AbsurdBackend
 from django_absurd.connection import register_jsonb_loader, validate_backend
-from django_absurd.context import AsyncDurableContext, DurableContext
+from django_absurd.context import AbsurdTaskContext, AsyncAbsurdTaskContext
 from django_absurd.scheduler import run_beat
 
 logger = logging.getLogger("django_absurd")
@@ -202,8 +202,8 @@ def build_task_context(
         ),
     )
     if inspect.iscoroutinefunction(task.func):
-        return AsyncDurableContext(task_result=task_result, absurd_ctx=ctx)
-    return DurableContext(
+        return AsyncAbsurdTaskContext(task_result=task_result, absurd_ctx=ctx)
+    return AbsurdTaskContext(
         task_result=task_result,
         absurd_ctx=ctx,
         loop=asyncio.get_running_loop(),
