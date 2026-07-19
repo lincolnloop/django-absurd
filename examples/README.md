@@ -5,7 +5,10 @@ each in its own directory with its own `docker compose`. Run **one at a time** (
 serve on http://localhost:8000; admin login `admin` / `admin`).
 
 - **[`web/`](web/)** — enqueue `add(a, b)` from a form and watch the result
-  (`get_result`); browse the read-only queue tables in the admin.
+  (`get_result`); browse the read-only queue tables in the admin. Also demonstrates
+  **Steps (checkpoints) + Sleep** at `/workflow/` — an order-fulfillment task that
+  checkpoints each step and suspends on a `sleep_for`, with a link into the task's admin
+  page to watch its checkpoints and suspended run.
 - **[`beat/`](beat/)** — the in-process **beat** scheduler firing a task every minute.
 - **[`pg_cron/`](pg_cron/)** — the **pg_cron** scheduler firing a task directly from
   Postgres (no beat process).
