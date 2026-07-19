@@ -20,11 +20,13 @@ import os
 import pprint
 
 from django import forms
+from django.contrib.admin.utils import quote
 from django.http import HttpRequest, HttpResponse
 from django.middleware.csrf import get_token
 from django.shortcuts import redirect
 from django.tasks import TaskResultStatus, default_task_backend, task
 from django.tasks.exceptions import TaskResultDoesNotExist
+from django.urls import reverse
 from nanodjango import Django
 
 from django_absurd import get_absurd_context
@@ -177,13 +179,18 @@ def task_detail(request: HttpRequest, result_id: str) -> HttpResponse | str:
 
     fields = {f.name: getattr(result, f.name) for f in dataclasses.fields(result)}
     dump = html.escape(pprint.pformat(fields))
+    admin_url = reverse("admin:django_absurd_task_change", args=[quote(result.id)])
     return f"""
         {refresh}
         <h1>Task {result.id}</h1>
         <p>Status: <strong>{result.status.name}</strong></p>
         {body}
         <pre><code>{dump}</code></pre>
-        <p><a href="/">Add another</a> · <a href="/admin/">Admin</a></p>
+        <p>
+          <a href="/">Add another</a> ·
+          <a href="{admin_url}">View this task in the admin</a>
+          — its Runs + Checkpoints inlines show the steps and suspended state.
+        </p>
     """
 
 
