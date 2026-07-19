@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 
@@ -40,6 +41,17 @@ def test_aget_absurd_context_outside_a_task_raises() -> None:
         match="aget_absurd_context\\(\\) must be called inside a running Absurd task",
     ):
         aget_absurd_context()
+
+
+def test_get_absurd_context_on_loop_raises() -> None:
+    async def call() -> None:
+        get_absurd_context()
+
+    with pytest.raises(
+        RuntimeError,
+        match="get_absurd_context\\(\\) is for sync tasks; use aget_absurd_context",
+    ):
+        asyncio.run(call())
 
 
 def test_async_step_runs_and_returns_value() -> None:

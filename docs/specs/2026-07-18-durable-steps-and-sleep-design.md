@@ -45,6 +45,10 @@ naming/order; JSON-serializable step returns; don't swallow `SuspendTask`; long 
 
 ## Context exposure — extend Django `TaskContext`, match ctx to task kind
 
+> **SUPERSEDED** — the `TaskContext`-subclass design in the sections below was replaced
+> during review. See the **AMENDMENT (post-review): accessor-based exposure** section at
+> the end for the shipped design.
+
 Today worker hands `takes_context=True` tasks a plain Django `TaskContext`
 (`task_result` only); Absurd SDK ctx withheld (`worker.py:216`). Change: hand a
 django-absurd context that **subclasses Django `TaskContext`** (keeps

@@ -1,5 +1,10 @@
 # Durable Steps + Sleep Implementation Plan
 
+> **SUPERSEDED (exposure layer)** — the durable context is now reached via
+> `get_absurd_context()`/`aget_absurd_context()` accessors, not a `TaskContext`
+> subclass. See the spec's "AMENDMENT" section. Do not execute the
+> subclass/`takes_context` context-exposure steps below as written.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > superpowers:subagent-driven-development (recommended) or superpowers:executing-plans
 > to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

@@ -34,6 +34,16 @@ def get_absurd_context() -> "AbsurdTaskContext":
     Wraps the live async context in the ``AbsurdTaskContext`` sync bridge over the
     stashed worker loop. Raises outside a running Absurd task.
     """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        pass  # not on the loop → sync task, correct usage
+    else:
+        msg = (
+            "get_absurd_context() is for sync tasks;"
+            " use aget_absurd_context() in async tasks"
+        )
+        raise RuntimeError(msg)
     absurd_ctx = absurd_sdk.get_current_context()
     if absurd_ctx is None:
         msg = "get_absurd_context() must be called inside a running Absurd task"
