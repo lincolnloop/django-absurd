@@ -50,6 +50,46 @@ def run_pg_cron_check(
     return cap.out + cap.err
 
 
+def run_pg_cron_cleanup_check(
+    settings: pytest_django.fixtures.SettingsWrapper,
+    capsys: pytest.CaptureFixture[str],
+    cleanup: dict[str, t.Any],
+) -> str:
+    settings.TASKS = {
+        "default": {
+            "BACKEND": ABSURD,
+            "OPTIONS": {"QUEUES": BASE_QUEUES, "CLEANUP": cleanup},
+        }
+    }
+    try:
+        call_command("check", "django_absurd")
+    except SystemCheckError as exc:
+        cap = capsys.readouterr()
+        return cap.out + cap.err + str(exc)
+    cap = capsys.readouterr()
+    return cap.out + cap.err
+
+
+def test_pg_cron_cleanup_accepts_arbitrary_nonempty_schedule(
+    settings: pytest_django.fixtures.SettingsWrapper,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Under pg_cron, CLEANUP's cron grammar is DB-authoritative at sync time — the
+    check only requires a non-empty string, unlike beat's croniter validation."""
+    out = run_pg_cron_cleanup_check(
+        settings, capsys, {"schedule": "not a cron but pg_cron doesn't validate this"}
+    )
+    assert "absurd.E010" not in out
+
+
+def test_pg_cron_cleanup_rejects_empty_schedule(
+    settings: pytest_django.fixtures.SettingsWrapper,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    out = run_pg_cron_cleanup_check(settings, capsys, {"schedule": ""})
+    assert "absurd.E010" in out
+
+
 def test_pg_cron_task_import_raise_reports_e007_not_crash(
     settings: pytest_django.fixtures.SettingsWrapper,
     capsys: pytest.CaptureFixture[str],

@@ -344,28 +344,25 @@ E010_HINT = (
 
 
 @pytest.mark.parametrize(
-    ("cleanup", "scheduler"),
+    "cleanup",
     [
-        ("0 2 * * *", "beat"),
-        ({"schedule": ""}, "beat"),
-        ({"schedule": ""}, "pg_cron"),
-        ({"schedule": "0 2 * * *", "unknown": 1}, "beat"),
-        ({"schedule": "not a cron"}, "beat"),
-        ({"schedule": 5}, "beat"),
+        "0 2 * * *",
+        {"schedule": ""},
+        {"schedule": "0 2 * * *", "unknown": 1},
+        {"schedule": "not a cron"},
+        {"schedule": 5},
     ],
 )
 def test_invalid_cleanup_errors(
     settings: "pytest_django.fixtures.SettingsWrapper",
     capsys: pytest.CaptureFixture[str],
     cleanup: str | dict[str, t.Any],
-    scheduler: str,
 ) -> None:
     settings.TASKS = {
         "default": {
             "BACKEND": ABSURD,
             "OPTIONS": {
                 "QUEUES": {"default": {}},
-                "SCHEDULER": scheduler,
                 "CLEANUP": cleanup,
             },
         }
@@ -385,18 +382,15 @@ def test_scheduler_defaults_to_beat(
     assert get_absurd_backends()["default"].scheduler == "beat"
 
 
-@pytest.mark.parametrize("scheduler", ["beat", "pg_cron"])
 def test_valid_cleanup_no_error(
     settings: "pytest_django.fixtures.SettingsWrapper",
     capsys: pytest.CaptureFixture[str],
-    scheduler: str,
 ) -> None:
     settings.TASKS = {
         "default": {
             "BACKEND": ABSURD,
             "OPTIONS": {
                 "QUEUES": {"default": {}},
-                "SCHEDULER": scheduler,
                 "CLEANUP": {"schedule": "0 2 * * *"},
             },
         }
