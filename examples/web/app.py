@@ -79,12 +79,21 @@ def fulfill_order(order: str) -> str:
 
     Each step is a checkpoint: check the admin's Checkpoints and Runs pages to
     see the steps and the suspended state while it waits.
+
+    Shows both step forms: ``context.step(name, fn)`` and the ``run_step``
+    decorator (sync only), which runs the function once and replaces it with the
+    step's return value.
     """
     context = get_absurd_context()
     context.step("charge", lambda: f"charged: {order}")
     context.step("reserve-inventory", lambda: f"reserved: {order}")
     context.sleep_for("await-warehouse", 5)
-    return context.step("notify", lambda: f"notified: {order}")
+
+    @context.run_step("notify")
+    def notify() -> str:
+        return f"notified: {order}"
+
+    return notify
 
 
 class AddForm(forms.Form):
