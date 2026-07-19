@@ -23,6 +23,7 @@ if t.TYPE_CHECKING:
     from django.contrib.admin.options import _FieldsetSpec
     from django.contrib.admin.sites import AdminSite
     from django.http import HttpRequest, HttpResponse
+    from django.utils.functional import _StrOrPromise
 
     _ScheduledTaskFormBase = forms.ModelForm[ScheduledTask]
     _ScheduledTaskAdminBase = admin.ModelAdmin[ScheduledTask]
@@ -78,6 +79,11 @@ class ScheduledTaskForm(_ScheduledTaskFormBase):
         return {} if value is None else value
 
 
+type FormErrorValueOrSequence = (
+    ValidationError | _StrOrPromise | t.Sequence[ValidationError | _StrOrPromise]
+)
+
+
 class ScheduledTaskCreateForm(ScheduledTaskForm):
     class Meta(ScheduledTaskForm.Meta):
         # The create step collects only identity + cron; every spawn column is
@@ -111,7 +117,17 @@ class ScheduledTaskCreateForm(ScheduledTaskForm):
                     setattr(self.instance, field, value)
         return cleaned
 
-    def add_error(self, field: str | None, error: t.Any) -> None:
+    @t.overload
+    def add_error(
+        self, field: None, error: t.Mapping[str, FormErrorValueOrSequence]
+    ) -> None: ...
+    @t.overload
+    def add_error(self, field: str | None, error: FormErrorValueOrSequence) -> None: ...
+    def add_error(
+        self,
+        field: str | None,
+        error: t.Mapping[str, FormErrorValueOrSequence] | FormErrorValueOrSequence,
+    ) -> None:
         # The resolved spawn columns (queue, retry_kind, ...) aren't fields on this
         # 4-field create form, so a model-validation error keyed to one of them (e.g. a
         # resolved queue that isn't declared for the backend) would raise "has no field
@@ -123,7 +139,10 @@ class ScheduledTaskCreateForm(ScheduledTaskForm):
                 key = name if name in self.fields else NON_FIELD_ERRORS
                 rehomed.setdefault(key, []).extend(messages)
             error = ValidationError(rehomed)
-        super().add_error(field, error)
+        if isinstance(error, t.Mapping):
+            super().add_error(None, error)
+        else:
+            super().add_error(field, error)
 
 
 class ScheduledTaskAdmin(_ScheduledTaskAdminBase):

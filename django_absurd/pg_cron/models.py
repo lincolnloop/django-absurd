@@ -30,6 +30,9 @@ from django_absurd.validators import (
 
 __all__ = ["ScheduledTask"]
 
+PgCronJobRow = tuple[str, str, str, bool]
+"""A ``(jobname, schedule, command, active)`` row from ``cron.job``."""
+
 CRON_HELP_TEXT = (
     "A 5-field cron (e.g. '0 2 * * *') or the interval form '<n> seconds' (1-59)."
     " High-frequency schedules (a few seconds) generate a lot of runs, so take care."
@@ -67,7 +70,7 @@ class PgCronManager(models.Manager["ScheduledTask"]):
     reuse an already-resolved value.
     """
 
-    def get_job(self, name: str, source: str) -> tuple[t.Any, ...] | None:
+    def get_job(self, name: str, source: str) -> PgCronJobRow | None:
         """The ``(jobname, schedule, command, active)`` row for one schedule's job."""
         with connections[resolve_absurd_database()].cursor() as cur:
             cur.execute(
@@ -75,10 +78,10 @@ class PgCronManager(models.Manager["ScheduledTask"]):
                 "where jobname = %s",
                 [build_jobname(name, source)],
             )
-            job: tuple[t.Any, ...] | None = cur.fetchone()
+            job: PgCronJobRow | None = cur.fetchone()
             return job
 
-    def get_managed_jobs(self, source: str | None = None) -> list[tuple[t.Any, ...]]:
+    def get_managed_jobs(self, source: str | None = None) -> list[PgCronJobRow]:
         """The ``(jobname, schedule, command, active)`` rows for every job we manage
         (all share the ``_dj:`` prefix). Pass source to narrow to one lane
         (``_dj:<source>:``)."""
@@ -89,7 +92,7 @@ class PgCronManager(models.Manager["ScheduledTask"]):
                 "where starts_with(jobname, %s) order by jobname",
                 [prefix],
             )
-            jobs: list[tuple[t.Any, ...]] = cur.fetchall()
+            jobs: list[PgCronJobRow] = cur.fetchall()
             return jobs
 
     def unschedule_matching(self, source: str, database: str | None = None) -> None:
@@ -243,7 +246,7 @@ class ScheduledTask(models.Model):
             errors["cron"] = exc.messages
         return errors
 
-    def get_pg_cron_job(self) -> tuple[t.Any, ...] | None:
+    def get_pg_cron_job(self) -> PgCronJobRow | None:
         """This row's own pg_cron job as ``(jobname, schedule, command, active)``, or
         None if it isn't scheduled. (The manager lives on the class — Django managers
         aren't accessible via instances.)"""
