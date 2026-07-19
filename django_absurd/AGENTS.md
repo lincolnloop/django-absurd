@@ -692,7 +692,7 @@ not increment.
 | `headers`                         | yes  | yes     | Read-only mapping of headers passed at enqueue time       |
 | `run_step([name])` (decorator)    | yes  | —       | Convenience wrapper around `step`; derives name from `fn` |
 
-### Footguns
+### Caveats
 
 **Effectively-once, not exactly-once.** A step's result is persisted to the database
 after `fn` returns, on a separate connection. In the window between `fn` completing and
@@ -700,22 +700,10 @@ the checkpoint being written, a crash re-runs the step. Design side effects to b
 idempotent (for example, use `idempotency_key` on downstream enqueues, or make database
 writes upserts).
 
-**Never swallow `SuspendTask` or `CancelledTask`.** Absurd uses these exceptions
-internally to suspend and cancel runs. If you have a bare `except Exception` (or
-broader) inside a step's `fn`, re-raise them:
-
-```python
-from absurd_sdk import SuspendTask, CancelledTask
-
-
-def my_fn():
-    try:
-        ...
-    except (SuspendTask, CancelledTask):
-        raise
-    except Exception:
-        ...
-```
+**Don't catch-all `except` in a task.** Absurd suspends and cancels runs via
+control-flow exceptions raised inside `step`/`sleep_for`/`sleep_until`. A bare `except:`
+or `except Exception:` around a durable call swallows them and silently breaks
+suspension — let them propagate.
 
 **Absurd backend only.** `get_absurd_context()` / `aget_absurd_context()` (and
 `step`/`sleep_for`/`sleep_until` on the returned context) are Absurd-specific. Calling

@@ -204,7 +204,7 @@ def process_order(order_id: int) -> None:
     context.step("charge", lambda: charge_card(order_id, tenant=tenant))
 ```
 
-## Footguns
+## Caveats
 
 ### Effectively-once, not exactly-once
 
@@ -219,24 +219,11 @@ crash causes the step to be re-run. **Keep side effects idempotent** — for exa
     completion and skipped on replay. In the crash window between completion and
     persistence, a step may run more than once. This is distinct from *exactly-once*.
 
-### Never swallow `SuspendTask` or `CancelledTask`
+### Don't catch-all `except` in a task
 
-Absurd uses these exceptions internally to suspend and cancel runs. A bare
-`except Exception` (or broader) inside a step's `fn` will intercept them. Always
-re-raise:
-
-```python
-from absurd_sdk import CancelledTask, SuspendTask
-
-
-def my_step_fn():
-    try:
-        ...
-    except (CancelledTask, SuspendTask):
-        raise
-    except Exception:
-        ...
-```
+Absurd suspends and cancels runs via control-flow exceptions raised inside
+`step`/`sleep_for`/`sleep_until`. A bare `except:` or `except Exception:` around a
+durable call swallows them and silently breaks suspension — let them propagate.
 
 ### Absurd backend only
 
