@@ -926,44 +926,28 @@ git commit -m "Collapse dead scheduler-mismatch guard in absurd_sync_crons"
 
 **Interfaces:** none new.
 
-- [ ] **Step 1: Rework the now-invalid test and delete its helper import**
+- [ ] **Step 1: Confirm test_schedule_emission.py is already handled**
 
-In `tests/pg_cron/test_schedule_emission.py`,
-`test_saving_non_pg_cron_backend_schedule_is_a_noop` (lines 81-94) has an
-unrepresentable premise post-change — "a row whose backend isn't pg_cron" (via
-`build_beat_tasks`) can no longer exist once scheduling derives from app presence. Don't
-just delete it: it was also the only test hitting `unschedule_pg_cron_job`'s
-`get_absurd_backend() is None` no-op branch (Task 4's collapse) via its
-`scheduled_task.delete()` call — replace its premise with the one surviving no-op
-condition (no `AbsurdBackend` configured at all):
+`test_saving_non_pg_cron_backend_schedule_is_a_noop`
+(`tests/pg_cron/ test_schedule_emission.py`) had an unrepresentable premise post-change
+— "a row whose backend isn't pg_cron" (via `build_beat_tasks`) can no longer exist once
+scheduling derives from app presence, and it was the only test covering
+`unschedule_pg_cron_job`'s `get_absurd_backend() is None` no-op branch. This was pulled
+forward into Task 4 as a coverage-gap fix (Task 4's collapse rewrote that branch, so its
+task-review correctly required the covering test to land in the same task, not three
+tasks later) — the test was already replaced with
+`test_saving_schedule_without_absurd_backend_is_a_noop` (same no-op condition: no
+`AbsurdBackend` configured at all, via `DummyBackend`) and the `build_beat_tasks` import
+already dropped from this file. Confirm rather than redo:
 
-```python
-def test_saving_schedule_without_absurd_backend_is_a_noop(
-    settings: pytest_django.fixtures.SettingsWrapper,
-) -> None:
-    """No Absurd backend configured at all: (un)schedule are clean no-ops — the
-    only surviving no-op condition once the scheduler-specific guard collapses."""
-    settings.TASKS = {
-        "default": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}
-    }
-    scheduled_task = ScheduledTask.objects.create(
-        source="s",
-        name="orphan_row",
-        task="tests.tasks.add",
-        cron="0 2 * * *",
-    )
-    assert ScheduledTask.pg_cron.get_job("orphan_row", "s") is None
-    scheduled_task.delete()  # unschedule no-op, no error
+```bash
+grep -n "build_beat_tasks\|test_saving_schedule_without_absurd_backend_is_a_noop" tests/pg_cron/test_schedule_emission.py
 ```
 
-Update the import line — `build_beat_tasks` is no longer used in this file:
-
-```python
-from tests.pg_cron.utils import build_pg_cron_tasks
-```
-
-Run: `grep -n "build_beat_tasks" tests/pg_cron/test_schedule_emission.py` — expect no
-output before moving on.
+Expected: no `build_beat_tasks` hit; one hit for the replacement test's `def` line. If
+both are already true, this file needs no further edits in this task — skip to Step 2's
+"no other caller" check below (it still needs verifying against the OTHER files this
+task touches).
 
 Confirm no other caller of `build_beat_tasks` remains anywhere (Tasks 5 and 6 already
 removed the other two):
