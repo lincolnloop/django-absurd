@@ -65,7 +65,6 @@ def reconcile_crons_after_migrate(
     from django_absurd.pg_cron.reconcile import (  # noqa: PLC0415
         sync_admin_crons,
         sync_crons,
-        teardown_crons,
     )
 
     style = color_style()
@@ -74,27 +73,19 @@ def reconcile_crons_after_migrate(
         return
     alias, backend = next(iter(absurd_backends.items()))
     try:
-        if backend.scheduler == "pg_cron":
-            created, pruned = sync_crons(backend)
-            sync_admin_crons()
-            lines = []
-            if created:
-                lines.append(f"  Scheduled {created}")
-            if pruned:
-                lines.append(f"  Pruned {pruned}")
-            if lines and verbosity >= 1 and stdout is not None:
-                stdout.write(
-                    style.MIGRATE_HEADING(f"Reconciling pg_cron schedules ({alias}):")
-                )
-                for line in lines:
-                    stdout.write(line)
-        else:
-            removed = teardown_crons()
-            if removed > 0 and verbosity >= 1 and stdout is not None:
-                stdout.write(
-                    f"  Removed {removed} pg_cron schedule(s)"
-                    f' — backend {alias!r} no longer uses SCHEDULER="pg_cron"'
-                )
+        created, pruned = sync_crons(backend)
+        sync_admin_crons()
+        lines = []
+        if created:
+            lines.append(f"  Scheduled {created}")
+        if pruned:
+            lines.append(f"  Pruned {pruned}")
+        if lines and verbosity >= 1 and stdout is not None:
+            stdout.write(
+                style.MIGRATE_HEADING(f"Reconciling pg_cron schedules ({alias}):")
+            )
+            for line in lines:
+                stdout.write(line)
     except (
         ImproperlyConfigured,
         OperationalError,

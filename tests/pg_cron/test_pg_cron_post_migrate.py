@@ -11,7 +11,7 @@ from django.db import connection
 from django_absurd.pg_cron.apps import reconcile_crons_after_migrate
 from django_absurd.pg_cron.models import ScheduledTask
 from django_absurd.queues import get_absurd_client
-from tests.pg_cron.utils import build_beat_tasks, build_pg_cron_tasks
+from tests.pg_cron.utils import build_pg_cron_tasks
 
 if t.TYPE_CHECKING:
     import pytest_django.fixtures
@@ -165,24 +165,6 @@ def test_reconcile_prunes_admin_job_whose_row_vanished(
     assert ScheduledTask.pg_cron.get_job("orphan", "a") is None
 
 
-def test_reconcile_tears_down_when_scheduler_switches_to_beat(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-) -> None:
-    settings.TASKS = build_pg_cron_tasks(
-        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
-    )
-    reconcile_crons_after_migrate(sender=apps.get_app_config("django_absurd_pg_cron"))
-    assert [r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()] == ["_dj:s:a"]
-
-    settings.TASKS = build_beat_tasks(
-        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
-    )
-    reconcile_crons_after_migrate(sender=apps.get_app_config("django_absurd_pg_cron"))
-
-    assert ScheduledTask.pg_cron.get_managed_jobs() == []
-    assert not ScheduledTask.objects.filter(source="s").exists()
-
-
 def test_reconcile_is_noop_without_absurd_backend(
     settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
@@ -333,25 +315,6 @@ def test_reconcile_emits_prune_line_on_sync(
     out = buf.getvalue()
     assert "Reconciling pg_cron schedules (default):" in out
     assert "Pruned 1" in out
-
-
-def test_reconcile_emits_teardown_notice_when_backend_switches(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-) -> None:
-    settings.TASKS = build_pg_cron_tasks(
-        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
-    )
-    reconcile_crons_after_migrate(sender=apps.get_app_config("django_absurd_pg_cron"))
-    settings.TASKS = build_beat_tasks(
-        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
-    )
-    buf = StringIO()
-    reconcile_crons_after_migrate(
-        sender=apps.get_app_config("django_absurd_pg_cron"), verbosity=1, stdout=buf
-    )
-    out = buf.getvalue()
-    assert "Removed 1 pg_cron schedule(s)" in out
-    assert 'no longer uses SCHEDULER="pg_cron"' in out
 
 
 def test_reconcile_warns_on_none_task_path(
