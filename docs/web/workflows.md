@@ -125,7 +125,7 @@ def process_batch(batch_id: int) -> None:
 ```
 
 Pass `seconds` to `heartbeat()` to extend by a specific number of seconds (default: the
-queue's `claim_timeout`).
+worker's `claim_timeout`).
 
 ### Step return values
 
