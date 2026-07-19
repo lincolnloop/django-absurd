@@ -4,7 +4,7 @@ import time
 import pytest
 from django.core.management import call_command
 
-from django_absurd import durable_context
+from django_absurd import aget_absurd_context, get_absurd_context
 from django_absurd.params import AbsurdSpawnParams
 from tests.atasks import (
     DURABLE_STEP_CALLS,
@@ -26,12 +26,20 @@ from tests.worker_support import get_task_result, run_absurd_worker
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
-def test_durable_context_outside_a_task_raises() -> None:
+def test_get_absurd_context_outside_a_task_raises() -> None:
     with pytest.raises(
         RuntimeError,
-        match="durable_context\\(\\) must be called inside a running Absurd task",
+        match="get_absurd_context\\(\\) must be called inside a running Absurd task",
     ):
-        durable_context()
+        get_absurd_context()
+
+
+def test_aget_absurd_context_outside_a_task_raises() -> None:
+    with pytest.raises(
+        RuntimeError,
+        match="aget_absurd_context\\(\\) must be called inside a running Absurd task",
+    ):
+        aget_absurd_context()
 
 
 def test_async_step_runs_and_returns_value() -> None:

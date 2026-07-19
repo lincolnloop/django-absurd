@@ -2,17 +2,12 @@ import time
 import typing as t
 from asyncio import sleep as asleep
 
-import absurd_sdk
 from django.tasks import TaskContext, task
 
-from django_absurd import durable_context
+from django_absurd import aget_absurd_context
 from tests.models import Payload
 
 DURABLE_STEP_CALLS: dict[str, int] = {"n": 0}
-
-
-def async_context() -> absurd_sdk.AsyncTaskContext:
-    return t.cast("absurd_sdk.AsyncTaskContext", durable_context())
 
 
 @task
@@ -20,18 +15,18 @@ async def astep_echo(value: str) -> str:
     async def compute() -> str:
         return value
 
-    return await async_context().step("echo", compute)
+    return await aget_absurd_context().step("echo", compute)
 
 
 @task
 async def aheaders_tenant() -> str | None:
-    tenant = async_context().headers.get("tenant")
+    tenant = aget_absurd_context().headers.get("tenant")
     return t.cast("str | None", tenant)
 
 
 @task
 async def aheartbeat_then_return(value: str) -> str:
-    await async_context().heartbeat()
+    await aget_absurd_context().heartbeat()
     return value
 
 
@@ -72,7 +67,7 @@ async def asleeper(seconds: float) -> str:
 
 @task
 async def asleep_for_once(key: str) -> int:
-    context = async_context()
+    context = aget_absurd_context()
 
     async def bump() -> int:
         DURABLE_STEP_CALLS["n"] += 1
@@ -85,5 +80,5 @@ async def asleep_for_once(key: str) -> int:
 
 @task
 async def asleep_until_once(key: str) -> str:
-    await async_context().sleep_until("nap", time.time() + 1.5)
+    await aget_absurd_context().sleep_until("nap", time.time() + 1.5)
     return "woke"

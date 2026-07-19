@@ -5,15 +5,11 @@ from absurd_sdk import CancellationPolicy, RetryStrategy
 from django.contrib.auth.models import Group
 from django.tasks import TaskContext, task
 
-from django_absurd import AbsurdTaskContext, durable_context
+from django_absurd import get_absurd_context
 from django_absurd.params import absurd_default_params
 from tests.models import Payload
 
 SYNC_STEP_CALLS: dict[str, int] = {"n": 0}
-
-
-def sync_context() -> AbsurdTaskContext:
-    return t.cast("AbsurdTaskContext", durable_context())
 
 
 @task
@@ -105,12 +101,12 @@ def fully_specced() -> t.Never:
 
 @task
 def sstep_echo(value: str) -> str:
-    return sync_context().step("echo", lambda: value)
+    return get_absurd_context().step("echo", lambda: value)
 
 
 @task
 def scoverage() -> dict[str, t.Any]:
-    context = sync_context()
+    context = get_absurd_context()
     context.heartbeat()
     tenant = context.headers.get("tenant")
 
@@ -131,7 +127,7 @@ def scoverage() -> dict[str, t.Any]:
 
 @task
 def ssleep_for_once(key: str) -> int:
-    context = sync_context()
+    context = get_absurd_context()
 
     def bump() -> int:
         SYNC_STEP_CALLS["n"] += 1
@@ -144,5 +140,5 @@ def ssleep_for_once(key: str) -> int:
 
 @task
 def ssleep_until_once(key: str) -> str:
-    sync_context().sleep_until("nap", time.time() + 1.5)
+    get_absurd_context().sleep_until("nap", time.time() + 1.5)
     return "woke"

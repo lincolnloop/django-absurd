@@ -262,32 +262,36 @@ Django's result-context with Absurd's runtime. **Replaced with an accessor**; no
 
 **New shape.** The Absurd SDK stashes the live ctx in a contextvar the worker sets at
 dispatch, exposed by the SDK's PUBLIC `get_current_context()` (in its `__all__`).
-Durable access is a django-absurd accessor `durable_context()`, orthogonal to the (now
-plain, unmodified) Django `TaskContext`:
+Durable access is a pair of django-absurd accessors — `get_absurd_context()` (sync
+tasks) / `aget_absurd_context()` (async tasks) — orthogonal to the (now plain,
+unmodified) Django `TaskContext`:
 
 ```python
-from django_absurd import durable_context
+from django_absurd import aget_absurd_context, get_absurd_context
 
 @task                                  # or takes_context=True for a plain .task_result
 async def workflow(order_id: int) -> None:
-    await durable_context().step("charge", charge)
+    await aget_absurd_context().step("charge", charge)
 ```
 
-- **Async task → pure delegation, no wrapper.** `durable_context()` returns the SDK's
-  own `AsyncTaskContext` (`get_current_context()`); user calls `await context.step(...)`
-  on Absurd's own py.typed object. We define no class, mirror no signatures — and get
-  the future primitives (events, `await_task_result`) for free. No `run_step` (SDK omits
-  it on async).
+- **Async task → pure delegation, no wrapper.** `aget_absurd_context()` returns the
+  SDK's own `AsyncTaskContext` (`get_current_context()`); user calls
+  `await context.step(...)` on Absurd's own py.typed object. We define no class, mirror
+  no signatures — and get the future primitives (events, `await_task_result`) for free.
+  No `run_step` (SDK omits it on async).
 - **Sync task → thin bridge wrapper (unavoidable).** Worker is `AsyncAbsurd`, so the
   live ctx is always `AsyncTaskContext` (async methods); a sync `def` can't `await`, and
-  the SDK's sync `TaskContext` needs its own sync connection we don't have. So sync
-  tasks get a small wrapper mirroring the SDK sync signatures 1:1, bridging each call to
-  the async ctx via `run_coroutine_threadsafe(coro, loop)`. Keeps `run_step` (all three
-  forms) — the sync-only asymmetry matches the SDK.
-- `durable_context()` **auto-selects**: called on the loop (async task) → SDK ctx
-  passthrough; called from the executor thread (sync task) → the bridge wrapper (using
-  the stashed worker loop). Outside a task → `get_current_context()` is `None` → raise a
-  clear error.
+  the SDK's sync `TaskContext` needs its own sync connection we don't have. So
+  `get_absurd_context()` returns a small wrapper mirroring the SDK sync signatures 1:1,
+  bridging each call to the async ctx via `run_coroutine_threadsafe(coro, loop)` (using
+  the stashed worker loop). Keeps `run_step` (all three forms) — the sync-only asymmetry
+  matches the SDK.
+- **Two concrete-typed accessors, no auto-select, no user `t.cast`.** The user picks the
+  accessor by task kind (matching the codebase's sync / `aget_result` async convention).
+  Each returns ONE concrete type — `get_absurd_context() -> AbsurdTaskContext`,
+  `aget_absurd_context() -> AsyncTaskContext` — so typed call sites need no cast.
+  Outside a task → `get_current_context()` is `None` → each raises a clear error naming
+  itself.
 
 **Worker.** `build_task_context` no longer injects our type — `takes_context` tasks get
 a plain Django `TaskContext` (built as today for `.task_result`/`.attempt`). Sync-task
@@ -301,5 +305,5 @@ to_thread copy; a missing propagation fails loud (`None`), never silently races.
 **Kept identical:** step/sleep/heartbeat/headers/run_step behavior, effectively-once
 semantics, admin (Checkpoints inline + `available_at` — untouched by this pivot), docs
 footgun set. **Tests:** behavioral assertions unchanged (they validate the refactor);
-only the test-task call sites re-point to `durable_context()` + drop narrowed
-annotations; add a `durable_context()`-outside-a-task guard test.
+only the test-task call sites re-point to the two accessors + drop narrowed
+annotations/casts; add an outside-a-task guard test for BOTH accessors.

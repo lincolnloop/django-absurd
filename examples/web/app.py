@@ -27,7 +27,7 @@ from django.tasks import TaskResultStatus, default_task_backend, task
 from django.tasks.exceptions import TaskResultDoesNotExist
 from nanodjango import Django
 
-from django_absurd import durable_context
+from django_absurd import get_absurd_context
 
 app = Django(
     ADMIN_URL="admin/",
@@ -73,7 +73,7 @@ def durable_workflow(message: str) -> str:
     Demonstrates checkpoint persistence and durable sleep: check the admin's
     Checkpoints and Runs pages to see the steps and the suspended state.
     """
-    context = durable_context()
+    context = get_absurd_context()
     step1_result = context.step("prepare", lambda: f"prepared: {message}")
     context.sleep_for("pause", 5)
     return context.step("finish", lambda: f"done: {step1_result}")

@@ -1,9 +1,10 @@
-"""Durable task context accessor for Absurd tasks.
+"""Durable task context accessors for Absurd tasks.
 
-``durable_context()`` returns the live Absurd runtime context, orthogonal to
-Django's ``TaskContext``. Async tasks get the SDK's own ``AsyncTaskContext`` (pure
-passthrough — ``await context.step(...)``); sync tasks get an ``AbsurdTaskContext``
-bridge that mirrors the SDK sync signatures and hops each op onto the worker loop.
+Two concrete-typed accessors return the live Absurd runtime context, orthogonal to
+Django's ``TaskContext``. ``aget_absurd_context()`` (async tasks) returns the SDK's own
+``AsyncTaskContext`` (pure passthrough — ``await context.step(...)``);
+``get_absurd_context()`` (sync tasks) returns an ``AbsurdTaskContext`` bridge that
+mirrors the SDK sync signatures and hops each op onto the worker loop.
 """
 
 import asyncio
@@ -27,24 +28,33 @@ WORKER_LOOP: "contextvars.ContextVar[asyncio.AbstractEventLoop]" = (
 )
 
 
-def durable_context() -> "AsyncTaskContext | AbsurdTaskContext":
-    """Return the live Absurd context for the running task.
+def get_absurd_context() -> "AbsurdTaskContext":
+    """Return the live Absurd context for a running SYNC task.
 
-    Auto-selects by execution surface: on the event loop (async task) the SDK's own
-    ``AsyncTaskContext`` is returned directly; in a worker thread (sync task) a sync
-    ``AbsurdTaskContext`` bridge over the stashed worker loop is returned. Raises
-    outside a running Absurd task.
+    Wraps the live async context in the ``AbsurdTaskContext`` sync bridge over the
+    stashed worker loop. Raises outside a running Absurd task.
     """
     absurd_ctx = absurd_sdk.get_current_context()
     if absurd_ctx is None:
-        msg = "durable_context() must be called inside a running Absurd task"
+        msg = "get_absurd_context() must be called inside a running Absurd task"
         raise RuntimeError(msg)
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return AbsurdTaskContext(
-            absurd_ctx=t.cast("AsyncTaskContext", absurd_ctx), loop=WORKER_LOOP.get()
-        )
+    return AbsurdTaskContext(
+        absurd_ctx=t.cast("AsyncTaskContext", absurd_ctx), loop=WORKER_LOOP.get()
+    )
+
+
+def aget_absurd_context() -> "AsyncTaskContext":
+    """Return the live Absurd context for a running ASYNC task.
+
+    Raises outside a running Absurd task.
+    """
+    absurd_ctx = absurd_sdk.get_current_context()
+    if absurd_ctx is None:
+        msg = "aget_absurd_context() must be called inside a running Absurd task"
+        raise RuntimeError(msg)
+    # Our worker is always AsyncAbsurd, so the live ctx is always AsyncTaskContext; the
+    # SDK types get_current_context() as TaskContext | AsyncTaskContext | None only
+    # because it also supports a sync worker we don't run.
     return t.cast("AsyncTaskContext", absurd_ctx)
 
 

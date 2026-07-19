@@ -7,31 +7,32 @@ icon: lucide/git-branch
 Absurd's durable primitives let a task break its work into **checkpointed steps** and
 **sleep** between them — persisting progress so retries and resumes pick up where they
 left off, never redoing completed steps. This page covers the django-absurd surface: the
-`durable_context()` accessor.
+`get_absurd_context()` / `aget_absurd_context()` accessors.
 
 → [Absurd: Concepts](https://earendil-works.github.io/absurd/concepts/) (durable
 execution, steps, sleep)
 
 ## Basics
 
-Call `durable_context()` **inside** a running task to reach the durable primitives. It
-is orthogonal to Django's `TaskContext` — you do **not** need `takes_context=True` (add
-that only if you also want `context.task_result` / `.attempt`).
+Call the matching accessor **inside** a running task to reach the durable primitives.
+Both are orthogonal to Django's `TaskContext` — you do **not** need `takes_context=True`
+(add that only if you also want `context.task_result` / `.attempt`).
 
 ```python
-from django_absurd import durable_context
+from django_absurd import aget_absurd_context, get_absurd_context
 ```
 
-`durable_context()` auto-selects by task kind:
+Pick the accessor by task kind — each returns one concrete, fully-typed context, so
+there is no cast and no union to narrow:
 
-- **Async task → the SDK's own `absurd_sdk.AsyncTaskContext`** (a py.typed object) —
-  pure passthrough, you `await` its methods. Annotate the result as
-  `absurd_sdk.AsyncTaskContext` for full editor autocomplete and mypy checking.
-- **Sync task → `django_absurd.AbsurdTaskContext`**, a thin bridge mirroring the SDK's
-  sync signatures (no `await`); it also carries `run_step` (sync only). Annotate the
-  result as `AbsurdTaskContext` (exported from the package root).
+- **Sync task → `get_absurd_context()`** returns `django_absurd.AbsurdTaskContext`, a
+  thin bridge mirroring the SDK's sync signatures (no `await`); it also carries
+  `run_step` (sync only).
+- **Async task → `aget_absurd_context()`** returns the SDK's own
+  `absurd_sdk.AsyncTaskContext` (a py.typed object) — pure passthrough, you `await` its
+  methods.
 
-Called outside a running Absurd task, `durable_context()` raises `RuntimeError`.
+Called outside a running Absurd task, either accessor raises `RuntimeError`.
 
 ## Steps (checkpoints)
 
@@ -49,12 +50,12 @@ one.
 
 ```python
 from django.tasks import task
-from django_absurd import durable_context
+from django_absurd import get_absurd_context
 
 
 @task
 def process_order(order_id: int) -> None:
-    context = durable_context()
+    context = get_absurd_context()
     context.step("charge", lambda: charge_card(order_id))
     context.step("ship", lambda: ship(order_id))
 ```
@@ -68,14 +69,13 @@ The async `step`'s `fn` must return an awaitable — pass an `async def`, not a 
 lambda (a sync lambda returns a non-awaitable and raises `TypeError`):
 
 ```python
-import absurd_sdk
 from django.tasks import task
-from django_absurd import durable_context
+from django_absurd import aget_absurd_context
 
 
 @task
 async def process_order(order_id: int) -> None:
-    context: absurd_sdk.AsyncTaskContext = durable_context()
+    context = aget_absurd_context()
 
     async def charge():
         return await charge_card(order_id)
@@ -95,7 +95,7 @@ An alternative to `context.step` for cases where wrapping a lambda is awkward:
 ```python
 @task
 def process_order(order_id: int) -> None:
-    context = durable_context()
+    context = get_absurd_context()
 
     @context.run_step                     # name = "charge"
     def charge():
@@ -115,7 +115,7 @@ Either keep steps short or call `context.heartbeat()` periodically:
 ```python
 @task
 def process_batch(batch_id: int) -> None:
-    context = durable_context()
+    context = get_absurd_context()
 
     def process():
         for row in big_result_set:
@@ -150,7 +150,7 @@ attempt counter does **not** increment. A sleep wake-up is not a retry.
 ```python
 @task
 def process_order(order_id: int) -> None:
-    context = durable_context()
+    context = get_absurd_context()
     context.step("charge", lambda: charge_card(order_id))
     context.sleep_for("cooldown", 5)           # suspend for ~5 seconds
     context.step("ship", lambda: ship(order_id))
@@ -163,12 +163,12 @@ Sleep until a specific moment rather than a duration:
 ```python
 import datetime as dt
 
-import absurd_sdk
+from django_absurd import aget_absurd_context
 
 
 @task
 async def send_reminder(user_id: int) -> None:
-    context: absurd_sdk.AsyncTaskContext = durable_context()
+    context = aget_absurd_context()
     wake_at = dt.datetime(2026, 1, 1, 9, 0, tzinfo=dt.timezone.utc)
     await context.sleep_until("wait-for-new-year", wake_at)
 
@@ -200,14 +200,14 @@ Headers passed at enqueue time are available on `context.headers`:
 ```python
 @task
 def process_order(order_id: int) -> None:
-    context = durable_context()
+    context = get_absurd_context()
     tenant = context.headers.get("tenant")
     context.step("charge", lambda: charge_card(order_id, tenant=tenant))
 ```
 
 ## Footguns
 
-### (a) Effectively-once, not exactly-once
+### Effectively-once, not exactly-once
 
 A step's result is persisted to the database after `fn` returns, on a separate
 connection. In the window between `fn` completing and the checkpoint being written, a
@@ -220,7 +220,7 @@ crash causes the step to be re-run. **Keep side effects idempotent** — for exa
     completion and skipped on replay. In the crash window between completion and
     persistence, a step may run more than once. This is distinct from *exactly-once*.
 
-### (d) Never swallow `SuspendTask` or `CancelledTask`
+### Never swallow `SuspendTask` or `CancelledTask`
 
 Absurd uses these exceptions internally to suspend and cancel runs. A bare
 `except Exception` (or broader) inside a step's `fn` will intercept them. Always
@@ -239,11 +239,12 @@ def my_step_fn():
         ...
 ```
 
-### (f) Absurd backend only
+### Absurd backend only
 
-`durable_context()` (and `step` / `sleep_for` / `sleep_until` on it) is Absurd-specific.
-Called under any other Django task backend — where the Absurd runtime context is never
-set — it raises `RuntimeError`.
+`get_absurd_context()` / `aget_absurd_context()` (and `step` / `sleep_for` /
+`sleep_until` on the returned context) are Absurd-specific. Called under any other
+Django task backend — where the Absurd runtime context is never set — they raise
+`RuntimeError`.
 
 ## Enqueue a durable task
 
