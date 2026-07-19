@@ -44,13 +44,6 @@ class Command(BaseCommand):
             )
             return None
 
-        if backend.scheduler != "pg_cron":
-            msg = (
-                f"SCHEDULER is '{backend.scheduler}', not 'pg_cron' — "
-                "absurd_sync_crons only applies to pg_cron backends."
-            )
-            raise CommandError(msg)
-
         try:
             created, pruned = sync_crons(backend)
             sync_admin_crons()

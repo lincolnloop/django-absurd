@@ -23,14 +23,10 @@ def run_check(
     settings: pytest_django.fixtures.SettingsWrapper,
     installed_apps: t.Sequence[str] | None = None,
     schedule: dict[str, t.Any] | None = None,
-    scheduler: str = "pg_cron",
 ) -> str:
     if installed_apps is not None:
         settings.INSTALLED_APPS = installed_apps
-    options: dict[str, t.Any] = {
-        "SCHEDULER": scheduler,
-        "QUEUES": BASE_QUEUES,
-    }
+    options: dict[str, t.Any] = {"QUEUES": BASE_QUEUES}
     if schedule is not None:
         options["SCHEDULE"] = schedule
     settings.TASKS = {
@@ -73,28 +69,11 @@ def test_pg_cron_app_before_core_warns(
     )
 
 
-def test_pg_cron_app_before_core_warns_under_beat(
-    capsys: pytest.CaptureFixture[str],
-    settings: pytest_django.fixtures.SettingsWrapper,
-) -> None:
-    """W003 tracks INSTALLED_APPS ordering, not the active scheduler: a beat
-    backend with the pg_cron app mis-ordered must still warn (the misordering
-    bites the moment the backend switches to pg_cron)."""
-    out = run_check(
-        capsys,
-        settings,
-        build_apps_with_pg_cron_first(settings),
-        scheduler="beat",
-    )
-    assert "absurd.W003" in out
-
-
 def test_pg_cron_app_after_core_clean(
     capsys: pytest.CaptureFixture[str],
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     out = run_check(capsys, settings)
-    assert "absurd.E008" not in out
     assert "absurd.W003" not in out
 
 

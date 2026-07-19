@@ -33,7 +33,6 @@ app = Django(
             "BACKEND": "django_absurd.backends.AbsurdBackend",
             "OPTIONS": {
                 "QUEUES": {"default": {}},
-                "SCHEDULER": "beat",
                 "SCHEDULE": {"tick": {"task": "app.tick", "cron": "* * * * *"}},
             },
         }

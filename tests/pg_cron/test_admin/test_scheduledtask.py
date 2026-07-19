@@ -26,7 +26,6 @@ TASKS = {
         "BACKEND": "django_absurd.backends.AbsurdBackend",
         "OPTIONS": {
             "QUEUES": {"default": {}, "other": {}, "reports": {}},
-            "SCHEDULER": "pg_cron",
             "SCHEDULE": {
                 "nightly": {"task": "tests.tasks.add", "cron": "0 2 * * *"},
                 "hourly": {
@@ -197,7 +196,7 @@ def narrow_to_default_queue_only(
     settings.TASKS = {
         "default": {
             "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "OPTIONS": {"QUEUES": {"default": {}}, "SCHEDULER": "pg_cron"},
+            "OPTIONS": {"QUEUES": {"default": {}}},
         }
     }
     call_command("absurd_sync_queues")
@@ -325,7 +324,6 @@ def test_create_and_sync_produce_identical_spawn_columns(
             "BACKEND": "django_absurd.backends.AbsurdBackend",
             "OPTIONS": {
                 "QUEUES": {"default": {}, "other": {}, "reports": {}},
-                "SCHEDULER": "pg_cron",
                 "SCHEDULE": {
                     "settings_specced": {
                         "task": "tests.tasks.fully_specced",

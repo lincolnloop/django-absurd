@@ -17,20 +17,6 @@ def build_pg_cron_tasks(schedule: dict[str, t.Any]) -> dict[str, t.Any]:
             "BACKEND": ABSURD_BACKEND,
             "OPTIONS": {
                 "QUEUES": DECLARED_QUEUES,
-                "SCHEDULER": "pg_cron",
-                "SCHEDULE": schedule,
-            },
-        }
-    }
-
-
-def build_beat_tasks(schedule: dict[str, t.Any]) -> dict[str, t.Any]:
-    return {
-        "default": {
-            "BACKEND": ABSURD_BACKEND,
-            "OPTIONS": {
-                "QUEUES": DECLARED_QUEUES,
-                "SCHEDULER": "beat",
                 "SCHEDULE": schedule,
             },
         }

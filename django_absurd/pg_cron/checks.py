@@ -33,8 +33,6 @@ def check_pg_cron_schedules(
 ) -> list[CheckMessage]:
     errors: list[CheckMessage] = []
     for backend in get_absurd_backends().values():
-        if backend.scheduler != "pg_cron":
-            continue
         declared_queues = set(get_declared_queues(backend))
         raw_schedule = backend.options.get("SCHEDULE", {})
         if not isinstance(raw_schedule, Mapping):

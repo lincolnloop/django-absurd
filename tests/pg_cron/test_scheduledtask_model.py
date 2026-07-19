@@ -5,20 +5,14 @@ from pytest_django.fixtures import SettingsWrapper
 from django_absurd.pg_cron.models import ScheduledTask
 
 
-def test_full_clean_skips_backend_validation_when_not_pg_cron(
+def test_full_clean_skips_backend_validation_when_no_backend_configured(
     settings: SettingsWrapper,
 ) -> None:
-    # Under a non-pg_cron backend there is nothing to validate the queue/cron against,
-    # so full_clean must skip the pg_cron backend checks (and not raise) rather than
-    # reject an otherwise-valid row.
+    # With no Absurd backend configured at all, there is nothing to validate the
+    # queue/cron against, so full_clean must skip cleanly (and not raise) rather
+    # than reject an otherwise-valid row.
     settings.TASKS = {
-        "default": {
-            "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "OPTIONS": {
-                "QUEUES": {"default": {}, "other": {}, "reports": {}},
-                "SCHEDULER": "beat",
-            },
-        }
+        "default": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}
     }
     ScheduledTask(
         source="a",
@@ -80,7 +74,6 @@ def test_scheduledtask_max_attempts_default_bubbles_from_backend(
             "BACKEND": "django_absurd.backends.AbsurdBackend",
             "OPTIONS": {
                 "QUEUES": {"default": {}},
-                "SCHEDULER": "pg_cron",
                 "DEFAULT_MAX_ATTEMPTS": 3,
             },
         }

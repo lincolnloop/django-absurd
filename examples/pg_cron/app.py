@@ -35,7 +35,6 @@ app = Django(
             "BACKEND": "django_absurd.backends.AbsurdBackend",
             "OPTIONS": {
                 "QUEUES": {"default": {}},
-                "SCHEDULER": "pg_cron",
                 "SCHEDULE": {"ping": {"task": "app.ping", "cron": "* * * * *"}},
             },
         }

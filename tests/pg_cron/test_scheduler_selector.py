@@ -22,18 +22,17 @@ def build_pg_cron_tasks(
             "BACKEND": ABSURD,
             "OPTIONS": {
                 "QUEUES": {"default": {}},
-                "SCHEDULER": "pg_cron",
                 "SCHEDULE": schedule or {},
             },
         }
     }
 
 
-def test_scheduler_defaults_to_beat(
+def test_scheduler_is_pg_cron_when_app_installed(
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
-    settings.TASKS = {"default": {"BACKEND": ABSURD, "QUEUES": ["default"]}}
-    assert get_absurd_backends()["default"].scheduler == "beat"
+    settings.TASKS = build_pg_cron_tasks()
+    assert get_absurd_backends()["default"].scheduler == "pg_cron"
 
 
 def test_beat_command_refuses_under_pg_cron(

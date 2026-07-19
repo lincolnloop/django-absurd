@@ -14,9 +14,9 @@ from django.utils.connection import ConnectionDoesNotExist
 from django.utils.module_loading import import_string
 
 from django_absurd.backends import (
+    PG_CRON_APP_NAME,
     get_absurd_backends,
     get_declared_queues,
-    get_pg_cron_backends,
 )
 from django_absurd.connection import BACKEND_ERROR_MESSAGE, validate_backend
 from django_absurd.models import Queue
@@ -89,13 +89,6 @@ E007_HINT_SHAPE = (
     "args must be a JSON array (list); kwargs must be a JSON object (dict)."
 )
 E007_HINT_QUEUE = "Declare the queue under OPTIONS['QUEUES'] or correct the queue name."
-E007_HINT_SCHEDULER = "Set SCHEDULER to 'beat' or 'pg_cron'."
-
-E008_MSG = (
-    "django-absurd: SCHEDULER is 'pg_cron' but 'django_absurd.pg_cron'"
-    " is not in INSTALLED_APPS."
-)
-E008_HINT = "Add 'django_absurd.pg_cron' to INSTALLED_APPS, after 'django_absurd'."
 
 E009_MSG = "django-absurd: OPTIONS['DEFAULT_MAX_ATTEMPTS'] must be an integer >= 1."
 E009_HINT = "Set DEFAULT_MAX_ATTEMPTS to a positive integer (Absurd rejects < 1)."
@@ -114,8 +107,6 @@ W003_MSG = (
 W003_HINT = "Place 'django_absurd.pg_cron' after 'django_absurd' in INSTALLED_APPS."
 
 VALID_SCHEDULE_KEYS = {"task", "cron", "queue", "args", "kwargs"}
-VALID_SCHEDULERS = {"beat", "pg_cron"}
-PG_CRON_APP_NAME = "django_absurd.pg_cron"
 
 
 @register("absurd")
@@ -213,16 +204,6 @@ def check_absurd_schedule_config(
     errors: list[CheckMessage] = []
     for backend in get_absurd_backends().values():
         scheduler = backend.scheduler
-        if scheduler not in VALID_SCHEDULERS:
-            errors.append(
-                Error(
-                    f"django-absurd: unknown SCHEDULER {scheduler!r}.",
-                    hint=E007_HINT_SCHEDULER,
-                    id="absurd.E007",
-                )
-            )
-            continue
-
         declared_queues = set(get_declared_queues(backend))
         raw_schedule = backend.options.get("SCHEDULE", {})
         if not isinstance(raw_schedule, Mapping):
@@ -367,22 +348,16 @@ def is_valid_cleanup(cleanup: t.Any, scheduler: str) -> bool:
 
 
 @register("absurd")
-def check_scheduler_app_installed(
+def check_pg_cron_app_ordering(
     *,
     app_configs: Sequence[AppConfig] | None,
     **kwargs: t.Any,
 ) -> list[CheckMessage]:
-    app_installed = apps.is_installed(PG_CRON_APP_NAME)
-
-    if not app_installed:
-        # E008 only fires when a backend actually needs the app.
-        if get_pg_cron_backends():
-            return [Error(E008_MSG, hint=E008_HINT, id="absurd.E008")]
+    if not apps.is_installed(PG_CRON_APP_NAME):
         return []
 
-    # W003 tracks INSTALLED_APPS ordering regardless of the active scheduler: a
-    # mis-ordered app runs its post_migrate reconcile before queue provisioning
-    # the moment any backend switches to pg_cron.
+    # W003 tracks INSTALLED_APPS ordering: a mis-ordered app runs its post_migrate
+    # cron reconcile before queue provisioning.
     app_names = resolve_installed_app_names()
     if (
         PG_CRON_APP_NAME in app_names

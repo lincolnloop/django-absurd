@@ -1,4 +1,4 @@
-"""Static E007 checks for SCHEDULER="pg_cron" entries."""
+"""Static system-check tests against a real pg_cron backend."""
 
 import typing as t
 
@@ -28,15 +28,14 @@ def run_pg_cron_check(
     capsys: pytest.CaptureFixture[str],
     options: dict[str, t.Any],
 ) -> str:
-    """Drive check with given scheduler/queues/schedule and return output.
+    """Drive check with given queues/schedule and return output.
 
-    options keys: scheduler, queues, schedule.
+    options keys: queues, schedule.
     """
     settings.TASKS = {
         "default": {
             "BACKEND": ABSURD,
             "OPTIONS": {
-                "SCHEDULER": options["scheduler"],
                 "QUEUES": options["queues"],
                 "SCHEDULE": options["schedule"],
             },
@@ -51,6 +50,46 @@ def run_pg_cron_check(
     return cap.out + cap.err
 
 
+def run_pg_cron_cleanup_check(
+    settings: pytest_django.fixtures.SettingsWrapper,
+    capsys: pytest.CaptureFixture[str],
+    cleanup: dict[str, t.Any],
+) -> str:
+    settings.TASKS = {
+        "default": {
+            "BACKEND": ABSURD,
+            "OPTIONS": {"QUEUES": BASE_QUEUES, "CLEANUP": cleanup},
+        }
+    }
+    try:
+        call_command("check", "django_absurd")
+    except SystemCheckError as exc:
+        cap = capsys.readouterr()
+        return cap.out + cap.err + str(exc)
+    cap = capsys.readouterr()
+    return cap.out + cap.err
+
+
+def test_pg_cron_cleanup_accepts_arbitrary_nonempty_schedule(
+    settings: pytest_django.fixtures.SettingsWrapper,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Under pg_cron, CLEANUP's cron grammar is DB-authoritative at sync time — the
+    check only requires a non-empty string, unlike beat's croniter validation."""
+    out = run_pg_cron_cleanup_check(
+        settings, capsys, {"schedule": "not a cron but pg_cron doesn't validate this"}
+    )
+    assert "absurd.E010" not in out
+
+
+def test_pg_cron_cleanup_rejects_empty_schedule(
+    settings: pytest_django.fixtures.SettingsWrapper,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    out = run_pg_cron_cleanup_check(settings, capsys, {"schedule": ""})
+    assert "absurd.E010" in out
+
+
 def test_pg_cron_task_import_raise_reports_e007_not_crash(
     settings: pytest_django.fixtures.SettingsWrapper,
     capsys: pytest.CaptureFixture[str],
@@ -63,7 +102,6 @@ def test_pg_cron_task_import_raise_reports_e007_not_crash(
         settings,
         capsys,
         {
-            "scheduler": "pg_cron",
             "queues": BASE_QUEUES,
             "schedule": {
                 "boom": {
@@ -92,7 +130,6 @@ def test_pg_cron_cron_grammar_not_checked(
         settings,
         capsys,
         {
-            "scheduler": "pg_cron",
             "queues": BASE_QUEUES,
             "schedule": {"s": {"task": "tests.tasks.add", "cron": cron}},
         },
@@ -109,7 +146,6 @@ def test_pg_cron_bad_name_charset_rejected(
         settings,
         capsys,
         {
-            "scheduler": "pg_cron",
             "queues": BASE_QUEUES,
             "schedule": {
                 "bad name!": {
@@ -135,7 +171,6 @@ def test_pg_cron_jobname_too_long_rejected(
         settings,
         capsys,
         {
-            "scheduler": "pg_cron",
             "queues": BASE_QUEUES,
             "schedule": {
                 long_name: {
@@ -161,7 +196,6 @@ def test_pg_cron_undeclared_task_queue_rejected(
         settings,
         capsys,
         {
-            "scheduler": "pg_cron",
             "queues": {"default": {}, "other": {}},
             "schedule": {
                 "ghostly": {
@@ -185,7 +219,6 @@ def test_pg_cron_undeclared_explicit_queue_single_error(
         settings,
         capsys,
         {
-            "scheduler": "pg_cron",
             "queues": BASE_QUEUES,
             "schedule": {
                 "nightly": {
@@ -209,7 +242,6 @@ def test_pg_cron_non_mapping_schedule_single_error(
         settings,
         capsys,
         {
-            "scheduler": "pg_cron",
             "queues": BASE_QUEUES,
             "schedule": ["nightly"],
         },
@@ -226,7 +258,6 @@ def test_pg_cron_non_mapping_entry_single_error(
         settings,
         capsys,
         {
-            "scheduler": "pg_cron",
             "queues": BASE_QUEUES,
             "schedule": {"nightly": "0 2 * * *"},
         },
@@ -243,7 +274,6 @@ def test_pg_cron_missing_task_no_queue_error(
         settings,
         capsys,
         {
-            "scheduler": "pg_cron",
             "queues": BASE_QUEUES,
             "schedule": {"nightly": {"cron": "0 2 * * *"}},
         },
@@ -261,7 +291,6 @@ def test_pg_cron_unimportable_task_no_queue_error(
         settings,
         capsys,
         {
-            "scheduler": "pg_cron",
             "queues": BASE_QUEUES,
             "schedule": {"nightly": {"task": "tests.tasks.nope", "cron": "0 2 * * *"}},
         },
@@ -279,7 +308,6 @@ def test_pg_cron_non_task_no_queue_error(
         settings,
         capsys,
         {
-            "scheduler": "pg_cron",
             "queues": BASE_QUEUES,
             "schedule": {
                 "nightly": {"task": "tests.tasks.Payload", "cron": "0 2 * * *"}
@@ -305,37 +333,12 @@ def test_pg_cron_structurally_absent_cron_rejected(
         settings,
         capsys,
         {
-            "scheduler": "pg_cron",
             "queues": BASE_QUEUES,
             "schedule": {"nightly": {"task": "tests.tasks.add", "cron": cron}},
         },
     )
     assert "absurd.E007" in out
     assert "cron must be a non-empty string." in out
-
-
-def test_unknown_scheduler_value_rejected(
-    settings: pytest_django.fixtures.SettingsWrapper,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """SCHEDULER value other than 'beat'/'pg_cron' rejected."""
-    out = run_pg_cron_check(
-        settings,
-        capsys,
-        {
-            "scheduler": "pgcron",  # typo — missing underscore
-            "queues": BASE_QUEUES,
-            "schedule": {
-                "nightly": {
-                    "task": "tests.tasks.add",
-                    "cron": "0 2 * * *",
-                }
-            },
-        },
-    )
-    assert "absurd.E007" in out
-    assert "unknown SCHEDULER" in out
-    assert "'pgcron'" in out
 
 
 def test_pg_cron_trailing_newline_name_rejected(
@@ -347,7 +350,6 @@ def test_pg_cron_trailing_newline_name_rejected(
         settings,
         capsys,
         {
-            "scheduler": "pg_cron",
             "queues": BASE_QUEUES,
             "schedule": {
                 "nightly\n": {
@@ -375,7 +377,6 @@ def test_pg_cron_empty_string_queue_resolves_via_effective_queue(
         settings,
         capsys,
         {
-            "scheduler": "pg_cron",
             "queues": BASE_QUEUES,
             "schedule": {
                 "nightly": {
@@ -398,7 +399,6 @@ def test_pg_cron_valid_five_field_cron_no_error(
         settings,
         capsys,
         {
-            "scheduler": "pg_cron",
             "queues": BASE_QUEUES,
             "schedule": {
                 "nightly": {
@@ -420,7 +420,6 @@ def test_pg_cron_non_string_name_yields_e007_not_typeerror(
         settings,
         capsys,
         {
-            "scheduler": "pg_cron",
             "queues": BASE_QUEUES,
             "schedule": {5: {"task": "tests.tasks.add", "cron": "0 2 * * *"}},
         },
