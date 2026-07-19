@@ -332,7 +332,7 @@ INSTALLED_APPS = [
 ]
 ```
 
-Then configure the scheduler:
+Then declare your schedule:
 
 ```python
 OPTIONS = {
