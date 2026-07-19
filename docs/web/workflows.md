@@ -2,15 +2,14 @@
 icon: lucide/git-branch
 ---
 
-# Durable workflows
+# Workflows
 
-Absurd's durable primitives let a task break its work into **checkpointed steps** and
-**sleep** between them — persisting progress so retries and resumes pick up where they
-left off, never redoing completed steps. This page covers the django-absurd surface: the
-`get_absurd_context()` / `aget_absurd_context()` accessors.
-
-→ [Absurd: Concepts](https://earendil-works.github.io/absurd/concepts/) (durable
-execution, steps, sleep)
+Absurd calls these primitives **Steps (Checkpoints)** and **Sleep** — see
+[Absurd: Concepts](https://earendil-works.github.io/absurd/concepts/). They let a task
+break its work into checkpointed steps and sleep between them, persisting progress so
+retries and resumes pick up where they left off, never redoing completed steps. This
+page covers the django-absurd surface: the `get_absurd_context()` /
+`aget_absurd_context()` accessors.
 
 ## Basics
 

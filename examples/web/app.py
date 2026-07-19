@@ -3,11 +3,11 @@
 Enqueue add(a, b) from a form; the worker runs it; watch the result page and
 browse the read-only queue tables in the admin (auto-registered by django-absurd).
 
-Also demonstrates durable steps + sleep: enqueue a two-step workflow that
-suspends for ~5 seconds between steps.
+Also demonstrates Steps (checkpoints) + Sleep: enqueue an order-fulfillment
+workflow that checkpoints each step and suspends between them.
 
     docker compose up
-    http://localhost:8000/         enqueue add(a, b) or a durable workflow
+    http://localhost:8000/         enqueue add(a, b) or the order workflow
     http://localhost:8000/admin/   Tasks / Runs / Checkpoints / … (admin / admin)
 
 psycopg (v3) backend required — DATABASES is overridden (nanodjango defaults to sqlite).
@@ -67,16 +67,24 @@ def add(a: str, b: str) -> float:
 
 
 @task
-def durable_workflow(message: str) -> str:
-    """Two-step durable task: run a step, sleep 5s, run another step.
+def fulfill_order(order: str) -> str:
+    """Order-fulfillment workflow: charge, reserve inventory, wait, notify.
 
-    Demonstrates checkpoint persistence and durable sleep: check the admin's
-    Checkpoints and Runs pages to see the steps and the suspended state.
+    Mirrors the shape of Absurd's headline order-fulfillment example
+    (https://github.com/earendil-works/absurd#readme): step(charge) →
+    step(reserve inventory) → wait for the warehouse to pack → step(notify).
+    Absurd's example awaits a "warehouse packed" event; Events aren't shipped
+    here yet, so `sleep_for` stands in for that wait — it becomes
+    `await_event("warehouse.packed")` once the Events pillar lands.
+
+    Each step is a checkpoint: check the admin's Checkpoints and Runs pages to
+    see the steps and the suspended state while it waits.
     """
     context = get_absurd_context()
-    step1_result = context.step("prepare", lambda: f"prepared: {message}")
-    context.sleep_for("pause", 5)
-    return context.step("finish", lambda: f"done: {step1_result}")
+    context.step("charge", lambda: f"charged: {order}")
+    context.step("reserve-inventory", lambda: f"reserved: {order}")
+    context.sleep_for("await-warehouse", 5)
+    return context.step("notify", lambda: f"notified: {order}")
 
 
 class AddForm(forms.Form):
@@ -85,7 +93,7 @@ class AddForm(forms.Form):
 
 
 class WorkflowForm(forms.Form):
-    message = forms.CharField(label="Message", initial="hello")
+    order = forms.CharField(label="Order", initial="order-42")
 
 
 @app.route("/")
@@ -106,8 +114,8 @@ def index(request: HttpRequest) -> HttpResponse | str:
           <button type="submit">Add</button>
         </form>
         <p>
-          <a href="/workflow/">Try the durable workflow</a>
-          — two checkpointed steps with a 5-second sleep between them.
+          <a href="/workflow/">Try the order-fulfillment workflow</a>
+          — checkpointed steps with a wait between them.
         </p>
         <p><a href="/admin/">Browse the queues in the admin</a> (admin / admin)</p>
     """
@@ -118,15 +126,18 @@ def workflow_view(request: HttpRequest) -> HttpResponse | str:
     if request.method == "POST":
         form = WorkflowForm(request.POST)
         if form.is_valid():
-            result = durable_workflow.enqueue(**form.cleaned_data)
+            result = fulfill_order.enqueue(**form.cleaned_data)
             return redirect(f"/tasks/{result.id}/")
     else:
         form = WorkflowForm()
     return f"""
-        <h1>Durable workflow</h1>
+        <h1>Order-fulfillment workflow</h1>
         <p>
-          Enqueues a two-step workflow: <em>prepare</em>, sleep 5s,
-          <em>finish</em>. While sleeping, check
+          Mirrors Absurd's
+          <a href="https://github.com/earendil-works/absurd#readme">order-fulfillment
+          example</a>: <em>charge</em>, <em>reserve-inventory</em>, wait for the
+          warehouse (a 5s sleep standing in for a "warehouse packed" event),
+          <em>notify</em>. While waiting, check
           <a href="/admin/django_absurd/run/">Runs</a> and
           <a href="/admin/django_absurd/checkpoint/">Checkpoints</a> in the admin.
         </p>

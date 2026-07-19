@@ -12,7 +12,7 @@ from django.urls import reverse, reverse_lazy
 from django_absurd.admin_views import ADMIN_ENTITY_SPECS, build_admin_model
 from django_absurd.queues import get_absurd_client
 from tests.atasks import DURABLE_STEP_CALLS, asleep_for_once
-from tests.core.test_admin.support import (
+from tests.core.test_admin.utils import (
     BACKEND,
     parse_html,
     result_rows,

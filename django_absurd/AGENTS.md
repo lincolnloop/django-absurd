@@ -572,11 +572,13 @@ checking it. Only do this when the existing `absurd` schema exactly matches the 
 django-absurd targets (`django_absurd.ABSURD_SCHEMA_VERSION`) — a mismatch causes
 runtime failures Django cannot detect. Verify the versions line up before faking.
 
-## Durable workflows
+## Workflows
 
-Call the matching accessor **inside** a running task to reach Absurd's durable
-primitives. Both are orthogonal to Django's `TaskContext` — you do **not** need
-`takes_context=True` (add that only if you also want `context.task_result`/`.attempt`).
+Absurd calls these primitives **Steps (Checkpoints)** and **Sleep** — see
+[Absurd — Concepts](https://earendil-works.github.io/absurd/concepts/). Call the
+matching accessor **inside** a running task to reach them. Both are orthogonal to
+Django's `TaskContext` — you do **not** need `takes_context=True` (add that only if you
+also want `context.task_result`/`.attempt`).
 
 ```python
 from django_absurd import aget_absurd_context, get_absurd_context

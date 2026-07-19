@@ -17,7 +17,7 @@ from django_absurd.worker import WorkerOptions, aworker_client, run_blocking_wor
 from tests.atasks import aecho
 from tests.jobs import record_from_jobs
 from tests.tasks import boom, make_group, report_args, report_attempt, routed
-from tests.worker_support import get_task_result, run_absurd_worker
+from tests.utils import get_task_result, run_absurd_worker
 
 pytestmark = pytest.mark.django_db(transaction=True)
 

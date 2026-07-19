@@ -1,6 +1,6 @@
 import pytest
 
-from tests.core.test_admin.support import register_admin
+from tests.core.test_admin.utils import register_admin
 
 
 @pytest.fixture(autouse=True)

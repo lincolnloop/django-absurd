@@ -25,12 +25,6 @@ from django_absurd.scheduler import run_beat
 
 logger = logging.getLogger("django_absurd")
 
-LIFECYCLE_WORDS: dict[type, str] = {
-    SuspendTask: "suspended",
-    CancelledTask: "cancelled",
-    FailedTask: "failed",
-}
-
 
 @dataclass(frozen=True)
 class WorkerOptions:
@@ -240,12 +234,9 @@ def build_handler(
 
                 result = await asyncio.to_thread(call_sync)
         except (SuspendTask, CancelledTask, FailedTask) as exc:
-            word = next(
-                word for cls, word in LIFECYCLE_WORDS.items() if isinstance(exc, cls)
-            )
             logger.info(
-                "django-absurd task %s: name=%s task_id=%s attempt=%d",
-                word,
+                "django-absurd task received %s: name=%s task_id=%s attempt=%d",
+                type(exc).__name__,
                 task.module_path,
                 ctx.task_id,
                 attempt,
