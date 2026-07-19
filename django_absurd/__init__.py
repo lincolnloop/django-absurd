@@ -10,8 +10,8 @@ It covers requirements, the ``TASKS`` setting, migrations, the ``absurd_sync_que
 ``absurd_worker`` management commands, system checks, and enqueue params/decorators.
 """
 
-from django_absurd.context import AbsurdTaskContext, AsyncAbsurdTaskContext
+from django_absurd.context import AbsurdTaskContext, durable_context
 
 ABSURD_SCHEMA_VERSION = "0.4.0"
 
-__all__ = ["ABSURD_SCHEMA_VERSION", "AbsurdTaskContext", "AsyncAbsurdTaskContext"]
+__all__ = ["ABSURD_SCHEMA_VERSION", "AbsurdTaskContext", "durable_context"]

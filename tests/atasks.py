@@ -2,32 +2,36 @@ import time
 import typing as t
 from asyncio import sleep as asleep
 
+import absurd_sdk
 from django.tasks import TaskContext, task
 
+from django_absurd import durable_context
 from tests.models import Payload
-
-if t.TYPE_CHECKING:
-    from django_absurd.context import AsyncAbsurdTaskContext
 
 DURABLE_STEP_CALLS: dict[str, int] = {"n": 0}
 
 
-@task(takes_context=True)  # type: ignore[arg-type]  # django-stubs types the ctx param as base TaskContext; the worker passes an AsyncAbsurdTaskContext to coroutine tasks
-async def astep_echo(context: "AsyncAbsurdTaskContext", value: str) -> str:
+def async_context() -> absurd_sdk.AsyncTaskContext:
+    return t.cast("absurd_sdk.AsyncTaskContext", durable_context())
+
+
+@task
+async def astep_echo(value: str) -> str:
     async def compute() -> str:
         return value
 
-    return await context.step("echo", compute)
+    return await async_context().step("echo", compute)
 
 
-@task(takes_context=True)  # type: ignore[arg-type]  # django-stubs types the ctx param as base TaskContext; the worker passes an AsyncAbsurdTaskContext to coroutine tasks
-async def aheaders_tenant(context: "AsyncAbsurdTaskContext") -> str | None:
-    return context.headers.get("tenant")
+@task
+async def aheaders_tenant() -> str | None:
+    tenant = async_context().headers.get("tenant")
+    return t.cast("str | None", tenant)
 
 
-@task(takes_context=True)  # type: ignore[arg-type]  # django-stubs types the ctx param as base TaskContext; the worker passes an AsyncAbsurdTaskContext to coroutine tasks
-async def aheartbeat_then_return(context: "AsyncAbsurdTaskContext", value: str) -> str:
-    await context.heartbeat()
+@task
+async def aheartbeat_then_return(value: str) -> str:
+    await async_context().heartbeat()
     return value
 
 
@@ -66,8 +70,10 @@ async def asleeper(seconds: float) -> str:
     return "slept"
 
 
-@task(takes_context=True)  # type: ignore[arg-type]  # django-stubs types the ctx param as base TaskContext; the worker passes an AsyncAbsurdTaskContext to coroutine tasks
-async def asleep_for_once(context: "AsyncAbsurdTaskContext", key: str) -> int:
+@task
+async def asleep_for_once(key: str) -> int:
+    context = async_context()
+
     async def bump() -> int:
         DURABLE_STEP_CALLS["n"] += 1
         return DURABLE_STEP_CALLS["n"]
@@ -77,7 +83,7 @@ async def asleep_for_once(context: "AsyncAbsurdTaskContext", key: str) -> int:
     return n
 
 
-@task(takes_context=True)  # type: ignore[arg-type]  # django-stubs types the ctx param as base TaskContext; the worker passes an AsyncAbsurdTaskContext to coroutine tasks
-async def asleep_until_once(context: "AsyncAbsurdTaskContext", key: str) -> str:
-    await context.sleep_until("nap", time.time() + 1.5)
+@task
+async def asleep_until_once(key: str) -> str:
+    await async_context().sleep_until("nap", time.time() + 1.5)
     return "woke"

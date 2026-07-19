@@ -20,7 +20,7 @@ from django.utils.module_loading import import_string
 
 from django_absurd.backends import AbsurdBackend
 from django_absurd.connection import register_jsonb_loader, validate_backend
-from django_absurd.context import AbsurdTaskContext, AsyncAbsurdTaskContext
+from django_absurd.context import WORKER_LOOP
 from django_absurd.scheduler import run_beat
 
 logger = logging.getLogger("django_absurd")
@@ -201,19 +201,14 @@ def build_task_context(
             worker_ids=["absurd"] * attempt,
         ),
     )
-    if inspect.iscoroutinefunction(task.func):
-        return AsyncAbsurdTaskContext(task_result=task_result, absurd_ctx=ctx)
-    return AbsurdTaskContext(
-        task_result=task_result,
-        absurd_ctx=ctx,
-        loop=asyncio.get_running_loop(),
-    )
+    return TaskContext(task_result=task_result)
 
 
 def build_handler(
     task: "Task[t.Any, t.Any]",
 ) -> t.Callable[[t.Any, t.Any], t.Awaitable[t.Any]]:
     async def handler(params: t.Any, ctx: t.Any) -> t.Any:
+        WORKER_LOOP.set(asyncio.get_running_loop())
         args = params.get("args", [])
         kwargs = params.get("kwargs", {})
         attempt = read_sdk_attempt(ctx)
@@ -243,9 +238,7 @@ def build_handler(
                     finally:
                         close_old_connections()
 
-                result = await asyncio.get_running_loop().run_in_executor(
-                    None, call_sync
-                )
+                result = await asyncio.to_thread(call_sync)
         except (SuspendTask, CancelledTask, FailedTask) as exc:
             logger.info(
                 "django-absurd task %s: name=%s task_id=%s attempt=%d",

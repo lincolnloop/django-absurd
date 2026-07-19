@@ -6,27 +6,32 @@ icon: lucide/git-branch
 
 Absurd's durable primitives let a task break its work into **checkpointed steps** and
 **sleep** between them — persisting progress so retries and resumes pick up where they
-left off, never redoing completed steps. This page covers the django-absurd surface:
-`AbsurdTaskContext` (sync) and `AsyncAbsurdTaskContext` (async).
+left off, never redoing completed steps. This page covers the django-absurd surface: the
+`durable_context()` accessor.
 
 → [Absurd: Concepts](https://earendil-works.github.io/absurd/concepts/) (durable
 execution, steps, sleep)
 
 ## Basics
 
-Add `takes_context=True` to `@task` and type the first parameter (which **must** be
-named `context`) as `AbsurdTaskContext` or `AsyncAbsurdTaskContext`. Both are exported
-from the package root:
+Call `durable_context()` **inside** a running task to reach the durable primitives. It
+is orthogonal to Django's `TaskContext` — you do **not** need `takes_context=True` (add
+that only if you also want `context.task_result` / `.attempt`).
 
 ```python
-from django_absurd import AbsurdTaskContext, AsyncAbsurdTaskContext
+from django_absurd import durable_context
 ```
 
-Annotating the context parameter unlocks editor autocomplete and mypy checking across
-all durable methods. Strict-mypy users who annotate `context: AbsurdTaskContext` add
-`# type: ignore[arg-type]` on the `@task` decorator — a django-stubs limitation
-(function-param contravariance: the stub types `@task` as passing a base `TaskContext`),
-not a bug.
+`durable_context()` auto-selects by task kind:
+
+- **Async task → the SDK's own `absurd_sdk.AsyncTaskContext`** (a py.typed object) —
+  pure passthrough, you `await` its methods. Annotate the result as
+  `absurd_sdk.AsyncTaskContext` for full editor autocomplete and mypy checking.
+- **Sync task → `django_absurd.AbsurdTaskContext`**, a thin bridge mirroring the SDK's
+  sync signatures (no `await`); it also carries `run_step` (sync only). Annotate the
+  result as `AbsurdTaskContext` (exported from the package root).
+
+Called outside a running Absurd task, `durable_context()` raises `RuntimeError`.
 
 ## Steps (checkpoints)
 
@@ -44,11 +49,12 @@ one.
 
 ```python
 from django.tasks import task
-from django_absurd import AbsurdTaskContext
+from django_absurd import durable_context
 
 
-@task(takes_context=True)
-def process_order(context: AbsurdTaskContext, order_id: int) -> None:
+@task
+def process_order(order_id: int) -> None:
+    context = durable_context()
     context.step("charge", lambda: charge_card(order_id))
     context.step("ship", lambda: ship(order_id))
 ```
@@ -62,12 +68,15 @@ The async `step`'s `fn` must return an awaitable — pass an `async def`, not a 
 lambda (a sync lambda returns a non-awaitable and raises `TypeError`):
 
 ```python
+import absurd_sdk
 from django.tasks import task
-from django_absurd import AsyncAbsurdTaskContext
+from django_absurd import durable_context
 
 
-@task(takes_context=True)
-async def process_order(context: AsyncAbsurdTaskContext, order_id: int) -> None:
+@task
+async def process_order(order_id: int) -> None:
+    context: absurd_sdk.AsyncTaskContext = durable_context()
+
     async def charge():
         return await charge_card(order_id)
 
@@ -84,8 +93,10 @@ async def process_order(context: AsyncAbsurdTaskContext, order_id: int) -> None:
 An alternative to `context.step` for cases where wrapping a lambda is awkward:
 
 ```python
-@task(takes_context=True)
-def process_order(context: AbsurdTaskContext, order_id: int) -> None:
+@task
+def process_order(order_id: int) -> None:
+    context = durable_context()
+
     @context.run_step                     # name = "charge"
     def charge():
         return charge_card(order_id)
@@ -102,8 +113,10 @@ running longer than that is re-claimed and the run is replayed from the last che
 Either keep steps short or call `context.heartbeat()` periodically:
 
 ```python
-@task(takes_context=True)
-def process_batch(context: AbsurdTaskContext, batch_id: int) -> None:
+@task
+def process_batch(batch_id: int) -> None:
+    context = durable_context()
+
     def process():
         for row in big_result_set:
             process_row(row)
@@ -135,8 +148,9 @@ attempt counter does **not** increment. A sleep wake-up is not a retry.
 → [Absurd: Concepts — Sleep](https://earendil-works.github.io/absurd/concepts/#sleep)
 
 ```python
-@task(takes_context=True)
-def process_order(context: AbsurdTaskContext, order_id: int) -> None:
+@task
+def process_order(order_id: int) -> None:
+    context = durable_context()
     context.step("charge", lambda: charge_card(order_id))
     context.sleep_for("cooldown", 5)           # suspend for ~5 seconds
     context.step("ship", lambda: ship(order_id))
@@ -149,8 +163,12 @@ Sleep until a specific moment rather than a duration:
 ```python
 import datetime as dt
 
-@task(takes_context=True)
-async def send_reminder(context: AsyncAbsurdTaskContext, user_id: int) -> None:
+import absurd_sdk
+
+
+@task
+async def send_reminder(user_id: int) -> None:
+    context: absurd_sdk.AsyncTaskContext = durable_context()
     wake_at = dt.datetime(2026, 1, 1, 9, 0, tzinfo=dt.timezone.utc)
     await context.sleep_until("wait-for-new-year", wake_at)
 
@@ -180,8 +198,9 @@ Absurd's timezone-aware clock.
 Headers passed at enqueue time are available on `context.headers`:
 
 ```python
-@task(takes_context=True)
-def process_order(context: AbsurdTaskContext, order_id: int) -> None:
+@task
+def process_order(order_id: int) -> None:
+    context = durable_context()
     tenant = context.headers.get("tenant")
     context.step("charge", lambda: charge_card(order_id, tenant=tenant))
 ```
@@ -222,8 +241,9 @@ def my_step_fn():
 
 ### (f) Absurd backend only
 
-`context.step`, `sleep_for`, and `sleep_until` are Absurd-specific. Using them under any
-other Django task backend raises at runtime.
+`durable_context()` (and `step` / `sleep_for` / `sleep_until` on it) is Absurd-specific.
+Called under any other Django task backend — where the Absurd runtime context is never
+set — it raises `RuntimeError`.
 
 ## Enqueue a durable task
 
