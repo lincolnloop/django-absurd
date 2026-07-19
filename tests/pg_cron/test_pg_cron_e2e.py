@@ -20,7 +20,6 @@ TASKS_PG_CRON = {
         "BACKEND": ABSURD,
         "OPTIONS": {
             "QUEUES": {"default": {}, "other": {}, "reports": {}},
-            "SCHEDULER": "pg_cron",
             "SCHEDULE": {
                 "e": {
                     "task": "tests.tasks.create_payload",

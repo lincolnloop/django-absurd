@@ -18,7 +18,6 @@ def build_cleanup_tasks(cleanup_schedule: str) -> dict[str, t.Any]:
             "BACKEND": ABSURD,
             "OPTIONS": {
                 "QUEUES": {"default": {}, "other": {}, "reports": {}},
-                "SCHEDULER": "pg_cron",
                 "CLEANUP": {"schedule": cleanup_schedule},
             },
         }
@@ -71,7 +70,6 @@ def test_sync_unschedules_cleanup_job_when_cleanup_dropped(
             "BACKEND": ABSURD,
             "OPTIONS": {
                 "QUEUES": {"default": {}, "other": {}, "reports": {}},
-                "SCHEDULER": "pg_cron",
             },
         }
     }
@@ -118,7 +116,6 @@ def test_teardown_reclaims_cleanup_job_without_cleanup_option(
             "BACKEND": ABSURD,
             "OPTIONS": {
                 "QUEUES": {"default": {}, "other": {}, "reports": {}},
-                "SCHEDULER": "pg_cron",
             },
         }
     }

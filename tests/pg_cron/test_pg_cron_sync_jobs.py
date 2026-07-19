@@ -24,7 +24,6 @@ def build_tasks(
             "BACKEND": ABSURD,
             "OPTIONS": {
                 "QUEUES": {"default": {}, "other": {}, "reports": {}},
-                "SCHEDULER": "pg_cron",
                 "SCHEDULE": schedule,
             },
         }

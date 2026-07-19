@@ -59,7 +59,6 @@ def configure_pg_cron_backend(
             "BACKEND": BACKEND,
             "OPTIONS": {
                 "QUEUES": QUEUES,
-                "SCHEDULER": "pg_cron",
                 "SCHEDULE": schedule or {},
             },
         }
