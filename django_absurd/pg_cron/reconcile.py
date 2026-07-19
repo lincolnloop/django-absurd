@@ -53,7 +53,7 @@ def resolve_spawn_options(backend: AbsurdBackend, task_path: str) -> JsonObject:
     task = import_string(task_path)
     defaults = getattr(task.func, "absurd_default_params", None)
     merged = build_merged_spawn_options(defaults, None)
-    merged["max_attempts"] = merged.pop("max_attempts", backend.default_max_attempts)
+    merged.setdefault("max_attempts", backend.default_max_attempts)
     return _normalize_spawn_options(**merged)
 
 

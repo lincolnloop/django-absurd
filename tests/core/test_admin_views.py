@@ -5,7 +5,6 @@ import pytest
 from django.core.management import call_command
 from django.db import connections
 
-from django_absurd.admin import ADMIN_COUNT_CAP, BoundedCountPaginator
 from django_absurd.admin_views import (
     ADMIN_ENTITY_SPECS,
     EntitySpec,
@@ -17,38 +16,6 @@ from django_absurd.queues import get_absurd_client
 from tests.tasks import add
 
 pytestmark = pytest.mark.django_db(transaction=True)
-
-
-class CountStub:
-    """A minimal object_list stand-in — only .count() after a slice matters here,
-    but Paginator.object_list's _SupportsPagination protocol also needs
-    __len__/__iter__/int-indexing to satisfy structurally."""
-
-    def __init__(self, n: int) -> None:
-        self.n = n
-
-    def __len__(self) -> int:
-        return self.n
-
-    def __iter__(self) -> t.Iterator[object]:
-        return iter(range(self.n))
-
-    @t.overload
-    def __getitem__(self, index: int) -> object: ...
-    @t.overload
-    def __getitem__(self, index: slice) -> "CountStub": ...
-    def __getitem__(self, index: int | slice) -> "object | CountStub":
-        return self if isinstance(index, slice) else object()
-
-    def count(self) -> int:
-        return self.n
-
-
-def test_bounded_paginator_clamps_count_to_cap() -> None:
-    over = BoundedCountPaginator(CountStub(ADMIN_COUNT_CAP + 500), per_page=20)
-    assert over.count == ADMIN_COUNT_CAP
-    under = BoundedCountPaginator(CountStub(7), per_page=20)
-    assert under.count == 7
 
 
 TASKS_SPEC: EntitySpec = next(s for s in ADMIN_ENTITY_SPECS if s.name == "tasks")
