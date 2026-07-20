@@ -20,7 +20,9 @@ IN:
   payload.
 - `emit_event(event_name, payload=None)` — in-task (on the task's own queue).
 - **Top-level `django_absurd.emit_event(event_name, payload=None, *, queue="default")`**
-  — emit from _outside_ a task (e.g. a view) to wake a waiter.
+  — emit from _outside_ a task (e.g. a view) to wake a waiter. See
+  [Absurd — Concepts → Events](https://earendil-works.github.io/absurd/concepts/#events)
+  ("emit ... from anywhere — another task, an API handler, etc.").
 - `await_event`'s `timeout` raises **`absurd_sdk.TimeoutError`**, imported directly from
   `absurd_sdk` (matching the existing pattern — `CancellationPolicy`, `RetryStrategy`
   etc. are already imported directly from `absurd_sdk` by user code, never re-exported)
@@ -73,6 +75,12 @@ def emit_event(self, event_name, payload=None) -> None:
 arm already re-raises it (no worker change needed). `emit_event` is fire-and-forget.
 
 ## Top-level `emit_event` (app-side) — the outside-a-task signal
+
+**What it is, mechanically:** `django_absurd.emit_event(...)` is an ordinary Python
+function — not a task, and it does not require a running Absurd task context. Call it
+from anywhere in your Django app that already talks to the database: a view, a webhook
+handler, a management command, a signal receiver, the shell. It opens its own client via
+`get_absurd_client()` and writes the event directly.
 
 **Purpose (the "why"):** `ctx.emit_event` is only reachable _inside_ a running task, but
 the real-world signal that wakes a waiter almost always arrives from **ordinary Django
