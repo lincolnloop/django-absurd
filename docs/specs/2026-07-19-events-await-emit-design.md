@@ -21,9 +21,13 @@ IN:
 - `emit_event(event_name, payload=None)` — in-task (on the task's own queue).
 - **Top-level `django_absurd.emit_event(event_name, payload=None, *, queue="default")`**
   — emit from _outside_ a task (e.g. a view) to wake a waiter.
-- Re-export **`absurd_sdk.TimeoutError`** from `django_absurd` — `await_event`'s
-  `timeout` raises it, and it is **NOT** Python's builtin `TimeoutError` (docs must
-  warn; a user `except TimeoutError` on the builtin catches nothing).
+- `await_event`'s `timeout` raises **`absurd_sdk.TimeoutError`**, imported directly from
+  `absurd_sdk` (matching the existing pattern — `CancellationPolicy`, `RetryStrategy`
+  etc. are already imported directly from `absurd_sdk` by user code, never re-exported)
+  — and it is **NOT** Python's builtin `TimeoutError` (docs must warn; a user
+  `except TimeoutError` on the builtin catches nothing). No `django_absurd` re-export:
+  re-exporting the bare name trips ruff's `A004` (builtin-shadowing, confirmed) for no
+  real benefit over importing it directly.
 - **Waits admin inline** under the task (mirrors the shipped Checkpoints inline).
 - Docs + tests + example (order-fulfillment's `sleep` stand-in → real `await_event`).
 
@@ -150,8 +154,9 @@ read-only **Waits inline**, mirroring the shipped Checkpoints inline exactly:
   suspend→emit→resume flow). Note `await_task_result` is intentionally not provided (use
   Django's `get_result` for child results). Reuse the effectively-once /
   don't-catch-all-`except` caveats, **plus these Events caveats**:
-  - `TimeoutError` is **`from absurd_sdk import TimeoutError`** (re-exported by
-    `django_absurd`), **not** the builtin — show the import, warn explicitly.
+  - `TimeoutError` is **`from absurd_sdk import TimeoutError`**, imported directly (NOT
+    re-exported by `django_absurd`), **not** the builtin — show the import, warn
+    explicitly.
   - An **uncaught** `TimeoutError` fails the run, which then **retries and re-waits the
     full `timeout` each attempt** until `max_attempts` — catch it if you want a
     one-shot.
