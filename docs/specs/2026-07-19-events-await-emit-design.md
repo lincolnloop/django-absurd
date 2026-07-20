@@ -65,20 +65,38 @@ def emit_event(self, event_name, payload=None) -> None:
 `await_event` suspending → the worker's existing `except (SuspendTask, …)` control-flow
 arm already re-raises it (no worker change needed). `emit_event` is fire-and-forget.
 
-## Top-level `emit_event` (app-side)
+## Top-level `emit_event` (app-side) — the outside-a-task signal
 
-A thin public helper, mirroring Absurd's own `app.emit_event` vs `ctx.emit_event` split,
-so a view can wake a waiter without reaching into internals:
+**Purpose (the "why"):** `ctx.emit_event` is only reachable _inside_ a running task, but
+the real-world signal that wakes a waiter almost always arrives from **ordinary Django
+code** — a webhook, a view, an API handler, an admin action. The top-level helper is
+that entry point. Absurd itself describes emitting "from anywhere — another task, an API
+handler, etc."
+([Concepts → Events](https://earendil-works.github.io/absurd/concepts/#events)).
+
+Event names typically carry a **business key** so an emit targets the one task waiting
+on that exact name — Absurd's own example is `await_event("shipment.packed:order-42")`.
+First-emit-per-name wins (immutable); payload is optional JSON.
 
 ```python
 from django_absurd import emit_event
 
-emit_event("warehouse.packed", {"tracking": "XYZ"}, queue="default")
+# a plain Django view / webhook / API handler (NOT a task):
+def warehouse_webhook(request, order):
+    emit_event(f"warehouse.packed:{order}", {"tracking": request.POST["tracking"]},
+               queue="default")
+    return HttpResponse(status=204)
 ```
 
-~8 lines: resolve the Absurd DB, open a client on `queue` (the existing
-`get_absurd_client(queue)` path), call its `emit_event(event_name, payload)`, done. Runs
-on the Absurd connection; no task context required.
+End-to-end: the order task calls `await_event(f"warehouse.packed:{order}")` →
+**suspends** (worker freed) → the warehouse system later POSTs the webhook → the view
+emits the named event on the task's queue → the task's next claim finds it → **resumes**
+with the payload.
+
+The helper is ~8 lines: resolve the Absurd DB, open a client on `queue` (the existing
+`get_absurd_client(queue)` path), call its `emit_event(event_name, payload)`. Runs on
+the Absurd connection; no task context required. `queue` must be the queue the awaiting
+task runs on (events are queue-scoped — see above).
 
 ## Waits admin
 
@@ -98,16 +116,21 @@ read-only **Waits inline**, mirroring the shipped Checkpoints inline exactly:
 
 ## Docs, tests, example
 
-- **Docs** — an **Events** section on the Workflows page + AGENTS: `await_event`
-  (suspend-until-signal, first-emit-wins, `timeout`, queue-scoped), in-task
-  `emit_event`, and the top-level `emit_event`; link Absurd's Concepts → Events. Note
-  `await_task_result` is intentionally not provided (use Django's `get_result` for child
-  results). Reuse the effectively-once / don't-catch-all-`except` caveats.
+- **Docs** — an **Events** section on the Workflows page + AGENTS, **grounded in
+  [Absurd → Concepts → Events](https://earendil-works.github.io/absurd/concepts/#events)**
+  (link it up front; mirror its terms — events awaited by name, optional JSON payload,
+  **first emit per name wins / immutable**, `timeout` → `TimeoutError`). Cover:
+  `await_event` (suspend-until-signal, queue-scoped, business-key naming like
+  `"warehouse.packed:order-42"` to target one waiter), in-task `emit_event`, and the
+  top-level `emit_event` (the outside-a-task signal — webhook/view/API handler; show the
+  suspend→emit→resume flow). Note `await_task_result` is intentionally not provided (use
+  Django's `get_result` for child results). Reuse the effectively-once /
+  don't-catch-all-`except` caveats.
 - **Example** — `examples/web`: the order-fulfillment task's
-  `sleep_for("await-warehouse", …)` becomes `await_event("warehouse.packed")`; add a
-  second view/button that calls the top-level `emit_event("warehouse.packed", queue=…)`
-  to wake it — a real signal→resume demo. Update the surrounding copy +
-  `examples/README.md`.
+  `sleep_for("await-warehouse", …)` becomes `await_event(f"warehouse.packed:{order}")`;
+  add a second view/button that calls the top-level
+  `emit_event(f"warehouse.packed:{order}", queue="default")` to wake that specific order
+  — a real signal→resume demo. Update the surrounding copy + `examples/README.md`.
 - **Tests** — behavioral, real worker, both task kinds parametrized where they differ:
   - a task `await_event`s → suspends (state `sleeping`/RUNNING, a Waits row exists) → a
     separate call to the top-level `emit_event` → next drain resumes with the payload.
