@@ -21,6 +21,18 @@ F = t.TypeVar("F")
 AbsurdFieldValue = int | RetryStrategy | CancellationPolicy | JsonObject | str
 
 
+class SpawnKwargs(t.TypedDict, total=False):
+    """The exact keyword-arg shape absurd_sdk's ``spawn``/``_normalize_spawn_options``
+    accept — mirrors their signatures field-for-field so ``**merged`` calls into them
+    type-check per field instead of collapsing to a union."""
+
+    max_attempts: int
+    retry_strategy: RetryStrategy
+    cancellation: CancellationPolicy
+    headers: JsonObject
+    idempotency_key: str
+
+
 @dataclasses.dataclass(frozen=True)
 class AbsurdDefaultParams:
     """Per-task default parameters passed to Absurd at enqueue time."""
@@ -29,12 +41,15 @@ class AbsurdDefaultParams:
     retry_strategy: RetryStrategy | NotSet = NOT_SET
     cancellation: CancellationPolicy | NotSet = NOT_SET
 
-    def to_kwargs(self) -> dict[str, AbsurdFieldValue]:
-        return {
-            f.name: value
-            for f in dataclasses.fields(self)
-            if (value := getattr(self, f.name)) is not NOT_SET
-        }
+    def to_kwargs(self) -> SpawnKwargs:
+        return t.cast(
+            "SpawnKwargs",
+            {
+                f.name: value
+                for f in dataclasses.fields(self)
+                if (value := getattr(self, f.name)) is not NOT_SET
+            },
+        )
 
 
 @dataclasses.dataclass(frozen=True)

@@ -1,7 +1,7 @@
 import time
 import typing as t
 
-from absurd_sdk import CancellationPolicy, RetryStrategy
+from absurd_sdk import CancellationPolicy, JsonValue, RetryStrategy
 from django.contrib.auth.models import Group
 from django.tasks import TaskContext, task
 
@@ -59,7 +59,7 @@ def echo(value: t.Any) -> t.Any:
 
 
 @task
-def create_payload(data: t.Any) -> int:
+def create_payload(data: JsonValue) -> int:
     return Payload.objects.create(data=data).pk
 
 
@@ -105,7 +105,7 @@ def sstep_echo(value: str) -> str:
 
 
 @task
-def scoverage() -> dict[str, t.Any]:
+def scoverage() -> dict[str, JsonValue]:
     context = get_absurd_context()
     context.heartbeat()
     tenant = context.headers.get("tenant")

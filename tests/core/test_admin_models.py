@@ -54,13 +54,13 @@ def test_model_str_is_the_natural_key() -> None:
 def test_run_has_task_fk_for_inlining_and_task_id_is_unique() -> None:
     tasks = build_admin_model(next(s for s in ADMIN_ENTITY_SPECS if s.name == "tasks"))
     runs = build_admin_model(next(s for s in ADMIN_ENTITY_SPECS if s.name == "runs"))
-    fk = t.cast("Field[t.Any, t.Any]", runs._meta.get_field("task"))
+    fk = t.cast("models.ForeignKey[t.Any, t.Any]", runs._meta.get_field("task"))
     assert fk.related_model is tasks
     # FK joins on task_id
-    assert t.cast("t.Any", fk).target_field.name == "task_id"
+    assert fk.target_field.name == "task_id"
     # attname stays task_id, not task_id_id
-    assert t.cast("t.Any", fk).get_attname() == "task_id"
-    # view-backed: no real FK constraint
+    assert fk.get_attname() == "task_id"
+    # view-backed: no real FK constraint (db_constraint has no stub declaration)
     assert t.cast("t.Any", fk).db_constraint is False
     # required as the FK target
     task_id_field = t.cast("Field[t.Any, t.Any]", tasks._meta.get_field("task_id"))

@@ -11,19 +11,28 @@ from dataclasses import dataclass
 
 import psycopg
 import psycopg.errors
-from absurd_sdk import AsyncAbsurd, CancelledTask, FailedTask, SuspendTask
+from absurd_sdk import (
+    AsyncAbsurd,
+    AsyncTaskContext,
+    CancelledTask,
+    FailedTask,
+    JsonValue,
+    SuspendTask,
+)
 from django.core.exceptions import ImproperlyConfigured
 from django.db import close_old_connections, connections
 from django.tasks import Task, TaskContext, TaskResult, TaskResultStatus
 from django.utils import timezone
 from django.utils.module_loading import import_string
 
-from django_absurd.backends import AbsurdBackend
+from django_absurd.backends import AbsurdBackend, TaskParams
 from django_absurd.connection import register_jsonb_loader, validate_backend
 from django_absurd.context import WORKER_LOOP
 from django_absurd.scheduler import run_beat
 
 logger = logging.getLogger("django_absurd")
+
+D = t.TypeVar("D")
 
 
 @dataclass(frozen=True)
@@ -35,19 +44,29 @@ class WorkerOptions:
     worker_id: str | None = None
 
 
-class LazyTaskRegistry(dict[str, t.Any]):
+class LazyTaskRegistry(dict[str, dict[str, t.Any]]):
     """dict subclass that resolves tasks by import_string on first claim.
 
     The SDK reads _registry.get(task_name) in both _execute_task (burst) and
     start_worker (blocking). Overriding .get intercepts all dispatch reads and
-    resolves any importable Task on demand — no tasks.py scan required.
+    resolves any importable Task on demand — no tasks.py scan required. Value type
+    matches the SDK's own ``_registry: Dict[str, Dict[str, Any]]`` declaration — each
+    entry mixes str/None/Callable fields, so the inner ``Any`` is a genuine boundary.
     """
 
     def __init__(self, queue: str) -> None:
         super().__init__()
         self.queue = queue
 
-    def get(self, name: t.Any, default: t.Any = None) -> t.Any:
+    @t.overload
+    def get(self, name: str, default: None = None, /) -> dict[str, t.Any] | None: ...
+    @t.overload
+    def get(self, name: str, default: dict[str, t.Any], /) -> dict[str, t.Any]: ...
+    @t.overload
+    def get(self, name: str, default: D, /) -> dict[str, t.Any] | D: ...
+    def get(
+        self, name: str, default: dict[str, t.Any] | D | None = None
+    ) -> dict[str, t.Any] | D | None:
         if name not in self:
             try:
                 task = import_string(name)
@@ -173,7 +192,7 @@ async def drain_queue(
 
 def build_task_context(
     task: "Task[t.Any, t.Any]",
-    ctx: t.Any,
+    ctx: AsyncTaskContext,
     args: t.Sequence[t.Any],
     kwargs: dict[str, t.Any],
 ) -> "TaskContext[t.Any, t.Any]":
@@ -200,8 +219,8 @@ def build_task_context(
 
 def build_handler(
     task: "Task[t.Any, t.Any]",
-) -> t.Callable[[t.Any, t.Any], t.Awaitable[t.Any]]:
-    async def handler(params: t.Any, ctx: t.Any) -> t.Any:
+) -> t.Callable[[TaskParams, AsyncTaskContext], t.Awaitable[JsonValue]]:
+    async def handler(params: TaskParams, ctx: AsyncTaskContext) -> JsonValue:
         WORKER_LOOP.set(asyncio.get_running_loop())
         args = params.get("args", [])
         kwargs = params.get("kwargs", {})
@@ -218,17 +237,17 @@ def build_handler(
                 ctx_ = build_task_context(task, ctx, args, kwargs)
             if inspect.iscoroutinefunction(task.func):
                 if task.takes_context:
-                    result = await task.func(ctx_, *args, **kwargs)
+                    result = t.cast("JsonValue", await task.func(ctx_, *args, **kwargs))
                 else:
-                    result = await task.func(*args, **kwargs)
+                    result = t.cast("JsonValue", await task.func(*args, **kwargs))
             else:
 
-                def call_sync() -> t.Any:
+                def call_sync() -> JsonValue:
                     close_old_connections()
                     try:
                         if task.takes_context:
-                            return task.func(ctx_, *args, **kwargs)
-                        return task.func(*args, **kwargs)
+                            return t.cast("JsonValue", task.func(ctx_, *args, **kwargs))
+                        return t.cast("JsonValue", task.func(*args, **kwargs))
                     finally:
                         close_old_connections()
 
@@ -268,7 +287,7 @@ def build_handler(
     return handler
 
 
-def read_sdk_attempt(ctx: t.Any) -> int:
+def read_sdk_attempt(ctx: AsyncTaskContext) -> int:
     attempt: int = ctx._task["attempt"]  # noqa: SLF001 -- SDK TaskContext has no public attempt property
     return attempt
 

@@ -170,9 +170,6 @@ VIEW_NOT_PROVISIONED_MSG = (
 )
 
 
-AnyCallable = t.Callable[..., t.Any]
-
-
 class AbsurdViewQuerySet(models.QuerySet[models.Model]):
     def _fetch_all(self) -> None:
         try:
@@ -195,8 +192,8 @@ class AbsurdViewQuerySet(models.QuerySet[models.Model]):
         return result
 
 
-def translate_view_errors(fn: AnyCallable) -> AnyCallable:
-    def wrapper(*args: t.Any, **kwargs: t.Any) -> t.Any:
+def translate_view_errors[**P, R](fn: t.Callable[P, R]) -> t.Callable[P, R]:
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
         try:
             return fn(*args, **kwargs)
         except (ProgrammingError, OperationalError) as exc:
@@ -247,13 +244,21 @@ def build_admin_model(spec: EntitySpec) -> type[models.Model]:
     return type(spec.model_name, (models.Model,), fields)
 
 
-def raise_view_read_only(self: t.Any, *args: object, **kwargs: object) -> t.NoReturn:
+def raise_view_read_only(
+    self: models.Model, *args: object, **kwargs: object
+) -> t.NoReturn:
     raise QueueReadOnlyError(ADMIN_VIEW_READONLY_MSG)
 
 
-def render_natural_key(self: t.Any) -> str:
-    key: str = self.natural_key
-    return key
+class HasNaturalKey(t.Protocol):
+    """The synthesized ``natural_key`` field every ``build_admin_model`` model
+    declares — ``render_natural_key`` is installed as its ``__str__``."""
+
+    natural_key: str
+
+
+def render_natural_key(self: HasNaturalKey) -> str:
+    return self.natural_key
 
 
 def build_model_field(

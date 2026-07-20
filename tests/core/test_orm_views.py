@@ -18,6 +18,7 @@ from django_absurd.queues import get_absurd_client
 from tests.tasks import add
 
 if t.TYPE_CHECKING:
+    from django.apps.config import AppConfig
     from pytest_django.plugin import DjangoDbBlocker
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -82,7 +83,7 @@ def test_provision_skips_when_schema_absent(
     with django_db_blocker.unblock():
         call_command("migrate", "django_absurd", "zero", verbosity=0)
     try:
-        config: t.Any = apps.get_app_config("django_absurd")
+        config: AppConfig = apps.get_app_config("django_absurd")
         provision_queues_after_migrate(config)
     finally:
         with django_db_blocker.unblock():

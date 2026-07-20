@@ -3,7 +3,6 @@ import typing as t
 
 from django.contrib import admin, messages
 from django.contrib.admin.sites import AdminSite
-from django.core.paginator import Paginator
 from django.db import connections, models
 from django.db.utils import OperationalError, ProgrammingError
 from django.utils.module_loading import import_string
@@ -23,21 +22,6 @@ from django_absurd.admin_views import (
 )
 from django_absurd.models import Queue
 from django_absurd.queues import get_absurd_backend, resolve_absurd_database
-
-ADMIN_COUNT_CAP = 1000
-
-if t.TYPE_CHECKING:
-    _PaginatorBase = Paginator[t.Any]
-else:
-    _PaginatorBase = Paginator
-
-
-class BoundedCountPaginator(_PaginatorBase):
-    @property
-    def count(self) -> int:
-        qs: t.Any = self.object_list[: ADMIN_COUNT_CAP + 1]
-        n: int = qs.count()
-        return min(n, ADMIN_COUNT_CAP)
 
 
 class AbsurdQueueListFilter(admin.SimpleListFilter):
@@ -123,7 +107,6 @@ class ReadOnlyAbsurdAdmin(ReadOnlyAdminBase):
 
     ordering = ("natural_key",)
     show_full_result_count = False
-    paginator = BoundedCountPaginator
 
     def get_queryset(self, request: "HttpRequest") -> "QuerySet[t.Any]":
         model: type[t.Any] = self.model

@@ -3,7 +3,7 @@ import typing as t
 import pytest
 from bs4 import BeautifulSoup
 from django.contrib import admin as djadmin
-from django.contrib.auth.models import AbstractBaseUser, Permission
+from django.contrib.auth.models import Permission, User
 from django.test import Client
 from django.urls import reverse_lazy
 
@@ -30,16 +30,15 @@ def test_scheduledtask_registered_on_default_site() -> None:
 
 
 def test_staff_user_with_view_permission_sees_scheduledtask_in_index(
-    client: Client, staff_user: AbstractBaseUser
+    client: Client, staff_user: User
 ) -> None:
-    user: t.Any = staff_user
-    user.user_permissions.add(
+    staff_user.user_permissions.add(
         Permission.objects.get(
             codename="view_scheduledtask",
             content_type__app_label="django_absurd_pg_cron",
         )
     )
-    client.force_login(user)
+    client.force_login(staff_user)
     soup = BeautifulSoup(client.get(INDEX).content, "html.parser")
     assert (
         soup.select_one('a[href$="/django_absurd_pg_cron/scheduledtask/"]') is not None

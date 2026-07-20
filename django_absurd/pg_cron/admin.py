@@ -117,6 +117,12 @@ class ScheduledTaskCreateForm(ScheduledTaskForm):
         # resolved queue that isn't declared for the backend) would raise "has no field
         # named ..." (HTTP 500). Re-home any error for a field this form doesn't expose
         # onto NON_FIELD_ERRORS so it renders as a form error instead.
+        #
+        # error stays t.Any rather than mirroring BaseForm.add_error's 2-overload
+        # signature (Mapping-of-errors vs single error): every call site in this
+        # codebase (and Django's own internal callers for this form) always passes a
+        # single ValidationError, never a raw Mapping — typing that branch would add
+        # dead, untestable code for a shape nothing here produces.
         if isinstance(error, ValidationError) and hasattr(error, "error_dict"):
             rehomed: dict[str, list[ValidationError]] = {}
             for name, messages in error.error_dict.items():

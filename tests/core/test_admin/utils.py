@@ -12,6 +12,7 @@ from django.urls import clear_url_caches
 from django_absurd.admin import register_absurd_admin
 from django_absurd.params import AbsurdSpawnParams
 from tests.tasks import add, boom
+from tests.utils import HasContent
 
 if t.TYPE_CHECKING:
     from django.tasks import TaskResult
@@ -19,7 +20,7 @@ if t.TYPE_CHECKING:
 BACKEND = "django_absurd.backends.AbsurdBackend"
 
 
-def parse_html(response: t.Any) -> BeautifulSoup:
+def parse_html(response: HasContent) -> BeautifulSoup:
     return BeautifulSoup(response.content, "html.parser")
 
 
