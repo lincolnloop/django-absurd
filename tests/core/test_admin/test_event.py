@@ -1,3 +1,5 @@
+import typing as t
+
 import pytest
 from django.contrib.admin.utils import quote
 from django.contrib.auth.models import User
@@ -6,6 +8,7 @@ from django.db import connections
 from django.test import Client
 from django.urls import reverse, reverse_lazy
 
+from django_absurd import emit_event
 from tests.core.test_admin.utils import parse_html, result_rows
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -38,3 +41,16 @@ def test_changelist_and_detail(client: Client, admin_user: User) -> None:
     name_elem = detail.select_one(".field-event_name .readonly")
     assert name_elem is not None
     assert name_elem.get_text(strip=True) == "order.shipped"
+
+
+def test_emit_event_writes_a_visible_row(client: Client, admin_user: t.Any) -> None:
+    call_command("absurd_sync_queues")
+    emit_event("order.shipped:demo", {"id": 1}, queue="default")
+    client.force_login(admin_user)
+    soup = parse_html(client.get(CHANGELIST))
+    names = set()
+    for r in result_rows(soup):
+        elem = r.select_one(".field-event_name")
+        assert elem is not None
+        names.add(elem.get_text(strip=True))
+    assert "order.shipped:demo" in names

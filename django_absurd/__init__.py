@@ -16,6 +16,7 @@ from django_absurd.context import (
     aget_absurd_context,
     get_absurd_context,
 )
+from django_absurd.events import emit_event
 
 ABSURD_SCHEMA_VERSION = "0.4.0"
 
@@ -23,5 +24,6 @@ __all__ = [
     "ABSURD_SCHEMA_VERSION",
     "AbsurdTaskContext",
     "aget_absurd_context",
+    "emit_event",
     "get_absurd_context",
 ]
