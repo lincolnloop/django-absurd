@@ -98,14 +98,15 @@ with the payload.
 
 **Contract (corrected — the earlier sketch was wrong):**
 
-- **Not** `get_absurd_client(queue)` — that arg is a **DB alias**, not a queue, and the
-  client's own queue defaults to `"default"`. Treating a queue as an alias fails
-  (`ConnectionDoesNotExist` for a non-`"default"` queue) or, worse, on a non-default
-  `DATABASE` **silently emits on the wrong database** and the waiter never wakes.
-  Correct call: resolve the Absurd DB (`resolve_absurd_database()`), build a client on
-  it (`build_absurd_client(...)`), and call the **client-level**
-  `emit_event(event_name, payload, queue_name=queue)` (SDK `Absurd.emit_event` takes
-  `queue_name`).
+- **Queue is NOT the client's `using` arg.** `get_absurd_client(using=None)` already
+  encapsulates DB resolution
+  (`build_absurd_client(using or resolve_absurd_database())`), so call it with **no
+  argument** — it returns a client on the Absurd DB. The queue goes to the
+  **client-level** `emit_event`'s `queue_name` (SDK `Absurd.emit_event` takes it):
+  `get_absurd_client().emit_event(event_name, payload, queue_name=queue)`. Do NOT pass
+  the queue as `get_absurd_client(queue)` — that positional is a **DB alias**, so a
+  non-`"default"` queue would `ConnectionDoesNotExist`, or under a non-default
+  `DATABASE` silently emit on the wrong database (waiter never wakes).
 - **Validate `queue` against the declared queues** (`get_declared_queues`) and raise a
   clear error if unknown — fail fast rather than silently never-waking on a typo/wrong
   queue.
@@ -114,9 +115,9 @@ with the payload.
   (queue declared but not yet synced) → `ImproperlyConfigured` with the sync hint — so
   it fails cleanly without poisoning an enclosing transaction.
 - **Module home / export:** live in a registry-safe module (e.g.
-  `django_absurd/events.py`) and import `queues`/`build_absurd_client` **inside** the
-  function — a top-level import in `django_absurd/__init__.py` would trip
-  `AppRegistryNotReady` at app load (`queues.py` imports `models`). Re-export the
+  `django_absurd/events.py`) and import `get_absurd_client` **inside** the function — a
+  top-level `from django_absurd.queues import …` in `django_absurd/__init__.py` would
+  trip `AppRegistryNotReady` at app load (`queues.py` imports `models`). Re-export the
   function from `django_absurd`.
 - **Sync-only** (rides Django's connection); from an async view, wrap in
   `sync_to_async`.
