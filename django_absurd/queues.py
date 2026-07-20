@@ -1,9 +1,8 @@
 import datetime as dt
 import typing as t
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from absurd_sdk import Absurd, CreateQueueOptions, QueuePolicyOptions
+from absurd_sdk import Absurd, QueuePolicyOptions
 from django.core.exceptions import ImproperlyConfigured
 from django.db import connections
 from django.db.utils import ProgrammingError
@@ -12,8 +11,6 @@ from django_absurd import backends
 from django_absurd.admin_views import rebuild_views
 from django_absurd.connection import build_absurd_client, validate_backend
 from django_absurd.models import Queue
-
-AbsurdQueues = Mapping[str, CreateQueueOptions]
 
 MUTABLE_OPTION_KEYS = (
     "partition_lookahead",
