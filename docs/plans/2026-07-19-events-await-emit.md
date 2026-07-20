@@ -75,7 +75,6 @@ Checkpoints inline verbatim.
 ```python
 import pytest
 from django.core.exceptions import ImproperlyConfigured
-from django.test import override_settings
 from pytest_django.fixtures import SettingsWrapper
 
 from django_absurd import emit_event
@@ -94,15 +93,19 @@ def test_top_level_emit_event_unknown_queue_raises() -> None:
         emit_event("whatever", queue="ghost")
 
 
-@override_settings(TASKS={"x": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}})
-def test_top_level_emit_event_no_backend_configured_raises() -> None:
+def test_top_level_emit_event_no_backend_configured_raises(
+    settings: SettingsWrapper,
+) -> None:
+    settings.TASKS = {"x": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}}
     with pytest.raises(
         ImproperlyConfigured, match=r"django-absurd: no Absurd backend configured\."
     ):
         emit_event("whatever")
 
 
-def test_top_level_emit_event_unsynced_queue_raises(settings: SettingsWrapper) -> None:
+def test_top_level_emit_event_unsynced_queue_raises(
+    settings: SettingsWrapper,
+) -> None:
     settings.TASKS = {
         "default": {
             "BACKEND": "django_absurd.backends.AbsurdBackend",
@@ -227,7 +230,7 @@ the top of the file.)
 - [ ] **Step 7: Run the full test_event.py + test_events.py, verify pass**
 
 Run: `uv run pytest tests/core/test_events.py tests/core/test_admin/test_event.py -v`
-Expected: PASS (4 + 2 tests)
+Expected: PASS (3 + 2 tests)
 
 - [ ] **Step 8: mypy + ruff clean**
 
@@ -394,6 +397,18 @@ def test_in_task_emit_event_wakes_a_separately_enqueued_waiter() -> None:
     assert done.result == {"tracking": "in-task"}
 
 
+def test_async_in_task_emit_event_wakes_a_separately_enqueued_waiter() -> None:
+    call_command("absurd_sync_queues")
+    atasks.aemit_event_once.enqueue("order.packed:in-task-async", {"tracking": "async"})
+    utils.run_absurd_worker()
+
+    result = atasks.aawait_event_once.enqueue("order.packed:in-task-async")
+    utils.run_absurd_worker()
+    done = utils.get_task_result(result.id)
+    assert done is not None
+    assert done.result == {"tracking": "async"}
+
+
 def test_uncaught_timeout_raises_absurd_sdk_timeout_error_and_is_catchable() -> None:
     call_command("absurd_sync_queues")
     result = tasks.sawait_event_timeout.enqueue("order.packed:never-arrives")
@@ -439,8 +454,8 @@ Add the two methods to `AbsurdTaskContext`, after `sleep_until`:
 
 - [ ] **Step 6: Run tests to verify they pass**
 
-Run: `uv run pytest tests/core/test_events.py -v` Expected: PASS (all 9 tests — 3 from
-Task 1, 6 from this task)
+Run: `uv run pytest tests/core/test_events.py -v` Expected: PASS (all 10 tests — 3 from
+Task 1, 7 from this task)
 
 - [ ] **Step 7: mypy + ruff clean**
 
@@ -851,9 +866,13 @@ git commit -m "docs: Events section (await_event/emit_event) on Workflows page"
 - [ ] **Step 1: Replace the `sleep_for` stand-in with real `await_event` in
       `examples/web/app.py`**
 
-Update the import line:
+Update the import lines — add the `emit_event` import and a `url_quote` alias for
+`urllib.parse.quote` (the file already imports `quote` from `django.contrib.admin.utils`
+for admin pk-quoting, so this needs a distinct name):
 
 ```python
+from urllib.parse import quote as url_quote
+
 from django_absurd import emit_event, get_absurd_context
 ```
 
@@ -949,7 +968,7 @@ def task_detail(request: HttpRequest, result_id: str) -> HttpResponse | str:
     order = request.GET.get("order")
     pack_button = ""
     if order and not finished:
-        back = f"/tasks/{result_id}/?order={order}"
+        back = url_quote(f"/tasks/{result_id}/?order={order}", safe="")
         pack_button = f"""
         <form method="post" action="/workflow/{order}/pack/?next={back}">
           <input type="hidden" name="csrfmiddlewaretoken" value="{get_token(request)}">
