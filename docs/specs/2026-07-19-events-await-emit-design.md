@@ -21,6 +21,9 @@ IN:
 - `emit_event(event_name, payload=None)` — in-task (on the task's own queue).
 - **Top-level `django_absurd.emit_event(event_name, payload=None, *, queue="default")`**
   — emit from _outside_ a task (e.g. a view) to wake a waiter.
+- Re-export **`absurd_sdk.TimeoutError`** from `django_absurd` — `await_event`'s
+  `timeout` raises it, and it is **NOT** Python's builtin `TimeoutError` (docs must
+  warn; a user `except TimeoutError` on the builtin catches nothing).
 - **Waits admin inline** under the task (mirrors the shipped Checkpoints inline).
 - Docs + tests + example (order-fulfillment's `sleep` stand-in → real `await_event`).
 
@@ -93,10 +96,30 @@ End-to-end: the order task calls `await_event(f"warehouse.packed:{order}")` →
 emits the named event on the task's queue → the task's next claim finds it → **resumes**
 with the payload.
 
-The helper is ~8 lines: resolve the Absurd DB, open a client on `queue` (the existing
-`get_absurd_client(queue)` path), call its `emit_event(event_name, payload)`. Runs on
-the Absurd connection; no task context required. `queue` must be the queue the awaiting
-task runs on (events are queue-scoped — see above).
+**Contract (corrected — the earlier sketch was wrong):**
+
+- **Not** `get_absurd_client(queue)` — that arg is a **DB alias**, not a queue, and the
+  client's own queue defaults to `"default"`. Treating a queue as an alias fails
+  (`ConnectionDoesNotExist` for a non-`"default"` queue) or, worse, on a non-default
+  `DATABASE` **silently emits on the wrong database** and the waiter never wakes.
+  Correct call: resolve the Absurd DB (`resolve_absurd_database()`), build a client on
+  it (`build_absurd_client(...)`), and call the **client-level**
+  `emit_event(event_name, payload, queue_name=queue)` (SDK `Absurd.emit_event` takes
+  `queue_name`).
+- **Validate `queue` against the declared queues** (`get_declared_queues`) and raise a
+  clear error if unknown — fail fast rather than silently never-waking on a typo/wrong
+  queue.
+- **Savepoint + translate**, mirroring `AbsurdBackend.enqueue`: wrap the emit in
+  `transaction.atomic(savepoint=True)`; a missing-table `psycopg.errors.UndefinedTable`
+  (queue declared but not yet synced) → `ImproperlyConfigured` with the sync hint — so
+  it fails cleanly without poisoning an enclosing transaction.
+- **Module home / export:** live in a registry-safe module (e.g.
+  `django_absurd/events.py`) and import `queues`/`build_absurd_client` **inside** the
+  function — a top-level import in `django_absurd/__init__.py` would trip
+  `AppRegistryNotReady` at app load (`queues.py` imports `models`). Re-export the
+  function from `django_absurd`.
+- **Sync-only** (rides Django's connection); from an async view, wrap in
+  `sync_to_async`.
 
 ## Waits admin
 
@@ -125,7 +148,17 @@ read-only **Waits inline**, mirroring the shipped Checkpoints inline exactly:
   top-level `emit_event` (the outside-a-task signal — webhook/view/API handler; show the
   suspend→emit→resume flow). Note `await_task_result` is intentionally not provided (use
   Django's `get_result` for child results). Reuse the effectively-once /
-  don't-catch-all-`except` caveats.
+  don't-catch-all-`except` caveats, **plus these Events caveats**:
+  - `TimeoutError` is **`from absurd_sdk import TimeoutError`** (re-exported by
+    `django_absurd`), **not** the builtin — show the import, warn explicitly.
+  - An **uncaught** `TimeoutError` fails the run, which then **retries and re-waits the
+    full `timeout` each attempt** until `max_attempts` — catch it if you want a
+    one-shot.
+  - Events are subject to the queue's **`cleanup_ttl`**: an event emitted long before a
+    delayed `await_event` can be cleaned up first → the waiter never wakes.
+  - In-task `emit_event` is **replay-safe** (first-write-wins upsert → a re-emit after
+    retry is a no-op).
+  - `emit_event` is sync; from an **async view** wrap it in `sync_to_async`.
 - **Example** — `examples/web`: the order-fulfillment task's
   `sleep_for("await-warehouse", …)` becomes `await_event(f"warehouse.packed:{order}")`;
   add a second view/button that calls the top-level
@@ -134,12 +167,16 @@ read-only **Waits inline**, mirroring the shipped Checkpoints inline exactly:
 - **Tests** — behavioral, real worker, both task kinds parametrized where they differ:
   - a task `await_event`s → suspends (state `sleeping`/RUNNING, a Waits row exists) → a
     separate call to the top-level `emit_event` → next drain resumes with the payload.
-  - first-emit-per-name-wins (a second emit is ignored).
-  - `timeout` elapses → `TimeoutError` path (task fails or handles it — assert
-    observable).
-  - admin: HTTP-test the task detail shows the Waits inline (event_name) while
-    suspended.
-  - Pinned timing recipe like Sleep (no monkeypatch; `transaction=True`).
+  - emit-before-await: event already present → `await_event` returns immediately (no
+    suspend).
+  - first-emit-per-name-wins (a second emit is ignored — payload unchanged).
+  - **timeout (deterministic):** a task that `await_event(..., timeout=0)` and **catches
+    `absurd_sdk.TimeoutError`**, returning a sentinel → assert the sentinel result in a
+    single drain (avoids the retry-re-wait churn of an uncaught timeout).
+  - admin: HTTP-test the task detail's Waits inline shows **the specific `event_name`
+    row** (assert the value, not a row count — timeout-resume leaves stale `w_` rows).
+  - Pinned timing recipe like Sleep (no monkeypatch; `transaction=True`; emit from a
+    separate connection; drain → emit → drain).
 
 ## Constraints (carried from #84)
 
