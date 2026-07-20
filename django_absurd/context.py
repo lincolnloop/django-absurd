@@ -19,6 +19,8 @@ if t.TYPE_CHECKING:
     import datetime as dt
     from collections.abc import Callable, Coroutine, Mapping
 
+    from absurd_sdk import JsonValue
+
 R = t.TypeVar("R")
 
 BRIDGE_TIMEOUT = 300.0
@@ -122,6 +124,16 @@ class AbsurdTaskContext:
 
     def sleep_until(self, step_name: str, wake_at: "dt.datetime | int | float") -> None:
         self.run_on_loop(self.absurd_ctx.sleep_until(step_name, wake_at))
+
+    def await_event(
+        self, event_name: str, step_name: str | None = None, timeout: int | None = None
+    ) -> "JsonValue":
+        return self.run_on_loop(
+            self.absurd_ctx.await_event(event_name, step_name, timeout)
+        )
+
+    def emit_event(self, event_name: str, payload: "JsonValue | None" = None) -> None:
+        self.run_on_loop(self.absurd_ctx.emit_event(event_name, payload))
 
     def run_on_loop(self, coro: "Coroutine[t.Any, t.Any, R]") -> R:
         future = asyncio.run_coroutine_threadsafe(coro, self.loop)

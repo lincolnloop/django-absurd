@@ -83,3 +83,13 @@ async def asleep_for_once(key: str) -> int:
 async def asleep_until_once(key: str) -> str:
     await aget_absurd_context().sleep_until("nap", time.time() + 1.5)
     return "woke"
+
+
+@task
+async def aawait_event_once(name: str) -> t.Any:
+    return await aget_absurd_context().await_event(name)
+
+
+@task
+async def aemit_event_once(name: str, payload: t.Any) -> None:
+    await aget_absurd_context().emit_event(name, payload)
