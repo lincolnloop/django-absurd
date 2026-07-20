@@ -23,7 +23,6 @@ if t.TYPE_CHECKING:
     from django.contrib.admin.options import _FieldsetSpec
     from django.contrib.admin.sites import AdminSite
     from django.http import HttpRequest, HttpResponse
-    from django.utils.functional import _StrOrPromise
 
     _ScheduledTaskFormBase = forms.ModelForm[ScheduledTask]
     _ScheduledTaskAdminBase = admin.ModelAdmin[ScheduledTask]
@@ -79,11 +78,6 @@ class ScheduledTaskForm(_ScheduledTaskFormBase):
         return {} if value is None else value
 
 
-type FormErrorValueOrSequence = (
-    ValidationError | _StrOrPromise | t.Sequence[ValidationError | _StrOrPromise]
-)
-
-
 class ScheduledTaskCreateForm(ScheduledTaskForm):
     class Meta(ScheduledTaskForm.Meta):
         # The create step collects only identity + cron; every spawn column is
@@ -117,36 +111,25 @@ class ScheduledTaskCreateForm(ScheduledTaskForm):
                     setattr(self.instance, field, value)
         return cleaned
 
-    @t.overload
-    def add_error(
-        self, field: None, error: t.Mapping[str, FormErrorValueOrSequence]
-    ) -> None: ...
-    @t.overload
-    def add_error(self, field: str | None, error: FormErrorValueOrSequence) -> None: ...
-    def add_error(
-        self,
-        field: str | None,
-        error: t.Mapping[str, FormErrorValueOrSequence] | FormErrorValueOrSequence,
-    ) -> None:
+    def add_error(self, field: str | None, error: t.Any) -> None:
         # The resolved spawn columns (queue, retry_kind, ...) aren't fields on this
         # 4-field create form, so a model-validation error keyed to one of them (e.g. a
         # resolved queue that isn't declared for the backend) would raise "has no field
         # named ..." (HTTP 500). Re-home any error for a field this form doesn't expose
         # onto NON_FIELD_ERRORS so it renders as a form error instead.
+        #
+        # error stays t.Any rather than mirroring BaseForm.add_error's 2-overload
+        # signature (Mapping-of-errors vs single error): every call site in this
+        # codebase (and Django's own internal callers for this form) always passes a
+        # single ValidationError, never a raw Mapping — typing that branch would add
+        # dead, untestable code for a shape nothing here produces.
         if isinstance(error, ValidationError) and hasattr(error, "error_dict"):
             rehomed: dict[str, list[ValidationError]] = {}
             for name, messages in error.error_dict.items():
                 key = name if name in self.fields else NON_FIELD_ERRORS
                 rehomed.setdefault(key, []).extend(messages)
             error = ValidationError(rehomed)
-        if isinstance(error, t.Mapping):
-            # error carries per-field errors for multiple fields; BaseForm.add_error's
-            # own contract requires field=None here — pass the literal, not field
-            # (a caller passing both a field name and a Mapping error violates that
-            # contract; letting Django's own add_error raise on it isn't our job here).
-            super().add_error(None, error)
-        else:
-            super().add_error(field, error)
+        super().add_error(field, error)
 
 
 class ScheduledTaskAdmin(_ScheduledTaskAdminBase):
