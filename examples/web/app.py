@@ -3,12 +3,13 @@
 Enqueue add(a, b) from a form; the worker runs it; watch the result page and
 browse the read-only queue tables in the admin (auto-registered by django-absurd).
 
-Also demonstrates Steps (checkpoints) + Sleep: enqueue an order-fulfillment
-workflow that checkpoints each step and suspends between them.
+Also demonstrates Steps (checkpoints) + Sleep + Events: an order-fulfillment
+workflow that checkpoints each step and suspends on await_event until a
+"mark packed" button emits the matching event.
 
     docker compose up
     http://localhost:8000/         enqueue add(a, b) or the order workflow
-    http://localhost:8000/admin/   Tasks / Runs / Checkpoints / … (admin / admin)
+    http://localhost:8000/admin/  Tasks / Runs / Checkpoints / Waits / … (admin / admin)
 
 psycopg (v3) backend required — DATABASES is overridden (nanodjango defaults to sqlite).
 """
@@ -18,6 +19,7 @@ import html
 import logging
 import os
 import pprint
+from urllib.parse import quote as url_quote
 
 from django import forms
 from django.contrib.admin.utils import quote
@@ -29,7 +31,7 @@ from django.tasks.exceptions import TaskResultDoesNotExist
 from django.urls import reverse
 from nanodjango import Django
 
-from django_absurd import get_absurd_context
+from django_absurd import emit_event, get_absurd_context
 
 app = Django(
     ADMIN_URL="admin/",
@@ -74,13 +76,10 @@ def fulfill_order(order: str) -> str:
 
     Mirrors the shape of Absurd's headline order-fulfillment example
     (https://github.com/earendil-works/absurd#readme): step(charge) →
-    step(reserve inventory) → wait for the warehouse to pack → step(notify).
-    Absurd's example awaits a "warehouse packed" event; Events aren't shipped
-    here yet, so `sleep_for` stands in for that wait — it becomes
-    `await_event("warehouse.packed")` once the Events pillar lands.
+    step(reserve inventory) → await_event(warehouse packed) → step(notify).
 
-    Each step is a checkpoint: check the admin's Checkpoints and Runs pages to
-    see the steps and the suspended state while it waits.
+    Each step is a checkpoint: check the admin's Checkpoints, Waits, and Runs
+    pages to see the steps and the suspended state while it waits.
 
     Shows both step forms: ``context.step(name, fn)`` and the ``run_step``
     decorator (sync only), which runs the function once and replaces it with the
@@ -89,7 +88,7 @@ def fulfill_order(order: str) -> str:
     context = get_absurd_context()
     context.step("charge", lambda: f"charged: {order}")
     context.step("reserve-inventory", lambda: f"reserved: {order}")
-    context.sleep_for("await-warehouse", 5)
+    context.await_event(f"warehouse.packed:{order}")
 
     @context.run_step("notify")
     def notify() -> str:
@@ -137,8 +136,9 @@ def workflow_view(request: HttpRequest) -> HttpResponse | str:
     if request.method == "POST":
         form = WorkflowForm(request.POST)
         if form.is_valid():
-            result = fulfill_order.enqueue(**form.cleaned_data)
-            return redirect(f"/tasks/{result.id}/")
+            order = form.cleaned_data["order"]
+            result = fulfill_order.enqueue(order=order)
+            return redirect(f"/tasks/{result.id}/?order={order}")
     else:
         form = WorkflowForm()
     return f"""
@@ -146,11 +146,13 @@ def workflow_view(request: HttpRequest) -> HttpResponse | str:
         <p>
           Mirrors Absurd's
           <a href="https://github.com/earendil-works/absurd#readme">order-fulfillment
-          example</a>: <em>charge</em>, <em>reserve-inventory</em>, wait for the
-          warehouse (a 5s sleep standing in for a "warehouse packed" event),
-          <em>notify</em>. While waiting, check
-          <a href="/admin/django_absurd/run/">Runs</a> and
-          <a href="/admin/django_absurd/checkpoint/">Checkpoints</a> in the admin.
+          example</a>: <em>charge</em>, <em>reserve-inventory</em>,
+          <code>await_event</code> for the warehouse to pack the order, <em>notify</em>.
+          While waiting, check
+          <a href="/admin/django_absurd/run/">Runs</a>,
+          <a href="/admin/django_absurd/checkpoint/">Checkpoints</a>, and
+          <a href="/admin/django_absurd/wait/">Waits</a> in the admin — or click
+          "mark packed" below once the task detail page appears.
         </p>
         <form method="post">
           <input type="hidden" name="csrfmiddlewaretoken" value="{get_token(request)}">
@@ -159,6 +161,18 @@ def workflow_view(request: HttpRequest) -> HttpResponse | str:
         </form>
         <p><a href="/">Back</a></p>
     """
+
+
+@app.route("/workflow/<str:order>/pack/")
+def pack_view(request: HttpRequest, order: str) -> HttpResponse:
+    if request.method == "POST":
+        emit_event(
+            f"warehouse.packed:{order}",
+            {"packed_by": "warehouse demo"},
+            queue="default",
+        )
+    next_url = request.GET.get("next", "/")
+    return redirect(next_url)
 
 
 @app.route("/tasks/<str:result_id>/")
@@ -177,6 +191,17 @@ def task_detail(request: HttpRequest, result_id: str) -> HttpResponse | str:
     else:
         body = "<p>Working… (auto-refreshing)</p>"
 
+    order = request.GET.get("order")
+    pack_button = ""
+    if order and not finished:
+        back = url_quote(f"/tasks/{result_id}/?order={order}", safe="")
+        pack_button = f"""
+        <form method="post" action="/workflow/{order}/pack/?next={back}">
+          <input type="hidden" name="csrfmiddlewaretoken" value="{get_token(request)}">
+          <button type="submit">Mark "{order}" packed by the warehouse</button>
+        </form>
+        """
+
     fields = {f.name: getattr(result, f.name) for f in dataclasses.fields(result)}
     dump = html.escape(pprint.pformat(fields))
     admin_url = reverse("admin:django_absurd_task_change", args=[quote(result.id)])
@@ -185,11 +210,12 @@ def task_detail(request: HttpRequest, result_id: str) -> HttpResponse | str:
         <h1>Task {result.id}</h1>
         <p>Status: <strong>{result.status.name}</strong></p>
         {body}
+        {pack_button}
         <pre><code>{dump}</code></pre>
         <p>
           <a href="/">Add another</a> ·
           <a href="{admin_url}">View this task in the admin</a>
-          — its Runs + Checkpoints inlines show the steps and suspended state.
+          — its Runs + Checkpoints + Waits inlines show the steps and suspended state.
         </p>
     """
 

@@ -6,9 +6,10 @@ serve on http://localhost:8000; admin login `admin` / `admin`).
 
 - **[`web/`](web/)** — enqueue `add(a, b)` from a form and watch the result
   (`get_result`); browse the read-only queue tables in the admin. Also demonstrates
-  **Steps (checkpoints) + Sleep** at `/workflow/` — an order-fulfillment task that
-  checkpoints each step and suspends on a `sleep_for`, with a link into the task's admin
-  page to watch its checkpoints and suspended run.
+  **Steps (checkpoints), Sleep, and Events** at `/workflow/` — an order-fulfillment task
+  that checkpoints each step and suspends on `await_event` until a "mark packed" button
+  (calling the top-level `emit_event`) wakes it, with a link into the task's admin page
+  to watch its checkpoints and suspended wait.
 - **[`beat/`](beat/)** — the in-process **beat** scheduler firing a task every minute.
 - **[`pg_cron/`](pg_cron/)** — the **pg_cron** scheduler firing a task directly from
   Postgres (no beat process).
