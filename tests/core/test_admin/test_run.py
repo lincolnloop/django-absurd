@@ -9,7 +9,7 @@ from django.urls import reverse, reverse_lazy
 
 from django_absurd.models import Run
 from tests.core.test_admin.utils import parse_html, result_rows, seed_mixed
-from tests.tasks import add
+from tests.tasks import add, sawait_event_once
 
 if t.TYPE_CHECKING:
     from bs4 import Tag
@@ -90,6 +90,33 @@ def test_detail_groups_fields_into_fieldsets(
     soup = parse_html(response)
     legends = {h.get_text(strip=True) for h in soup.select("h2.fieldset-heading")}
     assert {"Claim", "Timing", "Event", "Result"} <= legends
+
+
+def test_changelist_and_detail_survive_indefinite_available_at(
+    client: Client,
+    admin_user: AbstractBaseUser,
+) -> None:
+    # await_event with no timeout writes Postgres's 'infinity' sentinel into
+    # available_at (absurd.await_event, migrations/0001_initial_0_4_0.sql:1664:
+    # `v_available_at := coalesce(v_timeout_at, 'infinity'::timestamptz)`).
+    # psycopg cannot decode a literal infinity into a Python datetime, so an
+    # un-guarded available_at column crashes both the changelist and the detail
+    # page with a DataError before anything renders.
+    call_command("absurd_sync_queues")
+    sawait_event_once.enqueue("admin-infinity-check")
+    call_command("absurd_worker", queue="default", burst=True)  # suspends indefinitely
+
+    client.force_login(t.cast("User", admin_user))
+    changelist_response = client.get(CHANGELIST)
+    assert changelist_response.status_code == 200
+
+    run_obj = run_model.objects.get()
+    detail_response = client.get(change_url(run_obj.natural_key))
+    assert detail_response.status_code == 200
+    soup = parse_html(detail_response)
+    available = soup.select_one(".field-available_at .readonly")
+    assert available is not None
+    assert available.get_text(strip=True) == "-"
 
 
 def test_detail_shows_failure_reason(

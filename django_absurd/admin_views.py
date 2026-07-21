@@ -401,11 +401,26 @@ def compose_queue_arm(spec: EntitySpec, queue: str) -> psycopg.sql.Composable:
         + spec.natural_key_sql
     )
     col_list = psycopg.sql.SQL(", ").join(
-        psycopg.sql.Identifier(col) for col, _ in spec.columns
+        compose_column_expr(spec, col) for col, _ in spec.columns
     )
     return psycopg.sql.SQL(
         "SELECT {q}::text AS queue, {pk} AS natural_key, {cols} FROM {tbl}"
     ).format(q=queue_lit, pk=pk_expr, cols=col_list, tbl=table)
+
+
+def compose_column_expr(spec: EntitySpec, col: str) -> psycopg.sql.Composable:
+    # An indefinite await_event (no timeout) writes Postgres's 'infinity' sentinel
+    # into runs.available_at (absurd.await_event: `coalesce(v_timeout_at,
+    # 'infinity'::timestamptz)`) — psycopg cannot decode a literal infinity into a
+    # Python datetime. NULLIF converts it to SQL NULL at the query level, matching
+    # the Absurd SDK's own test helpers (sdks/python/tests/test_absurd.py
+    # `_fetch_run`), so the column stays a genuine timestamptz for every ordinary
+    # (non-infinite) value.
+    if spec.name == "runs" and col == "available_at":
+        return psycopg.sql.SQL(
+            "nullif({col}, 'infinity'::timestamptz) AS {col}"
+        ).format(col=psycopg.sql.Identifier(col))
+    return psycopg.sql.Identifier(col)
 
 
 def compose_empty_arm(spec: EntitySpec) -> psycopg.sql.Composable:
