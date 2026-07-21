@@ -218,6 +218,7 @@ def fetch_task_and_run(
                 run = (
                     run_model.objects.using(database)
                     .filter(pk=task.last_attempt_run)
+                    .defer("available_at")
                     .first()
                 )
         except ProgrammingError:
