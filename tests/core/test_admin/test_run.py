@@ -94,7 +94,7 @@ def test_detail_groups_fields_into_fieldsets(
 
 def test_changelist_and_detail_survive_indefinite_available_at(
     client: Client,
-    admin_user: AbstractBaseUser,
+    admin_user: User,
 ) -> None:
     # await_event with no timeout writes Postgres's 'infinity' sentinel into
     # available_at (absurd.await_event, migrations/0001_initial_0_4_0.sql:1664:
@@ -106,7 +106,7 @@ def test_changelist_and_detail_survive_indefinite_available_at(
     sawait_event_once.enqueue("admin-infinity-check")
     call_command("absurd_worker", queue="default", burst=True)  # suspends indefinitely
 
-    client.force_login(t.cast("User", admin_user))
+    client.force_login(admin_user)
     changelist_response = client.get(CHANGELIST)
     assert changelist_response.status_code == 200
 
