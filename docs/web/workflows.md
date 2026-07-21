@@ -203,6 +203,8 @@ task. `django_absurd.emit_event(event_name, payload=None, *, queue="default")` i
 entry point:
 
 ```python
+from django.http import HttpResponse
+
 from django_absurd import emit_event
 
 
@@ -297,7 +299,7 @@ Django's `get_result()` / `aget_result()` instead.
 | `step(name, fn)`                                        | yes  | `await` | Run `fn()`, checkpoint the result; skip on replay         |
 | `sleep_for(step_name, duration)`                        | yes  | `await` | Suspend the task for `duration` seconds                   |
 | `sleep_until(step_name, wake_at)`                       | yes  | `await` | Suspend until a `datetime`, Unix timestamp, or float      |
-| `await_event(event_name, step_name=None, timeout=None)` | yes  | `await` | Suspend until the named event arrives; return its payload |     |
+| `await_event(event_name, step_name=None, timeout=None)` | yes  | `await` | Suspend until the named event arrives; return its payload |
 | `emit_event(event_name, payload=None)`                  | yes  | `await` | Emit an event on the task's own queue (replay-safe)       |
 | `heartbeat(seconds=None)`                               | yes  | `await` | Extend the claim timeout (keep the run alive)             |
 | `headers`                                               | yes  | yes     | Read-only mapping of headers passed at enqueue time       |

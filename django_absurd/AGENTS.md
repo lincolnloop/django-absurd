@@ -705,6 +705,8 @@ task. `django_absurd.emit_event(event_name, payload=None, *, queue="default")` i
 entry point:
 
 ```python
+from django.http import HttpResponse
+
 from django_absurd import emit_event
 
 
