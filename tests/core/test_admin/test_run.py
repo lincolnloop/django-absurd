@@ -93,8 +93,8 @@ def test_detail_groups_fields_into_fieldsets(
 
 
 def test_changelist_and_detail_survive_indefinite_available_at(
-    client: Client,
     admin_user: User,
+    client: Client,
 ) -> None:
     # await_event with no timeout writes Postgres's 'infinity' sentinel into
     # available_at (absurd.await_event, migrations/0001_initial_0_4_0.sql:1664:
