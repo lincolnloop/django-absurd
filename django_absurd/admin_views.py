@@ -424,12 +424,17 @@ def compose_queue_arm(spec: EntitySpec, queue: str) -> psycopg.sql.Composable:
 
 def compose_column_expr(spec: EntitySpec, col: str) -> psycopg.sql.Composable:
     # An indefinite await_event (no timeout) writes Postgres's 'infinity' sentinel
-    # into runs.available_at (absurd.await_event: `coalesce(v_timeout_at,
-    # 'infinity'::timestamptz)`) — psycopg cannot decode a literal infinity into a
-    # Python datetime. NULLIF converts it to SQL NULL at the query level, matching
-    # the Absurd SDK's own test helpers (sdks/python/tests/test_absurd.py
-    # `_fetch_run`), so the column stays a genuine timestamptz for every ordinary
-    # (non-infinite) value.
+    # into runs.available_at — absurd.await_event, upstream source:
+    # https://github.com/earendil-works/absurd/blob/9b77b356963c65ff9b183fdb4044c2dff2392f6e/sql/absurd.sql#L1662
+    # vendored at django_absurd/migrations/0001_initial_0_4_0.sql:1664
+    # (`coalesce(v_timeout_at, 'infinity'::timestamptz)`). This is a Python/psycopg
+    # limitation, not a Postgres one — psycopg cannot decode a literal infinity
+    # into a Python datetime, so an un-guarded read crashes. NULLIF converts it to
+    # SQL NULL at the query level, matching the Absurd SDK's own test helpers:
+    # https://github.com/earendil-works/absurd/blob/9b77b356963c65ff9b183fdb4044c2dff2392f6e/sdks/python/tests/test_absurd.py#L15
+    # https://github.com/earendil-works/absurd/blame/9b77b356963c65ff9b183fdb4044c2dff2392f6e/sdks/python/tests/test_task_context.py#L21
+    # so the column stays a genuine timestamptz for every ordinary (non-infinite)
+    # value.
     if spec.name == "runs" and col == "available_at":
         return psycopg.sql.SQL(
             "nullif({col}, 'infinity'::timestamptz) AS {col}"
