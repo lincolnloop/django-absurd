@@ -2,7 +2,7 @@ import typing as t
 
 import pytest
 from django.contrib.admin.utils import quote
-from django.contrib.auth.models import AbstractBaseUser, User
+from django.contrib.auth.models import User
 from django.core.management import call_command
 from django.test import Client
 from django.urls import reverse, reverse_lazy
@@ -32,15 +32,15 @@ def run_for(result: "TaskResult[t.Any, t.Any]") -> t.Any:
 
 
 def test_changelist_shows_dates_ordered_by_recent_activity(
+    admin_user: User,
     client: Client,
-    admin_user: AbstractBaseUser,
 ) -> None:
     call_command("absurd_sync_queues")
     older = add.enqueue(1, 1)
     call_command("absurd_worker", queue="default", burst=True)  # older run starts
     newer = add.enqueue(2, 2)
     call_command("absurd_worker", queue="default", burst=True)  # newer run starts later
-    client.force_login(t.cast("User", admin_user))
+    client.force_login(admin_user)
     response = client.get(CHANGELIST)
     soup = parse_html(response)
     # the started_at column is the (descending) primary sort, and
@@ -58,11 +58,11 @@ def test_changelist_shows_dates_ordered_by_recent_activity(
 
 
 def test_changelist_filtered_to_task(
+    admin_user: User,
     client: Client,
-    admin_user: AbstractBaseUser,
 ) -> None:
     _, failed, _ = seed_mixed()
-    client.force_login(t.cast("User", admin_user))
+    client.force_login(admin_user)
     # the natural_key is "<queue>:<task_id>";
     # search by the bare task_id
     task_id = failed.id.split(":", 1)[1]
@@ -80,11 +80,11 @@ def test_changelist_filtered_to_task(
 
 
 def test_detail_groups_fields_into_fieldsets(
+    admin_user: User,
     client: Client,
-    admin_user: AbstractBaseUser,
 ) -> None:
     seed_mixed()  # produces runs
-    client.force_login(t.cast("User", admin_user))
+    client.force_login(admin_user)
     run_obj = run_model.objects.first()
     response = client.get(change_url(run_obj.natural_key))
     soup = parse_html(response)
@@ -120,11 +120,11 @@ def test_changelist_and_detail_survive_indefinite_available_at(
 
 
 def test_detail_shows_failure_reason(
+    admin_user: User,
     client: Client,
-    admin_user: AbstractBaseUser,
 ) -> None:
     seed_mixed()
-    client.force_login(t.cast("User", admin_user))
+    client.force_login(admin_user)
     client.get(CHANGELIST)  # prime the runs view
     run_obj = run_model.objects.filter(queue="default", state="failed").first()
     response = client.get(change_url(run_obj.natural_key))

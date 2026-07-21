@@ -1661,10 +1661,6 @@ begin
     v_timeout_at := v_now + (p_timeout::double precision * interval '1 second');
   end if;
 
-  -- Postgres 'infinity' sentinel — upstream source:
-  -- https://github.com/earendil-works/absurd/blob/9b77b356963c65ff9b183fdb4044c2dff2392f6e/sql/absurd.sql#L1662
-  -- Read via NULLIF in django_absurd/admin_views.py's compose_column_expr
-  -- (psycopg cannot decode a literal infinity into a Python datetime).
   v_available_at := coalesce(v_timeout_at, 'infinity'::timestamptz);
 
   execute format(
