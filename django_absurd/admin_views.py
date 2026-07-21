@@ -160,7 +160,7 @@ ADMIN_ENTITY_SPECS: tuple[EntitySpec, ...] = (
         has_state=False,
         has_status=False,
         list_display=("natural_key", "queue", "task_id", "run_id", "step_name"),
-        search_fields=("task_id", "run_id", "step_name"),
+        search_fields=("task__task_id", "run_id", "step_name"),
     ),
 )
 
@@ -293,6 +293,20 @@ def build_model_field(
             null=True,
             related_name="checkpoints",
         )
+    # Waits join to their task on task_id — same constraint-free FK treatment as runs
+    # and checkpoints so the admin can inline waits under a task. The attname stays
+    # task_id.
+    if spec.name == "waits" and col_name == "task_id":
+        tasks_spec = next(s for s in ADMIN_ENTITY_SPECS if s.name == "tasks")
+        return "task", models.ForeignKey(
+            build_admin_model(tasks_spec),
+            to_field="task_id",
+            db_column="task_id",
+            db_constraint=False,
+            on_delete=models.DO_NOTHING,
+            null=True,
+            related_name="waits",
+        )
     return col_name, make_field(col_type)
 
 
@@ -401,11 +415,31 @@ def compose_queue_arm(spec: EntitySpec, queue: str) -> psycopg.sql.Composable:
         + spec.natural_key_sql
     )
     col_list = psycopg.sql.SQL(", ").join(
-        psycopg.sql.Identifier(col) for col, _ in spec.columns
+        compose_column_expr(spec, col) for col, _ in spec.columns
     )
     return psycopg.sql.SQL(
         "SELECT {q}::text AS queue, {pk} AS natural_key, {cols} FROM {tbl}"
     ).format(q=queue_lit, pk=pk_expr, cols=col_list, tbl=table)
+
+
+def compose_column_expr(spec: EntitySpec, col: str) -> psycopg.sql.Composable:
+    # An indefinite await_event (no timeout) writes Postgres's 'infinity' sentinel
+    # into runs.available_at — absurd.await_event, upstream source:
+    # https://github.com/earendil-works/absurd/blob/9b77b356963c65ff9b183fdb4044c2dff2392f6e/sql/absurd.sql#L1662
+    # vendored at django_absurd/migrations/0001_initial_0_4_0.sql:1664
+    # (`coalesce(v_timeout_at, 'infinity'::timestamptz)`). This is a Python/psycopg
+    # limitation, not a Postgres one — psycopg cannot decode a literal infinity
+    # into a Python datetime, so an un-guarded read crashes. NULLIF converts it to
+    # SQL NULL at the query level, matching the Absurd SDK's own test helpers:
+    # https://github.com/earendil-works/absurd/blob/9b77b356963c65ff9b183fdb4044c2dff2392f6e/sdks/python/tests/test_absurd.py#L15
+    # https://github.com/earendil-works/absurd/blame/9b77b356963c65ff9b183fdb4044c2dff2392f6e/sdks/python/tests/test_task_context.py#L21
+    # so the column stays a genuine timestamptz for every ordinary (non-infinite)
+    # value.
+    if spec.name == "runs" and col == "available_at":
+        return psycopg.sql.SQL(
+            "nullif({col}, 'infinity'::timestamptz) AS {col}"
+        ).format(col=psycopg.sql.Identifier(col))
+    return psycopg.sql.Identifier(col)
 
 
 def compose_empty_arm(spec: EntitySpec) -> psycopg.sql.Composable:

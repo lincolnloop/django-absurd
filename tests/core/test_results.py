@@ -14,7 +14,7 @@ from django_absurd.backends import AbsurdBackend, get_absurd_backends
 from django_absurd.params import AbsurdSpawnParams
 from django_absurd.queues import get_absurd_client
 from tests.models import Payload
-from tests.tasks import add, boom, echo
+from tests.tasks import add, boom, echo, sawait_event_once
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -49,6 +49,14 @@ def test_get_result_successful() -> None:
     assert got.finished_at is not None
     assert got.last_attempted_at is not None
     assert got.worker_ids  # non-empty
+
+
+def test_get_result_suspended_on_indefinite_await_event() -> None:
+    call_command("absurd_sync_queues")
+    r = sawait_event_once.enqueue("get-result-infinity-check")
+    run_absurd_worker()
+    got = backend().get_result(r.id)
+    assert got.status == TaskResultStatus.RUNNING
 
 
 def test_refresh_round_trip() -> None:

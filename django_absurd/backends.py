@@ -218,6 +218,10 @@ def fetch_task_and_run(
                 run = (
                     run_model.objects.using(database)
                     .filter(pk=task.last_attempt_run)
+                    # An indefinite await_event can leave available_at as Postgres's
+                    # 'infinity' sentinel, which psycopg can't decode — defer it since
+                    # build_task_result() below never reads it.
+                    .defer("available_at")
                     .first()
                 )
         except ProgrammingError:

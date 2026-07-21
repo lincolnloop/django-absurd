@@ -259,9 +259,13 @@ def build_entity_admin(
         checkpoint_model = build_admin_model(
             next(s for s in ADMIN_ENTITY_SPECS if s.name == "checkpoints")
         )
+        wait_model = build_admin_model(
+            next(s for s in ADMIN_ENTITY_SPECS if s.name == "waits")
+        )
         extra["inlines"] = [
             build_run_inline(run_model),
             build_checkpoint_inline(checkpoint_model),
+            build_wait_inline(wait_model),
         ]
         extra["fieldsets"] = TASK_FIELDSETS
         # Most recently active first: by run start, then enqueue time (both real
@@ -327,6 +331,13 @@ CHECKPOINT_INLINE_FIELDS = (
     "status",
     "state",
     "updated_at",
+)
+
+WAIT_INLINE_FIELDS = (
+    "event_name",
+    "step_name",
+    "timeout_at",
+    "created_at",
 )
 
 
@@ -408,6 +419,42 @@ def build_checkpoint_inline(
     return type(
         "CheckpointInline", (ReadOnlyCheckpointInline,), {"model": checkpoint_model}
     )
+
+
+class ReadOnlyWaitInline(_TabularInlineBase):
+    fk_name = "task"
+    extra = 0
+    can_delete = False
+    show_change_link = True
+    ordering = ("created_at",)
+    fields = WAIT_INLINE_FIELDS
+    readonly_fields = WAIT_INLINE_FIELDS
+
+    def has_add_permission(
+        self, request: "HttpRequest", obj: "models.Model | None" = None
+    ) -> bool:
+        return False
+
+    def has_change_permission(
+        self, request: "HttpRequest", obj: "models.Model | None" = None
+    ) -> bool:
+        return False
+
+    def has_delete_permission(
+        self, request: "HttpRequest", obj: "models.Model | None" = None
+    ) -> bool:
+        return False
+
+    def has_view_permission(
+        self, request: "HttpRequest", obj: "models.Model | None" = None
+    ) -> bool:
+        return True
+
+
+def build_wait_inline(
+    wait_model: "type[Model]",
+) -> "type[admin.TabularInline[t.Any, t.Any]]":
+    return type("WaitInline", (ReadOnlyWaitInline,), {"model": wait_model})
 
 
 def autoregister_admin() -> None:

@@ -1,6 +1,7 @@
 import time
 import typing as t
 
+import absurd_sdk
 from absurd_sdk import CancellationPolicy, JsonValue, RetryStrategy
 from django.contrib.auth.models import Group
 from django.tasks import TaskContext, task
@@ -142,3 +143,22 @@ def ssleep_for_once(key: str) -> int:
 def ssleep_until_once(key: str) -> str:
     get_absurd_context().sleep_until("nap", time.time() + 1.5)
     return "woke"
+
+
+@task
+def sawait_event_once(name: str) -> t.Any:
+    return get_absurd_context().await_event(name)
+
+
+@task
+def semit_event_once(name: str, payload: t.Any) -> None:
+    get_absurd_context().emit_event(name, payload)
+
+
+@task
+def sawait_event_timeout(name: str, timeout: int) -> str:
+    try:
+        get_absurd_context().await_event(name, timeout=timeout)
+    except absurd_sdk.TimeoutError:
+        return "timed-out"
+    return "no-timeout"

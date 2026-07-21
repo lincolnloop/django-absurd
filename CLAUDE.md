@@ -112,6 +112,11 @@ duplicate that material here.
 - **Assert the COMPLETE error message, never a fragment** (fragments are unreadable and
   brittle); assert the full stable portion up to any volatile tail.
 - **Always alphabetize** `@pytest.mark.parametrize` values and fixture `params`.
+- **Alphabetize a test function's own fixture parameters** too (e.g.
+  `def test_x(admin_user: User, client: Client)`, not `client` then `admin_user`) — no
+  ruff/flake8-pytest-style rule enforces this (checked; no `PT0xx` rule covers parameter
+  order), so it's a manual convention only. Applies going forward on touched tests, not
+  a retroactive sweep of existing ones.
 
 ## Runtime
 
