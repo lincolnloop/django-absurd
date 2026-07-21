@@ -254,7 +254,7 @@ def test_detail_inlines_checkpoints_and_run_available_at(
 
 
 def test_detail_inlines_waits_for_a_suspended_await_event(
-    client: Client, admin_user: User
+    admin_user: User, client: Client
 ) -> None:
     call_command("absurd_sync_queues")
     sawait_event_once.enqueue("wait-admin-demo")

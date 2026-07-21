@@ -335,15 +335,15 @@ crash causes the step to be re-run. **Keep side effects idempotent** — for exa
 ### Don't catch-all `except` in a task
 
 Absurd suspends and cancels runs via control-flow exceptions raised inside
-`step`/`sleep_for`/`sleep_until`. A bare `except:` or `except Exception:` around a
-durable call swallows them and silently breaks suspension — let them propagate.
+`step`/`sleep_for`/`sleep_until`/`await_event`. A bare `except:` or `except Exception:`
+around a durable call swallows them and silently breaks suspension — let them propagate.
 
 ### Absurd backend only
 
 `get_absurd_context()` / `aget_absurd_context()` (and `step` / `sleep_for` /
-`sleep_until` on the returned context) are Absurd-specific. Called under any other
-Django task backend — where the Absurd runtime context is never set — they raise
-`RuntimeError`.
+`sleep_until` / `await_event` / `emit_event` on the returned context) are
+Absurd-specific. Called under any other Django task backend — where the Absurd runtime
+context is never set — they raise `RuntimeError`.
 
 ### Events are subject to cleanup_ttl
 

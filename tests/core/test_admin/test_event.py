@@ -1,5 +1,3 @@
-import typing as t
-
 import pytest
 from django.contrib.admin.utils import quote
 from django.contrib.auth.models import User
@@ -43,7 +41,7 @@ def test_changelist_and_detail(client: Client, admin_user: User) -> None:
     assert name_elem.get_text(strip=True) == "order.shipped"
 
 
-def test_emit_event_writes_a_visible_row(client: Client, admin_user: t.Any) -> None:
+def test_emit_event_writes_a_visible_row(admin_user: User, client: Client) -> None:
     call_command("absurd_sync_queues")
     emit_event("order.shipped:demo", {"id": 1}, queue="default")
     client.force_login(admin_user)
