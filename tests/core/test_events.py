@@ -135,9 +135,23 @@ def test_async_in_task_emit_event_wakes_a_separately_enqueued_waiter() -> None:
 
 def test_uncaught_timeout_raises_absurd_sdk_timeout_error_and_is_catchable() -> None:
     call_command("absurd_sync_queues")
-    result = tasks.sawait_event_timeout.enqueue("order.packed:never-arrives")
+    result = tasks.sawait_event_timeout.enqueue("order.packed:never-arrives", timeout=0)
     utils.run_absurd_worker()
     done = utils.get_task_result(result.id)
     assert done is not None
     assert done.state == "completed"
     assert done.result == "timed-out"
+
+
+def test_event_already_present_returns_no_timeout_before_deadline() -> None:
+    call_command("absurd_sync_queues")
+    emit_event("order.packed:before-timeout-1", {"tracking": "xyz"}, queue="default")
+
+    result = tasks.sawait_event_timeout.enqueue(
+        "order.packed:before-timeout-1", timeout=60
+    )
+    utils.run_absurd_worker()  # single drain: event already there, no suspend
+    done = utils.get_task_result(result.id)
+    assert done is not None
+    assert done.state == "completed"
+    assert done.result == "no-timeout"

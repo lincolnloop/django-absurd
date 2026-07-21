@@ -156,9 +156,9 @@ def semit_event_once(name: str, payload: t.Any) -> None:
 
 
 @task
-def sawait_event_timeout(name: str) -> str:
+def sawait_event_timeout(name: str, timeout: int) -> str:
     try:
-        get_absurd_context().await_event(name, timeout=0)
+        get_absurd_context().await_event(name, timeout=timeout)
     except absurd_sdk.TimeoutError:
         return "timed-out"
     return "no-timeout"
