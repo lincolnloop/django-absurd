@@ -160,7 +160,7 @@ ADMIN_ENTITY_SPECS: tuple[EntitySpec, ...] = (
         has_state=False,
         has_status=False,
         list_display=("natural_key", "queue", "task_id", "run_id", "step_name"),
-        search_fields=("task_id", "run_id", "step_name"),
+        search_fields=("task__task_id", "run_id", "step_name"),
     ),
 )
 
@@ -292,6 +292,20 @@ def build_model_field(
             on_delete=models.DO_NOTHING,
             null=True,
             related_name="checkpoints",
+        )
+    # Waits join to their task on task_id — same constraint-free FK treatment as runs
+    # and checkpoints so the admin can inline waits under a task. The attname stays
+    # task_id.
+    if spec.name == "waits" and col_name == "task_id":
+        tasks_spec = next(s for s in ADMIN_ENTITY_SPECS if s.name == "tasks")
+        return "task", models.ForeignKey(
+            build_admin_model(tasks_spec),
+            to_field="task_id",
+            db_column="task_id",
+            db_constraint=False,
+            on_delete=models.DO_NOTHING,
+            null=True,
+            related_name="waits",
         )
     return col_name, make_field(col_type)
 

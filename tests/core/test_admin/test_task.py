@@ -19,7 +19,7 @@ from tests.core.test_admin.utils import (
     seed,
     seed_mixed,
 )
-from tests.tasks import add
+from tests.tasks import add, sawait_event_once
 
 if t.TYPE_CHECKING:
     from bs4 import ResultSet, Tag
@@ -251,6 +251,23 @@ def test_detail_inlines_checkpoints_and_run_available_at(
     available = soup.select_one(".field-available_at")
     assert available is not None
     assert available.get_text(strip=True) != ""  # sleeping run has a wake time
+
+
+def test_detail_inlines_waits_for_a_suspended_await_event(
+    client: Client, admin_user: User
+) -> None:
+    call_command("absurd_sync_queues")
+    sawait_event_once.enqueue("wait-admin-demo")
+    call_command("absurd_worker", queue="default", burst=True)  # suspends
+    client.force_login(admin_user)
+
+    task = find_task("default", "tests.tasks.sawait_event_once")
+    assert task is not None
+    soup = parse_html(client.get(change_url(task.natural_key)))
+
+    assert soup.select_one('a[href*="/django_absurd/wait/"]') is not None
+    names = {cell.get_text(strip=True) for cell in soup.select(".field-event_name")}
+    assert "wait-admin-demo" in names
 
 
 def test_detail_renders_read_only(client: Client, admin_user: User) -> None:
