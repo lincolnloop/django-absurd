@@ -54,6 +54,19 @@ if not backend.options.get(key, default):
 variable for the `TASKS` backend _name_; the two happen to coincide in every example so
 far, but are not the same thing and must not be conflated.)
 
+**Why here, specifically — not in `sync_crons`/`sync_admin_crons`, not at
+`ready()`-time:** `django_absurd/pg_cron/management/commands/absurd_sync_crons.py`'s
+`handle()` calls `sync_crons(backend)` / `sync_admin_crons()` **directly** — a separate
+call site from `reconcile_crons_after_migrate`. Putting the guard in the shared
+functions instead of the receiver would also silently suppress an explicit, deliberate
+`manage.py absurd_sync_crons` run against a test DB — unwanted; a user who types that
+command wants it to actually sync, regardless of which DB they're pointed at. And the
+check can't move any further upstream to `PgCronConfig.ready()`'s
+`post_migrate.connect(...)` call either — `ready()` runs once at process start, before
+any test framework has swapped in a test DB, so it can't yet know which case a _future_
+migrate invocation will hit. The receiver is the only point that is both
+migrate-specific and running late enough to see the swapped connection.
+
 ### Test-DB detection — verified against Django's actual source, not assumed
 
 `django.db.backends.base.creation.BaseDatabaseCreation.create_test_db()` mutates
@@ -103,9 +116,6 @@ IN:
 
 - The two `OPTIONS` keys, the early-return check in `reconcile_crons_after_migrate`, and
   the test-DB detection helper.
-- **System check**: validate each key, if present, is a `bool` — mirroring the existing
-  `E006_ENABLE_ADMIN_MSG` pattern in `django_absurd/checks.py` (same `msg`/`hint` split:
-  `msg` states the problem, `hint` states the fix).
 - **Docs**: both keys documented in `django_absurd/AGENTS.md` (the `OPTIONS` reference
   table) and `docs/web/cron-jobs.md`, explaining the hazard and the safe-by-default
   behavior — mirroring every other public `OPTIONS` key's documentation.
