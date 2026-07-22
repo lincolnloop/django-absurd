@@ -95,6 +95,26 @@ Also confirmed: `tests/tasks.py`'s `add` task cannot be used as the subprocess's
 `tests.models.Payload` at the top level, which the subprocess's minimal `INSTALLED_APPS`
 doesn't support. Hence the new, dependency-free `tests/pg_cron/fixtures_tasks.py`.
 
+**A third bug was found by an earlier attempt at this exact task (not caught during
+initial verification) and is now fixed in Step 4's code below — do not revert it
+either:** `PgCronConfig.ready()` is **not guaranteed to run only once per process**.
+`tests/pg_cron/test_scheduler_app_checks.py` (an existing, unrelated test file, not part
+of this task) does `settings.INSTALLED_APPS = <new list>` in several tests, which
+triggers Django's `Apps.set_installed_apps()` — this resets the app registry and re-runs
+**every** `AppConfig.ready()`, including `PgCronConfig.ready()`, mid-session, well after
+the real test-DB swap already happened. A plain assignment
+(`ORIGINAL_DATABASE_NAMES[db_alias] = db_config["NAME"]`) on that later re-invocation
+silently overwrites the correct snapshot with the current (already-swapped) name,
+permanently breaking `is_test_db` detection for the rest of that test session — proven
+first by a failure in `test_migrate_skips_sync_by_default_on_a_test_database` (passes
+alone, fails when run after `test_scheduler_app_checks.py` in the same session), then
+confirmed via a direct probe. The fix, already in Step 4's code: `ready()` uses
+`ORIGINAL_DATABASE_NAMES.setdefault(db_alias, db_config["NAME"])`, not a plain
+assignment — the first invocation (always genuinely pre-swap) wins, every later
+re-invocation for any reason is a no-op for aliases already captured. Step 8 explicitly
+verifies the full suite (including `test_scheduler_app_checks.py` in the same session)
+stays green because of this.
+
 - [ ] **Step 1: Create the minimal task fixture module**
 
 ```python
@@ -313,12 +333,20 @@ ORIGINAL_DATABASE_NAMES: dict[str, str] = {}
 ```
 
 In `PgCronConfig.ready()`, add the snapshot population as the very first line of the
-method body (before the existing `# Side-effect import` comment):
+method body (before the existing `# Side-effect import` comment). **Use
+`dict.setdefault`, not a plain assignment** — `ready()` is not guaranteed to run only
+once per process: Django's `override_settings(INSTALLED_APPS=...)` (a real pattern
+already used elsewhere in this suite, `tests/pg_cron/test_scheduler_app_checks.py`)
+re-runs every `AppConfig.ready()` mid-session, including this one, well after any
+test-DB swap has already happened. A plain assignment would let that later re-entry
+silently overwrite the correct, genuinely-pre-swap snapshot with the current
+(already-swapped) name — `setdefault` ensures only the _first_ invocation ever writes an
+alias's entry, exactly matching "first invocation wins":
 
 ```python
     def ready(self) -> None:
         for db_alias, db_config in settings.DATABASES.items():
-            ORIGINAL_DATABASE_NAMES[db_alias] = db_config["NAME"]
+            ORIGINAL_DATABASE_NAMES.setdefault(db_alias, db_config["NAME"])
 
         # Side-effect import: running the module registers its @register'd E007 checks.
         import django_absurd.pg_cron.checks  # noqa: F401, PLC0415

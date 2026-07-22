@@ -86,19 +86,44 @@ against the real `db_pg_cron` container — that `connections[alias].settings_di
 differ, and this comparison always evaluates `False`, silently defeating the whole
 feature.
 
-**Fix, also verified empirically:** since `PgCronConfig.ready()` always runs before any
-test-DB swap (established above — `ready()` fires during `django.setup()`, strictly
-before pytest-django's `django_db_setup` fixture or `manage.py test`'s
-`setup_databases()`, in every real flow), snapshot each alias's `NAME` **value** (a
-plain string extraction — copying the value out, not holding a reference to the dict)
-into a module-level `ORIGINAL_DATABASE_NAMES` dict inside `ready()`, then compare the
-_live_ value against that frozen snapshot later, at signal-fire time. Verified directly:
-a value captured at collection time (same timing guarantee as `ready()`) read
-`"postgres"`; the live value inside a real, running `pytest.mark.django_db` test — after
-pytest-django's real test-DB creation had already run — read `"absurd_test_pg_cron"`.
-Genuine divergence, correctly detected. No pytest-specific code, no heuristic on
-`sys.argv` or env vars — works identically under pytest-django, `manage.py test`, or any
-other test runner (including a future `unittest`-based mixin).
+**Fix, also verified empirically:** since `PgCronConfig.ready()`'s _first_ invocation
+always runs before any test-DB swap (established above — `ready()` fires during
+`django.setup()`, strictly before pytest-django's `django_db_setup` fixture or
+`manage.py test`'s `setup_databases()`, in every real flow), snapshot each alias's
+`NAME` **value** (a plain string extraction — copying the value out, not holding a
+reference to the dict) into a module-level `ORIGINAL_DATABASE_NAMES` dict inside
+`ready()`, then compare the _live_ value against that frozen snapshot later, at
+signal-fire time. Verified directly: a value captured at collection time (same timing
+guarantee as `ready()`) read `"postgres"`; the live value inside a real, running
+`pytest.mark.django_db` test — after pytest-django's real test-DB creation had already
+run — read `"absurd_test_pg_cron"`. Genuine divergence, correctly detected. No
+pytest-specific code, no heuristic on `sys.argv` or env vars — works identically under
+pytest-django, `manage.py test`, or any other test runner (including a future
+`unittest`-based mixin).
+
+**Third bug, found during implementation, also fixed here (not just in the plan):**
+`ready()` is **not guaranteed to run only once per process.** Django's
+`override_settings(INSTALLED_APPS=...)` (a real, pre-existing pattern in this project's
+own `tests/pg_cron/test_scheduler_app_checks.py`, not a contrived edge case) triggers
+`Apps.set_installed_apps()`, which resets the app registry and re-runs **every**
+`AppConfig.ready()` — including `PgCronConfig.ready()` — mid-session, well after the
+test-DB swap has already happened. An unguarded re-population of
+`ORIGINAL_DATABASE_NAMES` on that second call silently overwrites the correct,
+genuinely-pre-swap snapshot with the _current_ (already-swapped) name, permanently
+breaking `is_test_db` detection for the rest of that process (confirmed via a real
+probe: the dict's `'default'` entry flips from `"postgres"` to `"absurd_test_pg_cron"`
+the moment any test reassigns `INSTALLED_APPS`, and never reverts). Fix: guard the
+population so an alias's entry is only ever set **once** — `ready()`'s _first_
+invocation wins, every later re-invocation (for any reason) is a no-op for names already
+captured:
+
+```
+for db_alias, db_config in settings.DATABASES.items():
+    ORIGINAL_DATABASE_NAMES.setdefault(db_alias, db_config["NAME"])
+```
+
+(`dict.setdefault` — not `ORIGINAL_DATABASE_NAMES[db_alias] = ...` — is the whole fix;
+it only writes when the key is absent, exactly matching "first invocation wins.")
 
 ## Validation (already done — a real, throwaway prototype, not a proof sketch)
 
