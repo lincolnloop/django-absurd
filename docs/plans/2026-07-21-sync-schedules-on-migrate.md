@@ -54,7 +54,7 @@ live value at signal-fire time.
 
 - Modify: `django_absurd/pg_cron/apps.py`
 - Modify: `tests/pg_cron/utils.py`
-- Create: `tests/pg_cron/fixtures_tasks.py`
+- Create: `tests/pg_cron/tasks.py`
 - Create: `tests/pg_cron/test_sync_schedules_on_migrate.py`
 
 **Interfaces:**
@@ -93,7 +93,7 @@ already reflected in the code below — do not "simplify" them back out:
 Also confirmed: `tests/tasks.py`'s `add` task cannot be used as the subprocess's
 `SCHEDULE` target — its module imports `django.contrib.auth.models.Group` and
 `tests.models.Payload` at the top level, which the subprocess's minimal `INSTALLED_APPS`
-doesn't support. Hence the new, dependency-free `tests/pg_cron/fixtures_tasks.py`.
+doesn't support. Hence the new, dependency-free `tests/pg_cron/tasks.py`.
 
 **A third bug was found by an earlier attempt at this exact task (not caught during
 initial verification) and is now fixed in Step 4's code below — do not revert it
@@ -118,7 +118,7 @@ stays green because of this.
 - [ ] **Step 1: Create the minimal task fixture module**
 
 ```python
-# tests/pg_cron/fixtures_tasks.py
+# tests/pg_cron/tasks.py
 """Minimal, dependency-free task used only by test_sync_schedules_on_migrate.py's
 subprocess-based real-DB test — must not import anything beyond django.tasks (no
 django.contrib.auth, no tests.models) so a bare, minimally-configured subprocess can
@@ -187,7 +187,7 @@ settings.configure(
                 "QUEUES": {{"default": {{}}}},
                 "SCHEDULE": {{
                     "nightly": {{
-                        "task": "tests.pg_cron.fixtures_tasks.add",
+                        "task": "tests.pg_cron.tasks.add",
                         "cron": "0 2 * * *",
                     }},
                 }},
@@ -481,9 +481,9 @@ source = ["django_absurd", "tests"]
 Run: `uv run pytest tests/pg_cron --create-db -v` (full run with coverage; use the
 `ALTER DATABASE ... WITH ALLOW_CONNECTIONS false` + terminate-backend dance from
 `CLAUDE.md` first if pg_cron's launcher blocks the `--create-db` drop) Run:
-`uv run mypy django_absurd/pg_cron/apps.py tests/pg_cron/utils.py tests/pg_cron/fixtures_tasks.py tests/pg_cron/test_sync_schedules_on_migrate.py`
+`uv run mypy django_absurd/pg_cron/apps.py tests/pg_cron/utils.py tests/pg_cron/tasks.py tests/pg_cron/test_sync_schedules_on_migrate.py`
 Run:
-`uv run ruff check django_absurd/pg_cron/apps.py tests/pg_cron/utils.py tests/pg_cron/fixtures_tasks.py tests/pg_cron/test_sync_schedules_on_migrate.py`
+`uv run ruff check django_absurd/pg_cron/apps.py tests/pg_cron/utils.py tests/pg_cron/tasks.py tests/pg_cron/test_sync_schedules_on_migrate.py`
 Expected: full suite passes, no missed lines/branches in `apps.py`'s new code (including
 the `SYNC_SCHEDULES_ON_MIGRATE` branch, now instrumented via Step 10); mypy and ruff
 clean.
@@ -491,7 +491,7 @@ clean.
 - [ ] **Step 12: Commit**
 
 ```bash
-git add pyproject.toml django_absurd/pg_cron/apps.py tests/pg_cron/utils.py tests/pg_cron/fixtures_tasks.py tests/pg_cron/test_sync_schedules_on_migrate.py
+git add pyproject.toml django_absurd/pg_cron/apps.py tests/pg_cron/utils.py tests/pg_cron/tasks.py tests/pg_cron/test_sync_schedules_on_migrate.py
 git commit -m "feat: SYNC_SCHEDULES_ON_MIGRATE / SYNC_SCHEDULES_ON_TEST_DB"
 ```
 
@@ -594,7 +594,7 @@ noted:
    which the minimal subprocess `INSTALLED_APPS` doesn't support; the failure was
    silently swallowed by `reconcile_crons_after_migrate`'s own broad `except`, making
    the test falsely pass/fail without testing anything. Fixed: a new, dependency-free
-   `tests/pg_cron/fixtures_tasks.py`.
+   `tests/pg_cron/tasks.py`.
 3. **Major — guaranteed `NameError` on import.** The originally-planned
    `resolve_sync_schedules_option(backend: AbsurdBackend) -> bool` would crash `apps.py`
    at import time (no `from __future__ import annotations`, `AbsurdBackend` only under

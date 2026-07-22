@@ -1,0 +1,166 @@
+"""Tests for SYNC_SCHEDULES_ON_MIGRATE / SYNC_SCHEDULES_ON_TEST_DB
+(django_absurd/pg_cron/apps.py). Not in test_pg_cron_post_migrate.py: that file's
+run_cron_sync fixture exists specifically to prove absurd_sync_crons/migrate are
+IDENTICAL — the opposite of what these tests show."""
+
+import os
+import subprocess
+import sys
+import typing as t
+from pathlib import Path
+
+import pytest
+from django.core.management import call_command
+from django.db import connections
+
+from django_absurd.pg_cron.models import ScheduledTask
+from tests.pg_cron.utils import build_pg_cron_tasks
+
+if t.TYPE_CHECKING:
+    import pytest_django.fixtures
+
+pytestmark = pytest.mark.django_db(transaction=True)
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+# Minimal, self-contained settings for the subprocess — least config required for
+# django_absurd + django_absurd.pg_cron to migrate and reconcile a SCHEDULE. Neither
+# app's migrations reference contenttypes/auth (verified), so neither is needed here.
+SUBPROCESS_SCRIPT = """
+import django
+from django.conf import settings
+
+settings.configure(
+    DATABASES={{
+        "default": {{
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": {dbname!r},
+            "USER": {user!r},
+            "PASSWORD": {password!r},
+            "HOST": {host!r},
+            "PORT": {port!r},
+        }}
+    }},
+    INSTALLED_APPS=["django_absurd", "django_absurd.pg_cron"],
+    TASKS={{
+        "default": {{
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {{
+                "QUEUES": {{"default": {{}}}},
+                "SCHEDULE": {{
+                    "nightly": {{
+                        "task": "tests.pg_cron.tasks.add",
+                        "cron": "0 2 * * *",
+                    }},
+                }},
+                "SYNC_SCHEDULES_ON_MIGRATE": {sync_on_migrate!r},
+            }},
+        }}
+    }},
+    DEFAULT_AUTO_FIELD="django.db.models.BigAutoField",
+    USE_TZ=True,
+)
+django.setup()
+from django.core.management import call_command
+
+call_command("migrate", verbosity=0)
+"""
+
+
+def migrate_real_db_in_subprocess(*, sync_on_migrate: bool) -> None:
+    params = connections["default"].get_connection_params()
+    script = SUBPROCESS_SCRIPT.format(
+        dbname=params["dbname"],
+        user=params.get("user", ""),
+        password=params.get("password", ""),
+        host=params.get("host", "localhost"),
+        port=params.get("port", ""),
+        sync_on_migrate=sync_on_migrate,
+    )
+    subprocess.run(
+        [sys.executable, "-c", script],
+        env={**os.environ, "PYTHONPATH": str(REPO_ROOT)},
+        cwd=REPO_ROOT,
+        check=True,
+    )
+
+
+@pytest.fixture
+def real_db_migration_cycle() -> "t.Iterator[None]":
+    """Roll back JUST django_absurd_pg_cron's own migrations (not the whole
+    database — that app owns CREATE EXTENSION pg_cron, so this is a genuine
+    from-scratch migrate for the exact feature under test) so the subprocess's
+    migrate is a real first-time provisioning run. Restores the schema afterward
+    so the rest of this --reuse-db session's tests aren't affected."""
+    call_command("migrate", "django_absurd_pg_cron", "zero", verbosity=0)
+    try:
+        yield
+    finally:
+        call_command("migrate", "django_absurd_pg_cron", "zero", verbosity=0)
+        call_command("migrate", verbosity=0)
+
+
+def test_migrate_syncs_by_default_on_a_real_non_test_database(
+    real_db_migration_cycle: None,
+) -> None:
+    # Regression check, not a true RED->GREEN test: this passes even before the
+    # guard exists (today's unchanged behavior). Kept to prove the guard doesn't
+    # accidentally also break the real-DB default.
+    migrate_real_db_in_subprocess(sync_on_migrate=True)
+    scheduled_task = ScheduledTask.objects.get(name="nightly", source="s")
+    assert scheduled_task.get_pg_cron_job() is not None
+
+
+def test_migrate_skips_sync_on_a_real_database_when_explicitly_disabled(
+    real_db_migration_cycle: None,
+) -> None:
+    # Genuine RED before the guard exists: SYNC_SCHEDULES_ON_MIGRATE doesn't exist
+    # yet, so it's silently ignored and sync happens anyway — this assertion fails.
+    # GREEN once the guard respects it.
+    migrate_real_db_in_subprocess(sync_on_migrate=False)
+    assert not ScheduledTask.objects.filter(name="nightly", source="s").exists()
+
+
+def test_migrate_skips_sync_by_default_on_a_test_database(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+) -> None:
+    settings.TASKS = build_pg_cron_tasks(
+        {"nightly": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
+    )
+    settings.TASKS["default"]["OPTIONS"]["SYNC_SCHEDULES_ON_TEST_DB"] = False
+
+    call_command("migrate", verbosity=0)
+
+    assert ScheduledTask.pg_cron.get_managed_jobs() == []
+    assert ScheduledTask.objects.filter(source="s").count() == 0
+
+
+def test_migrate_syncs_on_a_test_database_when_explicitly_enabled(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+) -> None:
+    settings.TASKS = build_pg_cron_tasks(
+        {"nightly": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
+    )
+    settings.TASKS["default"]["OPTIONS"]["SYNC_SCHEDULES_ON_TEST_DB"] = True
+
+    call_command("migrate", verbosity=0)
+
+    assert [r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()] == ["_dj:s:nightly"]
+
+
+def test_scheduled_task_create_and_delete_are_unaffected_by_either_setting(
+    settings: "pytest_django.fixtures.SettingsWrapper",
+) -> None:
+    settings.TASKS = build_pg_cron_tasks({})
+    settings.TASKS["default"]["OPTIONS"]["SYNC_SCHEDULES_ON_TEST_DB"] = False
+
+    scheduled_task = ScheduledTask.objects.create(
+        source="a",
+        name="direct_create",
+        task="tests.tasks.add",
+        cron="0 2 * * *",
+    )
+    assert scheduled_task.get_pg_cron_job() is not None
+
+    scheduled_task.delete()
+    assert ScheduledTask.pg_cron.get_job("direct_create", "a") is None
