@@ -13,6 +13,7 @@ from django.db.models.signals import (
     pre_save,
 )
 from django.db.utils import InternalError, OperationalError, ProgrammingError
+from django.utils.connection import ConnectionDoesNotExist
 
 from django_absurd.backends import get_absurd_backends
 from django_absurd.pg_cron import signals
@@ -85,9 +86,9 @@ def reconcile_crons_after_migrate(
     if not absurd_backends:
         return
     alias, backend = next(iter(absurd_backends.items()))
-    if not resolve_sync_schedules_option(backend):
-        return
     try:
+        if not resolve_sync_schedules_option(backend):
+            return
         created, pruned = sync_crons(backend)
         sync_admin_crons()
         lines = []
@@ -102,6 +103,7 @@ def reconcile_crons_after_migrate(
             for line in lines:
                 stdout.write(line)
     except (
+        ConnectionDoesNotExist,
         ImproperlyConfigured,
         OperationalError,
         ProgrammingError,
@@ -113,10 +115,10 @@ def reconcile_crons_after_migrate(
         ValueError,
     ):
         # Best-effort: migrate must never break. Skip this backend on an
-        # unreachable DB, tables not yet present (faked/adopted migration, or
-        # a multi-DB migrate firing post_migrate before the Absurd DB is
-        # migrated), a bad dotted path in a schedule, a malformed SCHEDULE
-        # spec, or an unserializable arg.
+        # unreachable DB, a misconfigured OPTIONS["DATABASE"] alias, tables not
+        # yet present (faked/adopted migration, or a multi-DB migrate firing
+        # post_migrate before the Absurd DB is migrated), a bad dotted path in a
+        # schedule, a malformed SCHEDULE spec, or an unserializable arg.
         logger.warning(
             "django-absurd: skipped cron reconcile for backend %r",
             alias,
@@ -125,9 +127,8 @@ def reconcile_crons_after_migrate(
 
 
 def resolve_sync_schedules_option(backend: "AbsurdBackend") -> bool:
-    is_test_db = connections[backend.database].settings_dict[
-        "NAME"
-    ] != ORIGINAL_DATABASE_NAMES.get(backend.database)
+    live_name = str(connections[backend.database].settings_dict["NAME"])
+    is_test_db = live_name != ORIGINAL_DATABASE_NAMES.get(backend.database)
     if is_test_db:
         return bool(backend.options.get("SYNC_SCHEDULES_ON_TEST_DB", False))
     return bool(backend.options.get("SYNC_SCHEDULES_ON_MIGRATE", True))

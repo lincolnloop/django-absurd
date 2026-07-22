@@ -53,7 +53,7 @@ settings.configure(
                         "cron": "0 2 * * *",
                     }},
                 }},
-                "SYNC_SCHEDULES_ON_MIGRATE": {sync_on_migrate!r},
+                {sync_on_migrate_option}
             }},
         }}
     }},
@@ -67,7 +67,14 @@ call_command("migrate", verbosity=0)
 """
 
 
-def migrate_real_db_in_subprocess(*, sync_on_migrate: bool) -> None:
+def migrate_real_db_in_subprocess(*, sync_on_migrate: bool | None) -> None:
+    # sync_on_migrate=None omits the key entirely, exercising the real shipped
+    # default rather than an explicit True standing in for it.
+    sync_on_migrate_option = (
+        ""
+        if sync_on_migrate is None
+        else f'"SYNC_SCHEDULES_ON_MIGRATE": {sync_on_migrate!r},'
+    )
     params = connections["default"].get_connection_params()
     script = SUBPROCESS_SCRIPT.format(
         dbname=params["dbname"],
@@ -75,7 +82,7 @@ def migrate_real_db_in_subprocess(*, sync_on_migrate: bool) -> None:
         password=params.get("password", ""),
         host=params.get("host", "localhost"),
         port=params.get("port", ""),
-        sync_on_migrate=sync_on_migrate,
+        sync_on_migrate_option=sync_on_migrate_option,
     )
     subprocess.run(
         [sys.executable, "-c", script],
@@ -103,10 +110,9 @@ def real_db_migration_cycle() -> "t.Iterator[None]":
 def test_migrate_syncs_by_default_on_a_real_non_test_database(
     real_db_migration_cycle: None,
 ) -> None:
-    # Regression check, not a true RED->GREEN test: this passes even before the
-    # guard exists (today's unchanged behavior). Kept to prove the guard doesn't
-    # accidentally also break the real-DB default.
-    migrate_real_db_in_subprocess(sync_on_migrate=True)
+    # No SYNC_SCHEDULES_ON_MIGRATE key at all — proves the real shipped default
+    # (True), not an explicit True standing in for it.
+    migrate_real_db_in_subprocess(sync_on_migrate=None)
     scheduled_task = ScheduledTask.objects.get(name="nightly", source="s")
     assert scheduled_task.get_pg_cron_job() is not None
 
@@ -127,7 +133,10 @@ def test_migrate_skips_sync_by_default_on_a_test_database(
     settings.TASKS = build_pg_cron_tasks(
         {"nightly": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
-    settings.TASKS["default"]["OPTIONS"]["SYNC_SCHEDULES_ON_TEST_DB"] = False
+    # No SYNC_SCHEDULES_ON_TEST_DB key at all (build_pg_cron_tasks's own default is
+    # True, for this project's own suite) — proves the real shipped default
+    # (False), not an explicit False standing in for it.
+    del settings.TASKS["default"]["OPTIONS"]["SYNC_SCHEDULES_ON_TEST_DB"]
 
     call_command("migrate", verbosity=0)
 
