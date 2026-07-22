@@ -22,7 +22,6 @@ if t.TYPE_CHECKING:
 pytestmark = pytest.mark.django_db(transaction=True)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SUBPROCESS_MIGRATE_SCRIPT = REPO_ROOT / "tests" / "pg_cron" / "subprocess_migrate.py"
 
 
 def migrate_real_db_in_subprocess(*, sync_on_migrate: bool | None) -> None:
@@ -41,7 +40,14 @@ def migrate_real_db_in_subprocess(*, sync_on_migrate: bool | None) -> None:
     if sync_on_migrate is not None:
         env["SYNC_SCHEDULES_ON_MIGRATE"] = "1" if sync_on_migrate else "0"
     subprocess.run(
-        [sys.executable, str(SUBPROCESS_MIGRATE_SCRIPT)],
+        [
+            sys.executable,
+            "-m",
+            "django",
+            "migrate",
+            "--settings=tests.pg_cron.live_settings",
+            "--verbosity=0",
+        ],
         env=env,
         cwd=REPO_ROOT,
         check=True,
