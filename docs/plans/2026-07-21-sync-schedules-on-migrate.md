@@ -54,6 +54,7 @@ live value at signal-fire time.
 
 - Modify: `django_absurd/pg_cron/apps.py`
 - Modify: `tests/pg_cron/utils.py`
+- Create: `tests/pg_cron/fixtures_tasks.py`
 - Create: `tests/pg_cron/test_sync_schedules_on_migrate.py`
 
 **Interfaces:**
@@ -61,14 +62,57 @@ live value at signal-fire time.
 - Produces: `django_absurd.pg_cron.apps.ORIGINAL_DATABASE_NAMES: dict[str, str]`
   (module-level, populated in `PgCronConfig.ready()`); the two new per-backend `OPTIONS`
   keys read via `backend.options.get(key, default)`.
-- Consumes: `django_absurd.backends.get_absurd_backends()`,
-  `django_absurd.backends.AbsurdBackend` (already imported/used in this file);
+- Consumes: `django_absurd.backends.get_absurd_backends()` (already imported/used in
+  this file); `django_absurd.backends.AbsurdBackend` (**not** currently imported at all
+  — added under `TYPE_CHECKING` only, referenced via a quoted annotation, see Step 4);
   `django.db.connections`, `django.conf.settings` (new imports, safe at module level —
   this file already imports `django.db.utils`/`django.db.models.signals` at module
   level, and these two are only ever _called_ later, at signal-fire time, long after
   `django.setup()` completes).
 
-- [ ] **Step 1: Write the failing tests in
+**IMPORTANT — this task's real-DB subprocess test design was independently verified
+end-to-end before this plan was finalized** (not just sketched): a throwaway script
+confirmed the exact sequence below — `migrate django_absurd_pg_cron zero` (rolls back
+just this app's own migrations; core `django_absurd`'s schema is untouched), a minimal
+subprocess `migrate` targeting `absurd_test_pg_cron` directly (bypassing pytest-django's
+test-DB machinery entirely, so no swap ever happens in that process — confirming
+`is_test_db=False` there), then `migrate django_absurd_pg_cron zero` + a full `migrate`
+again to restore. Two real bugs were found and fixed during that verification, both
+already reflected in the code below — do not "simplify" them back out:
+
+1. `OPTIONS["QUEUES"]` must be a **dict** (`{"default": {}}`), never a list — the
+   list-shorthand form is only valid as a **top-level** `TASKS["default"]["QUEUES"]`
+   key, not nested under `OPTIONS`. `get_declared_queues` does
+   `dict(backend.options["QUEUES"])`, which raises `ValueError` on a list.
+2. The `reconcile_crons_after_migrate` `except` block logging "skipped cron reconcile"
+   during the `migrate ... zero` step is **expected, benign noise** — `post_migrate`
+   fires even on a reverse migration, racing against the just-dropped
+   `django_absurd_scheduledtask` table; the function's own documented best-effort catch
+   handles it. Do not treat this log line as a test failure.
+
+Also confirmed: `tests/tasks.py`'s `add` task cannot be used as the subprocess's
+`SCHEDULE` target — its module imports `django.contrib.auth.models.Group` and
+`tests.models.Payload` at the top level, which the subprocess's minimal `INSTALLED_APPS`
+doesn't support. Hence the new, dependency-free `tests/pg_cron/fixtures_tasks.py`.
+
+- [ ] **Step 1: Create the minimal task fixture module**
+
+```python
+# tests/pg_cron/fixtures_tasks.py
+"""Minimal, dependency-free task used only by test_sync_schedules_on_migrate.py's
+subprocess-based real-DB test — must not import anything beyond django.tasks (no
+django.contrib.auth, no tests.models) so a bare, minimally-configured subprocess can
+resolve its dotted path."""
+
+from django.tasks import task
+
+
+@task
+def add(a: int, b: int) -> int:
+    return a + b
+```
+
+- [ ] **Step 2: Write the failing tests in
       `tests/pg_cron/test_sync_schedules_on_migrate.py`**
 
 ```python
@@ -83,7 +127,6 @@ import sys
 import typing as t
 from pathlib import Path
 
-import psycopg
 import pytest
 from django.core.management import call_command
 from django.db import connections
@@ -97,8 +140,10 @@ if t.TYPE_CHECKING:
 pytestmark = pytest.mark.django_db(transaction=True)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-REAL_DB_NAME = "absurd_sync_schedules_real_db_check"
 
+# Minimal, self-contained settings for the subprocess — least config required for
+# django_absurd + django_absurd.pg_cron to migrate and reconcile a SCHEDULE. Neither
+# app's migrations reference contenttypes/auth (verified), so neither is needed here.
 SUBPROCESS_SCRIPT = """
 import django
 from django.conf import settings
@@ -119,10 +164,14 @@ settings.configure(
         "default": {{
             "BACKEND": "django_absurd.backends.AbsurdBackend",
             "OPTIONS": {{
-                "QUEUES": ["default"],
+                "QUEUES": {{"default": {{}}}},
                 "SCHEDULE": {{
-                    "nightly": {{"task": "tests.tasks.add", "cron": "0 2 * * *"}},
+                    "nightly": {{
+                        "task": "tests.pg_cron.fixtures_tasks.add",
+                        "cron": "0 2 * * *",
+                    }},
                 }},
+                "SYNC_SCHEDULES_ON_MIGRATE": {sync_on_migrate!r},
             }},
         }}
     }},
@@ -136,29 +185,15 @@ call_command("migrate", verbosity=0)
 """
 
 
-def create_real_db() -> None:
-    params = connections["default"].get_connection_params()
-    params["dbname"] = "postgres"
-    with psycopg.connect(**params, autocommit=True) as conn, conn.cursor() as cur:
-        cur.execute(f'DROP DATABASE IF EXISTS "{REAL_DB_NAME}"')
-        cur.execute(f'CREATE DATABASE "{REAL_DB_NAME}"')
-
-
-def drop_real_db() -> None:
-    params = connections["default"].get_connection_params()
-    params["dbname"] = "postgres"
-    with psycopg.connect(**params, autocommit=True) as conn, conn.cursor() as cur:
-        cur.execute(f'DROP DATABASE IF EXISTS "{REAL_DB_NAME}"')
-
-
-def migrate_real_db_in_subprocess() -> None:
+def migrate_real_db_in_subprocess(*, sync_on_migrate: bool) -> None:
     params = connections["default"].get_connection_params()
     script = SUBPROCESS_SCRIPT.format(
-        dbname=REAL_DB_NAME,
+        dbname=params["dbname"],
         user=params.get("user", ""),
         password=params.get("password", ""),
         host=params.get("host", "localhost"),
         port=params.get("port", ""),
+        sync_on_migrate=sync_on_migrate,
     )
     subprocess.run(
         [sys.executable, "-c", script],
@@ -168,14 +203,40 @@ def migrate_real_db_in_subprocess() -> None:
     )
 
 
-def count_cron_jobs_in(dbname: str) -> int:
-    params = connections["default"].get_connection_params()
-    params["dbname"] = dbname
-    with psycopg.connect(**params, autocommit=True) as conn, conn.cursor() as cur:
-        cur.execute("select count(*) from cron.job")
-        row = cur.fetchone()
-        assert row is not None
-        return row[0]
+@pytest.fixture
+def real_db_migration_cycle() -> "t.Iterator[None]":
+    """Roll back JUST django_absurd_pg_cron's own migrations (not the whole
+    database — that app owns CREATE EXTENSION pg_cron, so this is a genuine
+    from-scratch migrate for the exact feature under test) so the subprocess's
+    migrate is a real first-time provisioning run. Restores the schema afterward
+    so the rest of this --reuse-db session's tests aren't affected."""
+    call_command("migrate", "django_absurd_pg_cron", "zero", verbosity=0)
+    try:
+        yield
+    finally:
+        call_command("migrate", "django_absurd_pg_cron", "zero", verbosity=0)
+        call_command("migrate", verbosity=0)
+
+
+def test_migrate_syncs_by_default_on_a_real_non_test_database(
+    real_db_migration_cycle: None,
+) -> None:
+    # Regression check, not a true RED->GREEN test: this passes even before the
+    # guard exists (today's unchanged behavior). Kept to prove the guard doesn't
+    # accidentally also break the real-DB default.
+    migrate_real_db_in_subprocess(sync_on_migrate=True)
+    scheduled_task = ScheduledTask.objects.get(name="nightly", source="s")
+    assert scheduled_task.get_pg_cron_job() is not None
+
+
+def test_migrate_skips_sync_on_a_real_database_when_explicitly_disabled(
+    real_db_migration_cycle: None,
+) -> None:
+    # Genuine RED before the guard exists: SYNC_SCHEDULES_ON_MIGRATE doesn't exist
+    # yet, so it's silently ignored and sync happens anyway — this assertion fails.
+    # GREEN once the guard respects it.
+    migrate_real_db_in_subprocess(sync_on_migrate=False)
+    assert not ScheduledTask.objects.filter(name="nightly", source="s").exists()
 
 
 def test_migrate_skips_sync_by_default_on_a_test_database(
@@ -205,15 +266,6 @@ def test_migrate_syncs_on_a_test_database_when_explicitly_enabled(
     assert [r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()] == ["_dj:s:nightly"]
 
 
-def test_migrate_syncs_by_default_on_a_real_non_test_database() -> None:
-    create_real_db()
-    try:
-        migrate_real_db_in_subprocess()
-        assert count_cron_jobs_in(REAL_DB_NAME) == 1
-    finally:
-        drop_real_db()
-
-
 def test_scheduled_task_create_and_delete_are_unaffected_by_either_setting(
     settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
@@ -226,22 +278,25 @@ def test_scheduled_task_create_and_delete_are_unaffected_by_either_setting(
         task="tests.tasks.add",
         cron="0 2 * * *",
     )
-    assert ScheduledTask.pg_cron.get_job("direct_create", "a") is not None
+    assert scheduled_task.get_pg_cron_job() is not None
 
     scheduled_task.delete()
     assert ScheduledTask.pg_cron.get_job("direct_create", "a") is None
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [ ] **Step 3: Run tests to verify they fail**
 
 Run: `uv run pytest tests/pg_cron/test_sync_schedules_on_migrate.py -v --no-cov`
-Expected: `test_migrate_skips_sync_by_default_on_a_test_database` FAILS (the guard
-doesn't exist yet — `migrate` syncs unconditionally today, so
-`ScheduledTask.pg_cron.get_managed_jobs()` is non-empty). The other three tests PASS
-already (they exercise behavior that's either already correct — real-DB sync, per-row
-create/delete — or explicitly opts in to today's behavior).
+Expected: **2 of the 5 tests genuinely FAIL** (real RED, not a placeholder claim):
+`test_migrate_skips_sync_on_a_real_database_when_explicitly_disabled` (the
+`SYNC_SCHEDULES_ON_MIGRATE` key doesn't exist yet, so it's silently ignored and sync
+happens anyway) and `test_migrate_skips_sync_by_default_on_a_test_database` (the guard
+doesn't exist yet, so `migrate` syncs unconditionally). The other 3 tests PASS already —
+they exercise behavior that's either already correct today (real-DB default sync,
+per-row create/delete) or an explicit-`True` override that happens to match today's
+unconditional-sync behavior anyway.
 
-- [ ] **Step 3: Implement the guard in `django_absurd/pg_cron/apps.py`**
+- [ ] **Step 4: Implement the guard in `django_absurd/pg_cron/apps.py`**
 
 Add two imports to the top of the file:
 
@@ -282,10 +337,15 @@ block:
 ```
 
 Add the new helper function below `reconcile_crons_after_migrate` (matching this
-project's "helpers live below the public function that uses them" convention):
+project's "helpers live below the public function that uses them" convention). **The
+annotation must be a quoted string** — this file has no
+`from __future__ import annotations`, and `AbsurdBackend` is only imported under
+`TYPE_CHECKING`; an unquoted annotation here would raise `NameError` at import time and
+brick the whole pg_cron app (mirrors the existing precedent in
+`django_absurd/backends.py::get_declared_queues(backend: "AbsurdBackend")`):
 
 ```python
-def resolve_sync_schedules_option(backend: AbsurdBackend) -> bool:
+def resolve_sync_schedules_option(backend: "AbsurdBackend") -> bool:
     is_test_db = (
         connections[backend.database].settings_dict["NAME"]
         != ORIGINAL_DATABASE_NAMES.get(backend.database)
@@ -295,31 +355,35 @@ def resolve_sync_schedules_option(backend: AbsurdBackend) -> bool:
     return bool(backend.options.get("SYNC_SCHEDULES_ON_MIGRATE", True))
 ```
 
-Add `AbsurdBackend` to this file's imports (it's currently only imported implicitly via
-`get_absurd_backends`'s return type as a string annotation — add an explicit
-`TYPE_CHECKING` import block if one doesn't already exist):
+Add a `TYPE_CHECKING` import block for `AbsurdBackend` (this file doesn't have one yet —
+`AbsurdBackend` is currently only referenced via `get_absurd_backends`'s return type,
+which is a plain runtime call, not an annotation):
 
 ```python
 if t.TYPE_CHECKING:
     from django_absurd.backends import AbsurdBackend
 ```
 
-- [ ] **Step 4: Run the new tests, verify they pass**
+- [ ] **Step 5: Run the new tests, verify they pass**
 
 Run: `uv run pytest tests/pg_cron/test_sync_schedules_on_migrate.py -v --no-cov`
-Expected: all 4 tests PASS.
+Expected: all 5 tests PASS.
 
-- [ ] **Step 5: Run the full existing pg_cron suite — confirm it's now broken**
+- [ ] **Step 6: Run the full existing pg_cron suite — confirm it's now broken**
 
 Run: `uv run pytest tests/pg_cron -v --no-cov 2>&1 | tail -40` Expected: multiple
 failures in `test_pg_cron_post_migrate.py` — the `run_cron_sync` fixture's `"migrate"`
 parametrization now silently skips syncing (since every test in this suite runs on a
 test DB, and `SYNC_SCHEDULES_ON_TEST_DB` defaults `False`), while the
 `"absurd_sync_crons"` parametrization still works — the two branches diverge where tests
-assert they're identical. This is expected and matches the Global Constraints — proceed
-to Step 6 to fix it.
+assert they're identical. Not limited to `run_cron_sync`-based tests either — several
+tests in that file call `reconcile_crons_after_migrate`-driving entrypoints directly
+(e.g. `test_reconcile_emits_migrate_stdout_on_sync`,
+`test_migrate_provisions_queues_and_reconciles_crons`, the prune tests) and break the
+same way. This is expected and matches the Global Constraints — proceed to Step 7 to fix
+it.
 
-- [ ] **Step 6: Fix `tests/pg_cron/utils.py::build_pg_cron_tasks` to restore this
+- [ ] **Step 7: Fix `tests/pg_cron/utils.py::build_pg_cron_tasks` to restore this
       project's own suite behavior**
 
 Read the current file — it's a 12-line module with one function. Replace it:
@@ -347,34 +411,59 @@ def build_pg_cron_tasks(
     return settings
 ```
 
-- [ ] **Step 7: Run the full pg_cron suite again, confirm it's green**
+- [ ] **Step 8: Run the full pg_cron suite again, confirm it's green**
 
 Run: `uv run pytest tests/pg_cron -v --no-cov` Expected: all tests PASS, including every
 `test_pg_cron_post_migrate.py` test using `run_cron_sync`.
 
-- [ ] **Step 8: Run the new dedicated test file once more (confirms Step 6 didn't
+- [ ] **Step 9: Run the new dedicated test file once more (confirms Step 7 didn't
       regress it — its tests explicitly override `SYNC_SCHEDULES_ON_TEST_DB` back down
       per-test, so `build_pg_cron_tasks`'s new default shouldn't affect them, but verify
       directly rather than assume)**
 
 Run: `uv run pytest tests/pg_cron/test_sync_schedules_on_migrate.py -v --no-cov`
-Expected: all 4 tests still PASS.
+Expected: all 5 tests still PASS.
 
-- [ ] **Step 9: Full suite + mypy + ruff clean**
+- [ ] **Step 10: Enable coverage instrumentation for the subprocess**
+
+The real-DB tests spawn a `subprocess.run(...)`; without this, its execution of
+`reconcile_crons_after_migrate`/`resolve_sync_schedules_option` is invisible to
+coverage, permanently "missing" the `SYNC_SCHEDULES_ON_MIGRATE` branch and violating the
+full-patch-coverage rule. Verified empirically (a standalone throwaway
+subprocess+coverage experiment, not just config-reading) that coverage.py's built-in
+subprocess patching closes this with a one-line config addition — no
+`COVERAGE_PROCESS_START`/`sitecustomize.py` needed. Add `patch = ["subprocess"]` to the
+root `pyproject.toml`'s `[tool.coverage.run]` section:
+
+```toml
+[tool.coverage.run]
+branch = true
+omit = [
+  "tests/multidb/*",
+]
+patch = ["subprocess"]
+plugins = [
+  "django_coverage_plugin",
+]
+source = ["django_absurd", "tests"]
+```
+
+- [ ] **Step 11: Full suite + mypy + ruff clean**
 
 Run: `uv run pytest tests/pg_cron --create-db -v` (full run with coverage; use the
 `ALTER DATABASE ... WITH ALLOW_CONNECTIONS false` + terminate-backend dance from
 `CLAUDE.md` first if pg_cron's launcher blocks the `--create-db` drop) Run:
-`uv run mypy django_absurd/pg_cron/apps.py tests/pg_cron/utils.py tests/pg_cron/test_sync_schedules_on_migrate.py`
+`uv run mypy django_absurd/pg_cron/apps.py tests/pg_cron/utils.py tests/pg_cron/fixtures_tasks.py tests/pg_cron/test_sync_schedules_on_migrate.py`
 Run:
-`uv run ruff check django_absurd/pg_cron/apps.py tests/pg_cron/utils.py tests/pg_cron/test_sync_schedules_on_migrate.py`
-Expected: full suite passes, no missed lines/branches in `apps.py`'s new code; mypy and
-ruff clean.
+`uv run ruff check django_absurd/pg_cron/apps.py tests/pg_cron/utils.py tests/pg_cron/fixtures_tasks.py tests/pg_cron/test_sync_schedules_on_migrate.py`
+Expected: full suite passes, no missed lines/branches in `apps.py`'s new code (including
+the `SYNC_SCHEDULES_ON_MIGRATE` branch, now instrumented via Step 10); mypy and ruff
+clean.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 12: Commit**
 
 ```bash
-git add django_absurd/pg_cron/apps.py tests/pg_cron/utils.py tests/pg_cron/test_sync_schedules_on_migrate.py
+git add pyproject.toml django_absurd/pg_cron/apps.py tests/pg_cron/utils.py tests/pg_cron/fixtures_tasks.py tests/pg_cron/test_sync_schedules_on_migrate.py
 git commit -m "feat: SYNC_SCHEDULES_ON_MIGRATE / SYNC_SCHEDULES_ON_TEST_DB"
 ```
 
@@ -459,15 +548,52 @@ git commit -m "docs: SYNC_SCHEDULES_ON_MIGRATE / SYNC_SCHEDULES_ON_TEST_DB"
 
 ## Self-Review Notes
 
+This plan went through one full adversarial review round (Opus) that found two real
+blockers and one guaranteed crash bug, all now fixed in the content above — not just
+noted:
+
+1. **Blocker — the original subprocess test design was infeasible.**
+   `CREATE EXTENSION pg_cron` is only permitted on `absurd_test_pg_cron` specifically
+   (this project's `compose.yaml` comment confirms it — `cron.database_name` is a
+   cluster-wide, postmaster-context setting), so a brand-new, separate database could
+   never host pg_cron at all. Fixed: the redesigned test targets `absurd_test_pg_cron`
+   itself, in a genuinely separate _process_ (not a separate database) — the
+   subprocess's own `ready()` never sees a test-DB swap, so `is_test_db` correctly
+   evaluates `False` there regardless of the physical database being shared with the
+   outer pytest session.
+2. **Blocker — the subprocess couldn't import its own schedule's task.**
+   `tests.tasks.add` pulls in `django.contrib.auth`/`tests.models` at module level,
+   which the minimal subprocess `INSTALLED_APPS` doesn't support; the failure was
+   silently swallowed by `reconcile_crons_after_migrate`'s own broad `except`, making
+   the test falsely pass/fail without testing anything. Fixed: a new, dependency-free
+   `tests/pg_cron/fixtures_tasks.py`.
+3. **Major — guaranteed `NameError` on import.** The originally-planned
+   `resolve_sync_schedules_option(backend: AbsurdBackend) -> bool` would crash `apps.py`
+   at import time (no `from __future__ import annotations`, `AbsurdBackend` only under
+   `TYPE_CHECKING`). Fixed: quoted annotation (`backend: "AbsurdBackend"`), matching
+   `backends.py`'s own established precedent.
+4. **Major — the subprocess wasn't coverage-instrumented.** Verified empirically (a
+   standalone throwaway experiment, not just config-reading) that coverage.py's built-in
+   `patch = ["subprocess"]` closes this cleanly. Added as Task 1 Step 10.
+
+**The entire migrate-zero → subprocess-migrate → migrate-zero → restore cycle was run
+for real** against this project's actual `db_pg_cron` container before this plan was
+finalized (not just designed on paper) — confirming the rollback, the corrected
+subprocess settings (including a `QUEUES` dict-vs-list bug caught only by running it),
+the real `ScheduledTask` row + `cron.job` creation, and a clean restore (`tests/pg_cron`
+suite ran 218/218 green afterward).
+
 - **Spec coverage:** both `OPTIONS` keys + their defaults, the `ORIGINAL_DATABASE_NAMES`
   snapshot mechanism (with the same-object bug fix baked in from the start — this plan
   never contains the broken version), the guard's placement (receiver only, verified
   against `absurd_sync_crons`'s separate call site), keeping the existing suite green
-  (`build_pg_cron_tasks` default), the two-pronged test strategy (in-process test-DB
-  branch + subprocess real-DB branch), docs in both locations. All present.
-- **Placeholder scan:** none — every step has real, complete code and exact commands.
-- **Type consistency:** `resolve_sync_schedules_option(backend: AbsurdBackend) -> bool`
-  matches how Task 1 Step 3 calls it (`resolve_sync_schedules_option(backend)` inside
+  (`build_pg_cron_tasks` default), the two-pronged, real (not simulated) test strategy,
+  docs in both locations, subprocess coverage instrumentation. All present.
+- **Placeholder scan:** none — every step has real, complete, independently-verified
+  code and exact commands.
+- **Type consistency:**
+  `resolve_sync_schedules_option(backend: "AbsurdBackend") -> bool` matches how Task 1
+  Step 4 calls it (`resolve_sync_schedules_option(backend)` inside
   `reconcile_crons_after_migrate`, where `backend` is already typed via
   `next(iter(absurd_backends.items()))`, itself typed by
   `get_absurd_backends() -> dict[str, AbsurdBackend]`).
