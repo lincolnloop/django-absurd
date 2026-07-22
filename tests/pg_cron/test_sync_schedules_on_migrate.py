@@ -37,7 +37,11 @@ def migrate_real_db_in_subprocess(*, sync_on_migrate: bool | None) -> None:
         "SUBPROCESS_MIGRATE_HOST": params.get("host", "localhost"),
         "SUBPROCESS_MIGRATE_PORT": str(params.get("port", "")),
     }
-    if sync_on_migrate is not None:
+    if sync_on_migrate is None:
+        # Hermetic: a stray SYNC_SCHEDULES_ON_MIGRATE in the outer environment must
+        # not leak into the subprocess and stand in for the real shipped default.
+        env.pop("SYNC_SCHEDULES_ON_MIGRATE", None)
+    else:
         env["SYNC_SCHEDULES_ON_MIGRATE"] = "1" if sync_on_migrate else "0"
     subprocess.run(
         [
