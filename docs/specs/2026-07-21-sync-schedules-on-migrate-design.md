@@ -39,15 +39,18 @@ applies and returns early (skipping both `sync_crons()` and `sync_admin_crons()`
 applicable key is `False`:
 
 ```
-is_test_db = (
-    connections[backend.database].settings_dict["NAME"]
-    != settings.DATABASES[backend.database]["NAME"]
-)
+is_test_db = connections[backend.database].settings_dict["NAME"] != ORIGINAL_DATABASE_NAMES.get(backend.database)
 key = "SYNC_SCHEDULES_ON_TEST_DB" if is_test_db else "SYNC_SCHEDULES_ON_MIGRATE"
 default = False if is_test_db else True
 if not backend.options.get(key, default):
     return
 ```
+
+`ORIGINAL_DATABASE_NAMES` is a module-level `dict[str, str]` in
+`django_absurd/pg_cron/apps.py`, populated once, inside `PgCronConfig.ready()`, by
+copying each configured alias's `NAME` value **out of** `settings.DATABASES` at that
+moment (a plain string extraction, not a dict reference — see below for why this
+distinction is load-bearing).
 
 (`backend.database` is the Django DB **alias** `AbsurdBackend` targets — e.g.
 `"default"` — distinct from `alias`, `reconcile_crons_after_migrate`'s existing local
@@ -67,19 +70,35 @@ any test framework has swapped in a test DB, so it can't yet know which case a _
 migrate invocation will hit. The receiver is the only point that is both
 migrate-specific and running late enough to see the swapped connection.
 
-### Test-DB detection — verified against Django's actual source, not assumed
+### Test-DB detection — verified twice against real infrastructure, second attempt fixed a real bug in the first
 
-`django.db.backends.base.creation.BaseDatabaseCreation.create_test_db()` mutates
-`self.connection.settings_dict["NAME"] = test_database_name`
-(`django/db/backends/base/creation.py:73`) — a live mutation of the **connection's**
-settings, distinct from the **static** `settings.DATABASES[backend.database]["NAME"]`
-declared in the settings module, which is never touched. Comparing the two is therefore
-a genuine, Django-native "are we currently on a test DB" signal — no pytest-specific
-code, no heuristic on `sys.argv` or env vars, works identically under pytest-django,
-`manage.py test`, or any other test runner (including a future `unittest`-based mixin).
-Confirmed this holds whether `TEST["NAME"]` is explicitly set (as this project's own
-`tests/pg_cron/settings.py` does) or left to Django's auto-generated `test_` prefix —
-either way `create_test_db()` mutates the live connection name away from the static one.
+**First attempt (wrong — do not use):** comparing
+`connections[alias].settings_dict["NAME"]` against `settings.DATABASES[alias]["NAME"]`
+directly. This looked sound from reading `django/db/backends/base/creation.py:73` alone
+(`create_test_db()` does `self.connection.settings_dict["NAME"] = test_database_name`),
+but verified empirically — twice, once bare and once inside a real pytest-django test
+against the real `db_pg_cron` container — that `connections[alias].settings_dict` **is
+`settings.DATABASES[alias]` — the same dict object**, not a copy
+(`django/utils/connection.py`'s `BaseConnectionHandler.settings` returns
+`django_settings.DATABASES` directly; `ConnectionHandler.create_connection` does
+`db = self.settings[alias]; backend.DatabaseWrapper(db, alias)`, no copy anywhere). So
+`create_test_db()`'s mutation updates **both** "views" simultaneously — they can never
+differ, and this comparison always evaluates `False`, silently defeating the whole
+feature.
+
+**Fix, also verified empirically:** since `PgCronConfig.ready()` always runs before any
+test-DB swap (established above — `ready()` fires during `django.setup()`, strictly
+before pytest-django's `django_db_setup` fixture or `manage.py test`'s
+`setup_databases()`, in every real flow), snapshot each alias's `NAME` **value** (a
+plain string extraction — copying the value out, not holding a reference to the dict)
+into a module-level `ORIGINAL_DATABASE_NAMES` dict inside `ready()`, then compare the
+_live_ value against that frozen snapshot later, at signal-fire time. Verified directly:
+a value captured at collection time (same timing guarantee as `ready()`) read
+`"postgres"`; the live value inside a real, running `pytest.mark.django_db` test — after
+pytest-django's real test-DB creation had already run — read `"absurd_test_pg_cron"`.
+Genuine divergence, correctly detected. No pytest-specific code, no heuristic on
+`sys.argv` or env vars — works identically under pytest-django, `manage.py test`, or any
+other test runner (including a future `unittest`-based mixin).
 
 ## Validation (already done — a real, throwaway prototype, not a proof sketch)
 
@@ -110,23 +129,49 @@ directly relevant to this feature's production code, but worth remembering for t
 feature's own tests (must use the `settings` fixture / `override_settings`, never a bare
 assignment, to actually exercise a changed `OPTIONS["SCHEDULE"]`).
 
+**Second round, after this design's first revdiff pass:** the originally-proposed
+test-DB detection (live-vs-static dict comparison) was re-verified against the real
+`db_pg_cron` container and found broken — see "Test-DB detection" above for the full
+account. The corrected snapshot-based mechanism was verified in its place, both bare and
+inside a real running `pytest.mark.django_db` test.
+
 ## Scope
 
 IN:
 
-- The two `OPTIONS` keys, the early-return check in `reconcile_crons_after_migrate`, and
-  the test-DB detection helper.
+- The two `OPTIONS` keys, the `ORIGINAL_DATABASE_NAMES` snapshot populated in
+  `PgCronConfig.ready()`, and the early-return check in `reconcile_crons_after_migrate`.
+- **Keep this project's own pg_cron suite green.**
+  `tests/pg_cron/test_pg_cron_post_migrate.py`'s `run_cron_sync` fixture parametrizes
+  over `["absurd_sync_crons", "migrate"]` and asserts **identical** outcomes for both —
+  which `SYNC_SCHEDULES_ON_TEST_DB=False` by default would break, since every test in
+  this suite runs on a test DB and the two entrypoints would now diverge
+  (`absurd_sync_crons` still syncs; `migrate` doesn't). Fix:
+  `tests/pg_cron/utils.py::build_pg_cron_tasks` sets
+  `OPTIONS["SYNC_SCHEDULES_ON_TEST_DB"] = True` by default in what it returns —
+  restoring today's behavior for this project's own suite (which is specifically testing
+  reconcile-on-migrate) without touching the many individual call sites.
 - **Docs**: both keys documented in `django_absurd/AGENTS.md` (the `OPTIONS` reference
   table) and `docs/web/cron-jobs.md`, explaining the hazard and the safe-by-default
   behavior — mirroring every other public `OPTIONS` key's documentation.
-- **Tests**: behavioral, through the real `migrate` entrypoint (matching this project's
-  own `tests/pg_cron/test_pg_cron_post_migrate.py::run_cron_sync` fixture pattern, which
-  already parametrizes over `absurd_sync_crons`/`migrate` as the two real reconcile
-  entrypoints) — not a unit-level call into `reconcile_crons_after_migrate` directly.
-  Cover: default behavior on a real (non-test) DB unchanged; default behavior on a test
-  DB skips sync; explicit `True`/`False` overrides on both keys; per-row `ScheduledTask`
-  create/delete still schedules/ unschedules regardless of either key's value (proving
-  the guard is scoped to the bulk reconcile only).
+- **Tests**: behavioral, through real entrypoints, in a new dedicated file
+  (`tests/pg_cron/test_sync_schedules_on_migrate.py` — not added to
+  `test_pg_cron_post_migrate.py`, since `run_cron_sync` exists specifically to prove the
+  two entrypoints are _identical_, the opposite of what these tests show). Two-pronged,
+  matching how each branch was actually validated:
+  - **Test-DB branch** (`SYNC_SCHEDULES_ON_TEST_DB`): in-process, via the normal
+    pytest-django test DB (no simulation needed — every test in this suite already runs
+    on one). Cover: default (`False`) skips sync; explicit `True` override syncs;
+    per-row `ScheduledTask` create/delete still schedules/unschedules regardless of
+    either key's value (proving the guard is scoped to the bulk reconcile only, not the
+    per-row signals).
+  - **Real (non-test) DB branch** (`SYNC_SCHEDULES_ON_MIGRATE`): a genuinely separate
+    database on the same `db_pg_cron` container — never touched by pytest-django's
+    test-DB machinery at all — with `manage.py migrate` run via subprocess against it,
+    and real create/drop bracketing the test. Higher-fidelity than any in-process
+    simulation, and independently validates the snapshot mechanism: since no swap ever
+    happens here, `ORIGINAL_DATABASE_NAMES` and the live value naturally stay equal,
+    correctly evaluating `is_test_db = False`.
 
 OUT (tracked elsewhere, not this spec):
 
