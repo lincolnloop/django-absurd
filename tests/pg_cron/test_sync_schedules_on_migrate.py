@@ -22,71 +22,27 @@ if t.TYPE_CHECKING:
 pytestmark = pytest.mark.django_db(transaction=True)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-
-# Minimal, self-contained settings for the subprocess — least config required for
-# django_absurd + django_absurd.pg_cron to migrate and reconcile a SCHEDULE. Neither
-# app's migrations reference contenttypes/auth (verified), so neither is needed here.
-SUBPROCESS_SCRIPT = """
-import django
-from django.conf import settings
-
-settings.configure(
-    DATABASES={{
-        "default": {{
-            "ENGINE": "django.db.backends.postgresql",
-            "NAME": {dbname!r},
-            "USER": {user!r},
-            "PASSWORD": {password!r},
-            "HOST": {host!r},
-            "PORT": {port!r},
-        }}
-    }},
-    INSTALLED_APPS=["django_absurd", "django_absurd.pg_cron"],
-    TASKS={{
-        "default": {{
-            "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "OPTIONS": {{
-                "QUEUES": {{"default": {{}}}},
-                "SCHEDULE": {{
-                    "nightly": {{
-                        "task": "tests.pg_cron.tasks.add",
-                        "cron": "0 2 * * *",
-                    }},
-                }},
-                {sync_on_migrate_option}
-            }},
-        }}
-    }},
-    DEFAULT_AUTO_FIELD="django.db.models.BigAutoField",
-    USE_TZ=True,
-)
-django.setup()
-from django.core.management import call_command
-
-call_command("migrate", verbosity=0)
-"""
+SUBPROCESS_MIGRATE_SCRIPT = REPO_ROOT / "tests" / "pg_cron" / "subprocess_migrate.py"
 
 
 def migrate_real_db_in_subprocess(*, sync_on_migrate: bool | None) -> None:
-    # sync_on_migrate=None omits the key entirely, exercising the real shipped
+    # sync_on_migrate=None omits the env var entirely, exercising the real shipped
     # default rather than an explicit True standing in for it.
-    sync_on_migrate_option = (
-        ""
-        if sync_on_migrate is None
-        else f'"SYNC_SCHEDULES_ON_MIGRATE": {sync_on_migrate!r},'
-    )
     params = connections["default"].get_connection_params()
-    script = SUBPROCESS_SCRIPT.format(
-        dbname=params["dbname"],
-        user=params.get("user", ""),
-        password=params.get("password", ""),
-        host=params.get("host", "localhost"),
-        port=params.get("port", ""),
-        sync_on_migrate_option=sync_on_migrate_option,
-    )
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(REPO_ROOT),
+        "SUBPROCESS_MIGRATE_DBNAME": params["dbname"],
+        "SUBPROCESS_MIGRATE_USER": params.get("user", ""),
+        "SUBPROCESS_MIGRATE_PASSWORD": params.get("password", ""),
+        "SUBPROCESS_MIGRATE_HOST": params.get("host", "localhost"),
+        "SUBPROCESS_MIGRATE_PORT": str(params.get("port", "")),
+    }
+    if sync_on_migrate is not None:
+        env["SYNC_SCHEDULES_ON_MIGRATE"] = "1" if sync_on_migrate else "0"
     subprocess.run(
-        [sys.executable, "-c", script],
-        env={**os.environ, "PYTHONPATH": str(REPO_ROOT)},
+        [sys.executable, str(SUBPROCESS_MIGRATE_SCRIPT)],
+        env=env,
         cwd=REPO_ROOT,
         check=True,
     )

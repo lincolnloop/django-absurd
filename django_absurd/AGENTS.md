@@ -366,10 +366,10 @@ jobs automatically — a settings-only change needs no new migration file.
 **Test databases.** An automatic, migrate-time sync of your real `SCHEDULE` is a hazard
 on a **test** database — pg_cron's launcher runs independently of pytest/Django, so a
 synced schedule fires for real, on schedule, against test data, for the rest of the
-session. Two `OPTIONS` keys govern this: `SYNC_SCHEDULES_ON_MIGRATE` (default `True`,
-governs a real database — unchanged from today) and `SYNC_SCHEDULES_ON_TEST_DB` (default
-`False`, governs a database Django's test framework has swapped in). The safe default
-requires no settings changes — test databases are detected automatically. Set
+session. Two `OPTIONS` keys govern this: `SYNC_SCHEDULES_ON_MIGRATE` (default `True`)
+governs sync against a real database; `SYNC_SCHEDULES_ON_TEST_DB` (default `False`)
+governs sync when Django's test framework has swapped in a test database. The safe
+default requires no settings changes — test databases are detected automatically. Set
 `OPTIONS["SYNC_SCHEDULES_ON_TEST_DB"] = True` if a test genuinely needs `migrate` to
 reconcile schedules for real (this project's own pg_cron test suite does exactly this,
 via `tests/pg_cron/utils.py::build_pg_cron_tasks`). `absurd_sync_crons` is never gated

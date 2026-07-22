@@ -198,7 +198,7 @@ fires for real, on schedule, against test data, for the rest of the session.
 Two `OPTIONS` keys govern this:
 
 - **`SYNC_SCHEDULES_ON_MIGRATE`** (default `True`) — governs `migrate` against a real
-  database. Unchanged from today's behavior.
+  database.
 - **`SYNC_SCHEDULES_ON_TEST_DB`** (default `False`) — governs `migrate` when Django's
   test framework has swapped in a test database. Safe by default, detected automatically
   — no settings changes needed.

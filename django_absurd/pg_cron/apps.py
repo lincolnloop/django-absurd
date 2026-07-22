@@ -33,9 +33,7 @@ class PgCronConfig(AppConfig):
 
     def ready(self) -> None:
         for db_alias, db_config in settings.DATABASES.items():
-            # str(...): django-stubs' plugin types DATABASES[alias]["NAME"] as
-            # Collection[str], not str (a TypedDict-inference quirk) — it's always a
-            # plain string (or sqlite's Path) at runtime.
+            # str(): django-stubs types NAME as Collection[str], not str.
             ORIGINAL_DATABASE_NAMES.setdefault(db_alias, str(db_config["NAME"]))
 
         # Side-effect import: running the module registers its @register'd E007 checks.
@@ -87,7 +85,7 @@ def reconcile_crons_after_migrate(
         return
     alias, backend = next(iter(absurd_backends.items()))
     try:
-        if not resolve_sync_schedules_option(backend):
+        if not should_sync_schedules(backend):
             return
         created, pruned = sync_crons(backend)
         sync_admin_crons()
@@ -126,7 +124,7 @@ def reconcile_crons_after_migrate(
         )
 
 
-def resolve_sync_schedules_option(backend: "AbsurdBackend") -> bool:
+def should_sync_schedules(backend: "AbsurdBackend") -> bool:
     live_name = str(connections[backend.database].settings_dict["NAME"])
     is_test_db = live_name != ORIGINAL_DATABASE_NAMES.get(backend.database)
     if is_test_db:
