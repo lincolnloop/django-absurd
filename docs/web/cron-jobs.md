@@ -189,6 +189,26 @@ its `post_migrate` reconcile no longer runs, so nothing tears down existing jobs
 automatically. Run `manage.py absurd_sync_crons --teardown --noinput` **before**
 removing the app — not after — so it can still see and remove them.
 
+### Test databases
+
+An automatic, migrate-time sync of your real `SCHEDULE` is a hazard on a **test**
+database — pg_cron's launcher runs independently of pytest/Django, so a synced schedule
+fires for real, on schedule, against test data, for the rest of the session.
+
+Two `OPTIONS` keys govern this:
+
+- **`SYNC_SCHEDULES_ON_MIGRATE`** (default `True`) — governs `migrate` against a real
+  database.
+- **`SYNC_SCHEDULES_ON_TEST_DB`** (default `False`) — governs `migrate` when Django's
+  test framework has swapped in a test database. Safe by default, detected automatically
+  — no settings changes needed.
+
+If a test genuinely needs `migrate` to reconcile schedules for real, set
+`OPTIONS["SYNC_SCHEDULES_ON_TEST_DB"] = True` explicitly.
+
+`absurd_sync_crons` is never gated by either key — it's a deliberate, explicit
+invocation, not an automatic side effect of `migrate`.
+
 ### Authoring schedules in the admin
 
 `ScheduledTask` rows appear in Django admin. Rows declared in settings

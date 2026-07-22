@@ -9,4 +9,6 @@ from tests.utils import make_tasks_settings
 def build_pg_cron_tasks(
     schedule: dict[str, dict[str, object]],
 ) -> dict[str, dict[str, t.Any]]:
-    return make_tasks_settings(schedule=schedule)
+    tasks = make_tasks_settings(schedule=schedule)
+    tasks["default"]["OPTIONS"]["SYNC_SCHEDULES_ON_TEST_DB"] = True
+    return tasks

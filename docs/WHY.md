@@ -185,6 +185,39 @@ app: adding it to `INSTALLED_APPS` on a DB that isn't pg_cron-ready breaks visib
 still operator-side prerequisites that a migration can't deliver. Those stay documented
 as manual setup steps.
 
+### Sync-on-migrate is gated against test databases, opt-in per side
+
+An automatic, migrate-time sync of `pg_cron` schedules is dangerous specifically on a
+**test** database: `pg_cron`'s launcher is a Postgres background worker, entirely
+outside pytest/Django's control, so a schedule synced into a test database's catalog
+keeps firing for real, on cadence, against test data, for the rest of that process —
+independent of whether the test session itself has ended. This is invisible until it
+happens, because most projects share `TASKS`/`OPTIONS["SCHEDULE"]` between real and test
+settings.
+
+The fix is two independent defaults, not one flag: sync-on-migrate stays on for a real
+database (unchanged behavior, no break on upgrade) and defaults off for a database
+Django's test framework has swapped in (safe out of the box, no settings changes
+required for any existing consumer). A single before/after boolean would have forced a
+choice between "break existing real-DB behavior" and "leave the hazard live by default"
+— the two cases need opposite defaults, so they need two keys.
+
+The guard belongs in the `post_migrate` receiver specifically, not in the shared sync
+functions it calls: the explicit reconcile command is a separate, deliberate invocation,
+and a user who types it wants it to sync regardless of which database they're pointed
+at. Folding the guard into the shared functions would silently neuter that explicit
+command too — an automatic side effect and a deliberate command must not share a gate.
+
+Detecting "is this a test database" can't compare the live connection's database name
+against the name in settings at signal-fire time — Django's test-database swap mutates
+the settings object itself, so the "before" and "live" views are the same object and can
+never differ. The name has to be snapshotted once, before any swap can happen, and
+compared against the live value later. That snapshot can't assume it only ever runs once
+per process either: Django re-runs every app's startup hook whenever `INSTALLED_APPS` is
+reassigned (a real pattern in test suites that exercise install-order checks), including
+well after a test database has already been swapped in — so a later re-run must never
+overwrite a name already captured, only fill in one it hasn't seen yet.
+
 ## Cleanup & retention
 
 Retention — deleting aged task history — is enforced by a plain function
