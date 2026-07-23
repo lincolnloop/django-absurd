@@ -6,8 +6,9 @@ from django.contrib.admin.utils import quote
 from django.contrib.auth.models import User
 from django.core.management import call_command
 from django.db import connections
-from django.test import Client, override_settings
+from django.test import Client
 from django.urls import reverse, reverse_lazy
+from pytest_django.fixtures import SettingsWrapper
 
 from django_absurd.admin_views import ADMIN_ENTITY_SPECS, build_admin_model
 from django_absurd.queues import get_absurd_client
@@ -319,8 +320,10 @@ def test_changelist_degrades_when_view_dropped(
     call_command("absurd_sync_queues")
 
 
-@override_settings(
-    TASKS={
+def test_partitioned_queue_appears_in_changelist(
+    admin_user: User, client: Client, settings: SettingsWrapper
+) -> None:
+    settings.TASKS = {
         "default": {
             "BACKEND": BACKEND,
             "OPTIONS": {
@@ -331,10 +334,6 @@ def test_changelist_degrades_when_view_dropped(
             },
         }
     }
-)
-def test_partitioned_queue_appears_in_changelist(
-    client: Client, admin_user: User
-) -> None:
     call_command("absurd_sync_queues")
     add.using(queue_name="part").enqueue(1, 1)
     call_command("absurd_worker", queue="part", burst=True)

@@ -224,22 +224,19 @@ def build_task_context(
     kwargs: dict[str, t.Any],
 ) -> "TaskContext[t.Any, t.Any]":
     attempt = read_sdk_attempt(ctx)
-    task_result = t.cast(
-        "TaskResult[t.Any, t.Any]",
-        TaskResult(
-            task=task,
-            id=ctx.task_id,
-            status=TaskResultStatus.RUNNING,
-            enqueued_at=None,
-            started_at=timezone.now(),
-            finished_at=None,
-            last_attempted_at=None,
-            args=list(args),
-            kwargs=dict(kwargs),
-            backend=task.backend,
-            errors=[],
-            worker_ids=["absurd"] * attempt,
-        ),
+    task_result: TaskResult[t.Any, t.Any] = TaskResult(
+        task=task,
+        id=ctx.task_id,
+        status=TaskResultStatus.RUNNING,
+        enqueued_at=None,
+        started_at=timezone.now(),
+        finished_at=None,
+        last_attempted_at=None,
+        args=list(args),
+        kwargs=dict(kwargs),
+        backend=task.backend,
+        errors=[],
+        worker_ids=["absurd"] * attempt,
     )
     return TaskContext(task_result=task_result)
 
