@@ -17,10 +17,12 @@ def test_index_redirects_to_admin(client: Client) -> None:
 
 @pytest.mark.django_db(transaction=True)
 def test_tick_task_runs_via_drain(
-    absurd_drain_queue: t.Callable[..., None],
+    absurd_drain_queue: t.Callable[..., None], caplog: pytest.LogCaptureFixture
 ) -> None:
     result = tick.enqueue()
-    absurd_drain_queue()
+    with caplog.at_level("INFO", logger="demo"):
+        absurd_drain_queue()
     result.refresh()
     assert result.status == "SUCCESSFUL"
     assert result.return_value is None
+    assert any("tock" in record.message for record in caplog.records)

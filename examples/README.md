@@ -23,3 +23,21 @@ docker compose up
 Each demo installs django-absurd from this checkout (editable path dependency), so it
 exercises the local source, and `nanodjango run` applies migrations and creates the
 `admin`/`admin` superuser on startup.
+
+## Running the tests
+
+Each demo has a pytest suite (high-level HTTP for `web`; enqueue-and-drain for the
+scheduled `beat`/`pg_cron` tasks — the schedulers themselves are covered in
+django-absurd's own tests). Start the Postgres service from the repo root, then run the
+suite against it:
+
+```bash
+docker compose up -d db db_pg_cron    # from the repo root
+
+cd examples/web    && uv run pytest    # web + beat use `db` on PGPORT (5432)
+cd examples/beat   && uv run pytest
+cd examples/pg_cron && PGPORT=5434 uv run pytest    # pg_cron needs the db_pg_cron server
+```
+
+`pg_cron` must run against the `db_pg_cron` server (`PGPORT=5434`): its migration
+creates the `pg_cron` extension, which the plain `db` server doesn't provide.

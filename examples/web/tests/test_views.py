@@ -19,7 +19,7 @@ def test_index_get_renders_the_add_form(client: Client) -> None:
 def test_index_post_invalid_rerenders_the_form(client: Client) -> None:
     resp = client.post("/", {"a": "1"})  # missing b → form invalid
     assert resp.status_code == 200
-    assert "This field is required" in resp.content.decode()
+    assert "This field is required." in resp.content.decode()
 
 
 @pytest.mark.django_db(transaction=True)
@@ -47,7 +47,7 @@ def test_add_fails_on_non_numeric_input(
     assert "Failed:" in body
 
 
-@pytest.mark.django_db(transaction=True)
+@pytest.mark.django_db
 def test_task_detail_shows_working_before_the_task_runs(client: Client) -> None:
     resp = client.post("/", {"a": "2", "b": "3"})
     body = client.get(resp.headers["Location"]).content.decode()
@@ -71,7 +71,7 @@ def test_workflow_get_renders_the_form(client: Client) -> None:
 def test_workflow_post_invalid_rerenders_the_form(client: Client) -> None:
     resp = client.post("/workflow/", {"order": ""})
     assert resp.status_code == 200
-    assert "This field is required" in resp.content.decode()
+    assert "This field is required." in resp.content.decode()
 
 
 @pytest.mark.django_db(transaction=True)
@@ -96,9 +96,17 @@ def test_workflow_suspends_on_event_then_completes_after_pack(
     assert "notified: order-7" in done
 
 
-def test_pack_view_get_does_not_emit_and_redirects_to_default_next(
-    client: Client,
+@pytest.mark.django_db(transaction=True)
+def test_pack_view_get_does_not_emit_the_event(
+    absurd_drain_queue: t.Callable[..., None], client: Client
 ) -> None:
-    resp = client.get("/workflow/order-x/pack/")
+    task_url = client.post("/workflow/", {"order": "order-get"}).headers["Location"]
+    absurd_drain_queue()  # suspends on await_event
+
+    resp = client.get("/workflow/order-get/pack/")  # GET must NOT emit
     assert resp.status_code == 302
-    assert resp.headers["Location"] == "/"
+    assert resp.headers["Location"] == "/"  # default next
+
+    absurd_drain_queue()
+    body = client.get(task_url).content.decode()
+    assert "Working" in body  # still suspended — the GET delivered no event
