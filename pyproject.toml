@@ -20,6 +20,7 @@ dev = [
   "pytest==9.1.1",
   "ruff==0.15.21",
   "types-croniter==6.2.4.20260711",
+  "zensical==0.0.50",
 ]
 
 [project]
