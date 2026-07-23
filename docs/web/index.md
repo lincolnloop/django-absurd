@@ -26,8 +26,17 @@ existing database connection.
 
 ## Install
 
+django-absurd is in **alpha** — only pre-releases are published, so your installer must
+be allowed to pick them up.
+
 ```bash
-pip install django-absurd
+uv add django-absurd --prerelease allow
+```
+
+Using pip:
+
+```bash
+pip install --pre django-absurd
 ```
 
 ## Quickstart
