@@ -1,6 +1,7 @@
 from django.core.management.base import BaseCommand, CommandParser
 
 from django_absurd.backends import get_absurd_backends
+from django_absurd.flush import clear_queues
 from django_absurd.queues import get_absurd_client
 
 
@@ -42,6 +43,5 @@ class Command(BaseCommand):
         if confirm != "yes":
             self.stdout.write("Flush cancelled.")
             return
-        for queue in queues:
-            client.drop_queue(queue)
+        clear_queues(drop_schema=True)
         self.stdout.write(f"Dropped {len(queues)} queue(s): {names}")

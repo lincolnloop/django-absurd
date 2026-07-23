@@ -1,9 +1,9 @@
+import typing as t
+
 import pytest
 from django.contrib.auth.models import User
-from django.core.exceptions import ImproperlyConfigured
-from django.db.utils import OperationalError, ProgrammingError
 
-from django_absurd.queues import get_absurd_client
+from django_absurd.flush import flush_absurd_state
 
 
 @pytest.fixture(autouse=True)
@@ -11,20 +11,24 @@ def _enable_db(db: None) -> None:
     pass
 
 
-@pytest.fixture(autouse=True)
-def _reset_absurd_queues(_enable_db: None) -> None:
-    """Drop all Absurd queues before each test.
+@pytest.fixture
+def _isolate_queues(_enable_db: None) -> t.Iterator[None]:
+    """Hard-drop all Absurd queue topology around a test (before AND after).
 
-    ``transaction=True`` tests create queues whose per-queue tables (DDL) and
-    ``managed=False`` registry rows are not rolled back / flushed, so they leak
-    across ``--reuse-db`` runs. Reset to zero queues so every test is hermetic.
+    The auto cleanup installed by the pytest plugin only TRUNCATEs after each DB
+    test — it removes rows, not queues. Topology-varying files create/vary queues
+    whose per-queue tables (DDL) and ``managed=False`` registry rows survive a
+    truncate and leak across ``--reuse-db`` runs. Apply this (via a module-level
+    ``pytest.mark.usefixtures("_isolate_queues")``) only to those files to drop the
+    schema on both sides so each such test is hermetic.
+
+    Naming: ``_``-prefixed but non-autouse. Outside the LETTER of CLAUDE.md's
+    autouse-only underscore exception, but within its spirit — never called
+    directly, only applied via ``usefixtures``.
     """
-    try:
-        client = get_absurd_client()
-        for name in client.list_queues():
-            client.drop_queue(name)
-    except (OperationalError, ProgrammingError, ImproperlyConfigured):
-        pass  # absurd schema not present (unmigrated / schema-absent test)
+    flush_absurd_state(drop_schema=True)
+    yield
+    flush_absurd_state(drop_schema=True)
 
 
 @pytest.fixture

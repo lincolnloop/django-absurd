@@ -42,7 +42,8 @@ duplicate that material here.
   suites via `--confcutdir=..` in each suite's `pytest.toml` (each suite's rootdir is
   its own dir, so without `confcutdir` a parent conftest isn't discovered). Do NOT
   re-import fixtures into a suite conftest — a suite `conftest.py` holds only
-  suite-specific fixtures (e.g. pg_cron's `_clear_owned_pg_cron_jobs`).
+  suite-specific fixtures. Per-test pg_cron isolation is not a suite-local fixture; it
+  comes from the mechanisms described below.
 - An **autouse `_enable_db(db)` fixture** (in `tests/conftest.py`) gives every test DB
   access — do NOT decorate tests with `@pytest.mark.django_db`. Only add
   `@pytest.mark.django_db(transaction=True)` (or markers for multi-DB / reset-sequences)
@@ -98,8 +99,15 @@ duplicate that material here.
     -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='absurd_test_pg_cron' AND pid <> pg_backend_pid()"
   uv run pytest tests/pg_cron --create-db
   ```
-  (Per-test isolation is separate and automatic: the autouse `_clear_owned_pg_cron_jobs`
-  fixture unschedules every `absurd:%` job after each test.)
+  (Per-test isolation is separate and automatic: the pytest plugin's auto-cleanup hook
+  (`django_absurd.test.install_absurd_cleanup`, wrapping
+  `TransactionTestCase._post_teardown`) calls `flush_absurd_state()` after every
+  DB-committing test, whose pg_cron branch runs the SCOPED
+  `teardown_crons(include_admin=True)` — unschedules django-absurd's own
+  settings-and-admin-authored jobs, never touching an unrelated cluster job. Files that
+  vary queue/schema topology additionally apply the non-autouse `_isolate_queues`
+  fixture (`tests/conftest.py`), which hard-drops the schema before AND after via
+  `flush_absurd_state(drop_schema=True)`.)
 - **Comment hygiene:** don't write comments that restate code or justify
   obviously-needed lines — let tests validate necessity. Remove noisy/distracting test
   comments.

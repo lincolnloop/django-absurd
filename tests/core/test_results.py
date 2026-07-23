@@ -16,7 +16,10 @@ from django_absurd.queues import get_absurd_client
 from tests.models import Payload
 from tests.tasks import add, boom, echo, sawait_event_once
 
-pytestmark = pytest.mark.django_db(transaction=True)
+pytestmark = [
+    pytest.mark.django_db(transaction=True),
+    pytest.mark.usefixtures("_isolate_queues"),
+]
 
 
 def backend() -> AbsurdBackend:

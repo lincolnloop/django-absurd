@@ -10,7 +10,10 @@ if t.TYPE_CHECKING:
 from django_absurd.models import Queue
 from django_absurd.routers import AbsurdRouter
 
-pytestmark = pytest.mark.django_db(databases=["default", "absurd"])
+pytestmark = [
+    pytest.mark.django_db(databases=["default", "absurd"]),
+    pytest.mark.usefixtures("_isolate_queues"),
+]
 
 ABSURD = "django_absurd.backends.AbsurdBackend"
 

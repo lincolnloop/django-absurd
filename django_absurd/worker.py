@@ -20,6 +20,7 @@ from absurd_sdk import (
     SuspendTask,
 )
 from django.core.exceptions import ImproperlyConfigured
+from django.core.management.base import CommandError
 from django.db import close_old_connections, connections
 from django.tasks import Task, TaskContext, TaskResult, TaskResultStatus
 from django.utils import timezone
@@ -28,6 +29,8 @@ from django.utils.module_loading import import_string
 from django_absurd.backends import AbsurdBackend, TaskParams
 from django_absurd.connection import register_jsonb_loader, validate_backend
 from django_absurd.context import WORKER_LOOP
+from django_absurd.management.base import resolve_backend
+from django_absurd.queues import SyncResult, provision_backend
 from django_absurd.scheduler import run_beat
 
 logger = logging.getLogger("django_absurd")
@@ -82,6 +85,30 @@ class LazyTaskRegistry(dict[str, dict[str, t.Any]]):
                 "handler": build_handler(task),
             }
         return super().get(name, default)
+
+
+def run_burst_worker(
+    queue: str = "default",
+    *,
+    options: WorkerOptions | None = None,
+) -> SyncResult:
+    options = options or WorkerOptions()
+    backend = resolve_backend()
+    if queue not in backend.queues:
+        valid = ", ".join(sorted(backend.queues))
+        msg = (
+            f"Queue '{queue}' is not declared for backend '{backend.alias}'."
+            f" Valid queues: {valid}"
+        )
+        raise CommandError(msg)
+
+    try:
+        result = provision_backend(backend)
+    except ImproperlyConfigured as exc:
+        raise CommandError(str(exc)) from exc
+
+    run_worker(backend, queue, burst=True, options=options)
+    return result
 
 
 def run_worker(

@@ -1,0 +1,11 @@
+[pytest]
+addopts = [
+  "--cov",
+  "--cov-report=term",
+  "--cov-report=xml",
+  "--junitxml=junit-examples-web.xml",
+  "--reuse-db",
+  "--strict-markers",
+]
+pythonpath = ["."]
+testpaths = ["."]

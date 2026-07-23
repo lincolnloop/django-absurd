@@ -13,13 +13,21 @@ from pytest_django.fixtures import SettingsWrapper
 from django_absurd.backends import AbsurdBackend, get_absurd_backends
 from django_absurd.models import Queue
 from django_absurd.queues import get_absurd_client
-from django_absurd.worker import WorkerOptions, aworker_client, run_blocking_worker
+from django_absurd.worker import (
+    WorkerOptions,
+    aworker_client,
+    run_blocking_worker,
+    run_burst_worker,
+)
 from tests.atasks import aecho
 from tests.jobs import record_from_jobs
 from tests.tasks import boom, make_group, report_args, report_attempt, routed
 from tests.utils import get_task_result, run_absurd_worker
 
-pytestmark = pytest.mark.django_db(transaction=True)
+pytestmark = [
+    pytest.mark.django_db(transaction=True),
+    pytest.mark.usefixtures("_isolate_queues"),
+]
 
 
 def backend() -> AbsurdBackend:
@@ -373,6 +381,20 @@ def test_worker_command_schema_absent_errors_migrate() -> None:
         call_command("migrate", verbosity=0)  # restore absurd schema
 
 
+def test_worker_non_burst_command_schema_absent_errors_migrate() -> None:
+    # Non-burst path's own provision_backend/ImproperlyConfigured translation
+    # (run_burst_worker has an independent copy, covered by the burst test above) --
+    # errors before ever reaching the blocking worker loop.
+    with connection.cursor() as cur:
+        cur.execute("DROP SCHEMA IF EXISTS absurd CASCADE")
+    try:
+        with pytest.raises(CommandError, match="migrate"):
+            call_command("absurd_worker", queue="default")
+    finally:
+        call_command("migrate", "django_absurd", "zero", verbosity=0)
+        call_command("migrate", verbosity=0)  # restore absurd schema
+
+
 def test_start_worker_drains_concurrently() -> None:
     call_command("absurd_sync_queues")
     for i in range(5):
@@ -416,6 +438,41 @@ def test_blocking_worker_drains_then_stops() -> None:
 
     asyncio.run(drive())
     assert Group.objects.filter(name__startswith="blk-").count() == 3
+
+
+def test_run_burst_worker_processes_a_task_and_returns_sync_result() -> None:
+
+    call_command("absurd_sync_queues")
+    result = make_group.enqueue("via-function")
+    sync_result = run_burst_worker("default")
+    assert Group.objects.filter(name="via-function").exists()
+    snap = get_task_result(result.id)
+    assert snap is not None
+    assert snap.state == "completed"
+    assert sync_result.created == []
+    assert sync_result.reconciled == []
+
+
+@pytest.mark.parametrize(
+    "run_burst",
+    ["command", "function"],
+)
+def test_undeclared_queue_is_rejected(run_burst: str) -> None:
+
+    def invoke() -> None:
+        if run_burst == "command":
+            call_command("absurd_worker", queue="nope", burst=True)
+        else:
+            run_burst_worker("nope")
+
+    with pytest.raises(CommandError) as exc:
+        invoke()
+    message = str(exc.value)
+    expected = (
+        "Queue 'nope' is not declared for backend 'default'. "
+        "Valid queues: default, other, reports"
+    )
+    assert message == expected
 
 
 def test_non_task_name_defers_not_crashes() -> None:
