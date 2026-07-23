@@ -75,6 +75,19 @@ This is the load-bearing thing a task author must know — side effects inside s
 need to tolerate re-execution. Teaching an absolute "runs once" guarantee would breed
 exactly the wrong code.
 
+### Events: waiting and emitting
+
+Alongside durable sleep, a task can durably wait for a named event and resume when it
+arrives. A wait with no timeout is a genuine "wait forever" state, not an oversight — it
+is stored as Postgres's infinity sentinel rather than a magic far-future timestamp, so
+nothing has to guess whether a distant date means "really far off" or "never." Emitting
+an event is a top-level operation callable from outside any task, because the producer
+is usually a web request or other ordinary code, not another task — so the emitter is a
+plain function riding Django's connection, not a method reachable only from inside a
+running handler. Letting one task block on another task's _result_ was considered and
+cut: it invites synchronous cross-task coupling that the durable-step model already
+expresses more safely.
+
 ## Recurring scheduling
 
 Recurring tasks are declared in settings and driven by an in-process beat that wakes on
@@ -288,6 +301,37 @@ system throughout (one cleanup authority, one `pg_cron` database, per-database
 migrations, cross-queue `UNION ALL` views) — enforcing one backend makes that assumption
 real rather than leaving a silent "pick the first / pick `default`" guess. Non-Absurd
 task backends coexist freely; the limit is on Absurd backends only.
+
+## Testing: Django-parity cleanup on Absurd's own tables
+
+Django's test isolation reverts each test by rolling back a transaction, but Absurd's
+state lives where that rollback can't reach it: per-queue tables the worker writes on
+its own connection, and scheduled jobs sitting in the database catalog. Left alone, that
+state leaks from one test into the next. The library restores Django-level isolation on
+exactly those non-Django tables — automatically, no per-test opt-in — so a project
+testing against Absurd gets the same clean-slate-per-test it already expects from
+Django.
+
+The cleanup hangs off Django's own post-test teardown hook, not a pytest fixture. A
+fixture was the first shape and cannot work: an autouse fixture's teardown runs _after_
+the test framework has already re-blocked the database, so the flush hits a blocked
+connection and hard-errors. The post-teardown hook instead fires while the database is
+still unblocked, and only for the database-backed cases that actually dirtied it — the
+correct seam. It also mirrors Django's own guarantee: a transactional test case already
+gets a full rollback, so the flush runs only for the commit-based cases Django itself
+would otherwise leave dirty.
+
+What ships is a deliberate split. Parity isolation on Absurd's tables is a guarantee
+every consumer wants, so it is automatic and unconditional. Aggressively clearing queues
+before _and_ after a test is specific to testing the library's own internals — not
+something a normal project needs — so it stays an internal helper, never forced on
+users.
+
+The pytest integration loads as a plugin imported before Django is configured, on every
+pytest run in any environment where the package is installed — Django project or not.
+That forces strict import-safety: the plugin touches nothing Django at import time and
+defers every Django-dependent import to call time. The non-pytest (`manage.py test`)
+path is not auto-wired yet; unittest users opt in through a mixin.
 
 ## Deliberately not doing (yet)
 

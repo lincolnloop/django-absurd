@@ -66,6 +66,36 @@ commit where it last lived — recoverable from git any time.
 - 2026-07-07 — pgcron-schedule-admin: read-only `ScheduledTask` admin (changelist +
   fieldsets, "Absurd Cron" section) →
   [view @912fea3](https://github.com/lincolnloop/django-absurd/blob/912fea398f7b93f41fd520f420841be7dd9232fb/docs/specs/2026-07-07-pgcron-schedule-admin-design.md)
+- 2026-07-07 — admin-definable-schedules: admin-authored `pg_cron` schedule store,
+  source-namespaced with the settings lane kept read-only →
+  [view @d49eb31](https://github.com/lincolnloop/django-absurd/blob/d49eb31405cd55fbeeea1e601756d0c1c7acf332/docs/specs/2026-07-07-admin-definable-schedules-design.md)
+- 2026-07-15 — cleanup-task: retention deletion of aged task/event history per queue
+  policy →
+  [view @d49eb31](https://github.com/lincolnloop/django-absurd/blob/d49eb31405cd55fbeeea1e601756d0c1c7acf332/docs/specs/2026-07-15-cleanup-task-design.md)
+- 2026-07-15 — two-step-scheduledtask-admin: two-step create flow for admin-authored
+  `ScheduledTask` rows →
+  [view @d49eb31](https://github.com/lincolnloop/django-absurd/blob/d49eb31405cd55fbeeea1e601756d0c1c7acf332/docs/specs/2026-07-15-two-step-scheduledtask-admin-design.md)
+- 2026-07-16 — declarative-cleanup-schedule: `OPTIONS["CLEANUP"]` drives retention under
+  beat + a native `pg_cron` cleanup job →
+  [view @d49eb31](https://github.com/lincolnloop/django-absurd/blob/d49eb31405cd55fbeeea1e601756d0c1c7acf332/docs/specs/2026-07-16-declarative-cleanup-schedule-design.md)
+- 2026-07-17 — single-absurd-backend: exactly one `AbsurdBackend` per project, resolved
+  by capability not by the `default` name →
+  [view @d49eb31](https://github.com/lincolnloop/django-absurd/blob/d49eb31405cd55fbeeea1e601756d0c1c7acf332/docs/specs/2026-07-17-single-absurd-backend-design.md)
+- 2026-07-18 — durable-steps-and-sleep: checkpointed steps + durable sleep reached via
+  an on-demand accessor, not a task-context subclass →
+  [view @d49eb31](https://github.com/lincolnloop/django-absurd/blob/d49eb31405cd55fbeeea1e601756d0c1c7acf332/docs/specs/2026-07-18-durable-steps-and-sleep-design.md)
+- 2026-07-18 — scheduler-from-app-presence: derive scheduler (beat / `pg_cron`) from
+  `INSTALLED_APPS`, dropping the `SCHEDULER` option and its check →
+  [view @d49eb31](https://github.com/lincolnloop/django-absurd/blob/d49eb31405cd55fbeeea1e601756d0c1c7acf332/docs/specs/2026-07-18-scheduler-from-app-presence-design.md)
+- 2026-07-19 — events-await-emit: durable `await_event` + top-level `emit_event`
+  (`await_task_result` cut) →
+  [view @d49eb31](https://github.com/lincolnloop/django-absurd/blob/d49eb31405cd55fbeeea1e601756d0c1c7acf332/docs/specs/2026-07-19-events-await-emit-design.md)
+- 2026-07-21 — pytest-plugin: automatic Absurd test-state cleanup with Django parity
+  (monkeypatch of the post-teardown hook; the fixture approach was superseded) →
+  [view @d49eb31](https://github.com/lincolnloop/django-absurd/blob/d49eb31405cd55fbeeea1e601756d0c1c7acf332/docs/specs/2026-07-21-pytest-plugin-design.md)
+- 2026-07-21 — sync-schedules-on-migrate: test-database-gated automatic `pg_cron` sync
+  at migrate time →
+  [view @d49eb31](https://github.com/lincolnloop/django-absurd/blob/d49eb31405cd55fbeeea1e601756d0c1c7acf332/docs/specs/2026-07-21-sync-schedules-on-migrate-design.md)
 
 ## Plans
 
@@ -105,3 +135,28 @@ commit where it last lived — recoverable from git any time.
   [view @912fea3](https://github.com/lincolnloop/django-absurd/blob/912fea398f7b93f41fd520f420841be7dd9232fb/docs/plans/2026-07-07-examples-nanodjango-three-apps.md)
 - 2026-07-07 — pgcron-schedule-admin implementation plan →
   [view @912fea3](https://github.com/lincolnloop/django-absurd/blob/912fea398f7b93f41fd520f420841be7dd9232fb/docs/plans/2026-07-07-pgcron-schedule-admin.md)
+- 2026-07-07 — admin-definable-schedules phase-a implementation plan →
+  [view @d49eb31](https://github.com/lincolnloop/django-absurd/blob/d49eb31405cd55fbeeea1e601756d0c1c7acf332/docs/plans/2026-07-07-admin-definable-schedules-phase-a.md)
+- 2026-07-09 — admin-writable-schedules phase-b implementation plan →
+  [view @d49eb31](https://github.com/lincolnloop/django-absurd/blob/d49eb31405cd55fbeeea1e601756d0c1c7acf332/docs/plans/2026-07-09-admin-writable-schedules-phase-b.md)
+- 2026-07-14 — typed-spawn-options-and-dynamic-queue implementation plan →
+  [view @d49eb31](https://github.com/lincolnloop/django-absurd/blob/d49eb31405cd55fbeeea1e601756d0c1c7acf332/docs/plans/2026-07-14-typed-spawn-options-and-dynamic-queue.md)
+- 2026-07-15 — two-step-scheduledtask-admin implementation plan →
+  [view @d49eb31](https://github.com/lincolnloop/django-absurd/blob/d49eb31405cd55fbeeea1e601756d0c1c7acf332/docs/plans/2026-07-15-two-step-scheduledtask-admin.md)
+- 2026-07-16 — cleanup-helper implementation plan →
+  [view @d49eb31](https://github.com/lincolnloop/django-absurd/blob/d49eb31405cd55fbeeea1e601756d0c1c7acf332/docs/plans/2026-07-16-cleanup-helper.md)
+- 2026-07-16 — declarative-cleanup-schedule implementation plan →
+  [view @d49eb31](https://github.com/lincolnloop/django-absurd/blob/d49eb31405cd55fbeeea1e601756d0c1c7acf332/docs/plans/2026-07-16-declarative-cleanup-schedule.md)
+- 2026-07-17 — single-absurd-backend implementation plan →
+  [view @d49eb31](https://github.com/lincolnloop/django-absurd/blob/d49eb31405cd55fbeeea1e601756d0c1c7acf332/docs/plans/2026-07-17-single-absurd-backend.md)
+- 2026-07-18 — durable-steps-and-sleep implementation plan →
+  [view @d49eb31](https://github.com/lincolnloop/django-absurd/blob/d49eb31405cd55fbeeea1e601756d0c1c7acf332/docs/plans/2026-07-18-durable-steps-and-sleep.md)
+- 2026-07-18 — scheduler-from-app-presence implementation plan →
+  [view @d49eb31](https://github.com/lincolnloop/django-absurd/blob/d49eb31405cd55fbeeea1e601756d0c1c7acf332/docs/plans/2026-07-18-scheduler-from-app-presence.md)
+- 2026-07-19 — events-await-emit implementation plan →
+  [view @d49eb31](https://github.com/lincolnloop/django-absurd/blob/d49eb31405cd55fbeeea1e601756d0c1c7acf332/docs/plans/2026-07-19-events-await-emit.md)
+- 2026-07-21 — sync-schedules-on-migrate implementation plan →
+  [view @d49eb31](https://github.com/lincolnloop/django-absurd/blob/d49eb31405cd55fbeeea1e601756d0c1c7acf332/docs/plans/2026-07-21-sync-schedules-on-migrate.md)
+- 2026-07-22 — absurd-db-autodetect implementation plan (abandoned fixture-autodetect
+  approach; superseded by the shipped post-teardown monkeypatch) →
+  [view @d49eb31](https://github.com/lincolnloop/django-absurd/blob/d49eb31405cd55fbeeea1e601756d0c1c7acf332/docs/plans/2026-07-22-absurd-db-autodetect.md)
