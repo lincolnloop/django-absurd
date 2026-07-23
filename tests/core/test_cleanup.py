@@ -27,7 +27,10 @@ if t.TYPE_CHECKING:
 
     CleanupCallable = t.Callable[..., list[QueueCleanup]]
 
-pytestmark = pytest.mark.django_db(transaction=True)
+pytestmark = [
+    pytest.mark.django_db(transaction=True),
+    pytest.mark.usefixtures("_isolate_queues"),
+]
 
 ABSURD = "django_absurd.backends.AbsurdBackend"
 

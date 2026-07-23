@@ -12,7 +12,7 @@ from django_absurd.management.base import (
     resolve_backend,
 )
 from django_absurd.queues import provision_backend
-from django_absurd.worker import WorkerOptions, run_worker
+from django_absurd.worker import WorkerOptions, run_burst_worker, run_worker
 
 
 class Command(AbsurdReportCommand):
@@ -81,6 +81,20 @@ class Command(AbsurdReportCommand):
         if options["beat"] and backend.scheduler == "pg_cron":
             raise CommandError(BEAT_DISABLED_UNDER_PG_CRON)
 
+        worker_options = WorkerOptions(
+            concurrency=options["concurrency"],
+            claim_timeout=options["claim_timeout"],
+            poll_interval=options["poll_interval"],
+            batch_size=options["batch_size"],
+            worker_id=options["worker_id"],
+        )
+
+        if options["burst"]:
+            result = run_burst_worker(queue, options=worker_options)
+            self.report_sync_result(result)
+            self.stdout.write(f"Started worker on queue '{queue}'.")
+            return
+
         if queue not in backend.queues:
             valid = ", ".join(sorted(backend.queues))
             msg = (
@@ -97,18 +111,10 @@ class Command(AbsurdReportCommand):
             raise CommandError(str(exc)) from exc
         self.report_sync_result(result)
 
-        worker_options = WorkerOptions(
-            concurrency=options["concurrency"],
-            claim_timeout=options["claim_timeout"],
-            poll_interval=options["poll_interval"],
-            batch_size=options["batch_size"],
-            worker_id=options["worker_id"],
-        )
         self.stdout.write(f"Started worker on queue '{queue}'.")
         run_worker(
             backend,
             queue,
-            burst=options["burst"],
             run_beat=options["beat"],
             options=worker_options,
         )

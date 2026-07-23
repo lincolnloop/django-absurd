@@ -9,6 +9,7 @@ nav = [
   {"Workflows" = "workflows.md"},
   {"Cron Jobs" = "cron-jobs.md"},
   {"Cleanup" = "cleanup.md"},
+  {"Testing" = "testing.md"},
   {"How it works" = "how-it-works.md"},
 ]
 repo_name = "lincolnloop/django-absurd"

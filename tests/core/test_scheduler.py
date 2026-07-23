@@ -27,7 +27,10 @@ from tests.models import Payload
 from tests.tasks import make_group as make_group_task
 from tests.utils import make_tasks_settings
 
-pytestmark = pytest.mark.django_db(transaction=True)
+pytestmark = [
+    pytest.mark.django_db(transaction=True),
+    pytest.mark.usefixtures("_isolate_queues"),
+]
 
 
 def make_tasks_setting(

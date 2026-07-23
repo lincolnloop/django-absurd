@@ -16,7 +16,10 @@ from django_absurd.params import AbsurdSpawnParams
 from django_absurd.queues import get_absurd_client
 from tests.tasks import add, make_group, with_default_attempts
 
-pytestmark = pytest.mark.django_db(transaction=True)
+pytestmark = [
+    pytest.mark.django_db(transaction=True),
+    pytest.mark.usefixtures("_isolate_queues"),
+]
 
 
 def claim_one() -> list[ClaimedTask]:

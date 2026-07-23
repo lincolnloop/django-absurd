@@ -1,3 +1,10 @@
+[dependency-groups]
+dev = [
+  "pytest",
+  "pytest-cov",
+  "pytest-django",
+]
+
 [project]
 dependencies = [
   "django-absurd",
@@ -8,6 +15,11 @@ dependencies = [
 name = "django-absurd-example-web"
 requires-python = ">=3.12"
 version = "0"
+
+[tool.coverage]
+
+[tool.coverage.run]
+source = ["tests"]
 
 # django-absurd from the local checkout (repo root), so the demo exercises THIS
 # branch's code — not a released version.

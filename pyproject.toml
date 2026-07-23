@@ -66,6 +66,9 @@ name = "django-absurd"
 readme = "README.md"
 requires-python = ">=3.12"
 
+[project.entry-points.pytest11]
+django_absurd = "django_absurd.pytest_plugin"
+
 [project.urls]
 Homepage = "https://github.com/lincolnloop/django-absurd"
 Issues = "https://github.com/lincolnloop/django-absurd/issues"
@@ -146,7 +149,7 @@ select = ["ALL"]
 "**/migrations/*" = [
   "E501",  # Allow exceeded line length in migrations.
 ]
-"tests/**/*" = [
+"**/tests/**/*" = [
   "S101",  # Allow use of asserts
   "S603",  # Allow subprocess calls in tests
   "SLF001",  # Allow private member access in tests (e.g. _meta)
