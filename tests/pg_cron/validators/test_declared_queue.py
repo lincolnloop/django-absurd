@@ -9,8 +9,8 @@ from tests.pg_cron.validators.utils import (
 
 
 def test_undeclared_queue_override_rejected_by_check(
-    settings: pytest_django.fixtures.SettingsWrapper,
     capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     # The core check validates explicit queue overrides via validate_schedule, which
     # calls validate_declared_queue with the override value and emits the custom

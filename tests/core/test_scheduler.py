@@ -495,8 +495,8 @@ def test_absurd_beat_valid_and_signal_handler(
 
 
 def test_absurd_beat_startup_reports_cleanup(
-    settings: pytest_django.fixtures.SettingsWrapper,
     capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     # Covers absurd_beat.py:38-39 (cleanup appended to the startup message). Empty
     # SCHEDULE + a CLEANUP makes run_beat loop, so a handler-gated SIGINT stops it; the

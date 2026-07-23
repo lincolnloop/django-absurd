@@ -52,7 +52,7 @@ def extract_field_texts(rows: "ResultSet[Tag]", field: str) -> set[str]:
     return {t.cast("Tag", r.select_one(f".{field}")).get_text(strip=True) for r in rows}
 
 
-def test_changelist_unions_and_filters(client: Client, admin_user: User) -> None:
+def test_changelist_unions_and_filters(admin_user: User, client: Client) -> None:
     seed()
     client.force_login(admin_user)
     resp = client.get(CHANGELIST)
@@ -77,7 +77,7 @@ def test_changelist_unions_and_filters(client: Client, admin_user: User) -> None
     assert fnames == {"tests.tasks.add"}  # boom is on the default queue only
 
 
-def test_changelist_shows_mixed_states(client: Client, admin_user: User) -> None:
+def test_changelist_shows_mixed_states(admin_user: User, client: Client) -> None:
     seed_mixed()
     client.force_login(admin_user)
     resp = client.get(CHANGELIST)
@@ -86,7 +86,7 @@ def test_changelist_shows_mixed_states(client: Client, admin_user: User) -> None
     assert states == {"pending", "completed", "failed"}
 
 
-def test_changelist_filters_by_state(client: Client, admin_user: User) -> None:
+def test_changelist_filters_by_state(admin_user: User, client: Client) -> None:
     seed_mixed()
     client.force_login(admin_user)
     resp_failed = client.get(CHANGELIST, {"state": "failed"})
@@ -100,7 +100,7 @@ def test_changelist_filters_by_state(client: Client, admin_user: User) -> None:
 
 
 def test_changelist_search_narrows_by_task_name(
-    client: Client, admin_user: User
+    admin_user: User, client: Client
 ) -> None:
     seed_mixed()  # two add tasks + one boom
     client.force_login(admin_user)
@@ -111,7 +111,7 @@ def test_changelist_search_narrows_by_task_name(
 
 
 def test_changelist_shows_dates_ordered_by_recent_activity(
-    client: Client, admin_user: User
+    admin_user: User, client: Client
 ) -> None:
     call_command("absurd_sync_queues")  # index the default queue
     older = add.enqueue(1, 1)
@@ -136,7 +136,7 @@ def test_changelist_shows_dates_ordered_by_recent_activity(
 
 
 def test_changelist_warns_about_unindexed_queue(
-    client: Client, admin_user: User
+    admin_user: User, client: Client
 ) -> None:
     # build the views over the declared queues, then create a queue directly
     # (config drift): it lands in the catalog but no view arm references it →
@@ -154,7 +154,7 @@ def test_changelist_warns_about_unindexed_queue(
 
 
 def test_changelist_no_warning_when_all_queues_indexed(
-    client: Client, admin_user: User
+    admin_user: User, client: Client
 ) -> None:
     seed_mixed()  # syncs + workers → every catalog queue is an arm
     client.force_login(admin_user)
@@ -164,8 +164,8 @@ def test_changelist_no_warning_when_all_queues_indexed(
 
 
 def test_changelist_survives_staleness_detection_failure(
-    client: Client,
     admin_user: User,
+    client: Client,
     django_db_blocker: "DjangoDbBlocker",
 ) -> None:
     client.force_login(admin_user)
@@ -181,7 +181,7 @@ def test_changelist_survives_staleness_detection_failure(
             call_command("migrate", "django_absurd", verbosity=0)
 
 
-def test_detail_shows_state(client: Client, admin_user: User) -> None:
+def test_detail_shows_state(admin_user: User, client: Client) -> None:
     _, failed, _ = seed_mixed()
     client.force_login(admin_user)
     resp = client.get(change_url(failed.id))
@@ -192,7 +192,7 @@ def test_detail_shows_state(client: Client, admin_user: User) -> None:
 
 
 def test_detail_for_missing_object_does_not_500(
-    client: Client, admin_user: User
+    admin_user: User, client: Client
 ) -> None:
     seed_mixed()
     client.force_login(admin_user)
@@ -203,7 +203,7 @@ def test_detail_for_missing_object_does_not_500(
 
 
 def test_detail_groups_fields_and_inlines_runs(
-    client: Client, admin_user: User
+    admin_user: User, client: Client
 ) -> None:
     completed, _, _ = seed_mixed()  # a completed task → has at least one run
     client.force_login(admin_user)
@@ -224,7 +224,7 @@ def test_detail_groups_fields_and_inlines_runs(
 
 
 def test_detail_inlines_checkpoints_and_run_available_at(
-    client: Client, admin_user: User
+    admin_user: User, client: Client
 ) -> None:
     call_command("absurd_sync_queues")
     DURABLE_STEP_CALLS["n"] = 0
@@ -271,7 +271,7 @@ def test_detail_inlines_waits_for_a_suspended_await_event(
     assert "wait-admin-demo" in names
 
 
-def test_detail_renders_read_only(client: Client, admin_user: User) -> None:
+def test_detail_renders_read_only(admin_user: User, client: Client) -> None:
     seed()
     client.force_login(admin_user)
     client.get(CHANGELIST)  # prime the view
@@ -286,13 +286,13 @@ def test_detail_renders_read_only(client: Client, admin_user: User) -> None:
     assert soup.select_one('textarea[name="params"]') is None
 
 
-def test_add_view_forbidden(client: Client, admin_user: User) -> None:
+def test_add_view_forbidden(admin_user: User, client: Client) -> None:
     client.force_login(admin_user)
     resp = client.get(ADD)
     assert resp.status_code in (403, 302)
 
 
-def test_admin_labels_app_as_absurd(client: Client, admin_user: User) -> None:
+def test_admin_labels_app_as_absurd(admin_user: User, client: Client) -> None:
     _, failed, _ = seed_mixed()
     client.force_login(admin_user)
     resp_index = client.get(INDEX)
@@ -308,7 +308,7 @@ def test_admin_labels_app_as_absurd(client: Client, admin_user: User) -> None:
 
 
 def test_changelist_degrades_when_view_dropped(
-    client: Client, admin_user: User
+    admin_user: User, client: Client
 ) -> None:
     call_command("absurd_sync_queues")
     with connections["default"].cursor() as cur:

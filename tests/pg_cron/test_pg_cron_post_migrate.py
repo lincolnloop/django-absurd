@@ -46,8 +46,8 @@ def run_cron_sync(
 
 
 def test_reconcile_creates_owned_cron_jobs_under_pg_cron(
-    settings: "pytest_django.fixtures.SettingsWrapper",
     run_cron_sync: collections.abc.Callable[[], None],
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     settings.TASKS = build_pg_cron_tasks(
         {
@@ -65,8 +65,8 @@ def test_reconcile_creates_owned_cron_jobs_under_pg_cron(
 
 
 def test_reconcile_emits_jobs_for_admin_rows_created_without_signal(
-    settings: "pytest_django.fixtures.SettingsWrapper",
     run_cron_sync: collections.abc.Callable[[], None],
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     """A source="a" row created without firing post_save (a data migration's
     historical model, or bulk_create) has no pg_cron job; the reconcile re-emits it so
@@ -95,8 +95,8 @@ def test_reconcile_emits_jobs_for_admin_rows_created_without_signal(
 
 
 def test_reconcile_admin_rows_is_idempotent(
-    settings: "pytest_django.fixtures.SettingsWrapper",
     run_cron_sync: collections.abc.Callable[[], None],
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     """Re-running the reconcile re-emits admin jobs harmlessly (cron.schedule is an
     upsert) — one row still maps to exactly one job, unchanged."""
@@ -124,8 +124,8 @@ def test_reconcile_admin_rows_is_idempotent(
 
 
 def test_reconcile_prunes_owned_settings_job_whose_row_vanished(
-    settings: "pytest_django.fixtures.SettingsWrapper",
     run_cron_sync: collections.abc.Callable[[], None],
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     """A settings job with no backing row — its row was removed out-of-band (a
     signal-less delete), so no post_delete unscheduled it — is orphaned; reconcile
@@ -146,8 +146,8 @@ def test_reconcile_prunes_owned_settings_job_whose_row_vanished(
 
 
 def test_reconcile_prunes_admin_job_whose_row_vanished(
-    settings: "pytest_django.fixtures.SettingsWrapper",
     run_cron_sync: collections.abc.Callable[[], None],
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     """An admin job with no backing row is orphaned; the reconcile prunes it (symmetric
     with the settings lane). Set up by scheduling from an unsaved instance."""
@@ -197,8 +197,8 @@ def test_reconcile_missing_row_fires_clean_noop(
 
 
 def test_reconcile_survives_missing_scheduledtask_table(
-    settings: "pytest_django.fixtures.SettingsWrapper",
     caplog: pytest.LogCaptureFixture,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     settings.TASKS = build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
@@ -318,8 +318,8 @@ def test_reconcile_emits_prune_line_on_sync(
 
 
 def test_reconcile_warns_on_none_task_path(
-    settings: "pytest_django.fixtures.SettingsWrapper",
     caplog: pytest.LogCaptureFixture,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     settings.TASKS = build_pg_cron_tasks({"x": {"task": None, "cron": "0 2 * * *"}})
     with caplog.at_level(logging.WARNING, logger="django_absurd"):
@@ -332,8 +332,8 @@ def test_reconcile_warns_on_none_task_path(
 
 
 def test_reconcile_warns_on_string_kwargs(
-    settings: "pytest_django.fixtures.SettingsWrapper",
     caplog: pytest.LogCaptureFixture,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     settings.TASKS = build_pg_cron_tasks(
         {"x": {"task": "tests.tasks.add", "cron": "0 2 * * *", "kwargs": "abc"}}

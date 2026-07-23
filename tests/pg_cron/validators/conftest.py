@@ -13,11 +13,11 @@ from tests.pg_cron.validators.utils import (
 
 @pytest.fixture(params=["check", "form", "model"])
 def validate(
-    request: pytest.FixtureRequest,
-    settings: pytest_django.fixtures.SettingsWrapper,
+    admin_user: User,
     capsys: pytest.CaptureFixture[str],
     client: Client,
-    admin_user: User,
+    request: pytest.FixtureRequest,
+    settings: pytest_django.fixtures.SettingsWrapper,
 ) -> ValidateSubject:
     """Parametrized subject: run a case through each real enforcing entrypoint —
     the system check, the admin change-form POST, and ScheduledTask.full_clean()."""
@@ -32,9 +32,9 @@ def validate(
 
 @pytest.fixture(params=["check", "model"])
 def validate_check_and_model(
+    capsys: pytest.CaptureFixture[str],
     request: pytest.FixtureRequest,
     settings: pytest_django.fixtures.SettingsWrapper,
-    capsys: pytest.CaptureFixture[str],
 ) -> ValidateSubject:
     """Subjects for rules the admin form cannot express (e.g. a non-JSON Python
     object for args/kwargs is not a form text input): the system check + full_clean."""
@@ -45,10 +45,10 @@ def validate_check_and_model(
 
 @pytest.fixture(params=["form", "model"])
 def validate_model_and_form(
+    admin_user: User,
+    client: Client,
     request: pytest.FixtureRequest,
     settings: pytest_django.fixtures.SettingsWrapper,
-    client: Client,
-    admin_user: User,
 ) -> ValidateSubject:
     """Subjects for rules the system check does not enforce (e.g. cron grammar is
     DB-authoritative, deferred from check time): the admin form POST + full_clean."""

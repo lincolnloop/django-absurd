@@ -18,7 +18,7 @@ def change_url(pk: str) -> str:
     return reverse("admin:django_absurd_event_change", args=[quote(pk)])
 
 
-def test_changelist_and_detail(client: Client, admin_user: User) -> None:
+def test_changelist_and_detail(admin_user: User, client: Client) -> None:
     call_command("absurd_sync_queues")
     with connections["default"].cursor() as cur:
         cur.execute(

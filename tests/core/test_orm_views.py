@@ -14,6 +14,7 @@ from django_absurd.admin_views import (
 )
 from django_absurd.apps import provision_queues_after_migrate
 from django_absurd.exceptions import ViewNotProvisionedError
+from django_absurd.models import Queue
 from django_absurd.queues import get_absurd_client
 from tests.tasks import add
 
@@ -57,8 +58,6 @@ def test_migrate_provisions_declared_queues_and_views(
 ) -> None:
     # `migrate` fires post_migrate → sync_queues: declared queues created + views
     # built, reported on stdout in Django's migrate style.
-    from django_absurd.models import Queue  # noqa: PLC0415
-
     buf = StringIO()
     with django_db_blocker.unblock():
         call_command("migrate", "django_absurd", "zero", verbosity=0)

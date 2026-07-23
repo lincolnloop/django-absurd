@@ -25,8 +25,8 @@ def run_absurd_check(
 
 
 def test_storage_mode_drift_detected_on_non_default_alias(
-    settings: SettingsWrapper,
     capsys: pytest.CaptureFixture[str],
+    settings: SettingsWrapper,
 ) -> None:
     # W002 now fires only on storage_mode drift (immutable; never self-heals). This
     # locks the alias threading through query_queue_state on a non-default database.
