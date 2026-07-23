@@ -26,7 +26,9 @@ jobs:
       - name: Build site
         run: uv run zensical build
       - name: Upload Pages artifact
-        if: ${{ github.event_name != 'pull_request' }}
+        if: >-
+          ${{ github.event_name == 'workflow_dispatch'
+          || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
         # yamllint disable-line rule:line-length
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
@@ -34,7 +36,9 @@ jobs:
 
   deploy:
     name: deploy to GitHub Pages
-    if: ${{ github.event_name != 'pull_request' }}
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch'
+      || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
     needs: build
     runs-on: ubuntu-latest
     permissions:
