@@ -66,5 +66,5 @@ def index(request: HttpRequest) -> HttpResponse:
     return redirect("/admin/")
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     app.run()

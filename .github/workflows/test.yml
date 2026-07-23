@@ -61,40 +61,56 @@ jobs:
           fail_ci_if_error: true
           files: junit-core.xml,junit-pg_cron.xml,junit-multidb.xml
 
-  examples-web:
-    name: examples/web pytest suite
+  examples:
+    name: examples/${{ matrix.example }} pytest suite
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - example: web
+            service: db
+            pgport: "5432"
+            pgdatabase: postgres
+          - example: beat
+            service: db
+            pgport: "5432"
+            pgdatabase: postgres
+          - example: pg_cron
+            service: db_pg_cron
+            pgport: "5434"
+            pgdatabase: demo
     env:
       PGHOST: localhost
       PGUSER: postgres
       PGPASSWORD: postgres
-      PGDATABASE: postgres
-      PGPORT: "5432"
+      PGDATABASE: ${{ matrix.pgdatabase }}
+      PGPORT: ${{ matrix.pgport }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install uv
         uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
       - name: Start Postgres service
-        run: docker compose up -d --build --wait db
+        run: docker compose up -d --build --wait ${{ matrix.service }}
       - name: Run pytest
-        run: cd examples/web && uv sync && uv run pytest
+        run: cd examples/${{ matrix.example }} && uv sync && uv run pytest
       - name: Upload coverage to Codecov
         if: ${{ success() || failure() }}
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          flags: examples-web
+          flags: examples-${{ matrix.example }}
           fail_ci_if_error: true
-          files: examples/web/coverage.xml
+          files: examples/${{ matrix.example }}/coverage.xml
       - name: Upload test results to Codecov
         if: ${{ success() || failure() }}
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           report_type: test_results
-          flags: examples-web
+          flags: examples-${{ matrix.example }}
           fail_ci_if_error: true
-          files: examples/web/junit-examples-web.xml
+          files: examples/${{ matrix.example }}/junit-examples-${{ matrix.example }}.xml
 
   build:
     name: build distribution
