@@ -74,7 +74,7 @@ duplicate that material here.
   `pytest.toml` and settings; invoke explicitly (a bare `uv run pytest` at repo root
   collects nothing and exits code 5 — intentional):
   - `uv run pytest tests/core` — core django-absurd; `django_absurd.pg_cron` NOT
-    installed; plain `db` service (`PGPORT`, default 5432; `.envrc` reserves 5433).
+    installed; plain `db` service (`PGPORT`, default 5432).
   - `uv run pytest tests/pg_cron` — pg_cron app installed; requires the `db_pg_cron`
     service (`PGPORT_PGCRON`, default 5434); test DB `absurd_test_pg_cron` matches
     `cron.database_name`.

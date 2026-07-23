@@ -6,7 +6,8 @@ Demonstrates enqueue + result with django-absurd and nanodjango.
 - Watch the task status page auto-refresh until the result appears.
 - Run an order-fulfillment workflow mirroring
   [Absurd's headline example](https://github.com/earendil-works/absurd#readme) (charge →
-  reserve inventory → wait → notify) to see Steps (checkpoints) and Sleep.
+  reserve inventory → wait → notify) to see Steps (checkpoints) and Events (it suspends
+  on `await_event` until a button emits the matching event).
 - Browse queue tables in the auto-registered admin.
 
 django-absurd is installed from the local checkout so the demo runs against this

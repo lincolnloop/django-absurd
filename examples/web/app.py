@@ -3,7 +3,7 @@
 Enqueue add(a, b) from a form; the worker runs it; watch the result page and
 browse the read-only queue tables in the admin (auto-registered by django-absurd).
 
-Also demonstrates Steps (checkpoints) + Sleep + Events: an order-fulfillment
+Also demonstrates Steps (checkpoints) + Events: an order-fulfillment
 workflow that checkpoints each step and suspends on await_event until a
 "mark packed" button emits the matching event.
 
