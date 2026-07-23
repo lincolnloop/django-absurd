@@ -19,16 +19,9 @@ no-DB proof lives in tests/core.
 import typing as t
 
 import pytest
-from app import add, app  # app.py's own Django(...) instance + its `add` task
+from app import add  # app.py's own `add` task
 
 from django_absurd.models import Queue, Task
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _init() -> None:
-    """Finish nanodjango's setup (admin/API routes) — mirrors nanodjango's own
-    (unmerged) example-app tests: https://github.com/radiac/nanodjango/pull/28."""
-    app._prepare()
 
 
 @pytest.mark.django_db(transaction=True)

@@ -1,14 +1,7 @@
 import typing as t
 
 import pytest
-from app import add, app  # app.py's own Django(...) instance + its `add` task
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _init() -> None:
-    """Finish nanodjango's setup (admin/API routes) — mirrors nanodjango's own
-    (unmerged) example-app tests: https://github.com/radiac/nanodjango/pull/28."""
-    app._prepare()
+from app import add  # app.py's own `add` task
 
 
 # transaction=True (not plain `db`): absurd_drain_queue's burst worker opens its
