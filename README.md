@@ -15,8 +15,17 @@ separate broker — reusing Django's own database connection.
 
 ## Install
 
+django-absurd is in **alpha** — only pre-releases are published, so your installer must
+be allowed to pick them up.
+
 ```console
-pip install django-absurd
+uv add django-absurd --prerelease allow
+```
+
+Using pip:
+
+```console
+pip install --pre django-absurd
 ```
 
 ## Quickstart
