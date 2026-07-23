@@ -52,8 +52,8 @@ def run_pg_cron_cleanup_check(
 
 
 def test_pg_cron_cleanup_accepts_arbitrary_nonempty_schedule(
-    settings: pytest_django.fixtures.SettingsWrapper,
     capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     """Under pg_cron, CLEANUP's cron grammar is DB-authoritative at sync time — the
     check only requires a non-empty string, unlike beat's croniter validation."""
@@ -64,16 +64,16 @@ def test_pg_cron_cleanup_accepts_arbitrary_nonempty_schedule(
 
 
 def test_pg_cron_cleanup_rejects_empty_schedule(
-    settings: pytest_django.fixtures.SettingsWrapper,
     capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     out = run_pg_cron_cleanup_check(settings, capsys, {"schedule": ""})
     assert "absurd.E010" in out
 
 
 def test_pg_cron_task_import_raise_reports_e007_not_crash(
-    settings: pytest_django.fixtures.SettingsWrapper,
     capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     """A scheduled task whose module raises non-ImportError on import.
 
@@ -98,8 +98,8 @@ def test_pg_cron_task_import_raise_reports_e007_not_crash(
 
 @pytest.mark.parametrize("cron", ["*/30 * * * * *", "30 seconds"])
 def test_pg_cron_cron_grammar_not_checked(
-    settings: pytest_django.fixtures.SettingsWrapper,
     capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
     cron: str,
 ) -> None:
     """pg_cron cron grammar is DB-authoritative.
@@ -119,8 +119,8 @@ def test_pg_cron_cron_grammar_not_checked(
 
 
 def test_pg_cron_bad_name_charset_rejected(
-    settings: pytest_django.fixtures.SettingsWrapper,
     capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     """Schedule name with spaces/special chars rejected under pg_cron."""
     out = run_pg_cron_check(
@@ -141,8 +141,8 @@ def test_pg_cron_bad_name_charset_rejected(
 
 
 def test_pg_cron_jobname_too_long_rejected(
-    settings: pytest_django.fixtures.SettingsWrapper,
     capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     """Composed jobname exceeding 63 bytes rejected under pg_cron."""
     # name long enough to push _dj:s:<name> > 63 bytes
@@ -166,8 +166,8 @@ def test_pg_cron_jobname_too_long_rejected(
 
 
 def test_pg_cron_undeclared_task_queue_rejected(
-    settings: pytest_django.fixtures.SettingsWrapper,
     capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     """Task with queue_name='reports' not in declared queues rejected."""
     # tests.tasks.on_reports has @task(queue_name="reports"); exclude from
@@ -192,8 +192,8 @@ def test_pg_cron_undeclared_task_queue_rejected(
 
 
 def test_pg_cron_undeclared_explicit_queue_single_error(
-    settings: pytest_django.fixtures.SettingsWrapper,
     capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     """Undeclared explicit queue override yields exactly ONE E007 (core's)."""
     out = run_pg_cron_check(
@@ -215,8 +215,8 @@ def test_pg_cron_undeclared_explicit_queue_single_error(
 
 
 def test_pg_cron_non_mapping_schedule_single_error(
-    settings: pytest_django.fixtures.SettingsWrapper,
     capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     """Non-mapping SCHEDULE under pg_cron yields only core's mapping E007."""
     out = run_pg_cron_check(
@@ -231,8 +231,8 @@ def test_pg_cron_non_mapping_schedule_single_error(
 
 
 def test_pg_cron_non_mapping_entry_single_error(
-    settings: pytest_django.fixtures.SettingsWrapper,
     capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     """Non-mapping schedule entry under pg_cron yields only core's E007."""
     out = run_pg_cron_check(
@@ -247,8 +247,8 @@ def test_pg_cron_non_mapping_entry_single_error(
 
 
 def test_pg_cron_missing_task_no_queue_error(
-    settings: pytest_django.fixtures.SettingsWrapper,
     capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     """Missing task under pg_cron yields core's import E007 only."""
     out = run_pg_cron_check(
@@ -264,8 +264,8 @@ def test_pg_cron_missing_task_no_queue_error(
 
 
 def test_pg_cron_unimportable_task_no_queue_error(
-    settings: pytest_django.fixtures.SettingsWrapper,
     capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     """Unimportable task under pg_cron yields core's import E007."""
     out = run_pg_cron_check(
@@ -281,8 +281,8 @@ def test_pg_cron_unimportable_task_no_queue_error(
 
 
 def test_pg_cron_non_task_no_queue_error(
-    settings: pytest_django.fixtures.SettingsWrapper,
     capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     """Non-task path under pg_cron yields core's not-a-task E007."""
     out = run_pg_cron_check(
@@ -301,8 +301,8 @@ def test_pg_cron_non_task_no_queue_error(
 
 @pytest.mark.parametrize("cron", ["", 300])
 def test_pg_cron_structurally_absent_cron_rejected(
-    settings: pytest_django.fixtures.SettingsWrapper,
     capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
     cron: t.Any,
 ) -> None:
     """pg_cron cron grammar DB-authoritative, structural presence is not.
@@ -323,8 +323,8 @@ def test_pg_cron_structurally_absent_cron_rejected(
 
 
 def test_pg_cron_trailing_newline_name_rejected(
-    settings: pytest_django.fixtures.SettingsWrapper,
     capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     """Schedule name with trailing newline rejected (fullmatch, not match)."""
     out = run_pg_cron_check(
@@ -345,8 +345,8 @@ def test_pg_cron_trailing_newline_name_rejected(
 
 
 def test_pg_cron_empty_string_queue_resolves_via_effective_queue(
-    settings: pytest_django.fixtures.SettingsWrapper,
     capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     """queue: "" is falsy — pg_cron resolves via task queue_name.
 
@@ -372,8 +372,8 @@ def test_pg_cron_empty_string_queue_resolves_via_effective_queue(
 
 
 def test_pg_cron_valid_five_field_cron_no_error(
-    settings: pytest_django.fixtures.SettingsWrapper,
     capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     """Valid 5-field cron under pg_cron passes without absurd.E007."""
     out = run_pg_cron_check(
@@ -393,8 +393,8 @@ def test_pg_cron_valid_five_field_cron_no_error(
 
 
 def test_pg_cron_non_string_name_yields_e007_not_typeerror(
-    settings: pytest_django.fixtures.SettingsWrapper,
     capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     """SCHEDULE key that is integer yields E007, not TypeError."""
     out = run_pg_cron_check(

@@ -32,7 +32,7 @@ def insert_checkpoint(task_id: uuid.UUID, name: str, status: str = "committed") 
         )
 
 
-def test_changelist(client: Client, admin_user: AbstractBaseUser) -> None:
+def test_changelist(admin_user: AbstractBaseUser, client: Client) -> None:
     call_command("absurd_sync_queues")
     insert_checkpoint(uuid.uuid4(), "cp1")
     client.force_login(t.cast("User", admin_user))
@@ -45,7 +45,7 @@ def test_changelist(client: Client, admin_user: AbstractBaseUser) -> None:
     assert "cp1" in names
 
 
-def test_detail_with_nasty_name(client: Client, admin_user: AbstractBaseUser) -> None:
+def test_detail_with_nasty_name(admin_user: AbstractBaseUser, client: Client) -> None:
     call_command("absurd_sync_queues")
     tid = uuid.uuid4()
     with connections["default"].cursor() as cur:

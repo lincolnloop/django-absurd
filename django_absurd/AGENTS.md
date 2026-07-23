@@ -150,6 +150,8 @@ System check IDs:
 - `absurd.E009` — `OPTIONS["DEFAULT_MAX_ATTEMPTS"]` is not an integer `>= 1`.
 - `absurd.E010` — invalid `CLEANUP` configuration (not a `{"schedule": …}` map, or
   unknown keys; cron grammar checked at `check` time for beat, at sync for pg_cron).
+- `absurd.W002` (Warning) — a queue's declared `storage_mode` differs from the database;
+  `storage_mode` is immutable once the queue exists.
 - `absurd.W003` (Warning) — `"django_absurd.pg_cron"` is in `INSTALLED_APPS` but ordered
   before `"django_absurd"`, causing its `post_migrate` cron reconcile to run before
   queue provisioning. See [pg_cron backend](#pg_cron-backend).
@@ -189,8 +191,8 @@ Absurd parameters attach two ways — both live in `django_absurd.params`:
 Parameter fields (see `django_absurd.params`): `max_attempts`, `retry_strategy`,
 `cancellation` (defaults and per-call), plus `headers` and `idempotency_key` (per-call
 only). Field types come from `absurd_sdk` (`RetryStrategy`, `CancellationPolicy`,
-`JsonObject`). Backend capabilities: result retrieval is supported; async enqueue,
-defer, and priority are not.
+`JsonObject`). Backend capabilities: result retrieval and async tasks are supported;
+deferred (run-later) enqueue and priority are not.
 
 ## Workers
 
@@ -315,6 +317,27 @@ the migrate role lacks superuser rights — exactly the fail-fast you want for a
 app. On managed Postgres where the migrate role is not a superuser, pre-create the
 extension as a superuser first so the migration no-ops cleanly. (Reversing it runs
 `DROP EXTENSION IF EXISTS pg_cron` — stock Django `CreateExtension` behavior.)
+
+**Local pg_cron via Docker.** Stock `postgres` doesn't bundle pg_cron, so build it in:
+
+```dockerfile
+# pg_cron.Dockerfile
+FROM postgres:18
+RUN apt-get update && apt-get install -y postgresql-18-cron
+```
+
+```yaml
+# compose.yaml
+services:
+  db:
+    build:
+      dockerfile: pg_cron.Dockerfile
+    command: postgres -c shared_preload_libraries=pg_cron
+    environment: { POSTGRES_PASSWORD: postgres }
+```
+
+pg_cron runs against the `postgres` database by default; if your Absurd database has a
+different name, add `-c cron.database_name=<db>`.
 
 **Enabling:**
 

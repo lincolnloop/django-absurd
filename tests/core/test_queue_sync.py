@@ -98,8 +98,8 @@ def test_non_destructive(settings: SettingsWrapper) -> None:
 
 
 def test_sync_reports_no_queues_when_all_in_sync(
-    settings: SettingsWrapper,
     capsys: pytest.CaptureFixture[str],
+    settings: SettingsWrapper,
 ) -> None:
     settings.TASKS = build_tasks_setting({"q": {}})
     call_command("absurd_sync_queues")  # creates q
@@ -122,8 +122,8 @@ def test_sync_command_takes_no_database_flag(settings: SettingsWrapper) -> None:
 
 
 def test_sync_command_reports_nothing_when_no_absurd_backend(
-    settings: SettingsWrapper,
     capsys: pytest.CaptureFixture[str],
+    settings: SettingsWrapper,
 ) -> None:
     settings.TASKS = {
         "default": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}

@@ -112,8 +112,9 @@ class ReadOnlyAbsurdAdmin(ReadOnlyAdminBase):
         model: type[t.Any] = self.model
         if self.spec is not None and not view_exists(self.spec.view_name, self.using):
             qs: QuerySet[t.Any] = model.objects.using(self.using).none()
-            return qs
-        return t.cast("QuerySet[t.Any]", model.objects.using(self.using).all())
+        else:
+            qs = model.objects.using(self.using).all()
+        return qs
 
     def get_object(
         self,

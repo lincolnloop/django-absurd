@@ -33,7 +33,8 @@ def reject_cross_database_save(
     if is_foreign_database(using):
         msg = (
             f"ScheduledTask was written to database {using!r}, but Absurd schedules "
-            f"live only on {get_absurd_database()!r} (the run-wrapper reads there). "
+            f"live only on {resolve_absurd_database_lazily()!r} "
+            "(the run-wrapper reads there). "
             "Cross-database schedule writes are not supported."
         )
         raise NotImplementedError(msg)
@@ -60,10 +61,10 @@ def unschedule_job_on_delete(
 
 def is_foreign_database(using: str | None) -> bool:
     """True when a save/delete targeted a database other than the single absurd one."""
-    return using is not None and using != get_absurd_database()
+    return using is not None and using != resolve_absurd_database_lazily()
 
 
-def get_absurd_database() -> str:
+def resolve_absurd_database_lazily() -> str:
     from django_absurd.queues import resolve_absurd_database  # noqa: PLC0415
 
     return resolve_absurd_database()

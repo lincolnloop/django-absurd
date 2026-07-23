@@ -74,9 +74,9 @@ def get_change_url(pk: int) -> str:
 
 
 def test_changelist_renders_one_row_per_schedule(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
     admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     seed(settings)
     client.force_login(admin_user)
@@ -84,9 +84,9 @@ def test_changelist_renders_one_row_per_schedule(
 
 
 def test_changelist_shows_expected_columns(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
     admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     seed(settings)
     client.force_login(admin_user)
@@ -97,9 +97,9 @@ def test_changelist_shows_expected_columns(
 
 
 def test_queue_filter_renders_and_narrows(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
     admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     seed(settings)
     client.force_login(admin_user)
@@ -111,9 +111,9 @@ def test_queue_filter_renders_and_narrows(
 
 
 def test_search_by_name_narrows(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
     admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     seed(settings)
     client.force_login(admin_user)
@@ -121,9 +121,9 @@ def test_search_by_name_narrows(
 
 
 def test_create_resolves_all_spawn_options_and_is_disabled(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
     admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     seed(settings)
     client.force_login(admin_user)
@@ -149,9 +149,9 @@ def test_create_resolves_all_spawn_options_and_is_disabled(
 
 
 def test_create_with_save_and_add_another_returns_to_the_add_view(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
     admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     # "Save and add another" must NOT force the review-on-change redirect — it lands
     # back on the add view like Django's default.
@@ -171,9 +171,9 @@ def test_create_with_save_and_add_another_returns_to_the_add_view(
 
 
 def test_add_view_renders_only_the_minimal_fields(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
     admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     seed(settings)
     client.force_login(admin_user)
@@ -204,9 +204,9 @@ def narrow_to_default_queue_only(
 
 
 def test_create_with_undeclared_resolved_queue_is_form_error_not_created(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
     admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     # on_reports' own queue ("reports") resolves fine, but the backend no longer
     # declares it, so the model rejects the resolved queue. queue isn't a field on the
@@ -230,9 +230,9 @@ def test_create_with_undeclared_resolved_queue_is_form_error_not_created(
 
 
 def test_create_with_unimportable_task_is_form_error_not_created(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
     admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     # An unimportable task path is rejected on the task field before any spawn-option
     # resolution runs (so build_scheduled_fields never sees a bad path), and nothing is
@@ -255,9 +255,9 @@ def test_create_with_unimportable_task_is_form_error_not_created(
 
 
 def test_create_with_non_task_target_is_form_error_not_created(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
     admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     # A path that imports but isn't a Django task is rejected on the task field (so
     # resolution, which reads task-only attributes, is never reached).
@@ -277,9 +277,9 @@ def test_create_with_non_task_target_is_form_error_not_created(
 
 
 def test_create_with_blank_task_skips_resolution_and_is_required_error(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
     admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     # A blank task never reaches cleaned_data, so spawn-option resolution is skipped
     # entirely; the form reports the field as required and creates nothing.
@@ -295,9 +295,9 @@ def test_create_with_blank_task_skips_resolution_and_is_required_error(
 
 
 def test_create_with_bad_cron_is_form_error_not_created(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
     admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     seed(settings)
     client.force_login(admin_user)
@@ -314,9 +314,9 @@ def test_create_with_bad_cron_is_form_error_not_created(
 
 
 def test_create_and_sync_produce_identical_spawn_columns(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
     admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     # parity: admin-creating a task resolves the same spawn columns as running
     # sync_crons over a settings SCHEDULE of that same task (the two write lanes).
@@ -364,9 +364,9 @@ def test_create_and_sync_produce_identical_spawn_columns(
 
 
 def test_add_link_present_and_add_view_renders(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
     admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     seed(settings)
     client.force_login(admin_user)
@@ -379,9 +379,9 @@ def test_add_link_present_and_add_view_renders(
 
 
 def test_add_view_cron_help_renders_pg_cron_link_as_html(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
     admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     # the cron field's help text embeds an <a> to the pg_cron docs; Django form
     # help_text is not auto-escaped, so it must reach the page as a real anchor (an
@@ -409,9 +409,9 @@ def create_scheduled_task(
 
 
 def test_change_view_shows_resolved_default_max_attempts(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
     admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     # The create form resolves max_attempts from the task/backend (here the backend
     # default, 5); the change form then renders that resolved value editable.
@@ -425,9 +425,9 @@ def test_change_view_shows_resolved_default_max_attempts(
 
 
 def test_posting_add_creates_admin_schedule_and_schedules_job(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
     admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     seed(settings)
     client.force_login(admin_user)
@@ -438,9 +438,9 @@ def test_posting_add_creates_admin_schedule_and_schedules_job(
 
 
 def test_posting_add_with_tampered_source_is_forced_to_admin(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
     admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     # source is a hidden, pinned field: a crafted POST setting source="s" (settings)
     # must not create a settings-owned row via the writable admin.
@@ -452,9 +452,9 @@ def test_posting_add_with_tampered_source_is_forced_to_admin(
 
 
 def test_editing_over_long_name_row_is_form_error_not_500(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
     admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     # A row whose name overflows the 63-byte jobname budget (created out-of-band, so it
     # skipped full_clean) must surface a form error on edit, not HTTP 500 — clean()
@@ -477,9 +477,9 @@ def test_editing_over_long_name_row_is_form_error_not_500(
 
 
 def test_editing_blank_args_kwargs_falls_back_to_defaults(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
     admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     # queue="reports" (declared) so the edit exercises the "stored queue is still a
     # valid choice" path (no injection) alongside the blank args/kwargs fallback.
@@ -498,9 +498,9 @@ def test_editing_blank_args_kwargs_falls_back_to_defaults(
 
 
 def test_posting_duplicate_admin_name_is_form_error_not_500(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
     admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     seed(settings)
     client.force_login(admin_user)
@@ -515,9 +515,9 @@ def test_posting_duplicate_admin_name_is_form_error_not_500(
 
 
 def test_posting_add_with_invalid_cron_shows_pg_crons_message(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
     admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     seed(settings)
     client.force_login(admin_user)
@@ -529,9 +529,9 @@ def test_posting_add_with_invalid_cron_shows_pg_crons_message(
 
 
 def test_settings_schedule_detail_is_readonly(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
     admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     seed(settings)
     pk = ScheduledTask.objects.get(name="hourly").pk  # a settings row
@@ -544,9 +544,9 @@ def test_settings_schedule_detail_is_readonly(
 
 
 def test_admin_schedule_edit_form_cron_editable_name_immutable(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
     admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     seed(settings)
     client.force_login(admin_user)
@@ -562,9 +562,9 @@ def test_admin_schedule_edit_form_cron_editable_name_immutable(
 
 
 def test_posting_edit_reschedules_the_job_with_the_new_cron(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
     admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     seed(settings)
     client.force_login(admin_user)
@@ -583,9 +583,9 @@ def test_posting_edit_reschedules_the_job_with_the_new_cron(
 
 
 def test_deleting_admin_schedule_via_admin_unschedules_the_job(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
     admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     seed(settings)
     client.force_login(admin_user)
@@ -601,9 +601,9 @@ def test_deleting_admin_schedule_via_admin_unschedules_the_job(
 
 
 def test_deleting_settings_schedule_via_admin_is_forbidden(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
     admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     seed(settings)
     pk = ScheduledTask.objects.get(name="hourly").pk  # a settings row
@@ -614,9 +614,9 @@ def test_deleting_settings_schedule_via_admin_is_forbidden(
 
 
 def test_change_form_rejects_a_blank_queue(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
     admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     seed(settings)
     client.force_login(admin_user)
@@ -635,9 +635,9 @@ def test_change_form_rejects_a_blank_queue(
 
 
 def test_change_view_queue_is_a_dropdown_of_declared_queues(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
     admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     seed(settings)  # QUEUES: default, other, reports
     client.force_login(admin_user)
@@ -648,9 +648,9 @@ def test_change_view_queue_is_a_dropdown_of_declared_queues(
 
 
 def test_change_view_retry_kind_is_a_dropdown(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
     admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     seed(settings)
     client.force_login(admin_user)
@@ -661,9 +661,9 @@ def test_change_view_retry_kind_is_a_dropdown(
 
 
 def test_change_view_cancellation_fields_are_number_inputs(
-    settings: "pytest_django.fixtures.SettingsWrapper",
-    client: Client,
     admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     seed(settings)
     client.force_login(admin_user)
@@ -674,8 +674,8 @@ def test_change_view_cancellation_fields_are_number_inputs(
 
 
 def test_add_forbidden_for_staff_without_permission(
-    settings: "pytest_django.fixtures.SettingsWrapper",
     client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
     staff_user: User,
 ) -> None:
     seed(settings)
@@ -684,8 +684,8 @@ def test_add_forbidden_for_staff_without_permission(
 
 
 def test_add_allowed_for_staff_with_permission(
-    settings: "pytest_django.fixtures.SettingsWrapper",
     client: Client,
+    settings: "pytest_django.fixtures.SettingsWrapper",
     staff_user: User,
 ) -> None:
     staff_user.user_permissions.add(

@@ -60,8 +60,8 @@ def drain(queue: str = "default") -> None:
 
 @pytest.fixture(params=["command", "direct"])
 def cleanup(
-    request: pytest.FixtureRequest,
     capsys: pytest.CaptureFixture[str],
+    request: pytest.FixtureRequest,
 ) -> "CleanupCallable":
     """Run cleanup through both entrypoints (management command + direct call),
     each normalized to the per-queue count dicts, so behavioral tests cover both.
@@ -101,8 +101,8 @@ def answer(text: str) -> collections.abc.Iterator[None]:
 
 
 def test_cleanup_deletes_aged_terminal_tasks(
-    settings: "pytest_django.fixtures.SettingsWrapper",
     cleanup: "CleanupCallable",
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     sync_queue(settings)
     add.enqueue(2, 3)
@@ -113,8 +113,8 @@ def test_cleanup_deletes_aged_terminal_tasks(
 
 
 def test_cleanup_skips_non_terminal_tasks(
-    settings: "pytest_django.fixtures.SettingsWrapper",
     cleanup: "CleanupCallable",
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     sync_queue(settings)
     add.enqueue(2, 3)  # pending — worker not run, so not terminal
@@ -128,8 +128,8 @@ def test_cleanup_skips_non_terminal_tasks(
 
 
 def test_cleanup_respects_batch_limit(
-    settings: "pytest_django.fixtures.SettingsWrapper",
     cleanup: "CleanupCallable",
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     sync_queue(settings, cleanup_limit=2)
     for _ in range(3):
@@ -147,8 +147,8 @@ def test_cleanup_respects_batch_limit(
 
 
 def test_cleanup_targets_specific_queue(
-    settings: "pytest_django.fixtures.SettingsWrapper",
     cleanup: "CleanupCallable",
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     sync_queue(settings, names=("default", "other"))
     add.enqueue(2, 3)  # default
@@ -165,8 +165,8 @@ def test_cleanup_targets_specific_queue(
 
 
 def test_cleanup_command_reports_per_queue_counts(
-    settings: "pytest_django.fixtures.SettingsWrapper",
     capsys: pytest.CaptureFixture[str],
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     sync_queue(settings)
     add.enqueue(2, 3)
@@ -177,8 +177,8 @@ def test_cleanup_command_reports_per_queue_counts(
 
 
 def test_cleanup_command_reports_no_backends(
-    settings: "pytest_django.fixtures.SettingsWrapper",
     capsys: pytest.CaptureFixture[str],
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     settings.TASKS = {}
     call_command("absurd_cleanup")
@@ -186,8 +186,8 @@ def test_cleanup_command_reports_no_backends(
 
 
 def test_flush_reports_no_backends(
-    settings: "pytest_django.fixtures.SettingsWrapper",
     capsys: pytest.CaptureFixture[str],
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     settings.TASKS = {}
     call_command("absurd_flush")
@@ -200,8 +200,8 @@ def test_flush_reports_no_queues(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_flush_noinput_drops_all_queues(
-    settings: "pytest_django.fixtures.SettingsWrapper",
     capsys: pytest.CaptureFixture[str],
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     sync_queue(settings, names=("default", "other"))
     capsys.readouterr()  # discard sync output
@@ -211,8 +211,8 @@ def test_flush_noinput_drops_all_queues(
 
 
 def test_flush_interactive_yes_drops_all_queues(
-    settings: "pytest_django.fixtures.SettingsWrapper",
     capsys: pytest.CaptureFixture[str],
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     sync_queue(settings, names=("default", "other"))
     capsys.readouterr()  # discard sync output
@@ -227,8 +227,8 @@ def test_flush_interactive_yes_drops_all_queues(
 
 
 def test_flush_interactive_no_keeps_queues(
-    settings: "pytest_django.fixtures.SettingsWrapper",
     capsys: pytest.CaptureFixture[str],
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     sync_queue(settings, names=("default", "other"))
     capsys.readouterr()  # discard sync output
@@ -243,8 +243,8 @@ def test_flush_interactive_no_keeps_queues(
 
 
 def test_flush_non_interactive_eof_keeps_queues(
-    settings: "pytest_django.fixtures.SettingsWrapper",
     capsys: pytest.CaptureFixture[str],
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     sync_queue(settings, names=("default", "other"))
     capsys.readouterr()  # discard sync output
@@ -272,8 +272,8 @@ def run_beat_until(
 
 
 def test_beat_fires_cleanup_on_cadence(
-    settings: "pytest_django.fixtures.SettingsWrapper",
     cleanup: "CleanupCallable",
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     sync_queue(settings, cleanup={"schedule": "* * * * *"})
     backend = get_absurd_backends()["default"]
@@ -286,8 +286,8 @@ def test_beat_fires_cleanup_on_cadence(
 
 
 def test_beat_isolates_failing_cleanup(
-    settings: "pytest_django.fixtures.SettingsWrapper",
     caplog: pytest.LogCaptureFixture,
+    settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     sync_queue(settings, cleanup={"schedule": "* * * * *"})
     backend = get_absurd_backends()["default"]

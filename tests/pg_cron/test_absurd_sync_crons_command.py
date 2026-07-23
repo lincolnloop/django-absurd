@@ -25,8 +25,8 @@ def test_sync_crons_command_malformed_schedule_raises_commanderror(
 
 
 def test_sync_crons_command_creates_cron_jobs(
-    settings: pytest_django.fixtures.SettingsWrapper,
     capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     settings.TASKS = build_pg_cron_tasks(
         {
@@ -46,8 +46,8 @@ def test_sync_crons_command_creates_cron_jobs(
 
 
 def test_sync_crons_command_writes_summary_to_stdout(
-    settings: pytest_django.fixtures.SettingsWrapper,
     capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     settings.TASKS = build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
@@ -59,8 +59,8 @@ def test_sync_crons_command_writes_summary_to_stdout(
 
 
 def test_sync_crons_command_is_idempotent(
-    settings: pytest_django.fixtures.SettingsWrapper,
     capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     settings.TASKS = build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
@@ -72,8 +72,8 @@ def test_sync_crons_command_is_idempotent(
 
 
 def test_teardown_removes_owned_cron_jobs(
-    settings: pytest_django.fixtures.SettingsWrapper,
     capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     settings.TASKS = build_pg_cron_tasks(
         {
@@ -141,8 +141,8 @@ def test_teardown_admin_schedule_does_not_resurrect_on_next_sync(
 
 @pytest.mark.parametrize("stdin_text", ["", "no\n"])
 def test_teardown_command_aborts_without_confirmation(
-    settings: pytest_django.fixtures.SettingsWrapper,
     capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
     stdin_text: str,
 ) -> None:
     # "no\n" declines; "" is a non-interactive EOF (CI / docker exec -T) — both abort

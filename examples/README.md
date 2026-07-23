@@ -6,8 +6,8 @@ serve on http://localhost:8000; admin login `admin` / `admin`).
 
 - **[`web/`](web/)** — enqueue `add(a, b)` from a form and watch the result
   (`get_result`); browse the read-only queue tables in the admin. Also demonstrates
-  **Steps (checkpoints), Sleep, and Events** at `/workflow/` — an order-fulfillment task
-  that checkpoints each step and suspends on `await_event` until a "mark packed" button
+  **Steps (checkpoints) and Events** at `/workflow/` — an order-fulfillment task that
+  checkpoints each step and suspends on `await_event` until a "mark packed" button
   (calling the top-level `emit_event`) wakes it, with a link into the task's admin page
   to watch its checkpoints and suspended wait.
 - **[`beat/`](beat/)** — the in-process **beat** scheduler firing a task every minute.

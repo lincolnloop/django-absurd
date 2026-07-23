@@ -24,7 +24,7 @@ def change_url(pk: str) -> str:
 
 
 def test_changelist_and_composite_detail(
-    client: Client, admin_user: AbstractBaseUser
+    admin_user: AbstractBaseUser, client: Client
 ) -> None:
     call_command("absurd_sync_queues")
     rid, tid = uuid.uuid4(), uuid.uuid4()

@@ -162,7 +162,7 @@ def test_task_outside_tasks_py_runs() -> None:
 
 
 def test_queue_defaults_to_default(
-    settings: SettingsWrapper, capsys: pytest.CaptureFixture[str]
+    capsys: pytest.CaptureFixture[str], settings: SettingsWrapper
 ) -> None:
     settings.TASKS = {
         "default": {
@@ -192,7 +192,7 @@ def test_worker_rejects_alias_flag(settings: SettingsWrapper) -> None:
 
 
 def test_worker_uses_single_backend_at_nondefault_alias(
-    settings: SettingsWrapper, capsys: pytest.CaptureFixture[str]
+    capsys: pytest.CaptureFixture[str], settings: SettingsWrapper
 ) -> None:
     settings.TASKS = {
         "myabsurd": {
@@ -273,7 +273,7 @@ def test_worker_start_provisions_all_declared_queues(
 
 
 def test_worker_command_reconciles_changed_mutable_option(
-    settings: SettingsWrapper, capsys: pytest.CaptureFixture[str]
+    capsys: pytest.CaptureFixture[str], settings: SettingsWrapper
 ) -> None:
     settings.TASKS = {
         "default": {
@@ -296,7 +296,7 @@ def test_worker_command_reconciles_changed_mutable_option(
 
 
 def test_worker_command_reconciles_changed_interval_option(
-    settings: SettingsWrapper, capsys: pytest.CaptureFixture[str]
+    capsys: pytest.CaptureFixture[str], settings: SettingsWrapper
 ) -> None:
     # Two mutable opts: cleanup_limit unchanged (loop continues), cleanup_ttl changed
     # (interval drift via parse_interval).
@@ -325,7 +325,7 @@ def test_worker_command_reconciles_changed_interval_option(
 
 
 def test_worker_command_no_reconcile_when_unchanged(
-    settings: SettingsWrapper, capsys: pytest.CaptureFixture[str]
+    capsys: pytest.CaptureFixture[str], settings: SettingsWrapper
 ) -> None:
     settings.TASKS = {
         "default": {
@@ -345,7 +345,7 @@ def test_worker_command_no_reconcile_when_unchanged(
 
 
 def test_worker_command_warns_on_storage_mode_drift(
-    settings: SettingsWrapper, capsys: pytest.CaptureFixture[str]
+    capsys: pytest.CaptureFixture[str], settings: SettingsWrapper
 ) -> None:
     settings.TASKS = {
         "default": {

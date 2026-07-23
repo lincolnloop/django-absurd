@@ -1,7 +1,7 @@
 import pytest
 from django.core.management import call_command
 from django.core.management.base import SystemCheckError
-from django.test import override_settings
+from pytest_django.fixtures import SettingsWrapper
 
 BACKEND = "django_absurd.backends.AbsurdBackend"
 IMMEDIATE = "django.tasks.backends.immediate.ImmediateBackend"
@@ -22,80 +22,72 @@ def run_check(capsys: pytest.CaptureFixture[str]) -> str:
     return cap.out + cap.err
 
 
-@override_settings(
-    TASKS={
+def test_bad_admin_site_path_emits_e006(
+    capsys: pytest.CaptureFixture[str], settings: SettingsWrapper
+) -> None:
+    settings.TASKS = {
         "default": {
             "BACKEND": BACKEND,
             "QUEUES": ["default"],
             "OPTIONS": {"ADMIN_SITE": (BAD_PATH,)},
         }
     }
-)
-def test_bad_admin_site_path_emits_e006(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
     out = run_check(capsys)
     assert "absurd.E006" in out
     assert E006_BAD_PATH_MSG in out
     assert "Set ADMIN_SITE to a tuple of dotted paths to AdminSite instances." in out
 
 
-@override_settings(
-    TASKS={
+def test_non_bool_enable_admin_emits_e006(
+    capsys: pytest.CaptureFixture[str], settings: SettingsWrapper
+) -> None:
+    settings.TASKS = {
         "default": {
             "BACKEND": BACKEND,
             "QUEUES": ["default"],
             "OPTIONS": {"ENABLE_ADMIN": "yes"},
         }
     }
-)
-def test_non_bool_enable_admin_emits_e006(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
     out = run_check(capsys)
     assert "absurd.E006" in out
     assert "django-absurd: OPTIONS['ENABLE_ADMIN'] must be a bool." in out
     assert "Set ENABLE_ADMIN to True or False." in out
 
 
-@override_settings(
-    TASKS={
+def test_valid_admin_config_no_e006(
+    capsys: pytest.CaptureFixture[str], settings: SettingsWrapper
+) -> None:
+    settings.TASKS = {
         "default": {
             "BACKEND": BACKEND,
             "QUEUES": ["default"],
             "OPTIONS": {"ADMIN_SITE": ("django.contrib.admin.site",)},
         }
     }
-)
-def test_valid_admin_config_no_e006(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
     out = run_check(capsys)
     assert "absurd.E006" not in out
     assert "admin.E0" not in out
     assert "System check identified no issues" in out
 
 
-@override_settings(TASKS={"default": {"BACKEND": IMMEDIATE}})
 def test_no_absurd_backend_emits_no_e006(
-    capsys: pytest.CaptureFixture[str],
+    capsys: pytest.CaptureFixture[str], settings: SettingsWrapper
 ) -> None:
+    settings.TASKS = {"default": {"BACKEND": IMMEDIATE}}
     out = run_check(capsys)
     assert "absurd.E006" not in out
 
 
-@override_settings(
-    TASKS={
+def test_admin_site_not_a_sequence_emits_e006(
+    capsys: pytest.CaptureFixture[str], settings: SettingsWrapper
+) -> None:
+    settings.TASKS = {
         "default": {
             "BACKEND": BACKEND,
             "QUEUES": ["default"],
             "OPTIONS": {"ADMIN_SITE": "django.contrib.admin.site"},
         }
     }
-)
-def test_admin_site_not_a_sequence_emits_e006(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
     out = run_check(capsys)
     assert "absurd.E006" in out
     assert (
@@ -104,18 +96,16 @@ def test_admin_site_not_a_sequence_emits_e006(
     ) in out
 
 
-@override_settings(
-    TASKS={
+def test_admin_site_not_an_adminsite_emits_e006(
+    capsys: pytest.CaptureFixture[str], settings: SettingsWrapper
+) -> None:
+    settings.TASKS = {
         "default": {
             "BACKEND": BACKEND,
             "QUEUES": ["default"],
             "OPTIONS": {"ADMIN_SITE": ("decimal.Decimal",)},
         }
     }
-)
-def test_admin_site_not_an_adminsite_emits_e006(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
     out = run_check(capsys)
     assert "absurd.E006" in out
     assert "is not an AdminSite instance" in out
