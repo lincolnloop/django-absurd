@@ -11,10 +11,9 @@ if t.TYPE_CHECKING:
     from django_absurd.backends import AbsurdBackend
 
 from django_absurd.backends import get_declared_queues
+from django_absurd.pg_cron import catalog
 from django_absurd.pg_cron.choices import RetryKind, Source
 from django_absurd.pg_cron.validators import (
-    build_jobname,
-    build_jobname_prefix,
     validate_declared_queue,
     validate_name_charset,
     validate_pg_cron_cron,
@@ -28,9 +27,6 @@ from django_absurd.validators import (
 )
 
 __all__ = ["ScheduledTask"]
-
-PgCronJobRow = tuple[str, str, str, bool]
-"""A ``(jobname, schedule, command, active)`` row from ``cron.job``."""
 
 CRON_HELP_TEXT = (
     "A 5-field cron (e.g. '0 2 * * *') or the interval form '<n> seconds' (1-59)."
@@ -69,39 +65,16 @@ class PgCronManager(models.Manager["ScheduledTask"]):
     reuse an already-resolved value.
     """
 
-    def get_job(self, name: str, source: str) -> PgCronJobRow | None:
-        """The ``(jobname, schedule, command, active)`` row for one schedule's job."""
-        with connections[resolve_absurd_database()].cursor() as cur:
-            cur.execute(
-                "select jobname, schedule, command, active from cron.job "
-                "where jobname = %s",
-                [build_jobname(name, source)],
-            )
-            job: PgCronJobRow | None = cur.fetchone()
-            return job
-
-    def get_managed_jobs(self, source: str | None = None) -> list[PgCronJobRow]:
-        """The ``(jobname, schedule, command, active)`` rows for every job we manage
-        (all share the ``_dj:`` prefix). Pass source to narrow to one lane
-        (``_dj:<source>:``)."""
-        prefix = f"_dj:{source}:" if source is not None else "_dj:"
-        with connections[resolve_absurd_database()].cursor() as cur:
-            cur.execute(
-                "select jobname, schedule, command, active from cron.job "
-                "where starts_with(jobname, %s) order by jobname",
-                [prefix],
-            )
-            jobs: list[PgCronJobRow] = cur.fetchall()
-            return jobs
-
     def unschedule_matching(self, source: str, database: str | None = None) -> None:
-        """Unschedule every pg_cron job owned by one source lane
-        (``_dj:<source>:%``). Scoped to that exact prefix so tearing down one lane
-        never touches another lane's jobs."""
-        with open_locked_cursor(database or resolve_absurd_database()) as cur:
+        """Unschedule every pg_cron job owned by one source lane on the app database
+        (``_dj:<app db>:<source>:%``). Scoped to that exact prefix so tearing down one
+        lane never touches another lane's jobs."""
+        alias = database or resolve_absurd_database()
+        prefix = catalog.build_jobname(catalog.resolve_app_database_name(alias), source)
+        with open_locked_cursor(alias) as cur:
             cur.execute(
                 "select jobid from cron.job where starts_with(jobname, %s)",
-                [build_jobname_prefix(source=source)],
+                [prefix],
             )
             prune_pg_cron_jobs(cur, [jobid for (jobid,) in cur.fetchall()])
 
@@ -111,16 +84,20 @@ class PgCronManager(models.Manager["ScheduledTask"]):
         keep_names: list[str],
         database: str | None = None,
     ) -> None:
-        """Unschedule owned jobs for a source lane (``_dj:<source>:%``) whose name
-        isn't in keep_names — i.e. jobs with no backing row. Row deletion unschedules
-        its own job via post_delete, but a row removed by a signal-less path (bulk
-        delete, ``flush``, raw SQL) leaves its job orphaned — reconcile heals it so
-        ``cron.job`` reconverges to the rows."""
-        keep = {build_jobname(name, source) for name in keep_names}
-        with open_locked_cursor(database or resolve_absurd_database()) as cur:
+        """Unschedule owned jobs for a source lane (``_dj:<app db>:<source>:%``) whose
+        name isn't in keep_names — i.e. jobs with no backing row. Row deletion
+        unschedules its own job via post_delete, but a row removed by a signal-less
+        path (bulk delete, ``flush``, raw SQL) leaves its job orphaned — reconcile heals
+        it so ``cron.job`` reconverges to the rows."""
+        alias = database or resolve_absurd_database()
+        app_database = catalog.resolve_app_database_name(alias)
+        keep = {
+            catalog.build_jobname(app_database, source, name) for name in keep_names
+        }
+        with open_locked_cursor(alias) as cur:
             cur.execute(
                 "select jobid, jobname from cron.job where starts_with(jobname, %s)",
-                [build_jobname_prefix(source=source)],
+                [catalog.build_jobname(app_database, source)],
             )
             stale = [jobid for jobid, jobname in cur.fetchall() if jobname not in keep]
             prune_pg_cron_jobs(cur, stale)
@@ -237,45 +214,32 @@ class ScheduledTask(models.Model):
             errors["cron"] = exc.messages
         return errors
 
-    def get_pg_cron_job(self) -> PgCronJobRow | None:
-        """This row's own pg_cron job as ``(jobname, schedule, command, active)``, or
-        None if it isn't scheduled. (The manager lives on the class — Django managers
-        aren't accessible via instances.)"""
-        return ScheduledTask.pg_cron.get_job(self.name, self.source)
-
     def schedule_pg_cron_job(self) -> None:
-        """(Re)schedule this row's pg_cron job (``_dj:<source>:<name>``) and arm it to
-        its enabled state. Called by the post_save signal for every write; a no-op when
-        no Absurd backend is configured."""
+        """(Re)schedule this row's pg_cron job and arm it to its enabled state, via the
+        catalog seam. Called by the post_save signal for every write; a no-op when no
+        Absurd backend is configured (and, on a test DB, unless pg_cron is opted in)."""
         if get_absurd_backend() is None:
             return
-        jobname = build_jobname(self.name, self.source)
-        # cron.schedule is a pg_cron catalog function (not the Absurd SDK). psycopg
-        # scans the query for %, so format()'s %L are doubled to %%L and the params
-        # carry a ::text cast — building the command server-side blocks arg injection.
-        with open_locked_cursor(resolve_absurd_database()) as cur:
-            cur.execute(
-                "select cron.schedule(%s, %s, "
-                "format('select public.django_absurd_run_scheduled(%%L, %%L)', "
-                "%s::text, %s::text))",
-                [jobname, self.cron, self.source, self.name],
-            )
-            jobid = cur.fetchone()[0]
-            cur.execute(
-                "select cron.alter_job(%s, active := %s)", [jobid, self.enabled]
-            )
+        alias = resolve_absurd_database()
+        catalog.schedule_job(
+            alias,
+            name=self.name,
+            source=self.source,
+            cron=self.cron,
+            command=build_scheduled_command(alias, self.source, self.name),
+            active=self.enabled,
+        )
 
     def unschedule_pg_cron_job(self) -> None:
-        """Remove this row's pg_cron job, tolerating an already-gone job. Called by the
-        post_delete signal for every deletion; a no-op when no Absurd backend is
-        configured (symmetric with schedule_pg_cron_job) — so deletes don't error on a
-        DB without one."""
+        """Remove this row's pg_cron job via the catalog seam, tolerating an
+        already-gone job. Called by the post_delete signal for every deletion; a no-op
+        when no Absurd backend is configured (symmetric with schedule_pg_cron_job) — so
+        deletes don't error on a DB without one."""
         if get_absurd_backend() is None:
             return
-        jobname = build_jobname(self.name, self.source)
-        with open_locked_cursor(resolve_absurd_database()) as cur:
-            cur.execute("select jobid from cron.job where jobname = %s", [jobname])
-            prune_pg_cron_jobs(cur, [jobid for (jobid,) in cur.fetchall()])
+        catalog.unschedule_job(
+            resolve_absurd_database(), name=self.name, source=self.source
+        )
 
 
 @contextmanager
@@ -305,3 +269,17 @@ def prune_pg_cron_jobs(cur: "CursorWrapper", stale_jobids: list[int]) -> None:
             cur.execute("rollback to savepoint prune_sp")
         else:
             cur.execute("release savepoint prune_sp")
+
+
+def build_scheduled_command(alias: str, source: str, name: str) -> str:
+    """The stored pg_cron command for a schedule's row, built server-side so
+    source/name are ``%L`` literal-escaped defense-in-depth — pg_cron executes this
+    string as raw SQL later, so quoting matters even though both are already
+    charset/enum-constrained. psycopg scans the query for ``%``, hence the ``%%L``."""
+    with connections[alias].cursor() as cur:
+        cur.execute(
+            "select format('select public.django_absurd_run_scheduled(%%L, %%L)', "
+            "%s::text, %s::text)",
+            [source, name],
+        )
+        return t.cast("str", cur.fetchone()[0])

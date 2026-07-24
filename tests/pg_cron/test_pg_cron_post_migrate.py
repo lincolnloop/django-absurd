@@ -6,17 +6,23 @@ from io import StringIO
 import pytest
 from django.apps import apps
 from django.core.management import call_command
-from django.db import connection
+from django.db import connection, connections
 
+from django_absurd.pg_cron import catalog
 from django_absurd.pg_cron.apps import reconcile_crons_after_migrate
+from django_absurd.pg_cron.choices import Source
 from django_absurd.pg_cron.models import ScheduledTask
 from django_absurd.queues import get_absurd_client
-from tests.pg_cron.utils import build_pg_cron_tasks
+from tests.pg_cron import utils
 
 if t.TYPE_CHECKING:
     import pytest_django.fixtures
 
 pytestmark = pytest.mark.django_db(transaction=True)
+
+
+def live_database() -> str:
+    return str(connections["default"].settings_dict["NAME"])
 
 
 def run_scheduled(source: str, name: str) -> None:
@@ -49,7 +55,7 @@ def test_reconcile_creates_owned_cron_jobs_under_pg_cron(
     run_cron_sync: collections.abc.Callable[[], None],
     settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
-    settings.TASKS = build_pg_cron_tasks(
+    settings.TASKS = utils.build_pg_cron_tasks(
         {
             "a": {"task": "tests.tasks.add", "cron": "0 2 * * *"},
             "b": {"task": "tests.tasks.add", "cron": "0 3 * * *"},
@@ -57,9 +63,10 @@ def test_reconcile_creates_owned_cron_jobs_under_pg_cron(
     )
     run_cron_sync()
 
-    assert [r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()] == [
-        "_dj:s:a",
-        "_dj:s:b",
+    live_db = live_database()
+    assert [r[0] for r in utils.fetch_managed_jobs(live_db)] == [
+        catalog.build_jobname(live_db, Source.SETTINGS, "a"),
+        catalog.build_jobname(live_db, Source.SETTINGS, "b"),
     ]
     assert ScheduledTask.objects.filter(source="s").count() == 2
 
@@ -71,7 +78,7 @@ def test_reconcile_emits_jobs_for_admin_rows_created_without_signal(
     """A source="a" row created without firing post_save (a data migration's
     historical model, or bulk_create) has no pg_cron job; the reconcile re-emits it so
     pg_cron matches the rows."""
-    settings.TASKS = build_pg_cron_tasks({})
+    settings.TASKS = utils.build_pg_cron_tasks({})
     ScheduledTask.objects.bulk_create(
         [
             ScheduledTask(
@@ -83,13 +90,18 @@ def test_reconcile_emits_jobs_for_admin_rows_created_without_signal(
             )
         ]
     )
-    assert ScheduledTask.pg_cron.get_job("seeded", "a") is None
+    assert (
+        utils.fetch_cron_job(
+            catalog.build_jobname(live_database(), Source.ADMIN, "seeded")
+        )
+        is None
+    )
 
     run_cron_sync()
 
-    job = ScheduledTask.pg_cron.get_job("seeded", "a")
-    assert job is not None
-    _, schedule, _, active = job
+    rows = utils.fetch_managed_jobs(live_database(), source=Source.ADMIN)
+    assert len(rows) == 1
+    _, schedule, _, active = rows[0]
     assert schedule == "0 3 * * *"
     assert active is True
 
@@ -100,7 +112,7 @@ def test_reconcile_admin_rows_is_idempotent(
 ) -> None:
     """Re-running the reconcile re-emits admin jobs harmlessly (cron.schedule is an
     upsert) — one row still maps to exactly one job, unchanged."""
-    settings.TASKS = build_pg_cron_tasks({})
+    settings.TASKS = utils.build_pg_cron_tasks({})
     ScheduledTask.objects.bulk_create(
         [
             ScheduledTask(
@@ -115,10 +127,11 @@ def test_reconcile_admin_rows_is_idempotent(
     run_cron_sync()
     run_cron_sync()
 
-    jobs = ScheduledTask.pg_cron.get_managed_jobs(source="a")
+    live_db = live_database()
+    jobs = utils.fetch_managed_jobs(live_db, source=Source.ADMIN)
     assert len(jobs) == 1
     jobname, schedule, _, active = jobs[0]
-    assert jobname == "_dj:a:seeded"
+    assert jobname == catalog.build_jobname(live_db, Source.ADMIN, "seeded")
     assert schedule == "0 3 * * *"
     assert active is True
 
@@ -131,18 +144,28 @@ def test_reconcile_prunes_owned_settings_job_whose_row_vanished(
     signal-less delete), so no post_delete unscheduled it — is orphaned; reconcile
     prunes it so cron.job reconverges to declared state. Set up by scheduling from
     an unsaved instance: a job with no row behind it."""
-    settings.TASKS = build_pg_cron_tasks({})  # nothing declared
+    settings.TASKS = utils.build_pg_cron_tasks({})  # nothing declared
     ScheduledTask(
         source="s",
         name="orphan",
         task="tests.tasks.add",
         cron="0 2 * * *",
     ).schedule_pg_cron_job()
-    assert ScheduledTask.pg_cron.get_job("orphan", "s") is not None
+    assert (
+        utils.fetch_cron_job(
+            catalog.build_jobname(live_database(), Source.SETTINGS, "orphan")
+        )
+        is not None
+    )
 
     run_cron_sync()
 
-    assert ScheduledTask.pg_cron.get_job("orphan", "s") is None
+    assert (
+        utils.fetch_cron_job(
+            catalog.build_jobname(live_database(), Source.SETTINGS, "orphan")
+        )
+        is None
+    )
 
 
 def test_reconcile_prunes_admin_job_whose_row_vanished(
@@ -151,18 +174,28 @@ def test_reconcile_prunes_admin_job_whose_row_vanished(
 ) -> None:
     """An admin job with no backing row is orphaned; the reconcile prunes it (symmetric
     with the settings lane). Set up by scheduling from an unsaved instance."""
-    settings.TASKS = build_pg_cron_tasks({})
+    settings.TASKS = utils.build_pg_cron_tasks({})
     ScheduledTask(
         source="a",
         name="orphan",
         task="tests.tasks.add",
         cron="0 3 * * *",
     ).schedule_pg_cron_job()
-    assert ScheduledTask.pg_cron.get_job("orphan", "a") is not None
+    assert (
+        utils.fetch_cron_job(
+            catalog.build_jobname(live_database(), Source.ADMIN, "orphan")
+        )
+        is not None
+    )
 
     run_cron_sync()
 
-    assert ScheduledTask.pg_cron.get_job("orphan", "a") is None
+    assert (
+        utils.fetch_cron_job(
+            catalog.build_jobname(live_database(), Source.ADMIN, "orphan")
+        )
+        is None
+    )
 
 
 def test_reconcile_is_noop_without_absurd_backend(
@@ -178,13 +211,13 @@ def test_reconcile_is_noop_without_absurd_backend(
     # must NOT raise
     reconcile_crons_after_migrate(sender=apps.get_app_config("django_absurd_pg_cron"))
 
-    assert ScheduledTask.pg_cron.get_managed_jobs() == []
+    assert utils.fetch_managed_jobs(live_database()) == []
 
 
 def test_reconcile_missing_row_fires_clean_noop(
     settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
-    settings.TASKS = build_pg_cron_tasks(
+    settings.TASKS = utils.build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     reconcile_crons_after_migrate(sender=apps.get_app_config("django_absurd_pg_cron"))
@@ -200,7 +233,7 @@ def test_reconcile_survives_missing_scheduledtask_table(
     caplog: pytest.LogCaptureFixture,
     settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
-    settings.TASKS = build_pg_cron_tasks(
+    settings.TASKS = utils.build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     # Simulate a faked/adopted migration or a multi-DB deploy where post_migrate
@@ -223,19 +256,19 @@ def test_reconcile_survives_missing_scheduledtask_table(
 def test_reconcile_skips_on_malformed_schedule_spec(
     settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
-    settings.TASKS = build_pg_cron_tasks({"broken": {}})  # no task/cron keys
+    settings.TASKS = utils.build_pg_cron_tasks({"broken": {}})  # no task/cron keys
 
     reconcile_crons_after_migrate(
         sender=apps.get_app_config("django_absurd_pg_cron")
     )  # must NOT raise
 
-    assert ScheduledTask.pg_cron.get_managed_jobs() == []
+    assert utils.fetch_managed_jobs(live_database()) == []
 
 
 def test_reconcile_skips_on_bad_dotted_path(
     settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
-    settings.TASKS = build_pg_cron_tasks(
+    settings.TASKS = utils.build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.does_not_exist", "cron": "0 2 * * *"}}
     )
 
@@ -243,7 +276,7 @@ def test_reconcile_skips_on_bad_dotted_path(
         sender=apps.get_app_config("django_absurd_pg_cron")
     )  # must NOT raise
 
-    assert ScheduledTask.pg_cron.get_managed_jobs() == []
+    assert utils.fetch_managed_jobs(live_database()) == []
 
 
 def test_pg_cron_app_registered_after_core() -> None:
@@ -256,21 +289,24 @@ def test_pg_cron_app_registered_after_core() -> None:
 def test_migrate_provisions_queues_and_reconciles_crons(
     settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
-    settings.TASKS = build_pg_cron_tasks(
+    settings.TASKS = utils.build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
 
     call_command("migrate", verbosity=0)
 
     assert set(get_absurd_client().list_queues()) == {"default", "other", "reports"}
-    assert [r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()] == ["_dj:s:a"]
+    live_db = live_database()
+    assert [r[0] for r in utils.fetch_managed_jobs(live_db)] == [
+        catalog.build_jobname(live_db, Source.SETTINGS, "a")
+    ]
     assert ScheduledTask.objects.filter(source="s").count() == 1
 
 
 def test_reconcile_emits_migrate_stdout_on_sync(
     settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
-    settings.TASKS = build_pg_cron_tasks(
+    settings.TASKS = utils.build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     buf = StringIO()
@@ -287,7 +323,7 @@ def test_reconcile_is_quiet_on_noop_migrate(
 ) -> None:
     """A second migrate with an unchanged SCHEDULE creates and prunes nothing,
     so it must emit no reconcile output (parity with queue provisioning)."""
-    settings.TASKS = build_pg_cron_tasks(
+    settings.TASKS = utils.build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     reconcile_crons_after_migrate(
@@ -303,11 +339,11 @@ def test_reconcile_is_quiet_on_noop_migrate(
 def test_reconcile_emits_prune_line_on_sync(
     settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
-    settings.TASKS = build_pg_cron_tasks(
+    settings.TASKS = utils.build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     reconcile_crons_after_migrate(sender=apps.get_app_config("django_absurd_pg_cron"))
-    settings.TASKS = build_pg_cron_tasks({})
+    settings.TASKS = utils.build_pg_cron_tasks({})
     buf = StringIO()
     reconcile_crons_after_migrate(
         sender=apps.get_app_config("django_absurd_pg_cron"), verbosity=1, stdout=buf
@@ -321,7 +357,9 @@ def test_reconcile_warns_on_none_task_path(
     caplog: pytest.LogCaptureFixture,
     settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
-    settings.TASKS = build_pg_cron_tasks({"x": {"task": None, "cron": "0 2 * * *"}})
+    settings.TASKS = utils.build_pg_cron_tasks(
+        {"x": {"task": None, "cron": "0 2 * * *"}}
+    )
     with caplog.at_level(logging.WARNING, logger="django_absurd"):
         reconcile_crons_after_migrate(
             sender=apps.get_app_config("django_absurd_pg_cron")
@@ -335,7 +373,7 @@ def test_reconcile_warns_on_string_kwargs(
     caplog: pytest.LogCaptureFixture,
     settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
-    settings.TASKS = build_pg_cron_tasks(
+    settings.TASKS = utils.build_pg_cron_tasks(
         {"x": {"task": "tests.tasks.add", "cron": "0 2 * * *", "kwargs": "abc"}}
     )
     with caplog.at_level(logging.WARNING, logger="django_absurd"):

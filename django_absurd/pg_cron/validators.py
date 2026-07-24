@@ -15,7 +15,6 @@ from django.core.validators import RegexValidator
 from django.db import DatabaseError, connections, transaction
 from django.utils.module_loading import import_string
 
-from django_absurd.pg_cron.choices import Source
 from django_absurd.validators import validate_task_path
 
 NAME_CHARSET_MESSAGE = "Schedule name contains characters other than [A-Za-z0-9_-]."
@@ -31,16 +30,6 @@ def validate_name_charset(value: t.Any) -> None:
     if not isinstance(value, str):
         raise ValidationError(NAME_CHARSET_MESSAGE)
     NAME_CHARSET_VALIDATOR(value)
-
-
-def build_jobname(name: str, source: str = Source.SETTINGS) -> str:
-    """Return the pg_cron job name for a scheduled task."""
-    return f"_dj:{source}:{name}"
-
-
-def build_jobname_prefix(source: str = Source.SETTINGS) -> str:
-    """Return the LIKE prefix used to prune pg_cron jobs for a source lane."""
-    return f"_dj:{source}:"
 
 
 def validate_declared_queue(

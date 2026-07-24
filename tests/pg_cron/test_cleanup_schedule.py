@@ -3,12 +3,16 @@ import typing as t
 import pytest
 import pytest_django.fixtures
 from django.core.management import call_command
-from django.db import connection
+from django.db import connection, connections
 
-from django_absurd.pg_cron.models import ScheduledTask
+from tests.pg_cron import utils
 from tests.utils import make_tasks_settings
 
 pytestmark = pytest.mark.django_db(transaction=True)
+
+
+def live_database() -> str:
+    return str(connections["default"].settings_dict["NAME"])
 
 
 def build_cleanup_tasks(cleanup_schedule: str) -> dict[str, dict[str, t.Any]]:
@@ -46,7 +50,7 @@ def test_cleanup_job_is_outside_managed_namespace(
 
     call_command("absurd_sync_crons")
 
-    assert ScheduledTask.pg_cron.get_managed_jobs() == []
+    assert utils.fetch_managed_jobs(live_database()) == []
 
 
 def test_sync_unschedules_cleanup_job_when_cleanup_dropped(

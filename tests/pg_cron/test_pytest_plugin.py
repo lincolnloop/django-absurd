@@ -1,18 +1,34 @@
 import pytest
 from django.core.management import call_command
-from django.db import connection
+from django.db import connection, connections
+from pytest_django.fixtures import SettingsWrapper
 
 from django_absurd.flush import flush_absurd_state
+from django_absurd.pg_cron import catalog
+from django_absurd.pg_cron.choices import Source
 from django_absurd.pg_cron.models import ScheduledTask
+from tests.pg_cron import utils
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
-def test_flush_absurd_state_drop_schema_true_unschedules_everything_blanket() -> None:
-    scheduled_task = ScheduledTask.objects.create(
+def live_database() -> str:
+    return str(connections["default"].settings_dict["NAME"])
+
+
+def test_flush_absurd_state_drop_schema_true_unschedules_everything_blanket(
+    settings: SettingsWrapper,
+) -> None:
+    settings.TASKS = utils.build_pg_cron_tasks({})
+    ScheduledTask.objects.create(
         source="a", name="direct", task="tests.tasks.add", cron="0 2 * * *"
     )
-    assert scheduled_task.get_pg_cron_job() is not None
+    assert (
+        utils.fetch_cron_job(
+            catalog.build_jobname(live_database(), Source.ADMIN, "direct")
+        )
+        is not None
+    )
     with connection.cursor() as cur:
         cur.execute(
             "select cron.schedule(%s, %s, %s)",
@@ -27,8 +43,11 @@ def test_flush_absurd_state_drop_schema_true_unschedules_everything_blanket() ->
         assert cur.fetchall() == []  # blanket: even the unrelated job is gone
 
 
-def test_flush_absurd_state_drop_schema_false_scopes_to_owned_jobs_only() -> None:
-    scheduled_task = ScheduledTask.objects.create(
+def test_flush_absurd_state_drop_schema_false_scopes_to_owned_jobs_only(
+    settings: SettingsWrapper,
+) -> None:
+    settings.TASKS = utils.build_pg_cron_tasks({})
+    ScheduledTask.objects.create(
         source="a", name="direct", task="tests.tasks.add", cron="0 2 * * *"
     )
     with connection.cursor() as cur:
@@ -40,7 +59,12 @@ def test_flush_absurd_state_drop_schema_false_scopes_to_owned_jobs_only() -> Non
     flush_absurd_state()
 
     assert not ScheduledTask.objects.filter(name="direct", source="a").exists()
-    assert scheduled_task.get_pg_cron_job() is None
+    assert (
+        utils.fetch_cron_job(
+            catalog.build_jobname(live_database(), Source.ADMIN, "direct")
+        )
+        is None
+    )
     with connection.cursor() as cur:
         cur.execute(
             "select jobname from cron.job where jobname = %s", ["unrelated_job"]

@@ -5,6 +5,7 @@ import pytest
 from bs4 import BeautifulSoup, Tag
 from django.contrib.auth.models import Permission, User
 from django.core.management import call_command
+from django.db import connections
 from django.test import Client
 from django.urls import reverse, reverse_lazy
 
@@ -13,8 +14,11 @@ if t.TYPE_CHECKING:
     from bs4.element import ResultSet
 
 from django_absurd.backends import get_absurd_backends
+from django_absurd.pg_cron import catalog
+from django_absurd.pg_cron.choices import Source
 from django_absurd.pg_cron.models import ScheduledTask
 from django_absurd.pg_cron.reconcile import sync_crons
+from tests.pg_cron import utils
 from tests.utils import HasContent
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -22,10 +26,16 @@ pytestmark = pytest.mark.django_db(transaction=True)
 CHANGELIST = reverse_lazy("admin:django_absurd_pg_cron_scheduledtask_changelist")
 ADD = reverse_lazy("admin:django_absurd_pg_cron_scheduledtask_add")
 
+
+def live_database() -> str:
+    return str(connections["default"].settings_dict["NAME"])
+
+
 TASKS = {
     "default": {
         "BACKEND": "django_absurd.backends.AbsurdBackend",
         "OPTIONS": {
+            "PG_CRON_ON_TEST_DB": True,
             "QUEUES": {"default": {}, "other": {}, "reports": {}},
             "SCHEDULE": {
                 "nightly": {"task": "tests.tasks.add", "cron": "0 2 * * *"},
@@ -434,7 +444,12 @@ def test_posting_add_creates_admin_schedule_and_schedules_job(
     response = client.post(ADD, {**CHANGE_PAYLOAD, "name": "fromadmin"})
     assert response.status_code == 302
     assert ScheduledTask.objects.get(name="fromadmin").source == "a"
-    assert ScheduledTask.pg_cron.get_job("fromadmin", "a") is not None
+    assert (
+        utils.fetch_cron_job(
+            catalog.build_jobname(live_database(), Source.ADMIN, "fromadmin")
+        )
+        is not None
+    )
 
 
 def test_posting_add_with_tampered_source_is_forced_to_admin(
@@ -551,9 +566,9 @@ def test_posting_edit_reschedules_the_job_with_the_new_cron(
         {**CHANGE_PAYLOAD, "task": "tests.tasks.add", "cron": "30 6 * * *"},
     )
     assert response.status_code == 302
-    job = ScheduledTask.pg_cron.get_job("reschedule", "a")
-    assert job is not None
-    _, schedule, _, _ = job
+    jobs = utils.fetch_managed_jobs(live_database(), source=Source.ADMIN)
+    assert len(jobs) == 1
+    _, schedule, _, _ = jobs[0]
     assert schedule == "30 6 * * *"
 
 
@@ -566,13 +581,23 @@ def test_deleting_admin_schedule_via_admin_unschedules_the_job(
     client.force_login(admin_user)
     client.post(ADD, {**CHANGE_PAYLOAD, "name": "deleteme"})
     pk = ScheduledTask.objects.get(name="deleteme").pk
-    assert ScheduledTask.pg_cron.get_job("deleteme", "a") is not None
+    assert (
+        utils.fetch_cron_job(
+            catalog.build_jobname(live_database(), Source.ADMIN, "deleteme")
+        )
+        is not None
+    )
 
     delete_url = reverse("admin:django_absurd_pg_cron_scheduledtask_delete", args=[pk])
     response = client.post(delete_url, {"post": "yes"})
     assert response.status_code == 302
     assert not ScheduledTask.objects.filter(name="deleteme").exists()
-    assert ScheduledTask.pg_cron.get_job("deleteme", "a") is None
+    assert (
+        utils.fetch_cron_job(
+            catalog.build_jobname(live_database(), Source.ADMIN, "deleteme")
+        )
+        is None
+    )
 
 
 def test_deleting_settings_schedule_via_admin_is_forbidden(
