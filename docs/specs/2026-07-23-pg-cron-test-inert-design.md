@@ -176,6 +176,27 @@ identity becomes db-namespaced — deliberately breaking the shared name with
 same-DB functions can't run in the app DB anyway. Absurd-native partition/detach jobs
 stay unsurfaced (status quo).
 
+### Cleanup lifecycle: teardown sweep AND session-start sweep (both required)
+
+Test-created schedules (opt-in) live as `cron.job` rows in the SHARED central catalog,
+target-bound to the test DB. Two sweeps, both keyed
+`WHERE database = <this test DB name>`
+
+- the `_dj:` prefix, run through the catalog seam as the test's role (RLS scopes to it):
+
+1. **Per-test teardown** (via the auto-cleanup hook, after every committing test) —
+   unschedule the test's jobs so they don't linger.
+2. **Session/worker START sweep (essential, not optional)** — before a worker runs any
+   test, unschedule any job targeting its test DB name. This is load-bearing because
+   **test DB names are REUSED**: `--reuse-db` keeps `test_<db>`, and `--create-db`
+   recreates the same name. So a run that **crashes before teardown** orphans a job in
+   the shared central catalog keyed on that name; when the NEXT run's `test_<db>` exists
+   again, the launcher fires the orphan INTO it — the scheduler writes tasks the new run
+   never asked for → cross-run contamination. Teardown-only cleanup can't catch this
+   (the crash skipped it); the start sweep clears the prior orphan before the new run
+   begins. Optionally also prune own-user jobs whose
+   `database NOT IN (SELECT datname FROM pg_database)`.
+
 ### Scoped flush (was a blanket wipe)
 
 `flush.drop_pg_cron_state` currently blanket `cron.unschedule(jobid) FROM cron.job` +
