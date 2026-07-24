@@ -148,10 +148,17 @@ flow. If the API changed, the change likely also touches `django_absurd/pg_cron/
 
 ## In this repo (brief)
 
-`django_absurd.pg_cron` schedules via `cron.schedule` (`pg_cron/models.py`,
-`pg_cron/reconcile.py`) and today assumes `cron.database_name` == the app/absurd DB (its
-`0001` migration runs `CREATE EXTENSION` there). The single-DB-per-cluster constraint is
-what makes installing the app break pytest-xdist / `test_` isolation — see the design
-work in `docs/specs/` and the `schedule_in_database` exploration for the fix. Repo
-servers: `db_pg_cron` (compose) runs pg_cron 1.6 with `cron.database_name` set to the
-suite's test DB (which is why `pytest --create-db` needs the evict dance in CLAUDE.md).
+`django_absurd.pg_cron` never installs the extension on the app/absurd database and
+never runs `CREATE EXTENSION` in a migration. It auto-discovers the central database
+(`current_setting('cron.database_name')`) and schedules every job cross-database via
+`cron.schedule_in_database(...)` (`pg_cron/catalog.py`), targeting the live app database
+by name; job names are namespaced `_dj:<app db>:<source>:<name>` so multiple app
+databases sharing one central catalog never collide. A same-database deployment (where
+`cron.database_name` IS the app database) works unchanged — it's the degenerate case of
+the same call.
+
+Repo servers: `db_pg_cron` (compose) runs pg_cron 1.6 with `cron.database_name` fixed at
+the central `postgres` database; `tests/pg_cron` runs against its own ordinary test
+database on that same server, which holds no extension. `pytest --create-db` needs no
+special handling — the launcher never touches the test database's session, only the
+central one's.

@@ -76,8 +76,9 @@ duplicate that material here.
   - `uv run pytest tests/core` — core django-absurd; `django_absurd.pg_cron` NOT
     installed; plain `db` service (`PGPORT`, default 5432).
   - `uv run pytest tests/pg_cron` — pg_cron app installed; requires the `db_pg_cron`
-    service (`PGPORT_PGCRON`, default 5434); test DB `absurd_test_pg_cron` matches
-    `cron.database_name`.
+    service (`PGPORT_PGCRON`, default 5434); an ORDINARY test DB (`test_absurd_pg_cron`)
+    with no extension — the central `cron.database_name` on that server is `postgres`, a
+    different database entirely, and jobs reach it cross-database.
   - `uv run pytest tests/multidb` — multi-DB router suite; plain `db`.
 - Two compose services: `db` (plain `postgres:18`) and `db_pg_cron`
   (`Dockerfile.pg_cron` + `shared_preload_libraries=pg_cron`). Start both:
@@ -87,19 +88,11 @@ duplicate that material here.
   anything cleverer.
 - Full Python×Django matrix + min-max mypy: `uvx --with tox-uv tox`.
 - Each suite runs with `--reuse-db` (addopts); add `--create-db` to rebuild after a
-  migration change. For `tests/pg_cron`, `--create-db`'s DROP is blocked because
-  pg_cron's launcher (pointed at `cron.database_name` = `absurd_test_pg_cron`) holds a
-  session on it and reconnects on startup (a plain restart just lets it re-grab the DB).
-  Don't drop the DB or wipe volumes — instead **block new connections + terminate the
-  existing one** so pg_cron can't re-grab during the drop window, then run `--create-db`
-  (its own DROP+CREATE succeeds; pg_cron reconnects to the fresh DB):
-  ```
-  docker exec django-absurd-db_pg_cron-1 psql -U postgres \
-    -c "ALTER DATABASE absurd_test_pg_cron WITH ALLOW_CONNECTIONS false" \
-    -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='absurd_test_pg_cron' AND pid <> pg_backend_pid()"
-  uv run pytest tests/pg_cron --create-db
-  ```
-  (Per-test isolation is separate and automatic: the pytest plugin's auto-cleanup hook
+  migration change — including `tests/pg_cron`: its test DB is an ordinary one that
+  pg_cron's launcher holds no session on (the launcher only ever connects to the central
+  `cron.database_name` database, `postgres`), so `--create-db`'s DROP+CREATE just works,
+  same as any other suite. No eviction dance needed. (Per-test isolation is separate and
+  automatic: the pytest plugin's auto-cleanup hook
   (`django_absurd.test.install_absurd_cleanup`, wrapping
   `TransactionTestCase._post_teardown`) calls `flush_absurd_state()` after every
   DB-committing test, whose pg_cron branch runs the SCOPED

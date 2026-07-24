@@ -85,6 +85,19 @@ This section covers running django-absurd's pg_cron backend. Installing and enab
 pg_cron extension on your database is pg_cron's own concern — see
 [References](#references) at the end for that.
 
+**pg_cron is a cluster-wide extension, not a per-app-database one.**
+[`cron.database_name`](https://github.com/citusdata/pg_cron#configuring-pg_cron) — one
+value per Postgres cluster — names the single database allowed to hold
+`CREATE EXTENSION pg_cron`; every other database in the cluster, including your Absurd
+database, has no `cron` schema at all. django-absurd never installs the extension on the
+Absurd database and never touches `cron.*` there — it auto-discovers the central
+database (`current_setting('cron.database_name')`, nothing to configure) and schedules
+each job **cross-database** with
+[`cron.schedule_in_database`](https://github.com/citusdata/pg_cron#cross-database-scheduling),
+targeting your Absurd database by name. If your cluster runs pg_cron with
+`cron.database_name` set to the Absurd database itself (the traditional single-database
+setup), this degenerates to scheduling into "itself" — zero reconfiguration needed.
+
 ### Get running
 
 **1. Add the opt-in app to `INSTALLED_APPS`, after `"django_absurd"`:**
@@ -99,10 +112,9 @@ INSTALLED_APPS = [
 ```
 
 This app owns the projection table + wrapper-function migrations and reconciles your
-`SCHEDULE` on `post_migrate`. Its first migration runs
-`CREATE EXTENSION IF NOT EXISTS pg_cron`: **if the extension isn't installed yet, we
-create it**; if it's already there (managed Postgres, or a superuser installed it) that
-step is a no-op and needs no special rights.
+`SCHEDULE` on `post_migrate`. It runs no `CREATE EXTENSION` of its own — the extension
+is one-time **operator** setup on the central `cron.database_name` database (see
+[References](#references)), not something a migration on the Absurd database can do.
 
 **2. Declare your `SCHEDULE`:**
 
@@ -160,11 +172,11 @@ leading-seconds croniter syntax, which `pg_cron` does not accept. `pg_cron` (the
 database) validates the grammar — at sync for settings schedules, at save time for admin
 ones — so `manage.py check` does **not** grammar-check pg_cron entries.
 
-**Naming.** `manage.py check` also reports `absurd.E007` for:
-
-- schedule name containing characters outside `[A-Za-z0-9_-]`
-- composed job name (`_dj:s:<name>`) exceeding 63 bytes (Postgres silently truncates
-  longer names)
+**Naming.** `manage.py check` also reports `absurd.E007` for a schedule name containing
+characters outside `[A-Za-z0-9_-]`. Internally each schedule becomes a pg_cron job named
+`_dj:<db>:<source>:<name>` — namespaced by the Absurd database name so jobs from
+different databases sharing one central catalog never collide, and by a one-letter
+source (`s` for settings, `a` for admin) so the two lanes never collide with each other.
 
 **Beat and pg_cron are mutually exclusive.** Running `absurd_beat` (or
 `absurd_worker --beat`) while `django_absurd.pg_cron` is installed raises a
@@ -191,23 +203,32 @@ removing the app — not after — so it can still see and remove them.
 
 ### Test databases
 
-An automatic, migrate-time sync of your real `SCHEDULE` is a hazard on a **test**
-database — pg_cron's launcher runs independently of pytest/Django, so a synced schedule
-fires for real, on schedule, against test data, for the rest of the session.
+Any `cron.*` write for a backend is a hazard on a **test** database or during an active
+test run: a plain test database never carries the central pg_cron extension (see above),
+and pg_cron's launcher runs independently of pytest/Django, so a schedule left behind
+fires for real, on cadence, against test data, for the rest of the session. So this
+scheduling seam is **inert by default under tests** — detected automatically, no
+settings changes needed — and every `cron.*` write silently no-ops until you opt in.
 
-Two `OPTIONS` keys govern this:
+**`OPTIONS["PG_CRON_ON_TEST_DB"]`** (default `False`) is that opt-in — set it `True` for
+a backend whose tests genuinely need real `pg_cron` jobs. With it unset,
+`absurd_sync_crons` refuses to run (`CommandError`) rather than silently doing nothing.
+
+Two further `OPTIONS` keys govern _`migrate`'s automatic_ reconcile specifically, on top
+of the `PG_CRON_ON_TEST_DB` gate above:
 
 - **`SYNC_SCHEDULES_ON_MIGRATE`** (default `True`) — governs `migrate` against a real
   database.
 - **`SYNC_SCHEDULES_ON_TEST_DB`** (default `False`) — governs `migrate` when Django's
-  test framework has swapped in a test database. Safe by default, detected automatically
-  — no settings changes needed.
+  test framework has swapped in a test database.
 
-If a test genuinely needs `migrate` to reconcile schedules for real, set
-`OPTIONS["SYNC_SCHEDULES_ON_TEST_DB"] = True` explicitly.
+Setting `SYNC_SCHEDULES_ON_TEST_DB = True` without also setting
+`PG_CRON_ON_TEST_DB = True` is a reported misconfiguration (`absurd.E011`) — the sync
+toggle is meaningless while the seam itself stays inert.
 
-`absurd_sync_crons` is never gated by either key — it's a deliberate, explicit
-invocation, not an automatic side effect of `migrate`.
+`absurd_sync_crons` is never gated by either sync key — it's a deliberate, explicit
+invocation, not an automatic side effect of `migrate` — but it **is** gated by
+`PG_CRON_ON_TEST_DB` like every other `cron.*` write.
 
 ### Authoring schedules in the admin
 
@@ -235,17 +256,17 @@ expression comes back with `pg_cron`'s own message. **`max_attempts`** defaults 
 (Absurd's default retry ceiling) and must be `≥ 1`; clearing it stores `NULL`, which
 Absurd treats as **retry forever** — a deliberate opt-in, so a mistyped schedule can't
 loop unbounded by accident. The row is the source of truth: any write that persists it
-(admin, ORM, or `loaddata`) keeps `pg_cron` in step (`cron.schedule` is an idempotent
-upsert). A write forced onto a **different** database (`loaddata --database=…`,
-`.using(…)`) raises `NotImplementedError` — schedules live only on the absurd DB. (When
-Absurd is on a **non-default** database, `loaddata` bypasses the router and targets
-`default`, so pass `--database=<alias>` to load schedules onto the absurd DB.) Writes
-that bypass `.save()` — a **data migration** (the historical model isn't the signal's
-sender), `bulk_create`, `QuerySet.update`, raw SQL — don't emit directly, but `migrate`
-(and `absurd_sync_crons`) reconciles admin rows, so their jobs materialize then. A
-settings schedule and an admin schedule **may** share the same name — they are distinct,
-source-namespaced jobs (`_dj:s:…` vs `_dj:a:…`, the source abbreviated to keep the job
-name short).
+(admin, ORM, or `loaddata`) keeps `pg_cron` in step (`cron.schedule_in_database` is an
+idempotent upsert). A write forced onto a **different** database
+(`loaddata --database=…`, `.using(…)`) raises `NotImplementedError` — schedules live
+only on the absurd DB. (When Absurd is on a **non-default** database, `loaddata`
+bypasses the router and targets `default`, so pass `--database=<alias>` to load
+schedules onto the absurd DB.) Writes that bypass `.save()` — a **data migration** (the
+historical model isn't the signal's sender), `bulk_create`, `QuerySet.update`, raw SQL —
+don't emit directly, but `migrate` (and `absurd_sync_crons`) reconciles admin rows, so
+their jobs materialize then. A settings schedule and an admin schedule **may** share the
+same name — they are distinct, source-namespaced jobs (`_dj:<db>:s:…` vs `_dj:<db>:a:…`;
+see [Naming](#schedule-constraints)).
 
 ### Timezone
 
@@ -312,21 +333,44 @@ same for any pg_cron user. Start from pg_cron's own docs:
   [Configuring](https://github.com/citusdata/pg_cron#configuring-pg_cron) ·
   [Viewing job run details](https://github.com/citusdata/pg_cron#viewing-job-run-details)
 
-Operator prerequisites django-absurd assumes are already in place before you `migrate`:
+Operator prerequisites django-absurd assumes are already in place before you `migrate` —
+all on the **central** database named by `cron.database_name`, not necessarily the
+Absurd database:
 
-- **pg_cron ≥ 1.4** — django-absurd calls `cron.alter_job` (added in 1.4) on every
-  reconcile.
+- **pg_cron ≥ 1.4** — django-absurd calls `cron.schedule_in_database` (its full 6-arg
+  form) and `cron.alter_job` (both added in 1.4) on every reconcile.
 - **`shared_preload_libraries = pg_cron`** — set in `postgresql.conf`; requires a server
   restart. A migration cannot set this.
-- **`cron.database_name = <your_db>`** — the database Absurd runs on (pg_cron only lets
-  the extension be created in that one database).
+- **`CREATE EXTENSION pg_cron`**, run once on the database named by `cron.database_name`
+  (pg_cron only lets the extension be created in that one database — django-absurd's own
+  Absurd database never holds it; jobs run cross-database via
+  `cron.schedule_in_database`).
+- The scheduling role (whichever role `migrate` / `absurd_sync_crons` connects as) needs
+  `USAGE` on the `cron` schema plus `EXECUTE` on `cron.schedule_in_database` and
+  `cron.alter_job` — unless it owns the extension outright. The `alter_job` grant is
+  required, not optional: `schedule_in_database`'s `active` argument only applies when
+  it first creates a job, so disabling an existing job needs an explicit `alter_job`
+  call.
+
+  ```sql
+  GRANT USAGE ON SCHEMA cron TO <scheduling_role>;
+  GRANT EXECUTE ON FUNCTION
+      cron.schedule_in_database(text, text, text, text, text, boolean)
+      TO <scheduling_role>;
+  GRANT EXECUTE ON FUNCTION
+      cron.alter_job(bigint, text, text, text, text, boolean)
+      TO <scheduling_role>;
+  ```
+
+If `cron.database_name` happens to point at the same database django-absurd runs on (the
+traditional single-database setup), all of the above still applies — the app role just
+also has to be the one that owns or was granted on the extension there. Nothing changes
+about how django-absurd itself is configured.
 
 Managed Postgres (Amazon RDS, Google Cloud SQL, Azure Database, …) exposes these as
-parameter-group / flag options and typically pre-installs the extension — in which case
-our `CREATE EXTENSION IF NOT EXISTS` step is a clean no-op.
+parameter-group / flag options and typically lets you pre-install the extension and
+grants once, centrally.
 
-!!! note
-
-    Because the app's first migration creates the extension, reversing it runs
-    `DROP EXTENSION IF EXISTS pg_cron` — stock Django `CreateExtension` behavior, same as
-    any extension migration.
+`manage.py check --database default` (and `migrate`, which runs checks first) reports
+`absurd.E012` if the central database is unreachable or missing the extension —
+deploy-time fail-fast, never during the test suite.
