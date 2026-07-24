@@ -26,9 +26,7 @@ def test_test_environment_active_true_under_pytest() -> None:
 
 
 @pytest.mark.usefixtures("_restore_original_names")
-def test_is_test_database_true_when_live_name_differs_from_snapshot(
-    settings: SettingsWrapper,
-) -> None:
+def test_is_test_database_true_when_live_name_differs_from_snapshot() -> None:
     alias = "default"
     detection.ORIGINAL_DATABASE_NAMES[alias] = "some_prod_name"
     assert connections[alias].settings_dict["NAME"] != "some_prod_name"

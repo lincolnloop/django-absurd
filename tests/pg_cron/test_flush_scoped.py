@@ -27,6 +27,6 @@ def test_flush_only_removes_this_database_jobs(settings: SettingsWrapper) -> Non
 
         mine = catalog.build_jobname(live_db, Source.SETTINGS, "mine")
         assert utils.fetch_cron_job(mine) is None
-        assert utils.control_job_still_present("other_db_name") is True
+        assert utils.is_control_job_present("other_db_name") is True
     finally:
         utils.remove_control_job("other_db_name")

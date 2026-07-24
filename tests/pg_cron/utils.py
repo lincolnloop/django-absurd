@@ -72,7 +72,7 @@ def schedule_control_job_in_other_database(database: str) -> None:
         )
 
 
-def control_job_still_present(database: str) -> bool:
+def is_control_job_present(database: str) -> bool:
     """Whether the control job bound to ``database`` is still in the central catalog."""
     with open_central_connection("default") as cur:
         cur.execute(

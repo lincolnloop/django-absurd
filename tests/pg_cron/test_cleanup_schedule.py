@@ -26,7 +26,7 @@ def fetch_cleanup_lane() -> list[tuple[str, str, str, bool]]:
     return utils.fetch_managed_jobs(utils.fetch_live_database(), source=CLEANUP_SOURCE)
 
 
-def cleanup_jobname() -> str:
+def build_cleanup_jobname() -> str:
     return catalog.build_jobname(
         utils.fetch_live_database(), CLEANUP_SOURCE, CLEANUP_NAME
     )
@@ -40,7 +40,7 @@ def test_sync_schedules_cleanup_job(
     call_command("absurd_sync_crons")
 
     assert fetch_cleanup_lane() == [
-        (cleanup_jobname(), "17 * * * *", CLEANUP_COMMAND, True)
+        (build_cleanup_jobname(), "17 * * * *", CLEANUP_COMMAND, True)
     ]
 
 
@@ -56,7 +56,7 @@ def test_cleanup_job_is_isolated_to_its_own_lane(
     admin_jobs = utils.fetch_managed_jobs(live_db, source=Source.ADMIN)
     assert [r[0] for r in settings_jobs] == []
     assert [r[0] for r in admin_jobs] == []
-    assert [r[0] for r in fetch_cleanup_lane()] == [cleanup_jobname()]
+    assert [r[0] for r in fetch_cleanup_lane()] == [build_cleanup_jobname()]
 
 
 def test_sync_unschedules_cleanup_job_when_cleanup_dropped(
@@ -84,7 +84,7 @@ def test_cleanup_job_survives_absurd_flush_command(
     call_command("absurd_flush", "--noinput")
 
     assert fetch_cleanup_lane() == [
-        (cleanup_jobname(), "17 * * * *", CLEANUP_COMMAND, True)
+        (build_cleanup_jobname(), "17 * * * *", CLEANUP_COMMAND, True)
     ]
 
 

@@ -4,7 +4,6 @@ from django.core.exceptions import ImproperlyConfigured
 from django_absurd import connection
 
 
-@pytest.mark.django_db
 def test_resolve_cron_database_raises_when_no_pg_cron() -> None:
     with pytest.raises(ImproperlyConfigured) as excinfo:
         connection.resolve_cron_database("default")
