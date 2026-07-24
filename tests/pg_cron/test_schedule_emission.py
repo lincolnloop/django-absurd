@@ -1,8 +1,10 @@
+import logging
 from pathlib import Path
 
 import pytest
 import pytest_django.fixtures
 from django.core.management import call_command
+from django.db import transaction
 
 from django_absurd.pg_cron import catalog
 from django_absurd.pg_cron.choices import Source
@@ -14,6 +16,50 @@ pytestmark = pytest.mark.django_db(transaction=True)
 LOADED_SCHEDULE_FIXTURE = str(
     Path(__file__).parent / "fixtures" / "loaded_schedule.json"
 )
+
+
+def test_save_emits_job_only_after_commit(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
+    """Emission rides the row's transaction.on_commit, never synchronously in post_save:
+    inside an open transaction the central job is still absent; it appears only once the
+    transaction commits."""
+    settings.TASKS = utils.build_pg_cron_tasks({})
+    jobname = catalog.build_jobname(utils.fetch_live_database(), Source.ADMIN, "onsave")
+    with transaction.atomic():
+        ScheduledTask.objects.create(
+            source="a",
+            name="onsave",
+            task="tests.tasks.add",
+            cron="0 2 * * *",
+        )
+        assert utils.fetch_cron_job(jobname) is None
+    assert utils.fetch_cron_job(jobname) is not None
+
+
+def test_central_failure_after_commit_is_swallowed_and_logged(
+    caplog: pytest.LogCaptureFixture,
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
+    """A central-connection failure that lands AFTER the row committed (here pg_cron
+    rejecting an invalid cron) is swallowed-and-logged, never propagated as a 500 — the
+    row stays saved and the next reconcile self-heals the missing job."""
+    settings.TASKS = utils.build_pg_cron_tasks({})
+    with caplog.at_level(logging.WARNING, logger="django_absurd"):
+        scheduled_task = ScheduledTask.objects.create(
+            source="a",
+            name="badcron",
+            task="tests.tasks.add",
+            cron="not a valid cron",
+        )
+    assert ScheduledTask.objects.filter(pk=scheduled_task.pk).exists()
+    assert (
+        utils.fetch_cron_job(
+            catalog.build_jobname(utils.fetch_live_database(), Source.ADMIN, "badcron")
+        )
+        is None
+    )
+    assert "django-absurd: pg_cron schedule emission failed after commit" in caplog.text
 
 
 def test_saving_admin_schedule_schedules_the_job(

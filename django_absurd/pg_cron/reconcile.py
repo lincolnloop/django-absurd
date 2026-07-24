@@ -85,14 +85,16 @@ def build_scheduled_fields(
 def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:
     """Reconcile ScheduledTask rows for this backend's declared SCHEDULE entries.
 
-    Upserts one row per declared schedule (source="settings"), then prunes undeclared
-    settings rows. The source="admin" scope is never touched. The pg_cron jobs follow:
-    each row upsert fires post_save → schedule; each pruned row fires post_delete →
-    unschedule. Finally it prunes (via the catalog seam) any owned settings job whose
-    row was removed out-of-band (signal-less delete), so cron.job reconverges to the
-    declared state. No lock — emission is idempotent (upserts) and self-healing (the
-    prune), so
-    concurrent reconcilers converge without one.
+    Runs the ordered central-connection body: upsert one row per declared schedule
+    (source="settings") — whose post_save commit hook schedules the job — then prune
+    undeclared settings rows (each pruned row's commit hook unschedules its job), then
+    prune (via the catalog seam) any owned settings job whose row was removed
+    out-of-band (signal-less delete), then reconcile the cleanup job — so cron.job
+    reconverges to the declared state. The source="admin" scope is never touched. No
+    lock — emission is idempotent (upserts) and self-healing (the prune), so concurrent
+    reconcilers converge without one. Lost row↔job atomicity is acceptable: the
+    run-wrapper re-reads the row on each fire, so a dropped emission is only a missed
+    fire / stale cadence, never a wrong or orphan spawn.
 
     Returns (created, pruned): count of ScheduledTask rows newly created and count
     deleted. A no-op reconcile returns (0, 0) so callers can stay quiet.
