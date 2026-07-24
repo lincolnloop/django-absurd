@@ -114,6 +114,27 @@ psql -d <cron.database_name> -c "SELECT cron.unschedule(jobid) FROM cron.job WHE
 dropdb probe
 ```
 
+## Keeping this reference current
+
+This file was verified against **pg_cron 1.6** (`postgresql-18-cron`, the version pinned
+in `Dockerfile.pg_cron`). pg_cron evolves, so re-verify when the pin moves or when
+unsure:
+
+1. **Check for new releases:** https://github.com/citusdata/pg_cron/releases and `/tags`
+   (or `gh api repos/citusdata/pg_cron/releases/latest --jq .tag_name`). Compare to the
+   `postgresql-*-cron=<version>` pin in `Dockerfile.pg_cron`.
+2. **Read the delta:** the release notes / `CHANGELOG.md`, and the versioned
+   `pg_cron--<old>--<new>.sql` upgrade scripts in the repo (the authoritative source for
+   new/changed function signatures) — e.g. `schedule_in_database`, `alter_job` were
+   added in 1.4.
+3. **Re-probe** the facts here against the running server (the probe commands above,
+   plus `\df cron.*` for the current signatures). Update this file with what changed and
+   bump the "verified against" version.
+
+**Trigger:** treat a bump of the `postgresql-*-cron` pin in `Dockerfile.pg_cron` (e.g. a
+Renovate PR) as a signal to re-verify this skill — a candidate check for the `sync-docs`
+flow. If the API changed, the change likely also touches `django_absurd/pg_cron/`.
+
 ## In this repo (brief)
 
 `django_absurd.pg_cron` schedules via `cron.schedule` (`pg_cron/models.py`,
