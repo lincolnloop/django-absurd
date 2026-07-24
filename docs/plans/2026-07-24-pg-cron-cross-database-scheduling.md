@@ -68,26 +68,25 @@ New modules:
 - `django_absurd/pg_cron/catalog.py` — the single `cron.*` seam. Opens the central
   connection, applies the inert gate, exposes verbs (`schedule_job`,
   `unschedule_jobs_for_database`, `get_job`, `get_managed_jobs`, `prune_jobs`,
-  `probe_cron_grammar`, `reconcile_cleanup_job`, `sweep_foreign_scheme_jobs`).
+  `probe_cron_grammar`, `reconcile_cleanup_job`).
 
 Modified:
 
 - `django_absurd/connection.py` — add `resolve_cron_database(alias)` +
   `open_central_connection(alias)` (raw psycopg + B1 wrap).
 - `django_absurd/pg_cron/validators.py` — db-namespaced `build_jobname` /
-  `build_jobname_prefix`; length cap 200 on the static portion.
+  `build_jobname_prefix`; DELETE `validate_jobname_length` (unbounded `text`, no cap).
 - `django_absurd/pg_cron/models.py` — `PgCronManager` + `schedule_pg_cron_job` /
   `unschedule_pg_cron_job` route through catalog; fold `active` into
   `schedule_in_database`, drop `cron.alter_job`.
-- `django_absurd/pg_cron/reconcile.py` — route through catalog; central cleanup job;
-  transition sweep.
+- `django_absurd/pg_cron/reconcile.py` — route through catalog; central cleanup job.
 - `django_absurd/pg_cron/signals.py` — `transaction.on_commit` emission; swallow-and-log
   after commit; contract rewrite.
 - `django_absurd/pg_cron/apps.py` — snapshot populates
   `detection.ORIGINAL_DATABASE_NAMES`; `should_sync_schedules` uses
   `detection.is_test_database`.
-- `django_absurd/pg_cron/checks.py` — fix the `_dj:s:<name>` hint; add composition +
-  central-extension checks.
+- `django_absurd/pg_cron/checks.py` — DELETE the jobname-length check + hint; add
+  composition + central-extension checks.
 - `django_absurd/flush.py` — scoped `drop_pg_cron_state`.
 - `django_absurd/backends.py` — `CRON_DATABASE_NAME`, `PG_CRON_ON_TEST_DB` in
   `AbsurdBackendOptions`.
@@ -308,14 +307,24 @@ Run: `uv run pytest tests/pg_cron/test_central_connection.py -v` Expected: PASS.
 
 ---
 
-### Task 3: Db-namespaced jobnames (`validators.py`)
+### Task 3: Db-namespaced jobnames + remove the length restriction (`validators.py`)
+
+`cron.job.jobname` is unbounded `text` (LIVE-VALIDATED: a 300-char jobname round-trips
+intact via `schedule_in_database`, no truncation). There is NO length restriction to
+enforce — so this task ALSO deletes the existing 63-byte `validate_jobname_length`
+guard, its check, and its hint entirely. Keep `validate_name_charset` (the
+`[A-Za-z0-9_-]` charset guard is still needed — jobnames use `:` as a separator).
 
 **Files:**
 
-- Modify: `django_absurd/pg_cron/validators.py:36-54`,
-  `django_absurd/pg_cron/checks.py:22-25`
+- Modify: `django_absurd/pg_cron/validators.py:36-54` (db-namespace the builders; DELETE
+  `validate_jobname_length`), `django_absurd/pg_cron/models.py:200-227` (drop the
+  `validate_jobname_length` call in `clean`), `django_absurd/pg_cron/checks.py` (DELETE
+  `E007_HINT_PG_CRON_JOBNAME` at :22-25, its import at :15, and the
+  `validate_jobname_length` call + branch at :79-84)
+- Delete: `tests/pg_cron/validators/test_jobname_length.py`
 - Test: `tests/pg_cron/test_pg_cron_naming.py`,
-  `tests/pg_cron/validators/test_jobname_length.py`
+  `tests/pg_cron/test_scheduledtask_model.py`
 
 **Interfaces:**
 
@@ -324,10 +333,7 @@ Run: `uv run pytest tests/pg_cron/test_central_connection.py -v` Expected: PASS.
     `f"_dj:{database}:{source}:{name}"`
   - `build_jobname_prefix(source: str, database: str) -> str` →
     `f"_dj:{database}:{source}:"`
-  - `build_static_jobname(name: str, source: str) -> str` → `f"_dj:{source}:{name}"`
-    (the DB-prefix-free portion the length check validates)
-  - `validate_jobname_length(source: str, name: str) -> None` — validates
-    `len(build_static_jobname(...).encode()) > 200`.
+- Removes: `validate_jobname_length`, `E007_HINT_PG_CRON_JOBNAME`.
 - Consumes (updated callers): every current `build_jobname`/`build_jobname_prefix`
   caller now threads a `database` argument (models manager methods, reconcile, catalog
   in later tasks).
@@ -352,60 +358,61 @@ def test_build_jobname_prefix_is_database_and_source_scoped() -> None:
         validators.build_jobname_prefix(Source.SETTINGS, "test_x_gw1")
         == "_dj:test_x_gw1:s:"
     )
+
+
+def test_validate_jobname_length_is_gone() -> None:
+    assert not hasattr(validators, "validate_jobname_length")
 ```
 
 ```python
-# tests/pg_cron/validators/test_jobname_length.py  (adjust to the 200-byte static cap)
+# tests/pg_cron/test_scheduledtask_model.py  (add — a very long name now validates cleanly)
 import pytest
-from django.core.exceptions import ValidationError
 
-from django_absurd.pg_cron import validators
 from django_absurd.pg_cron.choices import Source
+from django_absurd.pg_cron.models import ScheduledTask
+from tests.pg_cron import utils
 
 
-def test_validate_jobname_length_accepts_static_portion_up_to_cap() -> None:
-    name = "n" * (200 - len("_dj:s:"))
-    validators.validate_jobname_length(Source.SETTINGS, name)  # no raise
-
-
-def test_validate_jobname_length_rejects_over_cap() -> None:
-    name = "n" * 201
-    with pytest.raises(ValidationError) as excinfo:
-        validators.validate_jobname_length(Source.SETTINGS, name)
-    assert excinfo.value.messages == [
-        "Name too long: the pg_cron job name would exceed 200 bytes."
-    ]
+@pytest.mark.django_db(transaction=True)
+def test_long_schedule_name_passes_full_clean(settings: object) -> None:
+    settings.TASKS = utils.build_pg_cron_tasks({}, pg_cron_on_test_db=True)
+    task = ScheduledTask(
+        name="n" * 300, source=Source.ADMIN, task="tests.pg_cron.tasks.add",
+        queue="default", cron="5 seconds",
+    )
+    task.full_clean()  # no ValidationError — length is unbounded
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run:
-`uv run pytest tests/pg_cron/test_pg_cron_naming.py tests/pg_cron/validators/test_jobname_length.py -v`
-Expected: FAIL — signature mismatch (`build_jobname` takes 3 args now) and old 63-byte
-message.
+`uv run pytest tests/pg_cron/test_pg_cron_naming.py tests/pg_cron/test_scheduledtask_model.py -v`
+Expected: FAIL — `build_jobname` still takes 2 args; `validate_jobname_length` still
+present and rejects the 300-char name.
 
 - [ ] **Step 3: Implement (prose)**
 
 Rewrite `build_jobname`/`build_jobname_prefix` to take `database` and emit the 4-segment
-scheme; add `build_static_jobname`; change `validate_jobname_length` to measure the
-static portion against 200 bytes with the message asserted above. Update
-`checks.py:22-25` `E007_HINT_PG_CRON_JOBNAME` to reference the new scheme and 200-byte
-cap (assert the exact new hint text in `test_pg_cron_checks.py`). Thread a real
-`database` through the existing `build_jobname*` callers so the module imports; those
-call sites get their behavior fully wired in Task 4 — here just satisfy the signature
-(pass `resolve_absurd_database()` at call sites for now).
+scheme. DELETE `validate_jobname_length` from `validators.py`, its call in
+`ScheduledTask.clean`, and — in `checks.py` — the import, the
+`E007_HINT_PG_CRON_JOBNAME` constant, and the `validate_jobname_length` branch of
+`check_pg_cron_name`. Thread a real `database` through the existing `build_jobname*`
+callers so the module imports; those call sites get their behavior fully wired in Task 4
+— here just satisfy the signature (pass `resolve_absurd_database()` at call sites for
+now).
 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run:
-`uv run pytest tests/pg_cron/test_pg_cron_naming.py tests/pg_cron/validators/ tests/pg_cron/test_pg_cron_checks.py -v`
+`uv run pytest tests/pg_cron/test_pg_cron_naming.py tests/pg_cron/test_scheduledtask_model.py tests/pg_cron/test_pg_cron_checks.py -v`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-/usr/bin/git add django_absurd/pg_cron/validators.py django_absurd/pg_cron/checks.py tests/pg_cron/test_pg_cron_naming.py tests/pg_cron/validators/test_jobname_length.py
-/usr/bin/git commit -m "feat(pg_cron): db-namespaced jobnames + 200-byte static-portion length cap"
+/usr/bin/git add django_absurd/pg_cron/validators.py django_absurd/pg_cron/models.py django_absurd/pg_cron/checks.py tests/pg_cron/test_pg_cron_naming.py tests/pg_cron/test_scheduledtask_model.py
+/usr/bin/git rm tests/pg_cron/validators/test_jobname_length.py
+/usr/bin/git commit -m "feat(pg_cron): db-namespaced jobnames; drop the (unnecessary) jobname-length restriction"
 ```
 
 ---
@@ -690,9 +697,9 @@ swallows-and-logs a post-commit central failure). Rewrite the module docstring's
 emission contract (two connections; emission after commit; the advisory lock now
 serializes only the central op). In `reconcile.py`, take the central advisory lock on
 the central connection and run the bulk body in order: upsert declared jobs → prune
-orphaned jobs (source + `WHERE database = <live>`) → reconcile cleanup job → (transition
-sweep lands in Task 7). Note explicitly in comments that lost row↔job atomicity is
-acceptable because the run-wrapper re-reads the row each fire.
+orphaned jobs (source + `WHERE database = <live>`) → reconcile cleanup job. Note
+explicitly in comments that lost row↔job atomicity is acceptable because the run-wrapper
+re-reads the row each fire.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -709,71 +716,7 @@ Expected: PASS (admin HTTP save/delete still emits via the commit hook).
 
 ---
 
-### Task 7: Transition sweep (B2)
-
-**Files:**
-
-- Modify: `django_absurd/pg_cron/reconcile.py` + `django_absurd/pg_cron/catalog.py` (add
-  `sweep_foreign_scheme_jobs`)
-- Test: `tests/pg_cron/test_transition_sweep.py`
-
-**Interfaces:**
-
-- `catalog.sweep_foreign_scheme_jobs(alias) -> None` — one-time reconcile step:
-  unschedule
-  `WHERE database = <live> AND starts_with(jobname,'_dj:') AND NOT starts_with(jobname,'_dj:'||<live>||':')`
-  plus the literal legacy `absurd_cleanup_all` name. Called inside the bulk reconcile
-  body BEFORE emitting the new-scheme jobs.
-
-- [ ] **Step 1: Write the failing test**
-
-```python
-# tests/pg_cron/test_transition_sweep.py
-import pytest
-from django.db import connections
-
-from django_absurd.pg_cron import catalog, reconcile
-from tests.pg_cron import utils
-
-
-@pytest.mark.django_db(transaction=True)
-def test_reconcile_removes_old_scheme_jobs_for_this_database(settings: object) -> None:
-    settings.TASKS = utils.build_pg_cron_tasks(
-        {"nightly": {"task": "tests.pg_cron.tasks.add", "cron": "5 seconds"}},
-        pg_cron_on_test_db=True,
-    )
-    live_db = str(connections["default"].settings_dict["NAME"])
-    utils.seed_legacy_scheme_job(live_db, "_dj:s:nightly")  # old 3-segment name, same DB
-    reconcile.sync_crons(utils.absurd_backend())
-    assert not utils.job_exists("_dj:s:nightly")
-    assert utils.job_exists(f"_dj:{live_db}:s:nightly")  # new-scheme job present
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `uv run pytest tests/pg_cron/test_transition_sweep.py -v` Expected: FAIL — legacy
-job survives, both jobs present (double-fire).
-
-- [ ] **Step 3: Implement (prose)**
-
-Add `catalog.sweep_foreign_scheme_jobs(alias)` per the interface and call it in the bulk
-reconcile body immediately before emitting new-scheme jobs. Add the `utils.py`
-seed/exists helpers.
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `uv run pytest tests/pg_cron/test_transition_sweep.py -v` Expected: PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
-/usr/bin/git add django_absurd/pg_cron/reconcile.py django_absurd/pg_cron/catalog.py tests/pg_cron/test_transition_sweep.py tests/pg_cron/utils.py
-/usr/bin/git commit -m "feat(pg_cron): one-time transition sweep of legacy-scheme jobs on reconcile"
-```
-
----
-
-### Task 8: Drop CreateExtension + central compose + move `tests/pg_cron` to an ordinary test DB
+### Task 7: Drop CreateExtension + central compose + move `tests/pg_cron` to an ordinary test DB
 
 **Files:**
 
@@ -838,7 +781,7 @@ Expected: PASS on both — no `--create-db` eviction dance, xdist green.
 
 ---
 
-### Task 9: System checks (composition + central-extension fail-safe)
+### Task 8: System checks (composition + central-extension fail-safe)
 
 **Files:**
 
@@ -910,7 +853,7 @@ Expected: PASS.
 
 ---
 
-### Task 10: Command inert guard + sweeps + isolation regression tests
+### Task 9: Command inert guard + sweeps + isolation regression tests
 
 **Files:**
 
@@ -1008,7 +951,7 @@ Expected: PASS (the slow test runs on demand: `uv run pytest tests/pg_cron -m sl
 
 ---
 
-### Task 11: Docs
+### Task 10: Docs
 
 **Files:**
 
@@ -1052,25 +995,29 @@ Verify command/flag/message/default copy matches code across README/AGENTS/site.
 
 ## Self-Review
 
-**Spec coverage:** central metadata DB (T8) · central connection + B1 (T2) · one seam
-(T4/T5) · jobname namespacing + length cap (T3) · fold `active` / drop `alter_job` (T4)
-· on_commit emission + reconcile rework (T6) · cleanup job central (T5) · cleanup
-lifecycle teardown + session-start sweep (T5 teardown / T10 start) · scoped flush (T5) ·
-backward compat degenerate case (T2 auto-discovery) · transition sweep B2 (T7) ·
-detection leaf + inert gate + opt-in (T1) · validate skip when inert (T4/T5 gate) ·
-command CommandError (T10) · composition + `Tags.database` checks (T9) · two isolation
-regression tests (T10) · migration drop + compose + suite move (T8) · WHY/docs (T11).
-All spec sections mapped.
+**Spec coverage:** central metadata DB (T7) · central connection + B1 (T2) · one seam
+(T4/T5) · jobname namespacing + drop length restriction (T3) · fold `active` / drop
+`alter_job` (T4) · on_commit emission + reconcile rework (T6) · cleanup job central (T5)
+· cleanup lifecycle teardown + session-start sweep (T5 teardown / T9 start) · scoped
+flush (T5) · backward compat degenerate case (T2 auto-discovery) · detection leaf +
+inert gate + opt-in (T1) · validate skip when inert (T4/T5 gate) · command CommandError
+(T9) · composition + `Tags.database` checks (T8) · two isolation regression tests (T9) ·
+migration drop + compose + suite move (T7) · WHY/docs (T10). All spec sections mapped.
 
-**Placeholder scan:** one `...` body remains by design — T10's slow timing companion,
+**Descoped (alpha, per review):** the spec's transition sweep (B2) and jobname-length
+cap are cut — this is alpha, so there are no legacy-scheme jobs to migrate (from-scratch
+assumption), and `cron.job.jobname` is unbounded `text` (live-validated) so no length
+guard is warranted.
+
+**Placeholder scan:** one `...` body remains by design — T9's slow timing companion,
 whose body is specified by reference to spec §Isolation regression tests (fixture
 scratch DB + sleep window; the fast deterministic sweep test beside it is the always-on
 guard). Every other step carries real test code or concrete prose.
 
 **Type consistency:** `build_jobname(name, source, database)` and
 `build_jobname_prefix(source, database)` are used with the same signatures in T3, T4,
-T5, T7. Catalog verbs all take `alias: str` first + keyword-only params, consistent
-across T4/T5/T7/T10. `is_pg_cron_inert(alias)` consumed identically in T4/T5/T9/T10.
+T5. Catalog verbs all take `alias: str` first + keyword-only params, consistent across
+T4/T5/T9. `is_pg_cron_inert(alias)` consumed identically in T4/T5/T8/T9.
 `open_central_connection(alias)` / `resolve_cron_database(alias)` consistent T2→T4.
 
 ## Execution Handoff

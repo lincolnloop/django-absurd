@@ -157,11 +157,12 @@ run inside that wrapper to keep `__cause__.sqlstate`.
 NOT `LIKE` (`_` is a LIKE wildcard and appears in every test DB name like `test_x_gw1`;
 the existing code already uses `starts_with`). Collision-free across xdist workers,
 multiple projects, and test-vs-prod on one server. `cron.job.jobname` is untruncated
-`text` (no DB cap), and the runtime `<target_db>` prefix (incl. `_gwN`) isn't statically
-known — so **`validate_jobname_length` validates only the static `_dj:<source>:<name>`
-portion**, against a chosen cap of **200 bytes** (comfortably under pg_cron's own
-limits, leaves room for any DB prefix). **Also update the stale hint** `checks.py:24`
-(`" (_dj:s:<name>) fits within 63 bytes."`) to the new scheme + cap.
+`text` with **no length limit** — LIVE-VALIDATED: a 300-char jobname round-trips intact
+through `schedule_in_database` (no truncation, no NAMEDATALEN 63-byte cut). So the
+existing 63-byte `validate_jobname_length` guard is **DELETED** (validator + its model
+`clean` call + the `checks.py` `E007_HINT_PG_CRON_JOBNAME` + check branch) — there is no
+length restriction to enforce. `validate_name_charset` stays (the `[A-Za-z0-9_-]`
+charset guard is still needed since `:` is the jobname separator).
 
 ### Emission timing + serialization (a real regression to manage)
 
@@ -196,10 +197,10 @@ delete → scoped `unschedule` of that row's job. The bulk reconcilers
 (`sync_settings_crons`, `sync_admin_crons`, the `absurd_sync_crons` command) run the
 SAME central-conn body once: take the lock, then inline on that one connection — (1)
 upsert every declared row's job, (2) prune jobs for rows that no longer exist
-(source+db-scoped `WHERE database=ours`), (3) reconcile the cleanup job, (4) the
-transition sweep (§backward-compat). The per-row on_commit path and the bulk path share
-the catalog seam; the difference is only scope (one row vs all). Emission ordering
-caveat above still applies — the lock now serializes the central op, not the row write.
+(source+db-scoped `WHERE database=ours`), (3) reconcile the cleanup job. The per-row
+on_commit path and the bulk path share the catalog seam; the difference is only scope
+(one row vs all). Emission ordering caveat above still applies — the lock now serializes
+the central op, not the row write.
 
 ### Cleanup job
 
@@ -266,15 +267,13 @@ keep working with **zero reconfiguration, one code path, no flag**. Their
 already-present app-DB extension is harmless (there the app DB _is_
 `cron.database_name`).
 
-**Transition sweep (BLOCKING — B2):** jobnames gain the db-namespace, and a NAIVE
-reconcile does NOT converge — the existing prune paths are prefix-scoped to
-`_dj:<source>:` / `_dj:<db>:<source>:`, so old `_dj:s:foo` never matches the new prefix
-and is never pruned → BOTH jobs fire → **every schedule (and the cleanup job)
-double-fires** on a same-DB user's first migrate (the run-wrapper re-reads the row, so
-both spawns are live). Design an explicit one-time sweep in reconcile: unschedule
-`WHERE database = <ours> AND starts_with(jobname,'_dj:') AND NOT starts_with(jobname,'_dj:'||<ours>||':')`
-plus the literal old `absurd_cleanup_all` name, THEN emit the new-scheme jobs. Add it to
-the change list.
+**No transition/migration code (alpha, from-scratch).** The jobnames gain a
+db-namespace, so in principle an in-place upgrade of a same-DB install would leave the
+old `_dj:s:foo` jobs alongside the new `_dj:<db>:s:foo` jobs (double-fire until pruned).
+django-absurd is alpha and pre-1.0 — we deliberately do NOT ship migration code for
+legacy-scheme jobs. Anyone upgrading an existing alpha install clears the old jobs once
+with `absurd_sync_crons --teardown` (or a fresh DB); reconcile then emits only the new
+scheme. This drops the previously-planned "transition sweep (B2)."
 
 ## Test story — the thin residue
 
@@ -390,15 +389,15 @@ django-absurd is the sole scheduler; the mirror hazard is gone by target-DB bind
 `pg_cron/catalog.py` (new seam) · `pg_cron/<leaf>.py` (detection: `is_test_database` +
 `test_environment_active`) · `pg_cron/models.py` (fold `active` into
 `schedule_in_database`, DROP `alter_job`; db-namespaced jobnames; `starts_with`
-teardown), `reconcile.py` (route via catalog + the **transition sweep**, B2),
-`validators.py`, `signals.py` (contract rewrite; `on_commit`; swallow-and-log),
-`apps.py`, `checks.py` (route via catalog; gate; composition + `Tags.database`
-central-extension checks) · `pg_cron/migrations/0001` (drop `CreateExtension`) ·
-`flush.py` (scoped to live db name) · `queues.py` / `connection.py` (central-connection
-helper + **psycopg→Django error translation**, B1) · `backends.py`
-(`CRON_DATABASE_NAME`, `PG_CRON_ON_TEST_DB` in AbsurdBackendOptions) ·
-`management/commands/absurd_sync_crons.py` (route via catalog; `CommandError` when
-inert)
+teardown; drop the `validate_jobname_length` call), `reconcile.py` (route via catalog),
+`validators.py` (db-namespace builders; DELETE `validate_jobname_length`), `signals.py`
+(contract rewrite; `on_commit`; swallow-and-log), `apps.py`, `checks.py` (route via
+catalog; gate; composition + `Tags.database` central-extension checks) ·
+`pg_cron/migrations/0001` (drop `CreateExtension`) · `flush.py` (scoped to live db name)
+· `queues.py` / `connection.py` (central-connection helper + **psycopg→Django error
+translation**, B1) · `backends.py` (`CRON_DATABASE_NAME`, `PG_CRON_ON_TEST_DB` in
+AbsurdBackendOptions) · `management/commands/absurd_sync_crons.py` (route via catalog;
+`CommandError` when inert)
 
 - `tests/pg_cron/test_absurd_sync_crons_command.py` (assert inert `CommandError` + live
   sync) · `pytest_plugin.py` (`absurd_load_schedules` fixture, #101, must commit; + the
@@ -421,16 +420,17 @@ inert)
 
 1. Detection leaf + inert gate + central-connection open-helper (`connection.py`) + B1
    error-wrap.
-2. Db-namespaced jobnames (+ jobname-length validation on the static portion, cap 200;
-   fix stale `checks.py:24` hint).
+2. Db-namespaced jobnames + DELETE the `validate_jobname_length` guard/check/hint
+   (jobname is unbounded `text`, live-validated).
 3. Route all 11 `cron.*` sites through the `catalog.py` seam
    (models/reconcile/validators/ flush/checks/command).
 4. `on_commit` emission + reconcile rework (both write paths through one central-conn
    body).
-5. Transition sweep (B2).
-6. Migration drop-`CreateExtension` + `Dockerfile.pg_cron`/`compose.yaml` central
+5. Migration drop-`CreateExtension` + `Dockerfile.pg_cron`/`compose.yaml` central
    setup + move `tests/pg_cron` onto an ordinary test DB.
-7. System checks (composition + `Tags.database` central-extension).
-8. Command inert `CommandError` + teardown/start sweeps + the two isolation regression
+6. System checks (composition + `Tags.database` central-extension).
+7. Command inert `CommandError` + teardown/start sweeps + the two isolation regression
    tests.
-9. Docs (WHY reverse, AGENTS/site operator setup, CLAUDE.md, skill).
+8. Docs (WHY reverse, AGENTS/site operator setup, CLAUDE.md, skill).
+
+(No transition sweep — alpha, from-scratch; see §Backward compatibility.)
