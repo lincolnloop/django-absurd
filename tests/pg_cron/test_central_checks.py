@@ -21,11 +21,9 @@ def test_composition_check_rejects_sync_on_test_db_without_opt_in(
     with pytest.raises(SystemCheckError) as excinfo:
         call_command("check", "django_absurd")
     assert (
-        "django-absurd: OPTIONS['SYNC_SCHEDULES_ON_TEST_DB'] is True without"
-        " OPTIONS['PG_CRON_ON_TEST_DB']."
-    ) in str(excinfo.value)
-    assert (
-        "Set OPTIONS['PG_CRON_ON_TEST_DB'] = True as well, or turn off"
+        "?: (absurd.E011) django-absurd: OPTIONS['SYNC_SCHEDULES_ON_TEST_DB'] is True"
+        " without OPTIONS['PG_CRON_ON_TEST_DB'].\n"
+        "\tHINT: Set OPTIONS['PG_CRON_ON_TEST_DB'] = True as well, or turn off"
         " SYNC_SCHEDULES_ON_TEST_DB."
     ) in str(excinfo.value)
 
@@ -79,3 +77,9 @@ def test_central_extension_check_skips_backend_on_other_database(
     must not touch it, exercising the databases-filter branch."""
     settings.TASKS = utils.build_pg_cron_tasks({}, pg_cron_on_test_db=True)
     call_command("check", "django_absurd", "--database", "replica")
+
+
+def test_probe_central_extension_reports_present_with_pg_cron() -> None:
+    """This suite's central DB (Task 7: central `postgres`) HAS pg_cron — the probe's
+    query + success path (`to_regproc(...)` returns non-null, `return True`)."""
+    assert checks.probe_central_extension("default") is True
