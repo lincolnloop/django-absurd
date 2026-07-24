@@ -1,211 +1,224 @@
-# Spec: test-inert pg_cron
+# Spec: cross-database pg_cron scheduling (test-safe by construction)
+
+> Supersedes the earlier "test-inert pg_cron" approach (kept in git history). Same
+> problem, better solution: instead of installing the extension in the app DB and gating
+> it in tests, the app DB **never** holds the extension — pg_cron schedules across DBs
+> from one central metadata DB. Decision 2026-07-24; verified live against pg_cron 1.6.
 
 ## Problem
 
-`django_absurd.pg_cron` breaks ordinary Django testing for any downstream project that
-installs it. pg_cron's `cron.database_name` is a **single server-level GUC**:
-`CREATE EXTENSION pg_cron` is only legal in that one blessed DB, and its one launcher
-serves only that DB. `pg_cron/migrations/0001` runs
-`CREATE EXTENSION IF NOT EXISTS pg_cron` unconditionally. Consequences:
+pg_cron's `cron.database_name` is a **single server-level GUC**;
+`CREATE EXTENSION pg_cron` is only legal in that one designated database
+(cron.database_name). Today `django_absurd.pg_cron` assumes `cron.database_name` == the
+app/absurd DB — the extension, `cron.job` metadata, and the
+`django_absurd_run_scheduled` fire-wrapper all live there, and `pg_cron/0001` runs
+`CREATE EXTENSION` on the app DB. So every app/test DB must be the pg_cron database,
+which:
 
-- **xdist impossible** — pytest-django gives each worker `test_<db>_gwN`; only one DB
-  per server can be blessed → workers beyond it fail `CREATE EXTENSION`.
-- **no clean isolation** — the test DB must equal `cron.database_name`, forcing tests
-  onto the real dev DB (pollution; auto-cleanup wipes real schedules) or a second
-  server.
-- **mirror hazard** — a live dev launcher can fire real jobs (cleanup_all_queues, a
-  scheduled enqueue) into test data if a test ever runs on the blessed DB.
+- **breaks pytest-xdist** — each worker gets `test_<db>_gwN`; only one DB per server can
+  be pg_cron → other workers fail `CREATE EXTENSION`;
+- **breaks standard `test_` isolation** — the test DB must equal `cron.database_name`,
+  forcing tests onto the real dev DB (pollution; auto-cleanup can wipe real schedules)
+  or a second server;
+- **invites a mirror hazard** — a live launcher firing real jobs into test data.
 
-Migration escape hatch ALONE is insufficient: five files touch `cron.*` (models,
-reconcile, validators, flush, migration). With the extension absent, any
-`ScheduledTask.save()`/ `.delete()`/`full_clean` raises
-`ProgrammingError: schema "cron" does not exist`. Tests survive TODAY only because
-`flush_absurd_state` accidentally swallows ProgrammingError.
+## Decision & goal
 
-## Goal
+Adopt **`cron.schedule_in_database`**. `cron.database_name` becomes a **central metadata
+DB (≠ the app DB)** holding the extension + `cron.job`; jobs are scheduled from there to
+**run in the current app DB** (`database => <app db>`). The app/absurd DB — and
+therefore every `test_<db>` — **never holds the extension and never touches `cron.*`**.
+Tests then run ordinary pytest-django (xdist, `test_` isolation, no main-DB contact)
+with no special handling of the app DB. Live scheduling also becomes xdist-safe and
+multi-project-safe.
 
-`django_absurd.pg_cron` is **test-inert by default**: a pg_cron project runs its
-ordinary pytest-django suite (xdist, `test_<db>` isolation, no main-DB contact) exactly
-like a non-pg_cron project — no extension, no `cron.*`. An explicit **opt-in**
-re-enables the real machinery for the rare integration test (accepting single-blessed-DB
-/ single-worker).
+## Verified pg_cron facts this relies on (live, pg_cron 1.6; floor 1.4)
 
-Success = the pg_cron example test (and any downstream) runs on **plain Postgres** with
-no `cron.database_name` juggling. The DB-name problem disappears, not worked around.
+See the `pg-cron` skill. Load-bearing:
+
+- `cron.schedule_in_database(name, sched, cmd, database, username DEFAULT NULL, active DEFAULT true)`
+  — full signature (incl. `active`) since **1.4** (already our floor). Gate on
+  `to_regproc('cron.schedule_in_database')`, not version parsing.
+- **The target DB needs NO extension** — a job scheduled into an extension-less DB both
+  schedules AND fires (launcher connects to the target, runs the command there,
+  `job_run_details.status='succeeded'`).
+- **Jobs are bound to their target DB** (`cron.job.database`): a `database => main_db`
+  job fires only into `main_db`, never a test DB. → the mirror hazard is structurally
+  gone, and teardown filters by `WHERE database = '<test_db>'`.
+- **Upsert-steal (PROVEN, critical):** `schedule_in_database` on an existing
+  `(jobname, username)` silently retargets that jobid to the new database (`cron.job`
+  UNIQUE is `(jobname, username)`, NOT scoped by database; RLS
+  `username = current_user`). → jobnames MUST be namespaced by target DB.
+- `current_setting('cron.database_name', true)` is readable from any DB on the server
+  (NULL on a non-pg_cron server) → the central DB name is auto-discoverable,
+  zero-config.
+- Non-superuser needs `GRANT USAGE ON SCHEMA cron` +
+  `GRANT EXECUTE ON FUNCTION cron.schedule_in_database(...)` in the central DB (shipped
+  un-granted on purpose).
+- `DROP DATABASE` on a job's target succeeds (launcher holds no session on non-metadata
+  DBs) → the `--create-db` eviction hack disappears for app test DBs.
+
+## Architecture
+
+### Central metadata DB + operator setup (no CreateExtension migration)
+
+**Drop `CreateExtension("pg_cron")` from `pg_cron/0001` outright** (state-neutral op
+removal — safe for already-applied deployments; the conditional-operation machinery the
+old approach needed falls away). The `RunSQL` wrapper (`django_absurd_run_scheduled`)
+stays in the app-DB migration — it runs in the app DB, needs no extension. The extension
+becomes **one-time operator setup on `cron.database_name`**: `shared_preload_libraries`,
+one `CREATE EXTENSION pg_cron`, + the two grants. django-absurd runs NOTHING in the
+central DB except `cron.*` function calls (no migration, no wrapper there).
+
+### Central connection model (the crux)
+
+Do **NOT** add a `DATABASES` alias — `setup_databases` test-swaps every alias, so a
+central alias would become an extension-less `test_<central>`. Instead: a **raw,
+short-lived psycopg connection** built from
+`connections[resolve_absurd_database()].get_connection_params()` with `dbname` swapped
+to the central name. Central name = `OPTIONS["CRON_DATABASE_NAME"]` (a DB _name_) if
+set, else auto-discovered via `current_setting('cron.database_name', true)` on the app
+connection. Same-server is correct by construction (pg_cron is server-local). Scheduling
+ops are rare (migrate reconcile, admin save, teardown) so per-op connect cost is fine;
+the advisory-lock serialization (`open_locked_cursor`) moves onto this central
+connection.
+
+### One seam for all `cron.*`
+
+Route all eleven current `cron.*` sites (`models.py` PgCronManager ×4 +
+schedule/unschedule; `reconcile.py` cleanup-job (un)schedule; `validators` grammar
+probe; `flush.drop_pg_cron_state`) through **one new module** (`pg_cron/catalog.py`)
+exposing verbs (`schedule_job`, `unschedule_jobs_for_database`, `get_job`,
+`probe_cron_grammar`, …) that open the central connection. The one remaining test-gate
+lives here — one gate, not five.
+
+### Jobname namespacing (mandatory, defeats upsert-steal)
+
+`_dj:<target_db>:<source>:<name>`. Teardown double-scoped:
+`WHERE database = %s AND jobname LIKE '_dj:' || %s || ':%'`. Collision-free across xdist
+workers, multiple projects, and test-vs-prod on one server. The 63-byte jobname rule in
+`validate_jobname_length` is relaxable (`cron.job.jobname` is untruncated `text`); keep
+a sane cap; static validation uses the configured prod `NAME` (runtime `_gwN` suffixes
+are not statically known).
+
+### Emission timing (a real regression to manage)
+
+Today `post_save` schedules on the row's own connection → both-or-neither. Central = a
+second connection → that atomicity is lost. Emit via **`transaction.on_commit`** and
+rely on the existing reconcile paths (`sync_crons`/`sync_admin_crons`) to self-heal any
+divergence; the grammar probe stays transactional on the central connection (begin →
+schedule → rollback). Rewrite `signals.py`'s contract docs accordingly.
+
+### Cleanup job
+
+`reconcile_cleanup_job` moves central too:
+`schedule_in_database(<db-namespaced cleanup name>, cron, CLEANUP_COMMAND, database => app_db)`
+(`absurd.cleanup_all_queues` runs in the app DB). The `absurd_cleanup_all` shared
+identity becomes db-namespaced — deliberately breaking the shared name with
+`absurd.enable_cron` / `absurdctl cron`, acceptable because under central topology those
+same-DB functions can't run in the app DB anyway. Absurd-native partition/detach jobs
+stay unsurfaced (status quo).
+
+### Scoped flush (was a blanket wipe)
+
+`flush.drop_pg_cron_state` currently blanket `cron.unschedule(jobid) FROM cron.job` +
+`TRUNCATE cron.job_run_details`. Against a SHARED central catalog that is catastrophic —
+rewrite scoped: unschedule `WHERE database = <ours>`; drop the `TRUNCATE` (or
+`DELETE WHERE database = ours`).
+
+### Backward compatibility (free)
+
+Same-DB is the **degenerate case**: GUC auto-discovery on an existing deployment returns
+the app DB itself → the central connection lands on the app DB →
+`schedule_in_database(database => current)` ≡ today's `cron.schedule`. Existing users
+keep working with **zero reconfiguration, one code path, no flag**. What changes:
+jobnames gain the db-namespace → one reconcile sweep prunes old-scheme `_dj:` jobs and
+re-emits (pre-1.0 alpha; "run migrate once"). Their already-present app-DB extension is
+harmless (there the app DB _is_ `cron.database_name`).
+
+## Test story — the thin residue
+
+The app/test DB never touches `cron.*`, so most of the old gating is gone. What remains
+is a small policy layer (still one gate, in `catalog.py`):
+
+- **Detection leaf** — extract `is_test_database(alias)` (name-snapshot from
+  `should_sync_schedules`) + a `test_environment_active()` conjunct (`django.test.utils`
+  sets `_TestState.saved_data` in every pytest-django / `manage.py test` run,
+  per-xdist-worker, and NEVER in a real deploy → prod can't misfire; guard the private
+  access with a loud `install_absurd_cleanup`-style version-check).
+- **Opt-in** `OPTIONS["PG_CRON_ON_TEST_DB"]` (default False) to allow schedule creation
+  from tests (writing to the shared central catalog is opt-in). No longer must be
+  settings-level (no migrate-time DDL remains) — a fixture/marker opt-in is now
+  possible; settings-level stays the simplest default. The #101 `absurd_load_schedules`
+  fixture sits on top.
+- `validate_pg_cron_cron` skips its probe when inert (avoids requiring a pg_cron server
+  in every CI run).
+- `absurd_sync_crons` (and `--teardown`) → `CommandError` when inert.
+- **Composition check** — `SYNC_SCHEDULES_ON_TEST_DB=True` without opt-in → reject.
+
+**Eliminated vs the old approach:** conditional `CreateExtension` + all migration
+gating; five-site scattered gating (→ one seam); the mirror-hazard + W-level
+pg_cron-database checks (structurally gone); the "opt-in stays single-worker" non-goal
+(live opt-in is xdist-safe via db-namespaced jobs + `WHERE database` teardown); test-DB
+juggling + the `--create-db` eviction procedure.
+
+## System checks
+
+1. **Composition (E):** `SYNC_SCHEDULES_ON_TEST_DB=True` without
+   `PG_CRON_ON_TEST_DB=True`.
+2. **Central-extension fail-safe (E, `Tags.database`):** when non-test + the pg_cron
+   scheduler is configured → the central DB is reachable and has the extension.
+   Registered with `Tags.database` so it runs at `migrate` / `check --database` only
+   (plain `check` stays DB-free). This replaces today's migrate-time `CREATE EXTENSION`
+   fail-fast.
+
+## WHY.md deliverable
+
+**Reverse** the current "Extension in the app migration (fail-fast)" section. New
+rationale to capture (via `capture-why` at ship time): we deliberately do NOT
+`CREATE EXTENSION` in a migration — the single-pg_cron-database GUC makes an app-DB
+`CREATE EXTENSION` break pytest-xdist / `test_` isolation; the extension is
+operator-managed once on `cron.database_name`, jobs run cross-DB via
+`schedule_in_database`, and fail-fast moved from migrate-time DDL to an E-level
+`Tags.database` check. Also record: schedules are db-namespaced (upsert-steal);
+django-absurd is the sole scheduler; the mirror hazard is gone by target-DB binding.
+
+## Risks (ranked)
+
+1. **Upsert-steal** (PROVEN) — mitigated fully by db-namespaced jobnames; residual ≈
+   none.
+2. **Lost row↔job atomicity** (two connections) — `on_commit` + reconcile self-heal;
+   small self-correcting window.
+3. **Crash-during-test orphans** — central rows targeting a dropped `test_*_gwN` fail
+   each fire (spamming central `job_run_details`), never fire elsewhere. Recovery:
+   session-start
+   - teardown sweep `WHERE database = <current test db>`; optionally prune own jobs
+     whose `database NOT IN (SELECT datname FROM pg_database)`.
+4. **New operator surface** — central-DB `CREATE EXTENSION` + two grants + a role with
+   rights in both DBs; needs docs + the E-check.
+5. **Detection misfire on prod** — much softer (no DDL; worst case schedules not
+   created, surfaced by the E-check); keep the `test_environment_active` conjunct
+   regardless.
+6. **Central `job_run_details` growth** — shared table, not ours to truncate; operator
+   retention (standard pg_cron practice); risk 3's sweep bounds test contribution.
 
 ## Non-goals
 
-- Making pg_cron scheduling itself work under xdist (structurally impossible — one
-  blessed DB per server). Opt-in mode stays single-worker.
-- Client-side cron-grammar validation (stays DB-authoritative; skipped when inert).
-
-## Design
-
-### Detection predicate (state-based, NOT probe-based)
-
-Reuse the existing test-DB detection behind `SYNC_SCHEDULES_ON_TEST_DB`
-(`should_sync_schedules`, apps.py: `live settings_dict["NAME"]` !=
-`ORIGINAL_DATABASE_NAMES[alias]` snapshot captured in `PgCronConfig.ready()`). Extract
-`ORIGINAL_DATABASE_NAMES` + an `is_test_database(alias)` into a **leaf module**
-(importable by migrations + models + reconcile + flush without import cycles; apps.py
-imports backends/signals so it can't be the home). `ready()` still populates the
-snapshot.
-
-Liveness: `pg_cron_inert(alias)` = `is_test_database(alias) AND not PG_CRON_ON_TEST_DB`
-(new backend option, default False, sibling of `SYNC_SCHEDULES_ON_TEST_DB`). Opt-in read
-comes from the resolved Absurd backend's OPTIONS.
-
-**Must be state-based** (name-snapshot), never probe-based ("does cron.job exist?"): if
-a project points `TEST["NAME"]` at the blessed dev DB, the extension EXISTS there — a
-probe would go live and auto-cleanup (`teardown_crons`, or the blanket
-`drop_pg_cron_state` unschedule) would WIPE the dev's real schedules. State-based
-inertness protects that regardless of extension presence — this also FIXES today's
-latent wipe-real-jobs bug.
-
-Works in migrations (test-DB setup migrates after `setup()` snapshot + NAME swap →
-detected test) and xdist (each worker re-runs `setup()`, gets its own `test_<db>_gwN` →
-detected test).
-
-### Migration escape hatch (DECISION: edit 0001 in place)
-
-New `django_absurd/pg_cron/operations.py`: a `CreateExtension` subclass whose
-forwards/backwards no-op when `pg_cron_inert(schema_editor.connection.alias)`.
-Precedent: Django's own `CreateExtension.database_forwards` already conditionally skips
-(non-postgres, already-present). Swap `CreateExtension("pg_cron")` in `0001` for it.
-
-Determinism safe: `CreateExtension` has a no-op `state_forwards` → migration graph,
-autodetector, and `django_migrations` rows are byte-identical either way; only DDL
-execution differs, exactly along the test/real axis where DB contents already differ.
-Real deploys never re-run it. Editing shipped `0001` in place is fine here (no identity
-change; pre-1.0; a migration consolidation is already planned). The `RunSQL`
-wrapper-function operation stays UNCONDITIONAL — no pg_cron dependency, so the
-`ScheduledTask` table + fire-wrapper exist in test DBs and ORM/admin/row assertions
-work.
-
-### Core Absurd schema is already pg_cron-optional (no core-SQL change)
-
-The core Absurd schema SQL (shipped from `absurdctl`) references `cron.*` ~38×, but is
-**self-guarding**: auto-invoked paths wrap every access in
-`if to_regclass('cron.job') is not null` (no-op when the extension is absent), and only
-the explicitly-pg_cron functions `raise 'pg_cron is not available'` — which inert-gated
-app code never calls. So the core migration installs and runs fine without the extension
-(core works without the pg_cron app today). No core-SQL change is needed; gating stays
-at the pg_cron-app + `flush.py` layer below. (The one unguarded core-side statement is
-`flush.drop_pg_cron_state` — already gated below.)
-
-### Runtime gating (at the lowest cron.* sites, not signal receivers)
-
-Gate each `cron.*`-touching function on `pg_cron_inert(...)` (there are five
-signal/reconcile/flush paths; gating the receivers misses four). When inert:
-
-- `models.ScheduledTask.schedule_pg_cron_job` / `unschedule_pg_cron_job` → early return
-  (rows still save/delete for non-pg_cron assertions).
-- `models.PgCronManager.get_job` → None; `get_managed_jobs` → []; `unschedule_matching`
-  / `prune_jobs_without_rows` → no-op.
-- `reconcile.reconcile_cleanup_job` / `unschedule_cleanup_job` → no-op.
-- `validators.validate_pg_cron_cron` → skip the DB probe (grammar unvalidated when inert
-  — documented).
-- `flush.drop_pg_cron_state` → skip the two `cron.*` statements, KEEP the
-  `ScheduledTask` truncate.
-
-This REPLACES the accidental swallowed-ProgrammingError reliance. Auto-cleanup
-(`flush_absurd_after_teardown` → `teardown_crons`) keeps running; its cron ops become
-real no-ops while its row deletes still clear `ScheduledTask` between transactional
-tests.
-
-### Opt-in (settings-level) + explicit command
-
-`OPTIONS["PG_CRON_ON_TEST_DB"]` (default False). Must be settings-level, not a
-fixture/marker: the extension is created (or skipped) once at test-DB setup — a per-test
-fixture can't retroactively re-migrate. A run that genuinely exercises pg_cron needs a
-dedicated settings module anyway (blessed `TEST["NAME"]` = `cron.database_name`,
-dedicated server, single worker) — the shape of the internal `tests/pg_cron` suite,
-which sets the key and becomes the documented pattern.
-
-`absurd_sync_crons` must not silently half-work when inert (WHY.md principle: an
-explicit command should sync regardless) — it raises `CommandError` with an actionable
-message ("pg_cron is inert on a test database; set OPTIONS['PG_CRON_ON_TEST_DB']=True
-…").
-
-The #101 `absurd_load_schedules` fixture sits ON TOP: requires live mode, fails loud
-when inert; does not itself flip inertness.
-
-### System checks
-
-1. **Composition check (E-level):** `SYNC_SCHEDULES_ON_TEST_DB=True` without
-   `PG_CRON_ON_TEST_DB=True` is contradictory (migrate-time sync would upsert rows whose
-   job emission silently no-ops) → reject.
-2. **Real-DB fail-safe check (DECISION: include).** The hardest risk is detection
-   misfire on a real deploy — anything that mutates `DATABASES[...]["NAME"]` after
-   `ready()` (dynamic/multi-tenant) → real DB misclassified test → `CREATE EXTENSION`
-   silently skipped + fail-fast lost. Add a check that the extension IS present when the
-   app is installed and the DB is classified non-test → restores fail-loud at
-   `check`/deploy time.
-
-## Mirror hazard (real crons must not fire into tests)
-
-Structurally prevented by default: the launcher connects only to `cron.database_name`
-(the blessed dev DB); default-inert tests run on `test_<db>[_gwN]`, never the blessed DB
-→ the launcher can't reach test data even on a shared dev server with live schedules.
-Bites only if tests are pointed AT the blessed DB — our side stays inert (state-based),
-but the launcher is outside our control → surface via a W-level check reading
-`current_setting('cron.database_name')` when it equals the live test DB without opt-in
-(dovetails the deferred "absurd DB == cron.database_name" check). Opt-in mode IS this
-hazard by construction (accepted; dedicated test server, single worker, scoped
-auto-cleanup).
-
-## Composition with existing keys
-
-`SYNC_SCHEDULES_ON_TEST_DB` (migrate-time sync gate) and `PG_CRON_ON_TEST_DB` (machinery
-liveness) are independent axes. Internal `tests/pg_cron`: `PG_CRON_ON_TEST_DB=True` +
-`SYNC_SCHEDULES_ON_TEST_DB=False` (extension + signals live, migrate-sync off, tests
-drive sync explicitly) — proves independence.
-
-## Test proof (what the suite must show)
-
-- **Inert default on plain Postgres** (the downstream scenario): a settings module with
-  `pg_cron` installed, run against the plain `db` service (no extension possible).
-  `migrate` succeeds (no CREATE EXTENSION),
-  `ScheduledTask.save()`/`.delete()`/`full_clean` don't raise, auto-cleanup no-ops
-  cleanly, `cron.job`/`cron.*` never touched. Simulates xdist (each worker = a test DB
-  with no extension).
-- **Opt-in live** (internal suite): `PG_CRON_ON_TEST_DB=True` on the blessed test DB —
-  extension created, signals schedule real jobs, `absurd_load_schedules` works.
-- **Command loud when inert:** `absurd_sync_crons` → CommandError with the full message.
-- **Composition check:** `SYNC_SCHEDULES_ON_TEST_DB=True` alone → the E-level check
-  fires (full msg/hint).
-- **Real-DB fail-safe:** app installed, non-test DB, extension absent → the check fires.
+- Absurd-native partition/detach cron surfacing (status quo; would need upstream
+  `schedule_in_database` support).
+- No absurd-sdk / absurdctl change (all scheduling is django-absurd's own SQL).
 
 ## Change list (file-level)
 
-- `django_absurd/pg_cron/<leaf>.py` (new) — `ORIGINAL_DATABASE_NAMES`,
-  `is_test_database`, `pg_cron_inert`.
-- `django_absurd/pg_cron/apps.py` — populate snapshot into the leaf module;
-  `should_sync_schedules` uses it.
-- `django_absurd/pg_cron/operations.py` (new) — conditional `CreateExtension`.
-- `django_absurd/pg_cron/migrations/0001_initial.py` — swap the operation.
-- `django_absurd/pg_cron/models.py` — gate 6 methods.
-- `django_absurd/pg_cron/validators.py` — skip probe when inert.
-- `django_absurd/pg_cron/reconcile.py` — gate cleanup-job (un)schedule.
-- `django_absurd/flush.py` — gate `drop_pg_cron_state` cron.* (keep truncate).
-- `django_absurd/pg_cron/management/commands/absurd_sync_crons.py` — CommandError when
-  inert.
-- `django_absurd/backends.py` — `PG_CRON_ON_TEST_DB` in `AbsurdBackendOptions`.
-- `django_absurd/pg_cron/checks.py` — composition check + real-DB fail-safe + optional
-  W-level blessed-DB warning.
-- `django_absurd/pytest_plugin.py` — `absurd_load_schedules` fixture (#101),
-  live-mode-required.
-- `tests/pg_cron/settings.py` — set `PG_CRON_ON_TEST_DB=True`.
-- new inert-mode tests on plain `db`; docs (AGENTS testing, WHY, README).
-- Follow-up: simplify the pg_cron example test (drop `CRON_DATABASE_NAME`; run on plain
-  db).
-
-## Top risks
-
-1. (hardest) detection misfire on real deploy → mitigated by the real-DB fail-safe check
-   (above).
-2. `--keepdb` + flipping opt-in on → migrations don't re-run → raw ProgrammingError; doc
-   "flip needs --create-db".
-3. silent behavioral divergence (inert skips grammar validation + emission) —
-   documented; opt-in suite + #101 for job assertions.
-4. tests aimed at blessed DB — only the W-level warning can surface (launcher not ours).
+`pg_cron/catalog.py` (new seam) · `pg_cron/<leaf>.py` (detection: `is_test_database` +
+`test_environment_active`) · `pg_cron/models.py`, `reconcile.py`, `validators.py`,
+`signals.py`, `apps.py`, `checks.py` (route via catalog; gate; new checks) ·
+`pg_cron/migrations/0001` (drop `CreateExtension`) · `flush.py` (scoped) · `queues.py` /
+`connection.py` (central-connection helper) · `backends.py` (`CRON_DATABASE_NAME`,
+`PG_CRON_ON_TEST_DB` in AbsurdBackendOptions) · `pytest_plugin.py`
+(`absurd_load_schedules` fixture, #101) · `tests/pg_cron/*` (run on an ordinary test DB
+now) + new inert-mode tests on plain `db` · `Dockerfile.pg_cron` / `compose.yaml`
+(central `cron.database_name`, e.g. `postgres`) · `docs/WHY.md` (reverse the extension
+section) · `django_absurd/AGENTS.md` + `docs/web/cron-jobs.md` (operator setup: central
+DB + grants) · follow-up: simplify the pg_cron example (drop `CRON_DATABASE_NAME`, run
+on plain `db`).

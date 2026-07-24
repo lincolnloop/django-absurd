@@ -107,7 +107,7 @@ place to look when a job "isn't running."
 ## Inspecting / probing a live instance
 
 ```bash
-psql -c "SHOW cron.database_name"                          # which DB is blessed
+psql -c "SHOW cron.database_name"                          # which DB holds the extension
 psql -d <cron.database_name> -c "\d cron.job"              # schema
 psql -d <cron.database_name> -c "SELECT jobid,jobname,database,active,schedule FROM cron.job"
 psql -d <cron.database_name> -c \
