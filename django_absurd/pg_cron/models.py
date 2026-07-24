@@ -1,13 +1,10 @@
 import typing as t
-from contextlib import contextmanager
 
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
-from django.db import DatabaseError, InternalError, connections, models, transaction
+from django.db import connections, models
 
 if t.TYPE_CHECKING:
-    from django.db.backends.utils import CursorWrapper
-
     from django_absurd.backends import AbsurdBackend
 
 from django_absurd.backends import get_declared_queues
@@ -58,56 +55,10 @@ def get_declared_queue_choices() -> list[tuple[str, str]]:
     return [(q, q) for q in sorted(queues)]
 
 
-class PgCronManager(models.Manager["ScheduledTask"]):
-    """The pg_cron catalog (``cron.job``) operations for these schedules, kept off
-    ``objects`` (which queries the ScheduledTask table). Every method defaults to the
-    single absurd database (``resolve_absurd_database()``); pass ``database`` only to
-    reuse an already-resolved value.
-    """
-
-    def unschedule_matching(self, source: str, database: str | None = None) -> None:
-        """Unschedule every pg_cron job owned by one source lane on the app database
-        (``_dj:<app db>:<source>:%``). Scoped to that exact prefix so tearing down one
-        lane never touches another lane's jobs."""
-        alias = database or resolve_absurd_database()
-        prefix = catalog.build_jobname(catalog.resolve_app_database_name(alias), source)
-        with open_locked_cursor(alias) as cur:
-            cur.execute(
-                "select jobid from cron.job where starts_with(jobname, %s)",
-                [prefix],
-            )
-            prune_pg_cron_jobs(cur, [jobid for (jobid,) in cur.fetchall()])
-
-    def prune_jobs_without_rows(
-        self,
-        source: str,
-        keep_names: list[str],
-        database: str | None = None,
-    ) -> None:
-        """Unschedule owned jobs for a source lane (``_dj:<app db>:<source>:%``) whose
-        name isn't in keep_names — i.e. jobs with no backing row. Row deletion
-        unschedules its own job via post_delete, but a row removed by a signal-less
-        path (bulk delete, ``flush``, raw SQL) leaves its job orphaned — reconcile heals
-        it so ``cron.job`` reconverges to the rows."""
-        alias = database or resolve_absurd_database()
-        app_database = catalog.resolve_app_database_name(alias)
-        keep = {
-            catalog.build_jobname(app_database, source, name) for name in keep_names
-        }
-        with open_locked_cursor(alias) as cur:
-            cur.execute(
-                "select jobid, jobname from cron.job where starts_with(jobname, %s)",
-                [catalog.build_jobname(app_database, source)],
-            )
-            stale = [jobid for jobid, jobname in cur.fetchall() if jobname not in keep]
-            prune_pg_cron_jobs(cur, stale)
-
-
 class ScheduledTask(models.Model):
     Source = Source
 
     objects = models.Manager()
-    pg_cron = PgCronManager()
 
     name = models.CharField(validators=[validate_name_charset])
     source = models.CharField(choices=Source.choices, default=Source.SETTINGS)
@@ -240,35 +191,6 @@ class ScheduledTask(models.Model):
         catalog.unschedule_job(
             resolve_absurd_database(), name=self.name, source=self.source
         )
-
-
-@contextmanager
-def open_locked_cursor(database: str) -> t.Iterator["CursorWrapper"]:
-    """A cursor on ``database`` inside a transaction holding the shared advisory lock,
-    so concurrent pg_cron job writers serialise."""
-    advisory_lock_key = 0x616273_75726421  # "absurd!" as hex
-    with transaction.atomic(using=database), connections[database].cursor() as cur:
-        cur.execute("select pg_advisory_xact_lock(%s)", [advisory_lock_key])
-        yield cur
-
-
-def prune_pg_cron_jobs(cur: "CursorWrapper", stale_jobids: list[int]) -> None:
-    """Unschedule each jobid, tolerating already-removed rows.
-
-    Each unschedule runs inside its own savepoint: if the cron.job row was removed
-    out-of-band, cron.unschedule raises InternalError (SQLSTATE XX000); we roll back
-    to the savepoint and continue. Matched on SQLSTATE (not message) for lc_messages.
-    """
-    for jobid in stale_jobids:
-        cur.execute("savepoint prune_sp")
-        try:
-            cur.execute("select cron.unschedule(%s)", [jobid])
-        except (InternalError, DatabaseError) as exc:
-            if getattr(exc.__cause__, "sqlstate", None) != "XX000":
-                raise
-            cur.execute("rollback to savepoint prune_sp")
-        else:
-            cur.execute("release savepoint prune_sp")
 
 
 def build_scheduled_command(alias: str, source: str, name: str) -> str:

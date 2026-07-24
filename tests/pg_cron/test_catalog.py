@@ -166,9 +166,8 @@ def test_unschedule_jobids_swallows_job_vanished_after_scan() -> None:
     # Direct coverage of unschedule_jobids' XX000 tolerance branch: a jobid whose
     # cron.job row is already gone (a post_delete racing prune between the stale-id scan
     # and the unschedule) makes cron.unschedule raise InternalError (XX000) on the RAW
-    # central cursor — it must be swallowed, not raised (parity with the models-path
-    # prune_pg_cron_jobs). The scan-based test above never enters the loop, so it does
-    # not reach this branch.
+    # central cursor — it must be swallowed, not raised. The scan-based test above never
+    # enters the loop, so it does not reach this branch.
     with open_central_connection("default") as cur:
         catalog.unschedule_jobids(cur, [999_999_999])  # dangling jobid -> no raise
 

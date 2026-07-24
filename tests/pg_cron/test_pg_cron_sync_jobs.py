@@ -1,13 +1,11 @@
-import psycopg
 import pytest
 from django.core.management import call_command
-from django.db import DatabaseError, connection, connections, transaction
+from django.db import connection
 from pytest_django.fixtures import SettingsWrapper
 
 from django_absurd.backends import get_absurd_backends
 from django_absurd.pg_cron import catalog
 from django_absurd.pg_cron.choices import Source
-from django_absurd.pg_cron.models import prune_pg_cron_jobs
 from django_absurd.pg_cron.reconcile import sync_crons
 from tests.pg_cron import utils
 
@@ -110,55 +108,6 @@ def test_prune_tolerates_already_unscheduled_job(
     assert {r[0] for r in utils.fetch_managed_jobs(live_db)} == {
         catalog.build_jobname(live_db, Source.SETTINGS, "a")
     }
-
-
-def test_prune_swallows_job_vanished_after_stale_scan(
-    settings: SettingsWrapper,
-) -> None:
-    # The stale-id scan and the unschedule are separate steps; a concurrent actor
-    # can remove a job's cron.job row in between. prune_pg_cron_jobs must swallow
-    # the resulting "could not find" error and finish the reconcile.
-    settings.TASKS = utils.build_pg_cron_tasks(
-        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
-    )
-    sync_crons(get_absurd_backends()["default"])
-    live_db = utils.fetch_live_database()
-
-    with connection.cursor() as cur:
-        cur.execute(
-            "select jobid from cron.job where jobname = %s",
-            [catalog.build_jobname(live_db, Source.SETTINGS, "a")],
-        )
-        jobid = cur.fetchone()[0]
-
-    # Concurrent actor on a separate connection removes the row after the scan.
-    params = connections["default"].get_connection_params()
-    other = psycopg.connect(**params, autocommit=True)
-    try:
-        with other.cursor() as ocur:
-            ocur.execute("select cron.unschedule(%s)", [jobid])
-    finally:
-        other.close()
-
-    with transaction.atomic(), connection.cursor() as cur:
-        prune_pg_cron_jobs(cur, [jobid])  # dangling id -> swallowed, no exception
-
-    assert utils.fetch_managed_jobs(live_db) == []
-
-
-def test_prune_reraises_unexpected_error(
-    settings: SettingsWrapper,
-) -> None:
-    # A non-"could not find" DatabaseError (bad cast) is not swallowed.
-    with (
-        transaction.atomic(),
-        connection.cursor() as cur,
-        pytest.raises(DatabaseError),
-    ):
-        prune_pg_cron_jobs(
-            cur,
-            [{"bad": "type"}],  # type: ignore[list-item]
-        )
 
 
 def test_rearm_reenables_disabled_job(settings: SettingsWrapper) -> None:

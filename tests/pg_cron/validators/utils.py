@@ -52,15 +52,21 @@ VALID: dict[str, t.Any] = {
 def configure_pg_cron_backend(
     settings: SettingsWrapper,
     schedule: dict[str, dict[str, object]] | None = None,
+    *,
+    pg_cron_on_test_db: bool = False,
 ) -> None:
     """A pg_cron 'default' backend so model clean() resolves it (declared queues),
-    and the check has a SCHEDULE to validate."""
+    and the check has a SCHEDULE to validate.
+
+    ``pg_cron_on_test_db`` opts the probe into a LIVE central schedule (past the inert
+    test gate) — the cron-grammar subjects need it so a bad expression still raises."""
     settings.TASKS = {
         "default": {
             "BACKEND": BACKEND,
             "OPTIONS": {
                 "QUEUES": QUEUES,
                 "SCHEDULE": schedule or {},
+                "PG_CRON_ON_TEST_DB": pg_cron_on_test_db,
             },
         }
     }
@@ -79,10 +85,12 @@ def clean_scheduled_task(**kwargs: t.Any) -> str | None:
 
 def validate_from_model(
     settings: SettingsWrapper,
+    *,
+    pg_cron_on_test_db: bool = False,
     **kwargs: t.Any,
 ) -> str | None:
     """Subject: ScheduledTask.full_clean(). Return joined error text or None."""
-    configure_pg_cron_backend(settings)
+    configure_pg_cron_backend(settings, pg_cron_on_test_db=pg_cron_on_test_db)
     return clean_scheduled_task(**kwargs)
 
 
@@ -118,6 +126,8 @@ def validate_from_admin_post(
     client: Client,
     admin_user: User,
     settings: SettingsWrapper,
+    *,
+    pg_cron_on_test_db: bool = False,
     **kwargs: t.Any,
 ) -> str | None:
     """Subject: the admin change-form POST over a pre-seeded admin row. Return the
@@ -129,7 +139,7 @@ def validate_from_admin_post(
     seed a baseline admin row, then POST the overrides to its editable fields. name
     is read-only on the change form; rules on it move to the
     check + model subjects."""
-    configure_pg_cron_backend(settings)
+    configure_pg_cron_backend(settings, pg_cron_on_test_db=pg_cron_on_test_db)
     client.force_login(admin_user)
     fields = {**VALID, **kwargs}
     scheduled_task = ScheduledTask.objects.create(

@@ -19,12 +19,14 @@ def flush_absurd_state(*, drop_schema: bool = False) -> None:
     """Reset Absurd state: drop or truncate every queue's tables, then (if
     ``django_absurd.pg_cron`` is installed) clear its scheduled-task state.
 
-    ``drop_schema=True`` drops each queue's schema (catalog row + tables) and
-    blanket-clears pg_cron (``cron.job`` + ``cron.job_run_details`` + the
-    ``ScheduledTask`` table); ``drop_schema=False`` (the default) truncates queue
-    tables' rows only and scopes the pg_cron clear to django-absurd's own jobs via
-    ``teardown_crons``, never touching ``cron.job_run_details``. Both steps are
-    independently no-ops on an unmigrated/absent schema.
+    ``drop_schema=True`` drops each queue's schema (catalog row + tables) and clears
+    this app database's pg_cron state (its ``cron.job`` jobs + its
+    ``cron.job_run_details`` + the ``ScheduledTask`` table), scoped to the app database
+    — never a blanket clear of the shared central catalog. ``drop_schema=False`` (the
+    default) truncates queue tables' rows only and scopes the pg_cron clear to
+    django-absurd's own jobs via ``teardown_crons``, never touching
+    ``cron.job_run_details``. Both steps are independently no-ops on an unmigrated /
+    absent schema.
     """
     clear_queues(drop_schema=drop_schema)
 
@@ -82,14 +84,16 @@ def truncate_queue_tables(queue: str) -> None:
 
 
 def drop_pg_cron_state() -> None:
-    # Blanket clear — "the test DB is ours": unschedule every cron.job, unlike
-    # drop_schema=False's scoped teardown_crons(include_admin=True).
+    from django_absurd.pg_cron import catalog  # noqa: PLC0415
+
+    # Scoped clear — this app database's own jobs + run history in the shared central
+    # catalog (never a blanket TRUNCATE/unschedule) — plus a TRUNCATE of the app-DB
+    # ScheduledTask row table.
     database = resolve_absurd_database()
+    catalog.flush_database_jobs(database)
     with connections[database].cursor() as cur:
-        cur.execute("select cron.unschedule(jobid) from cron.job")
         cur.execute(
             psycopg.sql.SQL("TRUNCATE {table} CASCADE").format(
                 table=psycopg.sql.Identifier("django_absurd_scheduledtask")
             )
         )
-        cur.execute("TRUNCATE cron.job_run_details")

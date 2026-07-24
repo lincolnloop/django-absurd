@@ -10,29 +10,23 @@ from absurd_sdk import CancellationPolicy, JsonObject, RetryStrategy
 from django.utils.module_loading import import_string
 
 from django_absurd.backends import AbsurdBackend, build_merged_spawn_options
+from django_absurd.pg_cron import catalog
 from django_absurd.pg_cron.choices import Source
-from django_absurd.pg_cron.models import (
-    ScheduledTask,
-    open_locked_cursor,
-    prune_pg_cron_jobs,
-)
+from django_absurd.pg_cron.models import ScheduledTask
 from django_absurd.queues import resolve_absurd_database
 from django_absurd.scheduler import get_cleanup_schedule, get_settings_schedules
 
-if t.TYPE_CHECKING:
-    from django.db.backends.utils import CursorWrapper
-
-# Absurd's OWN global cleanup job: reconcile schedules/unschedules exactly this
-# identity — the same jobname and command that absurd.enable_cron / `absurdctl cron
-# --enable` use — so django-absurd and absurdctl reference one shared job rather than
-# forking a parallel one. It lives outside our managed ``_dj:`` (colon) namespace,
-# so get_managed_jobs() never sweeps it. When ``django_absurd.pg_cron`` is installed,
-# django-absurd is AUTHORITATIVE over this job: it schedules it from OPTIONS["CLEANUP"]
-# and removes it otherwise — including at explicit teardown (--teardown) even when
-# CLEANUP was never set — so a job created via ``absurdctl cron`` is reclaimed and
-# removed. Drive cleanup ONE way — OPTIONS["CLEANUP"] OR `absurdctl cron`, not both
-# (deferred: multi-manager cleanup-job arbitration is out of scope here).
-ABSURD_CLEANUP_JOB = "absurd_cleanup_all"
+# Absurd's global queue-cleanup job. It rides the catalog seam like every other
+# schedule, on its own db-namespaced lane (source="c" → jobname
+# _dj:<app db>:c:cleanup_all), so it's scoped to the app database and swept by the same
+# per-database flush. This deliberately breaks the old shared ``absurd_cleanup_all``
+# identity with
+# absurd.enable_cron / `absurdctl cron` — under central topology those same-DB functions
+# can't run in the app DB anyway. Drive cleanup ONE way — OPTIONS["CLEANUP"] OR
+# `absurdctl cron`, not both (deferred: multi-manager cleanup-job arbitration is out of
+# scope here).
+CLEANUP_SOURCE = "c"
+CLEANUP_NAME = "cleanup_all"
 CLEANUP_COMMAND = "select * from absurd.cleanup_all_queues(null::text);"
 
 
@@ -91,13 +85,14 @@ def build_scheduled_fields(
 def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:
     """Reconcile ScheduledTask rows for this backend's declared SCHEDULE entries.
 
-    Opens a transaction on the absurd database and acquires an advisory lock to
-    serialise concurrent reconcilers. Upserts one row per declared schedule
-    (source="settings"), then prunes undeclared settings rows. The
-    source="admin" scope is never touched. The pg_cron jobs follow: each row upsert
-    fires post_save → schedule; each pruned row fires post_delete → unschedule. Finally
-    it prunes any owned settings job whose row was removed out-of-band (signal-less
-    delete), so cron.job reconverges to the declared state.
+    Upserts one row per declared schedule (source="settings"), then prunes undeclared
+    settings rows. The source="admin" scope is never touched. The pg_cron jobs follow:
+    each row upsert fires post_save → schedule; each pruned row fires post_delete →
+    unschedule. Finally it prunes (via the catalog seam) any owned settings job whose
+    row was removed out-of-band (signal-less delete), so cron.job reconverges to the
+    declared state. No lock — emission is idempotent (upserts) and self-healing (the
+    prune), so
+    concurrent reconcilers converge without one.
 
     Returns (created, pruned): count of ScheduledTask rows newly created and count
     deleted. A no-op reconcile returns (0, 0) so callers can stay quiet.
@@ -107,69 +102,60 @@ def sync_crons(backend: AbsurdBackend) -> tuple[int, int]:
     database = resolve_absurd_database()
 
     created = 0
-    with open_locked_cursor(database) as cur:
-        for schedule in schedules:
-            spawn_fields = build_scheduled_fields(
-                backend, schedule.task, queue_override=schedule.queue
-            )
-            _, was_created = ScheduledTask.objects.using(database).update_or_create(
-                source=Source.SETTINGS,
-                name=schedule.name,
-                defaults={
-                    "task": schedule.task,
-                    "args": schedule.args,
-                    "kwargs": schedule.kwargs,
-                    "cron": schedule.cron,
-                    "enabled": True,
-                    **spawn_fields,
-                },
-            )
-            created += was_created
-
-        pruned, _ = (
-            ScheduledTask.objects.using(database)
-            .filter(source=Source.SETTINGS)
-            .exclude(name__in=declared_names)
-            .delete()
+    for schedule in schedules:
+        spawn_fields = build_scheduled_fields(
+            backend, schedule.task, queue_override=schedule.queue
         )
-        ScheduledTask.pg_cron.prune_jobs_without_rows(Source.SETTINGS, declared_names)
-        reconcile_cleanup_job(cur, backend)
+        _, was_created = ScheduledTask.objects.using(database).update_or_create(
+            source=Source.SETTINGS,
+            name=schedule.name,
+            defaults={
+                "task": schedule.task,
+                "args": schedule.args,
+                "kwargs": schedule.kwargs,
+                "cron": schedule.cron,
+                "enabled": True,
+                **spawn_fields,
+            },
+        )
+        created += was_created
+
+    pruned, _ = (
+        ScheduledTask.objects.using(database)
+        .filter(source=Source.SETTINGS)
+        .exclude(name__in=declared_names)
+        .delete()
+    )
+    catalog.prune_jobs(database, source=Source.SETTINGS, keep_names=declared_names)
+    reconcile_cleanup_job(backend)
 
     return created, pruned
 
 
-def reconcile_cleanup_job(cur: "CursorWrapper", backend: AbsurdBackend) -> None:
+def reconcile_cleanup_job(backend: AbsurdBackend) -> None:
     """Schedule or unschedule Absurd's global cleanup job from OPTIONS["CLEANUP"].
 
-    Stateless (no ScheduledTask row). This targets Absurd's OWN global cleanup job —
-    jobname ``absurd_cleanup_all`` running ``select * from
-    absurd.cleanup_all_queues(null::text)`` — deliberately the same identity
-    ``absurd.enable_cron`` / ``absurdctl cron --enable`` uses, so the two never fork a
-    parallel job. A declared CLEANUP schedule → upsert that job on the declared cadence
-    (cron.schedule is an idempotent upsert); an absent one → unschedule it (tolerating
-    an already-gone job). Because ``django_absurd.pg_cron`` is installed, django-absurd
-    is AUTHORITATIVE over this job: it schedules it from OPTIONS["CLEANUP"] and removes
-    it otherwise — including at explicit teardown (``--teardown``) even when CLEANUP was
-    never set — so a job created via ``absurdctl cron`` is reclaimed and removed. Drive
-    cleanup ONE way — OPTIONS["CLEANUP"] OR ``absurdctl cron``, not both
-    (deferred: multi-manager cleanup-job arbitration is out of scope here).
-    Runs on the caller's already-locked cursor so it shares the reconcile's advisory
-    lock and transaction.
-    """
+    Stateless (no ScheduledTask row) — it rides the catalog seam on its own cleanup lane
+    (source="c" → jobname ``_dj:<app db>:c:cleanup_all``), running ``select * from
+    absurd.cleanup_all_queues(null::text)`` bound to the app database. A declared
+    CLEANUP schedule → schedule that job on the declared cadence (an idempotent upsert);
+    an absent one → unschedule it (tolerating an already-gone job). The present-or-not
+    decision
+    lives here; the cross-database write goes through the generic catalog verbs, not a
+    dedicated cleanup verb."""
     cleanup_cron = get_cleanup_schedule(backend)
+    alias = resolve_absurd_database()
     if cleanup_cron is not None:
-        cur.execute(
-            "select cron.schedule(%s, %s, %s)",
-            [ABSURD_CLEANUP_JOB, cleanup_cron, CLEANUP_COMMAND],
+        catalog.schedule_job(
+            alias,
+            name=CLEANUP_NAME,
+            source=CLEANUP_SOURCE,
+            cron=cleanup_cron,
+            command=CLEANUP_COMMAND,
+            active=True,
         )
     else:
-        unschedule_cleanup_job(cur)
-
-
-def unschedule_cleanup_job(cur: "CursorWrapper") -> None:
-    """Remove Absurd's global cleanup job, tolerating an already-gone job."""
-    cur.execute("select jobid from cron.job where jobname = %s", [ABSURD_CLEANUP_JOB])
-    prune_pg_cron_jobs(cur, [jobid for (jobid,) in cur.fetchall()])
+        catalog.unschedule_job(alias, name=CLEANUP_NAME, source=CLEANUP_SOURCE)
 
 
 def sync_admin_crons() -> None:
@@ -184,35 +170,33 @@ def sync_admin_crons() -> None:
     operations, direct SQL), symmetric with the settings lane.
     """
     database = resolve_absurd_database()
-    with open_locked_cursor(database):
-        names = []
-        for scheduled_task in ScheduledTask.objects.using(database).filter(
-            source=Source.ADMIN
-        ):
-            scheduled_task.schedule_pg_cron_job()
-            names.append(scheduled_task.name)
-        ScheduledTask.pg_cron.prune_jobs_without_rows(Source.ADMIN, names)
+    names = []
+    for scheduled_task in ScheduledTask.objects.using(database).filter(
+        source=Source.ADMIN
+    ):
+        scheduled_task.schedule_pg_cron_job()
+        names.append(scheduled_task.name)
+    catalog.prune_jobs(database, source=Source.ADMIN, keep_names=names)
 
 
 def teardown_crons(include_admin: bool = False) -> int:
     """Remove pg_cron jobs and ScheduledTask rows.
 
-    Without include_admin, unschedules _dj:s:% jobs and deletes settings rows only,
-    leaving admin schedules (user data) untouched — a narrower, general-purpose form.
-    The guarded absurd_sync_crons --teardown command always passes include_admin=True,
-    additionally clearing _dj:a:% jobs AND deleting their rows — so that teardown is
-    terminal, not undone by the next migrate's admin re-emit (that is why the command
-    confirms first).
+    Without include_admin, unschedules the settings lane (_dj:<app db>:s:%) and deletes
+    settings rows only, leaving admin schedules (user data) untouched — a narrower,
+    general-purpose form. The guarded absurd_sync_crons --teardown command always passes
+    include_admin=True, additionally clearing the admin lane (_dj:<app db>:a:%) AND
+    deleting their rows — so that teardown is terminal, not undone by the next migrate's
+    admin re-emit (that is why the command confirms first). Either way the cleanup
+    lane's job is removed.
 
     Idempotent. Returns removed: count of ScheduledTask rows deleted.
     """
     database = resolve_absurd_database()
     sources = [Source.SETTINGS, Source.ADMIN] if include_admin else [Source.SETTINGS]
     for source in sources:
-        ScheduledTask.pg_cron.unschedule_matching(source)
-
-    with open_locked_cursor(database) as cur:
-        unschedule_cleanup_job(cur)
+        catalog.unschedule_jobs_for_database(database, source=source)
+    catalog.unschedule_job(database, name=CLEANUP_NAME, source=CLEANUP_SOURCE)
 
     removed, _ = (
         ScheduledTask.objects.using(database).filter(source__in=sources).delete()

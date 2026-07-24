@@ -12,7 +12,7 @@ from tests.pg_cron import utils
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
-def test_flush_absurd_state_drop_schema_true_unschedules_everything_blanket(
+def test_flush_absurd_state_drop_schema_true_scopes_to_this_database(
     settings: SettingsWrapper,
 ) -> None:
     settings.TASKS = utils.build_pg_cron_tasks({})
@@ -31,12 +31,26 @@ def test_flush_absurd_state_drop_schema_true_unschedules_everything_blanket(
             ["unrelated_job", "0 3 * * *", "select 1"],
         )
 
-    flush_absurd_state(drop_schema=True)
+    try:
+        flush_absurd_state(drop_schema=True)
 
-    assert not ScheduledTask.objects.filter(name="direct", source="a").exists()
-    with connection.cursor() as cur:
-        cur.execute("select jobname from cron.job")
-        assert cur.fetchall() == []  # blanket: even the unrelated job is gone
+        assert not ScheduledTask.objects.filter(name="direct", source="a").exists()
+        assert (
+            utils.fetch_cron_job(
+                catalog.build_jobname(
+                    utils.fetch_live_database(), Source.ADMIN, "direct"
+                )
+            )
+            is None
+        )
+        with connection.cursor() as cur:
+            cur.execute(
+                "select jobname from cron.job where jobname = %s", ["unrelated_job"]
+            )
+            assert cur.fetchone() is not None  # scoped: the unrelated job survives
+    finally:
+        with connection.cursor() as cur:
+            cur.execute("select cron.unschedule('unrelated_job')")  # don't leak it
 
 
 def test_flush_absurd_state_drop_schema_false_scopes_to_owned_jobs_only(
