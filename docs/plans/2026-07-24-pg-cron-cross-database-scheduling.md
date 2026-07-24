@@ -68,8 +68,10 @@ New modules:
 - `django_absurd/pg_cron/catalog.py` — the single `cron.*` seam. Owns the one
   db-namespaced `build_jobname(database, source, name="")` constructor. Opens the
   central connection, applies the inert gate, exposes verbs (`schedule_job`,
-  `unschedule_jobs_for_database`, `get_job`, `get_managed_jobs`, `prune_jobs`,
-  `probe_cron_grammar`, `reconcile_cleanup_job`).
+  `unschedule_job`, `unschedule_jobs_for_database`, `prune_jobs`, `probe_cron_grammar`,
+  `flush_database_jobs`). Reads (`cron.job` inspection) happen in tests via a `utils.py`
+  helper, not shipped verbs; the cleanup job uses the generic `schedule_job` /
+  `unschedule_job` (no dedicated cleanup verbs); no advisory lock.
 
 Modified:
 
@@ -78,9 +80,10 @@ Modified:
 - `django_absurd/pg_cron/validators.py` — DELETE the `build_jobname` /
   `build_jobname_prefix` constructors (moved to `catalog.py`) and
   `validate_jobname_length` (unbounded `text`, no cap). Keeps only real validators.
-- `django_absurd/pg_cron/models.py` — `PgCronManager` + `schedule_pg_cron_job` /
-  `unschedule_pg_cron_job` route through catalog; fold `active` into
-  `schedule_in_database`, drop `cron.alter_job`.
+- `django_absurd/pg_cron/models.py` — DELETE `PgCronManager`, `get_pg_cron_job`,
+  `PgCronJobRow`, `open_locked_cursor` (no prod consumers / no lock);
+  `schedule_pg_cron_job` / `unschedule_pg_cron_job` delegate to catalog verbs (fold
+  `active` into `schedule_in_database`, drop `cron.alter_job`).
 - `django_absurd/pg_cron/reconcile.py` — route through catalog; central cleanup job.
 - `django_absurd/pg_cron/signals.py` — `transaction.on_commit` emission; swallow-and-log
   after commit; contract rewrite.
@@ -90,8 +93,7 @@ Modified:
 - `django_absurd/pg_cron/checks.py` — DELETE the jobname-length check + hint; add
   composition + central-extension checks.
 - `django_absurd/flush.py` — scoped `drop_pg_cron_state`.
-- `django_absurd/backends.py` — `CRON_DATABASE_NAME`, `PG_CRON_ON_TEST_DB` in
-  `AbsurdBackendOptions`.
+- `django_absurd/backends.py` — `PG_CRON_ON_TEST_DB` in `AbsurdBackendOptions`.
 - `django_absurd/pytest_plugin.py` — session-scoped autouse start-sweep fixture; keep
   `absurd_drain_queue`.
 - `django_absurd/pg_cron/management/commands/absurd_sync_crons.py` — `CommandError` when
@@ -225,8 +227,7 @@ unchanged).
 
 **Files:**
 
-- Modify: `django_absurd/connection.py` (add helpers), `django_absurd/backends.py:73-81`
-  (declare `CRON_DATABASE_NAME` in `AbsurdBackendOptions`)
+- Modify: `django_absurd/connection.py` (add helpers)
 - Test: `tests/pg_cron/test_central_connection.py`
 
 **Interfaces:**
@@ -234,9 +235,11 @@ unchanged).
 - Consumes: `django_absurd.queues.resolve_absurd_database`, `django.db.connections`,
   `psycopg`.
 - Produces:
-  - `resolve_cron_database(alias: str) -> str` — `OPTIONS["CRON_DATABASE_NAME"]` if set,
-    else `current_setting('cron.database_name', true)` read on the app connection (NULL
-    → raise a clear `ImproperlyConfigured`).
+  - `resolve_cron_database(alias: str) -> str` —
+    `current_setting('cron.database_name', true)` read on the app connection; NULL
+    (non-pg_cron server) → raise a clear `ImproperlyConfigured`. No override option:
+    pg_cron is server-local, so the auto-discovered value is definitionally the only
+    correct one.
   - `open_central_connection(alias: str)` — `@contextmanager` yielding a psycopg cursor
     on the central DB. Built from `connections[alias].get_connection_params()` (pop
     `cursor_factory`), `dbname` swapped to `resolve_cron_database(alias)`,
@@ -258,7 +261,7 @@ from tests.pg_cron import utils
 
 @pytest.mark.django_db(transaction=True)
 def test_open_central_connection_reaches_central_db(settings: object) -> None:
-    settings.TASKS = utils.build_pg_cron_tasks({}, pg_cron_on_test_db=True)
+    settings.TASKS = utils.build_pg_cron_tasks({})
     with connection.open_central_connection("default") as cur:
         cur.execute("select current_database()")
         (dbname,) = cur.fetchone()
@@ -267,7 +270,7 @@ def test_open_central_connection_reaches_central_db(settings: object) -> None:
 
 @pytest.mark.django_db(transaction=True)
 def test_open_central_connection_translates_psycopg_errors(settings: object) -> None:
-    settings.TASKS = utils.build_pg_cron_tasks({}, pg_cron_on_test_db=True)
+    settings.TASKS = utils.build_pg_cron_tasks({})
     with pytest.raises(ProgrammingError) as excinfo:
         with connection.open_central_connection("default") as cur:
             cur.execute("select * from this_table_does_not_exist")
@@ -276,7 +279,7 @@ def test_open_central_connection_translates_psycopg_errors(settings: object) -> 
 ```
 
 The `tests/pg_cron` suite runs against `db_pg_cron`, whose `cron.database_name` the
-settings pin — so `resolve_cron_database` auto-discovers it. (Task 8 finalizes the
+settings pin — so `resolve_cron_database` auto-discovers it. (Task 7 finalizes the
 suite's DB story; for now the central DB is reachable on that service.)
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -286,15 +289,14 @@ Run: `uv run pytest tests/pg_cron/test_central_connection.py -v` Expected: FAIL 
 
 - [ ] **Step 3: Implement the helpers (prose)**
 
-In `connection.py`: `resolve_cron_database(alias)` reads the backend
-`OPTIONS["CRON_DATABASE_NAME"]`; if absent, opens `connections[alias].cursor()` and
-`select current_setting('cron.database_name', true)`, raising `ImproperlyConfigured` on
-NULL (non-pg_cron server) with a hint to set `CRON_DATABASE_NAME`.
-`open_central_connection(alias)` follows the proven `worker.py:171-175` template: copy
-`get_connection_params()`, `params.pop("cursor_factory", None)`, override `dbname`,
-`psycopg.connect(**params, autocommit=True)`; wrap the yielded cursor usage in
+In `connection.py`: `resolve_cron_database(alias)` opens `connections[alias].cursor()`
+and `select current_setting('cron.database_name', true)`, raising `ImproperlyConfigured`
+on NULL with a hint that the server has no pg_cron (`shared_preload_libraries`) — no
+override option. `open_central_connection(alias)` follows the proven `worker.py:171-175`
+template: copy `get_connection_params()`, `params.pop("cursor_factory", None)`, override
+`dbname`, `psycopg.connect(**params, autocommit=True)`; wrap the yielded cursor usage in
 `with connections[alias].wrap_database_errors:` so errors translate; close in a
-`finally`. Declare `CRON_DATABASE_NAME: str` in `AbsurdBackendOptions`.
+`finally`.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -303,7 +305,7 @@ Run: `uv run pytest tests/pg_cron/test_central_connection.py -v` Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-/usr/bin/git add django_absurd/connection.py django_absurd/backends.py tests/pg_cron/test_central_connection.py
+/usr/bin/git add django_absurd/connection.py tests/pg_cron/test_central_connection.py
 /usr/bin/git commit -m "feat(pg_cron): central-connection helper with psycopg->Django error translation (B1)"
 ```
 
@@ -383,14 +385,15 @@ Expected: PASS.
 
 ---
 
-### Task 4: Catalog seam — schedule/unschedule/read verbs (`catalog.py`) + wire models
+### Task 4: Catalog seam (`catalog.py`) + wire models
 
 **Files:**
 
 - Create: `django_absurd/pg_cron/catalog.py`
-- Modify: `django_absurd/pg_cron/models.py:66-127` (`PgCronManager` → catalog),
-  `models.py:255-287` (`schedule_pg_cron_job` folds `active` into
-  `schedule_in_database`, drops `cron.alter_job`; `unschedule_pg_cron_job` → catalog),
+- Modify: `django_absurd/pg_cron/models.py` — DELETE `PgCronManager` (:66-127),
+  `get_pg_cron_job` (:249-253), `PgCronJobRow` (:33), `open_locked_cursor` (:290-297; no
+  lock, see §F4); `schedule_pg_cron_job` / `unschedule_pg_cron_job` (:255-287) delegate
+  to catalog verbs (fold `active` into `schedule_in_database`, drop `cron.alter_job`);
   `django_absurd/pg_cron/validators.py:36-43` (DELETE `build_jobname` +
   `build_jobname_prefix` — they move to `catalog.py`)
 - Test: `tests/pg_cron/test_catalog.py`; move the jobname-builder tests here (out of
@@ -414,11 +417,13 @@ Expected: PASS.
     jobname and `database => <app db name>`; `active` is the 6th argument (no
     `alter_job`).
   - `unschedule_job(alias, *, name, source) -> None`
-  - `unschedule_jobs_for_database(alias, *, source=None) -> None` — scoped
-    `WHERE database = <live app db> AND starts_with(jobname, prefix)`.
-  - `get_job(alias, *, name, source) -> PgCronJobRow | None`
-  - `get_managed_jobs(alias, *, source=None) -> list[PgCronJobRow]`
+  - `unschedule_jobs_for_database(alias, *, source) -> None` — scoped
+    `WHERE database = <live app db> AND starts_with(jobname, build_jobname(<live>, source))`.
+    `source` is REQUIRED; the whole-DB sweep (all sources) is `flush_database_jobs`
+    (Task 5).
   - `prune_jobs(alias, *, source, keep_names) -> None`
+- **No read verbs ship.** `get_job`/`get_managed_jobs` had zero production consumers
+  (test-only). Tests inspect `cron.job` via a `utils.py` central-read helper instead.
 - The app-DB name passed as `database =>` is the LIVE
   `connections[alias].settings_dict["NAME"]`.
 
@@ -452,6 +457,7 @@ def _opt_in(settings: object) -> None:
 
 @pytest.mark.django_db(transaction=True)
 def test_schedule_job_binds_to_app_database(_opt_in: None) -> None:
+    live_db = str(connections["default"].settings_dict["NAME"])
     catalog.schedule_job(
         "default",
         name="probe",
@@ -460,15 +466,7 @@ def test_schedule_job_binds_to_app_database(_opt_in: None) -> None:
         command="select 1",
         active=True,
     )
-    row = catalog.get_job("default", name="probe", source=Source.SETTINGS)
-    assert row is not None
-    live_db = str(connections["default"].settings_dict["NAME"])
-    with catalog.open_central_connection_for_test("default") as cur:  # test helper in utils
-        cur.execute(
-            "select database, active from cron.job where jobname = %s",
-            [f"_dj:{live_db}:{Source.SETTINGS}:probe"],
-        )
-        database, active = cur.fetchone()
+    database, active = utils.fetch_cron_job(f"_dj:{live_db}:{Source.SETTINGS}:probe")
     assert database == live_db
     assert active is True
 
@@ -476,6 +474,7 @@ def test_schedule_job_binds_to_app_database(_opt_in: None) -> None:
 @pytest.mark.django_db(transaction=True)
 def test_schedule_job_is_noop_when_inert(settings: object) -> None:
     settings.TASKS = utils.build_pg_cron_tasks({}, pg_cron_on_test_db=False)
+    live_db = str(connections["default"].settings_dict["NAME"])
     catalog.schedule_job(
         "default",
         name="probe",
@@ -484,11 +483,13 @@ def test_schedule_job_is_noop_when_inert(settings: object) -> None:
         command="select 1",
         active=True,
     )
-    assert catalog.get_job("default", name="probe", source=Source.SETTINGS) is None
+    assert utils.fetch_cron_job(f"_dj:{live_db}:{Source.SETTINGS}:probe") is None
 ```
 
-(Prefer reading `cron.job` via a small `utils.py` helper rather than an ad-hoc catalog
-method — keep the seam's public surface to the verbs above.)
+Add `utils.fetch_cron_job(jobname) -> tuple[str, bool] | None` — opens the central
+connection and returns `(database, active)` for a jobname, else `None`. This is the
+single test-side `cron.job` reader (replaces the deleted `get_job`/`get_managed_jobs`
+verbs); reuse it across the suite.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -507,13 +508,16 @@ jobnames via `build_jobname`. `schedule_job` uses
 `cron.schedule_in_database(name, schedule, command, database, NULL, active)` — folding
 `active` into the 6th positional and DELETING the old `cron.alter_job(active:=…)`
 follow-up (`models.py:273-275`). Move `prune_jobs` savepoint/`XX000` tolerance here (it
-must run inside the B1 wrapper so `__cause__.sqlstate` survives). Then rewrite
-`PgCronManager` methods and `ScheduledTask.schedule_pg_cron_job` /
-`unschedule_pg_cron_job` to delegate to the catalog verbs (they keep their current
-public signatures; the advisory lock moves onto the central connection — see Task 6 for
-the lock's new home; here a per-op `select pg_advisory_xact_lock` on the central conn is
-acceptable). `open_locked_cursor` (`models.py:290-297`) is superseded for `cron.*` —
-leave it only if a non-cron caller remains, else remove.
+must run inside the B1 wrapper so `__cause__.sqlstate` survives). DELETE
+`PgCronManager`, `get_pg_cron_job`, and `PgCronJobRow` (test-only read surface — tests
+use `utils.fetch_cron_job`); the manager's write methods become the catalog verbs
+(`unschedule_matching` → `unschedule_jobs_for_database`, `prune_jobs_without_rows` →
+`prune_jobs`). `ScheduledTask.schedule_pg_cron_job` / `unschedule_pg_cron_job` (still
+called by the save/delete signals) delegate to `catalog.schedule_job` /
+`catalog.unschedule_job`. DELETE `open_locked_cursor` with no successor — there is NO
+advisory lock (see §F4: emission is post-commit, races are idempotent upserts /
+`update_or_create` / self-heal at next reconcile, and a per-statement
+`pg_advisory_xact_lock` on an `autocommit=True` connection releases instantly anyway).
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -546,15 +550,23 @@ Expected: PASS.
 
 - Adds to catalog: `probe_cron_grammar(alias, *, cron) -> None` (schedule-then-rollback
   via `schedule_in_database`, inside the granted set — NOT bare `cron.schedule`);
-  `reconcile_cleanup_job(alias, *, cron, command) -> None` /
-  `unschedule_cleanup_job(alias) -> None` with a db-namespaced cleanup jobname;
   `flush_database_jobs(alias) -> None` (scoped unschedule
   `WHERE database = <live> AND starts_with(jobname,'_dj:')` +
   `DELETE FROM cron.job_run_details WHERE database = <live>`).
+- **No dedicated cleanup verbs.** The cleanup job is scheduled/removed with the generic
+  `schedule_job` / `unschedule_job` on a cleanup lane — `source="c"` (a `CLEANUP_SOURCE`
+  constant), jobname `_dj:<db>:c:cleanup_all`, `command=CLEANUP_COMMAND`. The
+  schedule-vs-unschedule decision (is `OPTIONS["CLEANUP"]` set?) stays in
+  `reconcile.py`.
 - `reconcile.py`'s `sync_crons` / `sync_admin_crons` / `teardown_crons` call the catalog
-  verbs instead of `open_locked_cursor`.
+  verbs (the deleted `open_locked_cursor` had no successor — no lock).
 
 - [ ] **Step 1: Write the failing tests**
+
+This `test_flush_scoped` is ALSO the **structural isolation regression test** (that the
+sweep only ever touches THIS DB's jobs and can't reach another DB's) — driven through
+the real `flush_absurd_state` entrypoint, so there is no separate helper-level duplicate
+(see §F3).
 
 ```python
 # tests/pg_cron/test_flush_scoped.py
@@ -577,7 +589,7 @@ def test_flush_only_removes_this_database_jobs(settings: object) -> None:
     )
     utils.schedule_control_job_in_other_database("other_db_name")  # helper: raw central insert
     flush_absurd_state()
-    assert catalog.get_job("default", name="mine", source=Source.SETTINGS) is None
+    assert utils.fetch_cron_job(catalog.build_jobname(live_db, Source.SETTINGS, "mine")) is None
     assert utils.control_job_still_present("other_db_name") is True
     utils.remove_control_job("other_db_name")
 ```
@@ -608,10 +620,13 @@ Rewrite `drop_pg_cron_state` to call `catalog.flush_database_jobs(alias)` (scope
 unschedule + scoped `DELETE FROM cron.job_run_details`, never blanket `TRUNCATE`); keep
 the `TRUNCATE django_absurd_scheduledtask CASCADE` (that's the app-DB row table,
 correct). Route `reconcile.py`'s three functions through the catalog verbs; the cleanup
-job becomes `catalog.reconcile_cleanup_job` with a db-namespaced name (breaking the
-shared `absurd_cleanup_all` identity, per spec §Cleanup job). `validate_pg_cron_cron`
-delegates to `catalog.probe_cron_grammar` (which schedules a throwaway
-`_dj:__probe__:<uuid>` via `schedule_in_database` and rolls back), re-raising
+job is scheduled with the generic
+`catalog.schedule_job(..., source=CLEANUP_SOURCE, name="cleanup_all", command=CLEANUP_COMMAND)`
+(jobname `_dj:<db>:c:cleanup_all`, breaking the shared `absurd_cleanup_all` identity,
+per spec §Cleanup job) and removed with `catalog.unschedule_job(...)` — no dedicated
+cleanup verbs; the present-or-not decision stays in `reconcile.py`.
+`validate_pg_cron_cron` delegates to `catalog.probe_cron_grammar` (which schedules a
+throwaway `_dj:__probe__:<uuid>` via `schedule_in_database` and rolls back), re-raising
 `DatabaseError` as `ValidationError` as today. Add the three `utils.py` control-job
 helpers.
 
@@ -635,8 +650,8 @@ Expected: PASS.
 **Files:**
 
 - Modify: `django_absurd/pg_cron/signals.py:43-59` (register `transaction.on_commit`
-  callbacks; swallow-and-log after commit), `django_absurd/pg_cron/reconcile.py`
-  (central advisory lock; bulk body order)
+  callbacks; swallow-and-log after commit), `django_absurd/pg_cron/reconcile.py` (bulk
+  body order — no lock)
 - Test: `tests/pg_cron/test_schedule_emission.py` (convert to `transaction=True` /
   `django_capture_on_commit_callbacks`)
 
@@ -652,7 +667,7 @@ Expected: PASS.
 ```python
 # tests/pg_cron/test_schedule_emission.py  (representative — convert from post_save-fires-synchronously)
 import pytest
-from django.test import TestCase  # NOT used — function-based below
+from django.db import connections
 
 from django_absurd.pg_cron import catalog
 from django_absurd.pg_cron.choices import Source
@@ -665,12 +680,13 @@ def test_save_emits_job_only_after_commit(
     django_capture_on_commit_callbacks: object, settings: object
 ) -> None:
     settings.TASKS = utils.build_pg_cron_tasks({}, pg_cron_on_test_db=True)
+    live_db = str(connections["default"].settings_dict["NAME"])
     with django_capture_on_commit_callbacks(execute=True):
         ScheduledTask.objects.create(
             name="onsave", source=Source.ADMIN, task="tests.pg_cron.tasks.add",
             queue="default", cron="5 seconds",
         )
-    assert catalog.get_job("default", name="onsave", source=Source.ADMIN) is not None
+    assert utils.fetch_cron_job(catalog.build_jobname(live_db, Source.ADMIN, "onsave")) is not None
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -684,12 +700,12 @@ emission no longer happens synchronously in `post_save` until `on_commit` wiring
 Rewrite `signals.schedule_job_on_save` / `unschedule_job_on_delete` to register
 `transaction.on_commit` callbacks that call the catalog (the callback body
 swallows-and-logs a post-commit central failure). Rewrite the module docstring's
-emission contract (two connections; emission after commit; the advisory lock now
-serializes only the central op). In `reconcile.py`, take the central advisory lock on
-the central connection and run the bulk body in order: upsert declared jobs → prune
-orphaned jobs (source + `WHERE database = <live>`) → reconcile cleanup job. Note
-explicitly in comments that lost row↔job atomicity is acceptable because the run-wrapper
-re-reads the row each fire.
+emission contract (two connections; emission after commit; NO lock — concurrent writes
+are idempotent upserts / `update_or_create` and self-heal at the next reconcile). In
+`reconcile.py`, run the bulk body on the central connection in order: upsert declared
+jobs → prune orphaned jobs (source + `WHERE database = <live>`) → schedule/unschedule
+the cleanup job. Note explicitly in comments that lost row↔job atomicity is acceptable
+because the run-wrapper re-reads the row each fire.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -715,8 +731,8 @@ Expected: PASS (admin HTTP save/delete still emits via the commit hook).
   `examples/pg_cron/compose.yaml` (central `cron.database_name`, e.g. `postgres`;
   `CREATE EXTENSION` + grants via `/docker-entrypoint-initdb.d`),
   `tests/pg_cron/settings.py` (drop the `TEST["NAME"] == cron.database_name` pin; set
-  `CRON_DATABASE_NAME`; set BOTH `SYNC_SCHEDULES_ON_TEST_DB` + `PG_CRON_ON_TEST_DB`),
-  `tests/pg_cron/utils.py`
+  BOTH `SYNC_SCHEDULES_ON_TEST_DB` + `PG_CRON_ON_TEST_DB` — the central DB is
+  auto-discovered, no option to set), `tests/pg_cron/utils.py`
 - Test: full `tests/pg_cron` suite must pass on the new topology (incl. under
   `-p no:cacheprovider -n 2` xdist smoke)
 
@@ -749,8 +765,9 @@ removal; the `RunSQL` wrapper stays). Rework `Dockerfile.pg_cron` / `compose.yam
 an init script (runs only on a fresh volume — call out that existing dev volumes need
 `docker compose down -v` recreation). Change `tests/pg_cron/settings.py`:
 `DATABASES["default"]["TEST"]` becomes an ordinary `test_<name>` (no pin to
-`cron.database_name`), add `OPTIONS["CRON_DATABASE_NAME"]` pointing at the central DB,
-and set both opt-in knobs. Update the CLAUDE.md `tests/pg_cron` guidance in Task 11.
+`cron.database_name`) and set both opt-in knobs — the central DB is auto-discovered on
+the same server via `current_setting('cron.database_name')`, no option to set. Update
+the CLAUDE.md `tests/pg_cron` guidance in Task 10.
 
 - [ ] **Step 4: Run the full suite (incl. xdist smoke)**
 
@@ -843,7 +860,7 @@ Expected: PASS.
 
 ---
 
-### Task 9: Command inert guard + sweeps + isolation regression tests
+### Task 9: Command inert guard + start-sweep fixture + runtime isolation test
 
 **Files:**
 
@@ -851,7 +868,13 @@ Expected: PASS.
   (`CommandError` when inert), `django_absurd/pytest_plugin.py` (session-scoped autouse
   start-sweep fixture)
 - Test: `tests/pg_cron/test_absurd_sync_crons_command.py` (inert `CommandError`),
-  `tests/pg_cron/test_start_sweep.py`, `tests/pg_cron/test_isolation_regression.py`
+  `tests/pg_cron/test_isolation_regression.py` (the runtime no-leak test)
+
+The structural sweep-scoping regression is already covered by Task 5's
+`test_flush_scoped` (§F3), so there is no separate helper-level duplicate here. The
+start-sweep fixture gets no dedicated test: it is session-autouse (runs before any
+in-suite test can seed an orphan to observe), it just calls the already-tested
+`flush_database_jobs`, and its lines are covered by executing every session (§F7).
 
 **Interfaces:**
 
@@ -880,63 +903,59 @@ def test_command_errors_when_inert(settings: object) -> None:
 
 ```python
 # tests/pg_cron/test_isolation_regression.py
+# The runtime no-leak proof (the live experiment, made deterministic). NOT marked slow —
+# it RUNS in CI (no deselected tests). Determinism comes from a positive sync point
+# (poll cron.job_run_details until the producer fires into its own DB) rather than a
+# blind sleep; xdist-safe because the producer targets a per-worker-unique DB.
 import pytest
 from django.db import connections
 
-from django_absurd.pg_cron import catalog
-from django_absurd.pg_cron.choices import Source
 from tests.pg_cron import utils
 
 
 @pytest.mark.django_db(transaction=True)
-def test_sweep_removes_this_db_job_and_spares_control_job(settings: object) -> None:
+def test_producing_schedule_never_fires_into_this_test_db(settings: object) -> None:
     settings.TASKS = utils.build_pg_cron_tasks({}, pg_cron_on_test_db=True)
-    live_db = str(connections["default"].settings_dict["NAME"])
-    catalog.schedule_job(
-        "default", name="mine", source=Source.SETTINGS,
-        cron="5 seconds", command="select 1", active=True,
-    )
-    utils.schedule_control_job_in_other_database("unrelated_db")
-    catalog.flush_database_jobs("default")
-    assert catalog.get_job("default", name="mine", source=Source.SETTINGS) is None
-    assert utils.control_job_still_present("unrelated_db") is True
-    utils.remove_control_job("unrelated_db")
-
-
-@pytest.mark.slow
-@pytest.mark.django_db(transaction=True)
-def test_main_db_schedule_never_fires_into_test_db(settings: object) -> None:
-    # Timing-based, serial-only: schedule a task-producing cron into a NON-test DB and
-    # assert the migrated test queue stays 0. Marked slow so the default suite deselects.
-    ...  # implement per spec §Isolation regression tests (fixture scratch DB + sleep window)
+    test_db = str(connections["default"].settings_dict["NAME"])
+    # a task-producing cron bound to a NON-test DB (unique per worker), enqueuing each second
+    producer = utils.schedule_producer_cron(target=utils.scratch_db_name())
+    try:
+        utils.wait_for_fire(producer, timeout=20)      # positive sync: it fired into its own DB
+        assert utils.absurd_queue_depth(test_db) == 0  # nothing leaked into THIS test DB
+    finally:
+        utils.remove_producer(producer)
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run:
 `uv run pytest tests/pg_cron/test_absurd_sync_crons_command.py tests/pg_cron/test_isolation_regression.py -v`
-Expected: FAIL — command doesn't raise; sweep helpers missing.
+Expected: FAIL — command doesn't raise; producer/poll helpers missing.
 
 - [ ] **Step 3: Implement (prose)**
 
 Guard `absurd_sync_crons.handle` with `is_pg_cron_inert` → `CommandError`. Add the
 session-scoped autouse start-sweep fixture to `pytest_plugin.py` per the interface
 (import-safe: only import `catalog` inside the fixture body, behind the `is_installed`
-guard). Implement the fast deterministic isolation test fully; scaffold the slow timing
-companion and mark it `slow` (register the `slow` marker in `pytest.toml` `markers` if
-absent) + serial.
+guard). Add the `utils.py` producer helpers: `scratch_db_name()` (per-worker-unique
+non-test DB the producer targets), `schedule_producer_cron(target)` (a
+`schedule_in_database` job that enqueues a task into `target` every second; returns a
+handle with its jobid), `wait_for_fire(producer, timeout)` (poll `cron.job_run_details`
+for `status='succeeded'` on that jobid), `absurd_queue_depth(db)`,
+`remove_producer(producer)`. The runtime test RUNS in CI — no `slow` marker, no
+deselection.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run:
-`uv run pytest tests/pg_cron/test_absurd_sync_crons_command.py tests/pg_cron/test_isolation_regression.py tests/pg_cron/test_start_sweep.py -v`
-Expected: PASS (the slow test runs on demand: `uv run pytest tests/pg_cron -m slow`).
+`uv run pytest tests/pg_cron/test_absurd_sync_crons_command.py tests/pg_cron/test_isolation_regression.py -v`
+Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-/usr/bin/git add django_absurd/pg_cron/management/commands/absurd_sync_crons.py django_absurd/pytest_plugin.py tests/pg_cron/test_absurd_sync_crons_command.py tests/pg_cron/test_isolation_regression.py tests/pg_cron/test_start_sweep.py tests/pg_cron/pytest.toml
-/usr/bin/git commit -m "feat(pg_cron): inert command guard, session start-sweep fixture, isolation regression tests"
+/usr/bin/git add django_absurd/pg_cron/management/commands/absurd_sync_crons.py django_absurd/pytest_plugin.py tests/pg_cron/test_absurd_sync_crons_command.py tests/pg_cron/test_isolation_regression.py tests/pg_cron/utils.py
+/usr/bin/git commit -m "feat(pg_cron): inert command guard, session start-sweep fixture, runtime isolation test"
 ```
 
 ---
@@ -956,10 +975,10 @@ Expected: PASS (the slow test runs on demand: `uv run pytest tests/pg_cron -m sl
 
 AGENTS.md + `docs/web/cron-jobs.md`: document that the extension is one-time operator
 setup on `cron.database_name` (central DB), not a migration; jobs run cross-DB via
-`schedule_in_database`; one scheduling role for the Absurd DB; `CRON_DATABASE_NAME`
-option (optional — auto-discovered when the app DB is itself `cron.database_name`, i.e.
-same-DB backward compat). Build the site: `uvx zensical build` (expect "No issues
-found").
+`schedule_in_database`; one scheduling role for the Absurd DB; the central DB is
+auto-discovered (`current_setting('cron.database_name')`), so nothing to configure — and
+same-DB deployments (where `cron.database_name` IS the app DB) keep working unchanged.
+Build the site: `uvx zensical build` (expect "No issues found").
 
 - [ ] **Step 2: Update contributor docs**
 
@@ -991,24 +1010,99 @@ Verify command/flag/message/default copy matches code across README/AGENTS/site.
 · cleanup lifecycle teardown + session-start sweep (T5 teardown / T9 start) · scoped
 flush (T5) · backward compat degenerate case (T2 auto-discovery) · detection leaf +
 inert gate + opt-in (T1) · validate skip when inert (T4/T5 gate) · command CommandError
-(T9) · composition + `Tags.database` checks (T8) · two isolation regression tests (T9) ·
-migration drop + compose + suite move (T7) · WHY/docs (T10). All spec sections mapped.
+(T9) · composition + `Tags.database` checks (T8) · structural isolation regression (T5
+`test_flush_scoped`) + runtime no-leak (T9) · migration drop + compose + suite move (T7)
+· WHY/docs (T10). All spec sections mapped.
 
-**Descoped (alpha, per review):** the spec's transition sweep (B2) and jobname-length
-cap are cut — this is alpha, so there are no legacy-scheme jobs to migrate (from-scratch
-assumption), and `cron.job.jobname` is unbounded `text` (live-validated) so no length
-guard is warranted.
+**Descoped (alpha + post-review cruft cut):** the transition sweep (B2), the
+jobname-length cap, the two-verb cleanup API, the advisory lock, the
+`CRON_DATABASE_NAME` option, the `PgCronManager` + `get_job`/`get_managed_jobs` read
+surface, the duplicate fast isolation test, and the dedicated start-sweep test are all
+cut. Rationale: alpha = no legacy jobs to migrate; `jobname` is unbounded `text`
+(live-validated); auto-discovery is the only correct central-DB value;
+emission-on_commit + self-heal make the lock a no-op footgun; the reads/cleanup verbs
+had zero prod consumers.
 
-**Placeholder scan:** one `...` body remains by design — T9's slow timing companion,
-whose body is specified by reference to spec §Isolation regression tests (fixture
-scratch DB + sleep window; the fast deterministic sweep test beside it is the always-on
-guard). Every other step carries real test code or concrete prose.
+**Placeholder scan:** NO `...` placeholder bodies remain — every step carries real test
+code or concrete prose.
 
 **Type consistency:** the single `build_jobname(database, source, name="")` is defined
 in `catalog.py` (T4) and called only there; `validators.py` no longer owns it. Catalog
 verbs all take `alias: str` first + keyword-only params, consistent across T4/T5/T9.
 `is_pg_cron_inert(alias)` consumed identically in T4/T5/T8/T9.
 `open_central_connection(alias)` / `resolve_cron_database(alias)` consistent T2→T4.
+`utils.fetch_cron_job(jobname)` is the one test-side `cron.job` reader, used in
+T4/T5/T6.
+
+## Post-Implementation Validation
+
+Run these AFTER Task 10, from a clean state, to prove the whole thing works the way a
+downstream developer would exercise it. Each scenario is a real, runnable check —
+automate them into a `scripts/validate_pg_cron.sh` (or a `make` target) so they're
+repeatable, not a one-time manual dance. Every scenario must pass.
+
+**Scenario 1 — fresh cluster from zero (the headline promise).**
+
+```bash
+docker compose down -v                       # wipe volumes — no leftover state
+docker compose up -d db db_pg_cron           # db_pg_cron runs the init script: CREATE EXTENSION + grants on cron.database_name
+uv run pytest tests/core                      # pg_cron NOT installed — must be green
+uv run pytest tests/pg_cron                   # pg_cron installed, app/test DB has NO extension — must be green
+uv run pytest tests/multidb                   # router suite — green
+```
+
+Expect: all three suites pass on a cluster that has the extension ONLY in the central
+DB.
+
+**Scenario 2 — pytest-xdist (the isolation win).**
+
+```bash
+uv run pytest tests/pg_cron -n 4              # each worker migrates test_<db>_gwN with NO CREATE EXTENSION
+```
+
+Expect: green — no `can only create extension in database ...` error on any worker. This
+is the whole point; if it fails, the app DB is still touching `cron.*`.
+
+**Scenario 3 — `--create-db` with no eviction dance.**
+
+```bash
+uv run pytest tests/pg_cron --create-db       # drops/recreates test DBs; the launcher holds no session on them
+```
+
+Expect: green with NO manual `ALTER DATABASE ... ALLOW_CONNECTIONS false` + terminate
+step. (If this needs the old dance, the app DB is still the pg_cron database.)
+
+**Scenario 4 — fresh migrate on a real (non-test) DB.**
+
+```bash
+# against a throwaway non-test DB on db_pg_cron, with a SCHEDULE + CLEANUP configured:
+uv run python -m manage migrate               # reconcile runs; no CREATE EXTENSION on the app DB
+uv run python -m manage absurd_sync_crons     # idempotent; second run makes no changes
+uv run python -m manage check --database default   # central-extension E-check passes (extension present centrally)
+```
+
+Then inspect centrally: `SELECT jobname, database, active FROM cron.job` shows the
+schedules + `_dj:<db>:c:cleanup_all`, all `database = <the app db>`.
+
+**Scenario 5 — live scheduling actually fires into the app DB, not elsewhere.** Bring up
+the `examples/pg_cron` app (`docker compose up --build` in that dir) and confirm its
+scheduled task produces work in the app DB's queue and the launcher run history
+(`cron.job_run_details.status='succeeded'`, `database = <app db>`).
+
+**Scenario 6 — same-DB backward-compat (degenerate case).** On a cluster where
+`cron.database_name` IS the app DB (an existing-style deployment), Scenario 4 still
+works with zero config: auto-discovery returns the app DB, and
+`schedule_in_database(database => current)` behaves exactly like the old
+`cron.schedule`.
+
+**Scenario 7 — full matrix (parity across versions).**
+
+```bash
+uvx --with tox-uv tox                          # Python × Django matrix + min-max mypy
+```
+
+If any scenario fails, that's a real defect — do not paper over it; trace it to the task
+whose deliverable it exercises.
 
 ## Execution Handoff
 

@@ -106,17 +106,20 @@ Do **NOT** add a `DATABASES` alias — `setup_databases` test-swaps every alias,
 central alias would become an extension-less `test_<central>`. Instead: a **raw,
 short-lived psycopg connection** built from
 `connections[resolve_absurd_database()].get_connection_params()` with `dbname` swapped
-to the central name. Central name = `OPTIONS["CRON_DATABASE_NAME"]` (a DB _name_) if
-set, else auto-discovered via `current_setting('cron.database_name', true)` on the app
-connection. Same-server is correct by construction (pg_cron is server-local). Scheduling
-ops are rare (migrate reconcile, admin save, teardown) so per-op connect cost is fine.
-The exact pattern already runs green twice here (`worker.py:171-175` async — pops
-`cursor_factory`; `tests/utils.py:72-73` sync). **Commit discipline:** raw psycopg
-defaults `autocommit=False` — every write op MUST commit and the grammar probe MUST roll
-back; use `autocommit=True` + an explicit per-op `conn.transaction()`, or a forgotten
-commit is a silent no-schedule bug. `get_connection_params()` carries SSL `OPTIONS`
-through (sslmode inherited); a dbname-routing pooler (pgbouncer) or an
-`OPTIONS["service"]` setup needs the central DB reachable — one docs line.
+to the central name. Central name = auto-discovered via
+`current_setting('cron.database_name', true)` on the app connection (NULL → a clear
+`ImproperlyConfigured`: server has no pg_cron). **No `CRON_DATABASE_NAME` override
+option** — pg_cron is server-local, so the auto-discovered value is definitionally the
+only correct one; an override could only equal it or misconfigure. Same-server is
+correct by construction (pg_cron is server-local). Scheduling ops are rare (migrate
+reconcile, admin save, teardown) so per-op connect cost is fine. The exact pattern
+already runs green twice here (`worker.py:171-175` async — pops `cursor_factory`;
+`tests/utils.py:72-73` sync). **Commit discipline:** raw psycopg defaults
+`autocommit=False` — every write op MUST commit and the grammar probe MUST roll back;
+use `autocommit=True` + an explicit per-op `conn.transaction()`, or a forgotten commit
+is a silent no-schedule bug. `get_connection_params()` carries SSL `OPTIONS` through
+(sslmode inherited); a dbname-routing pooler (pgbouncer) or an `OPTIONS["service"]`
+setup needs the central DB reachable — one docs line.
 
 **Homes:** the central-connection open-helper (params-swap + autocommit + error-wrap)
 lives in `connection.py` (alongside `resolve_absurd_database`); the `cron.*` seam that
@@ -127,21 +130,23 @@ that wrapper.
 
 ### One seam for all `cron.*`
 
-Route all eleven current `cron.*` sites (`models.py` PgCronManager ×4 +
-schedule/unschedule; `reconcile.py` cleanup-job (un)schedule; `validators` grammar
-probe; `flush.drop_pg_cron_state`) through **one new module** (`pg_cron/catalog.py`)
-exposing verbs (`schedule_job`, `unschedule_jobs_for_database`, `get_job`,
-`probe_cron_grammar`, …) that open the central connection. The one remaining test-gate
-lives here — one gate, not five.
+Route all current `cron.*` sites (`models.py` schedule/unschedule + the manager's write
+methods; `reconcile.py` cleanup-job (un)schedule; `validators` grammar probe;
+`flush.drop_pg_cron_state`) through **one new module** (`pg_cron/catalog.py`) exposing a
+small verb set (`schedule_job`, `unschedule_job`, `unschedule_jobs_for_database`,
+`prune_jobs`, `probe_cron_grammar`, `flush_database_jobs`) that opens the central
+connection. NO read verbs ship (the old `PgCronManager` reads had zero prod consumers —
+tests read `cron.job` via a `utils.py` helper), and NO dedicated cleanup verbs (the
+generic pair covers it). The one remaining test-gate lives here — one gate, not five.
 
 **Error contract (BLOCKING — B1):** a raw psycopg connection raises `psycopg.*`, NOT
 Django's `django.db.utils.*` wrappers (Django only wraps errors on its own registered
 connections). `catalog.py` MUST translate psycopg exceptions into the Django hierarchy
 at the seam boundary — otherwise the existing best-effort catch nets miss them and
-crash: `apps.py:103-114` (migrate-never-breaks → a wrong/unreachable
-`CRON_DATABASE_NAME` crashes migrate), `flush.py:37` (test teardown → every transaction
-test errors in `_post_teardown`), `validators.py:100` (grammar probe → a 500 in the
-admin instead of a form error). **Mechanism:** wrap raw-psycopg execution in
+crash: `apps.py:103-114` (migrate-never-breaks → an unreachable central DB crashes
+migrate), `flush.py:37` (test teardown → every transaction test errors in
+`_post_teardown`), `validators.py:100` (grammar probe → a 500 in the admin instead of a
+form error). **Mechanism:** wrap raw-psycopg execution in
 `connections[<app alias>].wrap_database_errors` (Django's `DatabaseErrorWrapper`) — it
 re-raises `psycopg.*` as the matching `django.db.utils.*` with `__cause__` set to the
 original psycopg error (the wrapper reads the class map off the Django connection
@@ -169,17 +174,20 @@ existing 63-byte `validate_jobname_length` guard is **DELETED** (validator + its
 length restriction to enforce. `validate_name_charset` stays (the `[A-Za-z0-9_-]`
 charset guard is still needed since `:` is the jobname separator).
 
-### Emission timing + serialization (a real regression to manage)
+### Emission timing (a real regression to manage) — and NO lock
 
 Today `post_save` schedules on the row's own connection under `pg_advisory_xact_lock`
 (`open_locked_cursor`) → row upserts AND cron writes are one atomic, serialized
-transaction. Central = a second connection, so: (a) emission happens after commit (via
-**`transaction.on_commit`**), outside any lock; (b) the advisory lock now serializes
-only the central op, not the row write → concurrent reconcilers' row upserts can race
-(survivable: `update_or_create` handles the IntegrityError) and two writers can emit
-out-of-commit-order (older cadence lingers until the next reconcile). State this new
-serialization story explicitly — "the lock moves onto the central connection" is NOT
-equivalence.
+transaction. Central = a second connection, so emission happens after commit (via
+**`transaction.on_commit`**). **The advisory lock is DELETED, with no successor** — it
+protected a same-DB atomicity that the two-connection split already breaks, and nothing
+left needs serializing: `schedule_in_database` is an idempotent upsert on
+`(jobname, username)` (concurrent writers converge, last cadence wins), row upserts race
+survivably (`update_or_create` handles the IntegrityError), out-of-commit-order emission
+self-heals at the next reconcile. Worse, the central connection is `autocommit=True`, so
+a per-statement `pg_advisory_xact_lock` would release instantly — it would guard nothing
+without extra explicit-transaction machinery. So: no lock; `open_locked_cursor` is
+removed.
 
 **Why lost atomicity is acceptable (load-bearing):** the run-wrapper (`0001`
 `CREATE_FN`) RE-READS the `ScheduledTask` row on every fire
@@ -196,33 +204,35 @@ Rewrite `signals.py`'s contract docs.
 
 **Reconcile control flow (both write paths route through one central-conn body).** Save
 AND delete signals each register a `transaction.on_commit` callback that opens the
-central connection (§central-connection), takes the central advisory lock, and runs the
-catalog op for that row: save → `schedule_in_database` upsert (db-namespaced jobname);
-delete → scoped `unschedule` of that row's job. The bulk reconcilers
-(`sync_settings_crons`, `sync_admin_crons`, the `absurd_sync_crons` command) run the
-SAME central-conn body once: take the lock, then inline on that one connection — (1)
-upsert every declared row's job, (2) prune jobs for rows that no longer exist
-(source+db-scoped `WHERE database=ours`), (3) reconcile the cleanup job. The per-row
+central connection (§central-connection) and runs the catalog op for that row: save →
+`schedule_in_database` upsert (db-namespaced jobname); delete → scoped `unschedule` of
+that row's job. The bulk reconcilers (`sync_settings_crons`, `sync_admin_crons`, the
+`absurd_sync_crons` command) run the SAME central-conn body once: on that one connection
+— (1) upsert every declared row's job, (2) prune jobs for rows that no longer exist
+(source+db-scoped `WHERE database=ours`), (3) schedule/unschedule the cleanup job via
+the generic `schedule_job`/`unschedule_job` (no dedicated cleanup verbs). The per-row
 on_commit path and the bulk path share the catalog seam; the difference is only scope
-(one row vs all). Emission ordering caveat above still applies — the lock now serializes
-the central op, not the row write.
+(one row vs all). No lock (see above) — concurrent writers are idempotent + self-heal.
 
 ### Cleanup job
 
-`reconcile_cleanup_job` moves central too:
-`schedule_in_database(<db-namespaced cleanup name>, cron, CLEANUP_COMMAND, database => app_db)`
-(`absurd.cleanup_all_queues` runs in the app DB). The `absurd_cleanup_all` shared
-identity becomes db-namespaced — deliberately breaking the shared name with
-`absurd.enable_cron` / `absurdctl cron`, acceptable because under central topology those
-same-DB functions can't run in the app DB anyway. Absurd-native partition/detach jobs
-stay unsurfaced (status quo).
+The cleanup job moves central too — scheduled with the **generic** `schedule_job` (no
+dedicated `reconcile_cleanup_job`/`unschedule_cleanup_job` verbs): a cleanup lane
+`source="c"` gives jobname `_dj:<db>:c:cleanup_all`, `command=CLEANUP_COMMAND`,
+`database => app_db` (`absurd.cleanup_all_queues` runs in the app DB); `reconcile.py`
+keeps the present-or-not (`OPTIONS["CLEANUP"]`) decision and calls `schedule_job` /
+`unschedule_job`. The `absurd_cleanup_all` shared identity becomes db-namespaced —
+deliberately breaking the shared name with `absurd.enable_cron` / `absurdctl cron`,
+acceptable because under central topology those same-DB functions can't run in the app
+DB anyway. Absurd-native partition/detach jobs stay unsurfaced (status quo).
 
 ### Cleanup lifecycle: teardown sweep AND session-start sweep (both required)
 
 Test-created schedules (opt-in) live as `cron.job` rows in the SHARED central catalog,
 target-bound to the test DB. Two sweeps — same operation
-(`unschedule WHERE database = <this test DB name> AND jobname LIKE '_dj:%'`, through the
-catalog seam as the test's role; RLS scopes to it), at two different times:
+(`unschedule WHERE database = <this test DB name> AND starts_with(jobname, '_dj:')` —
+`starts_with`, NEVER `LIKE` (`_` is a LIKE wildcard), through the catalog seam as the
+test's role; RLS scopes to it), at two different times:
 
 1. **Per-test teardown** — via the existing `_post_teardown` auto-cleanup hook, after
    every committing test. For cross-function isolation: an opt-in test's schedule must
@@ -316,24 +326,23 @@ gate, not five" refers to the `cron.*`-site collapse into `catalog.py`, NOT the 
 gate. So the **opt-in pg_cron suite must set BOTH** `SYNC_SCHEDULES_ON_TEST_DB=True` AND
 `PG_CRON_ON_TEST_DB=True` (via `tests/pg_cron` settings / `build_pg_cron_tasks`).
 
-### Isolation regression tests (two, in `tests/pg_cron/`)
+### Isolation regression — two guarantees, both always-on (NO deselected tests)
 
 The proven live isolation (§verified facts: main-DB `ping` schedule → 0 leak into
-`test_demo`) ships as TWO tests, both their own isolated cases:
+`test_demo`) is covered by two tests, **both run in CI** (no `slow`/deselected tests —
+that would break the no-CI-skipped-tests + 100%-patch-coverage rules):
 
-- **Timing-based (marked slow/serial)** — the definitive form, but needs the launcher to
-  actually fire. Setup: a schedule targeting a NON-test DB (a fixture-created scratch
-  DB, or `cron.database_name`/`postgres` itself) that enqueues a real task each second;
-  assert the migrated `test_<db>` queue stays `before == after == 0` across a real sleep
-  window. Mark it `slow` + serial (no xdist-parallel — it reads a shared launcher's
-  timing) so the default suite can deselect it. Wall-clock + a live launcher make it
-  unfit as the ONLY guard.
-- **Deterministic companion (fast, always-on)** — no launcher timing. Opt-in mode on;
-  schedule a job targeting THIS test DB via the catalog seam; assert the sweep
-  (`unschedule WHERE database = <this test DB>`) removes exactly it and leaves an
-  unrelated-DB-targeted control job untouched. This asserts the STRUCTURAL guarantee
-  (jobs are db-target-bound; the sweep is correctly scoped) deterministically, so CI
-  never depends on the slow timing test to catch a regression.
+- **Structural scoping** — is `test_flush_scoped` (Task 5), not a separate test:
+  schedule a job for THIS DB + a control job in another DB, run the real
+  `flush_absurd_state` entrypoint, assert only this DB's job is removed and the control
+  survives. Proves jobs are db-target-bound and the sweep is correctly scoped —
+  deterministically.
+- **Runtime no-leak** — `test_isolation_regression.py`: a task-producing cron bound to a
+  NON-test DB (per-worker-unique → xdist-safe), made **deterministic by a positive sync
+  point** — poll `cron.job_run_details` until the producer fires into its own DB
+  (proving the launcher completed a cycle), THEN assert THIS test DB's queue is `0`. No
+  blind sleep, no `slow` marker — it runs every CI pass. Guards against a future revert
+  of the `database =>` binding to plain `cron.schedule`.
 
 **Eliminated vs the old approach:** conditional `CreateExtension` + all migration
 gating; five-site scattered gating (→ one seam); the mirror hazard is structurally gone
@@ -391,37 +400,43 @@ django-absurd is the sole scheduler; the mirror hazard is gone by target-DB bind
 
 ## Change list (file-level)
 
-`pg_cron/catalog.py` (new seam) · `pg_cron/<leaf>.py` (detection: `is_test_database` +
-`test_environment_active`) · `pg_cron/models.py` (fold `active` into
-`schedule_in_database`, DROP `alter_job`; `starts_with` teardown; drop the
-`validate_jobname_length` call), `reconcile.py` (route via catalog), `catalog.py` (owns
-the single db-namespaced `build_jobname`), `validators.py` (DELETE the
-`build_jobname`/`build_jobname_prefix` constructors — moved to catalog — and
-`validate_jobname_length`), `signals.py` (contract rewrite; `on_commit`;
-swallow-and-log), `apps.py`, `checks.py` (route via catalog; gate; composition +
-`Tags.database` central-extension checks) · `pg_cron/migrations/0001` (drop
-`CreateExtension`) · `flush.py` (scoped to live db name) · `queues.py` / `connection.py`
-(central-connection helper + **psycopg→Django error translation**, B1) · `backends.py`
-(`CRON_DATABASE_NAME`, `PG_CRON_ON_TEST_DB` in AbsurdBackendOptions) ·
-`management/commands/absurd_sync_crons.py` (route via catalog; `CommandError` when
-inert)
+`pg_cron/catalog.py` (NEW seam — owns the single db-namespaced `build_jobname`, the
+`cron.*` verbs, and the inert gate) · `pg_cron/detection.py` (NEW leaf:
+`is_test_database`
 
-- `tests/pg_cron/test_absurd_sync_crons_command.py` (assert inert `CommandError` + live
+- `test_environment_active` + `is_pg_cron_inert` + the `ORIGINAL_DATABASE_NAMES`
+  snapshot) · `pg_cron/models.py` (DELETE `PgCronManager`, `get_pg_cron_job`,
+  `PgCronJobRow`, `open_locked_cursor`; `schedule_pg_cron_job`/`unschedule_pg_cron_job`
+  delegate to catalog; fold `active` into `schedule_in_database`, DROP `alter_job`) ·
+  `reconcile.py` (route via catalog; cleanup via generic
+  `schedule_job`/`unschedule_job`; no lock) · `validators.py` (DELETE
+  `build_jobname`/`build_jobname_prefix` — moved to catalog — and
+  `validate_jobname_length`) · `signals.py` (contract rewrite; `on_commit`;
+  swallow-and-log; no lock) · `apps.py` (snapshot → `detection`) · `checks.py` (route
+  via catalog; DELETE the jobname-length check + hint; add composition + `Tags.database`
+  central-extension checks) · `pg_cron/migrations/0001` (drop `CreateExtension`) ·
+  `flush.py` (scoped to live db name) · `connection.py` (central-connection helper +
+  **psycopg→Django error translation**, B1; GUC-only `resolve_cron_database`) ·
+  `backends.py` (`PG_CRON_ON_TEST_DB` in AbsurdBackendOptions — NO `CRON_DATABASE_NAME`)
+  · `management/commands/absurd_sync_crons.py` (route via catalog; `CommandError` when
+  inert)
+
+* `tests/pg_cron/test_absurd_sync_crons_command.py` (assert inert `CommandError` + live
   sync) · `pytest_plugin.py` (`absurd_load_schedules` fixture, #101, must commit; + the
   **session-scoped autouse start-sweep fixture**) · `tests/pg_cron/*` (run on an
-  ordinary test DB now; convert emission tests to `transaction=True`) + new inert-mode
-  tests on plain `db` + **the two isolation regression tests** (slow/serial timing
-  form + fast deterministic sweep-scope companion, §isolation-regression-tests) ·
+  ordinary test DB now; convert emission tests to `transaction=True`;
+  `utils.fetch_cron_job` is the one test-side reader) + new inert-mode tests on plain
+  `db` + **the isolation regression: structural via `test_flush_scoped` (Task 5) +
+  runtime `test_isolation_regression.py`, BOTH always-on, no `slow`/deselected tests** ·
   `Dockerfile.pg_cron` / `compose.yaml` (central `cron.database_name`, e.g. `postgres`;
   `CREATE EXTENSION` + grants via `/docker-entrypoint-initdb.d` — runs only on a FRESH
   volume, so existing dev volumes need recreation) · `docs/WHY.md` (reverse the
-  extension section) · `django_absurd/AGENTS.md` + `docs/web/cron-jobs.md` (operator
-  setup: central DB + grants + one-scheduling-role) · `CLAUDE.md` (the `--create-db`
-  eviction dance
-
-* "test DB must equal cron.database_name" doctrine become obsolete) ·
-  `.claude/skills/pg-cron` (update the "In this repo" section) · follow-up: simplify the
-  pg_cron example (drop `CRON_DATABASE_NAME`, run on plain `db`).
+  extension section) · `django_absurd/AGENTS.md`
+  - `docs/web/cron-jobs.md` (operator setup: central DB + grants + one-scheduling-role)
+    · `CLAUDE.md` (the `--create-db` eviction dance + "test DB must equal
+    cron.database_name" doctrine become obsolete) · `.claude/skills/pg-cron` (update the
+    "In this repo" section) · follow-up: simplify the pg_cron example (run on plain
+    `db`).
 
 ## Suggested task order (dependency-safe, for writing-plans)
 
@@ -436,8 +451,9 @@ inert)
 5. Migration drop-`CreateExtension` + `Dockerfile.pg_cron`/`compose.yaml` central
    setup + move `tests/pg_cron` onto an ordinary test DB.
 6. System checks (composition + `Tags.database` central-extension).
-7. Command inert `CommandError` + teardown/start sweeps + the two isolation regression
-   tests.
+7. Command inert `CommandError` + teardown/start sweeps + the runtime isolation test
+   (structural scoping is already covered by Task 5's `test_flush_scoped`).
 8. Docs (WHY reverse, AGENTS/site operator setup, CLAUDE.md, skill).
 
-(No transition sweep — alpha, from-scratch; see §Backward compatibility.)
+(No transition sweep — alpha, from-scratch; see §Backward compatibility. No advisory
+lock, no `CRON_DATABASE_NAME`, no cleanup/read verbs, no `slow`-deselected tests.)
