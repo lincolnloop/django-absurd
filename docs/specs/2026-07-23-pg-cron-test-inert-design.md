@@ -82,6 +82,17 @@ wrapper-function operation stays UNCONDITIONAL — no pg_cron dependency, so the
 `ScheduledTask` table + fire-wrapper exist in test DBs and ORM/admin/row assertions
 work.
 
+### Core Absurd schema is already pg_cron-optional (no core-SQL change)
+
+The core Absurd schema SQL (shipped from `absurdctl`) references `cron.*` ~38×, but is
+**self-guarding**: auto-invoked paths wrap every access in
+`if to_regclass('cron.job') is not null` (no-op when the extension is absent), and only
+the explicitly-pg_cron functions `raise 'pg_cron is not available'` — which inert-gated
+app code never calls. So the core migration installs and runs fine without the extension
+(core works without the pg_cron app today). No core-SQL change is needed; gating stays
+at the pg_cron-app + `flush.py` layer below. (The one unguarded core-side statement is
+`flush.drop_pg_cron_state` — already gated below.)
+
 ### Runtime gating (at the lowest cron.* sites, not signal receivers)
 
 Gate each `cron.*`-touching function on `pg_cron_inert(...)` (there are five
