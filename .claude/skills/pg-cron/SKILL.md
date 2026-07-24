@@ -92,6 +92,17 @@ place to look when a job "isn't running."
   (`... FROM cron.job WHERE database = 'a'`).
 - Metadata (`cron.job`, run history) always lives centrally in `cron.database_name`
   regardless of target.
+- **Version floor: pg_cron ≥ 1.4.** `cron.schedule_in_database` — with its full 6-arg
+  signature INCLUDING `active` — and `cron.alter_job` both landed in 1.4 (verified in
+  `pg_cron--1.3--1.4.sql`). That is already django-absurd's documented floor, unchanged.
+  Prefer gating on function existence (`to_regproc('cron.schedule_in_database')`) over
+  version parsing, since managed platforms vary.
+- **Permissions:** a non-superuser needs `GRANT USAGE ON SCHEMA cron` **+**
+  `GRANT EXECUTE ON FUNCTION cron.schedule_in_database(text,text,text,text,text,boolean)`
+  in `cron.database_name` (the extension ships it un-granted on purpose: "admin should
+  decide whether cron.schedule_in_database is safe by explicitly granting execute"). It
+  may then schedule OWN-user jobs into any DB; passing another `username` requires
+  superuser.
 
 ## Inspecting / probing a live instance
 
