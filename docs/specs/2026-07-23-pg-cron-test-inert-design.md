@@ -412,26 +412,29 @@ django-absurd is the sole scheduler; the mirror hazard is gone by target-DB bind
   `schedule_job`/`unschedule_job`; no lock) · `validators.py` (DELETE
   `build_jobname`/`build_jobname_prefix` — moved to catalog — and
   `validate_jobname_length`) · `signals.py` (contract rewrite; `on_commit`;
-  swallow-and-log; no lock) · `apps.py` (snapshot → `detection`) · `checks.py` (route
-  via catalog; DELETE the jobname-length check + hint; add composition + `Tags.database`
-  central-extension checks) · `pg_cron/migrations/0001` (drop `CreateExtension`) ·
-  `flush.py` (scoped to live db name) · `connection.py` (central-connection helper +
-  **psycopg→Django error translation**, B1; GUC-only `resolve_cron_database`) ·
-  `backends.py` (`PG_CRON_ON_TEST_DB` in AbsurdBackendOptions — NO `CRON_DATABASE_NAME`)
-  · `management/commands/absurd_sync_crons.py` (route via catalog; `CommandError` when
+  swallow-and-log; no lock) · `apps.py` (snapshot → `detection`; `should_sync_schedules`
+  uses `detection.is_test_database`) · `checks.py` (DELETE the jobname-length check +
+  hint; add composition + `Tags.database` central-extension check — the latter reads via
+  the central connection, `to_regproc('cron.schedule_in_database')`) ·
+  `pg_cron/migrations/0001` (drop `CreateExtension`) · `flush.py` (scoped to live db
+  name) · `connection.py` (central-connection helper + **psycopg→Django error
+  translation**, B1; GUC-only `resolve_cron_database`) · `backends.py`
+  (`PG_CRON_ON_TEST_DB` in AbsurdBackendOptions — NO `CRON_DATABASE_NAME`) ·
+  `management/commands/absurd_sync_crons.py` (route via catalog; `CommandError` when
   inert)
 
 * `tests/pg_cron/test_absurd_sync_crons_command.py` (assert inert `CommandError` + live
-  sync) · `pytest_plugin.py` (`absurd_load_schedules` fixture, #101, must commit; + the
-  **session-scoped autouse start-sweep fixture**) · `tests/pg_cron/*` (run on an
-  ordinary test DB now; convert emission tests to `transaction=True`;
-  `utils.fetch_cron_job` is the one test-side reader) + new inert-mode tests on plain
-  `db` + **the isolation regression: structural via `test_flush_scoped` (Task 5) +
-  runtime `test_isolation_regression.py`, BOTH always-on, no `slow`/deselected tests** ·
-  `Dockerfile.pg_cron` / `compose.yaml` (central `cron.database_name`, e.g. `postgres`;
-  `CREATE EXTENSION` + grants via `/docker-entrypoint-initdb.d` — runs only on a FRESH
-  volume, so existing dev volumes need recreation) · `docs/WHY.md` (reverse the
-  extension section) · `django_absurd/AGENTS.md`
+  sync) · `pytest_plugin.py` (the **session-scoped autouse start-sweep fixture**; the
+  `absurd_load_schedules` fixture is a #101 follow-up, NOT this plan) ·
+  `tests/pg_cron/*` (run on an ordinary test DB now; convert emission tests to
+  `transaction=True`; `utils.fetch_cron_job` is the one test-side reader) + new
+  inert-mode tests on plain `db` + **the isolation regression: structural via
+  `test_flush_scoped` (Task 5) + runtime `test_isolation_regression.py`, BOTH always-on,
+  no `slow`/deselected tests** · `Dockerfile.pg_cron` / `compose.yaml` (central
+  `cron.database_name`, e.g. `postgres`; `CREATE EXTENSION` + grants via
+  `/docker-entrypoint-initdb.d` — runs only on a FRESH volume, so existing dev volumes
+  need recreation) · `docs/WHY.md` (reverse the extension section) ·
+  `django_absurd/AGENTS.md`
   - `docs/web/cron-jobs.md` (operator setup: central DB + grants + one-scheduling-role)
     · `CLAUDE.md` (the `--create-db` eviction dance + "test DB must equal
     cron.database_name" doctrine become obsolete) · `.claude/skills/pg-cron` (update the
