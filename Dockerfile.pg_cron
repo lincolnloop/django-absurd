@@ -8,3 +8,7 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends postgresql-18-cron=1.6.7-3.pgdg13+1; \
     rm -rf /var/lib/apt/lists/*
+
+# Runs once on a fresh volume against the central DB (POSTGRES_DB = postgres, which
+# also is cron.database_name): CREATE EXTENSION pg_cron + the scheduling-role grants.
+COPY pg_cron_init.sql /docker-entrypoint-initdb.d/10-pg_cron-central.sql

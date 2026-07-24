@@ -1,6 +1,5 @@
 import psycopg
 import pytest
-from django.db import connections
 from pytest_django.fixtures import SettingsWrapper
 
 from django_absurd.connection import open_central_connection
@@ -149,9 +148,11 @@ def test_prune_jobs_tolerates_a_job_removed_out_of_band() -> None:
         active=True,
     )
     jobname = catalog.build_jobname(live_db, Source.SETTINGS, "vanishing")
-    with connections["default"].cursor() as cur:
+    with open_central_connection("default") as cur:
         cur.execute("select jobid from cron.job where jobname = %s", [jobname])
-        (jobid,) = cur.fetchone()
+        row = cur.fetchone()
+        assert row is not None
+        (jobid,) = row
         cur.execute("select cron.unschedule(%s)", [jobid])
 
     catalog.prune_jobs("default", source=Source.SETTINGS, keep_names=[])  # no raise

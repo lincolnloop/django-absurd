@@ -1,4 +1,3 @@
-from django.contrib.postgres.operations import CreateExtension
 from django.core.validators import MinValueValidator
 from django.db import migrations, models
 
@@ -66,7 +65,6 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        CreateExtension("pg_cron"),
         migrations.CreateModel(
             name="ScheduledTask",
             fields=[

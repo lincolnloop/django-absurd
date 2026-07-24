@@ -14,8 +14,9 @@ services:
       timeout: 5s
       retries: 10
   db_pg_cron:
-    # pg_cron-enabled Postgres for tests/pg_cron/. cron.database_name must match
-    # the pg_cron suite's TEST db NAME (CREATE EXTENSION is only allowed there).
+    # pg_cron-enabled Postgres for tests/pg_cron/. cron.database_name points at the
+    # CENTRAL `postgres` DB (where the extension + cron.* catalog live); the suite's
+    # ordinary test DB holds NO extension and schedules cross-database into it.
     build:
       context: .
       dockerfile: Dockerfile.pg_cron
@@ -24,7 +25,7 @@ services:
       - -c
       - shared_preload_libraries=pg_cron
       - -c
-      - cron.database_name=absurd_test_pg_cron
+      - cron.database_name=postgres
     environment:
       - POSTGRES_PASSWORD=postgres
     ports:

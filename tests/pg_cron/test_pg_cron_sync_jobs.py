@@ -4,6 +4,7 @@ from django.db import connection
 from pytest_django.fixtures import SettingsWrapper
 
 from django_absurd.backends import get_absurd_backends
+from django_absurd.connection import open_central_connection
 from django_absurd.pg_cron import catalog
 from django_absurd.pg_cron.choices import Source
 from django_absurd.pg_cron.reconcile import sync_crons
@@ -46,7 +47,7 @@ def test_sync_is_idempotent(settings: SettingsWrapper) -> None:
 def test_prune_removes_undeclared_job_but_keeps_foreign(
     settings: SettingsWrapper,
 ) -> None:
-    with connection.cursor() as cur:
+    with open_central_connection("default") as cur:
         cur.execute(
             "select cron.schedule(%s, %s, %s)", ["keepme", "* * * * *", "select 1"]
         )
@@ -72,9 +73,9 @@ def test_prune_removes_undeclared_job_but_keeps_foreign(
         catalog.build_jobname(live_db, Source.SETTINGS, "a")
     }
 
-    with connection.cursor() as cur:
+    with open_central_connection("default") as cur:
         cur.execute("select count(*) from cron.job where jobname = 'keepme'")
-        assert cur.fetchone()[0] == 1
+        assert cur.fetchone() == (1,)
         cur.execute("select cron.unschedule('keepme')")  # don't leak the foreign job
 
 
@@ -92,12 +93,14 @@ def test_prune_tolerates_already_unscheduled_job(
 
     # Pre-remove job b's cron.job row out-of-band; prune must swallow the
     # "could not find valid entry" error and still complete.
-    with connection.cursor() as cur:
+    with open_central_connection("default") as cur:
         cur.execute(
             "select jobid from cron.job where jobname = %s",
             [catalog.build_jobname(live_db, Source.SETTINGS, "b")],
         )
-        jobid = cur.fetchone()[0]
+        row = cur.fetchone()
+        assert row is not None
+        jobid = row[0]
         cur.execute("select cron.unschedule(%s)", [jobid])
 
     settings.TASKS = utils.build_pg_cron_tasks(
@@ -117,12 +120,14 @@ def test_rearm_reenables_disabled_job(settings: SettingsWrapper) -> None:
     sync_crons(get_absurd_backends()["default"])
     live_db = utils.fetch_live_database()
 
-    with connection.cursor() as cur:
+    with open_central_connection("default") as cur:
         cur.execute(
             "select jobid from cron.job where jobname = %s",
             [catalog.build_jobname(live_db, Source.SETTINGS, "a")],
         )
-        jobid = cur.fetchone()[0]
+        row = cur.fetchone()
+        assert row is not None
+        jobid = row[0]
         cur.execute("select cron.alter_job(%s, active := false)", [jobid])
 
     sync_crons(get_absurd_backends()["default"])
