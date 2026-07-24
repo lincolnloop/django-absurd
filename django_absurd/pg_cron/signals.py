@@ -31,6 +31,7 @@ import logging
 import typing as t
 
 import psycopg
+from django.core.exceptions import ImproperlyConfigured
 from django.db import DatabaseError, transaction
 
 if t.TYPE_CHECKING:
@@ -90,7 +91,11 @@ def emit_schedule_change(catalog_op: t.Callable[[], None]) -> None:
     path."""
     try:
         catalog_op()
-    except (DatabaseError, psycopg.Error):
+    # ImproperlyConfigured covers post-migrate config drift: pg_cron present at
+    # migrate but later dropped from shared_preload_libraries, so resolve_cron_database
+    # finds cron.database_name NULL — in autocommit the on_commit callback runs inside
+    # .save(), so this must be swallowed too, never a 500 on an already-committed row.
+    except (DatabaseError, ImproperlyConfigured, psycopg.Error):
         logger.warning(
             "django-absurd: pg_cron schedule emission failed after commit",
             exc_info=True,
