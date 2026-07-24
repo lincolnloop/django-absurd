@@ -65,8 +65,9 @@ New modules:
   `test_environment_active`, `is_pg_cron_inert`) + the `ORIGINAL_DATABASE_NAMES`
   snapshot moved here (no heavy imports → importable by migrations/models with no
   cycle).
-- `django_absurd/pg_cron/catalog.py` — the single `cron.*` seam. Opens the central
-  connection, applies the inert gate, exposes verbs (`schedule_job`,
+- `django_absurd/pg_cron/catalog.py` — the single `cron.*` seam. Owns the one
+  db-namespaced `build_jobname(database, source, name="")` constructor. Opens the
+  central connection, applies the inert gate, exposes verbs (`schedule_job`,
   `unschedule_jobs_for_database`, `get_job`, `get_managed_jobs`, `prune_jobs`,
   `probe_cron_grammar`, `reconcile_cleanup_job`).
 
@@ -74,9 +75,9 @@ Modified:
 
 - `django_absurd/connection.py` — add `resolve_cron_database(alias)` +
   `open_central_connection(alias)` (raw psycopg + B1 wrap).
-- `django_absurd/pg_cron/validators.py` — ONE db-namespaced `build_jobname` (db
-  implicit, resolved at the seam); DELETE `build_jobname_prefix` +
-  `validate_jobname_length` (unbounded `text`, no cap).
+- `django_absurd/pg_cron/validators.py` — DELETE the `build_jobname` /
+  `build_jobname_prefix` constructors (moved to `catalog.py`) and
+  `validate_jobname_length` (unbounded `text`, no cap). Keeps only real validators.
 - `django_absurd/pg_cron/models.py` — `PgCronManager` + `schedule_pg_cron_job` /
   `unschedule_pg_cron_job` route through catalog; fold `active` into
   `schedule_in_database`, drop `cron.alter_job`.
