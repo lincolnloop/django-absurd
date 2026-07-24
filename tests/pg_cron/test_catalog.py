@@ -1,14 +1,12 @@
+import psycopg
 import pytest
 from django.db import connections
 from pytest_django.fixtures import SettingsWrapper
 
+from django_absurd.connection import open_central_connection
 from django_absurd.pg_cron import catalog
 from django_absurd.pg_cron.choices import Source
 from tests.pg_cron import utils
-
-
-def live_database() -> str:
-    return str(connections["default"].settings_dict["NAME"])
 
 
 def test_build_jobname_includes_target_database() -> None:
@@ -35,7 +33,7 @@ def _inert(settings: SettingsWrapper) -> None:
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.usefixtures("_opt_in")
 def test_schedule_job_binds_to_app_database() -> None:
-    live_db = live_database()
+    live_db = utils.fetch_live_database()
     catalog.schedule_job(
         "default",
         name="probe",
@@ -54,7 +52,7 @@ def test_schedule_job_binds_to_app_database() -> None:
 @pytest.mark.django_db(transaction=True)
 def test_schedule_job_is_noop_when_inert(settings: SettingsWrapper) -> None:
     settings.TASKS = utils.build_pg_cron_tasks({}, pg_cron_on_test_db=False)
-    live_db = live_database()
+    live_db = utils.fetch_live_database()
     catalog.schedule_job(
         "default",
         name="probe",
@@ -69,7 +67,7 @@ def test_schedule_job_is_noop_when_inert(settings: SettingsWrapper) -> None:
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.usefixtures("_opt_in")
 def test_unschedule_job_removes_the_bound_job() -> None:
-    live_db = live_database()
+    live_db = utils.fetch_live_database()
     jobname = catalog.build_jobname(live_db, Source.SETTINGS, "probe")
     catalog.schedule_job(
         "default",
@@ -88,7 +86,7 @@ def test_unschedule_job_removes_the_bound_job() -> None:
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.usefixtures("_opt_in")
 def test_unschedule_jobs_for_database_clears_one_source_lane() -> None:
-    live_db = live_database()
+    live_db = utils.fetch_live_database()
     for name in ("a", "b"):
         catalog.schedule_job(
             "default",
@@ -120,7 +118,7 @@ def test_unschedule_jobs_for_database_clears_one_source_lane() -> None:
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.usefixtures("_opt_in")
 def test_prune_jobs_removes_jobs_absent_from_keep_names() -> None:
-    live_db = live_database()
+    live_db = utils.fetch_live_database()
     for name in ("keep", "stale"):
         catalog.schedule_job(
             "default",
@@ -141,7 +139,7 @@ def test_prune_jobs_removes_jobs_absent_from_keep_names() -> None:
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.usefixtures("_opt_in")
 def test_prune_jobs_tolerates_a_job_removed_out_of_band() -> None:
-    live_db = live_database()
+    live_db = utils.fetch_live_database()
     catalog.schedule_job(
         "default",
         name="vanishing",
@@ -164,13 +162,37 @@ def test_prune_jobs_tolerates_a_job_removed_out_of_band() -> None:
 
 
 @pytest.mark.django_db(transaction=True)
+def test_unschedule_jobids_swallows_job_vanished_after_scan() -> None:
+    # Direct coverage of unschedule_jobids' XX000 tolerance branch: a jobid whose
+    # cron.job row is already gone (a post_delete racing prune between the stale-id scan
+    # and the unschedule) makes cron.unschedule raise InternalError (XX000) on the RAW
+    # central cursor — it must be swallowed, not raised (parity with the models-path
+    # prune_pg_cron_jobs). The scan-based test above never enters the loop, so it does
+    # not reach this branch.
+    with open_central_connection("default") as cur:
+        catalog.unschedule_jobids(cur, [999_999_999])  # dangling jobid -> no raise
+
+
+@pytest.mark.django_db(transaction=True)
+def test_unschedule_jobids_reraises_unexpected_error() -> None:
+    # A non-XX000 psycopg error (unadaptable param) is NOT swallowed. pytest.raises is
+    # inside the open_central_connection block so it catches the RAW psycopg.Error
+    # before wrap_database_errors (which only fires on escape from the whole block).
+    with (
+        open_central_connection("default") as cur,
+        pytest.raises(psycopg.Error),
+    ):
+        catalog.unschedule_jobids(cur, [{"bad": "type"}])  # type: ignore[list-item]
+
+
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.usefixtures("_inert")
 @pytest.mark.parametrize(
     "verb",
     ["prune_jobs", "schedule_job", "unschedule_job", "unschedule_jobs_for_database"],
 )
 def test_verbs_are_noop_when_inert(verb: str) -> None:
-    live_db = live_database()
+    live_db = utils.fetch_live_database()
     calls = {
         "prune_jobs": lambda: catalog.prune_jobs(
             "default", source=Source.SETTINGS, keep_names=[]

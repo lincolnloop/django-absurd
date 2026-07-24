@@ -6,7 +6,7 @@ from io import StringIO
 import pytest
 from django.apps import apps
 from django.core.management import call_command
-from django.db import connection, connections
+from django.db import connection
 
 from django_absurd.pg_cron import catalog
 from django_absurd.pg_cron.apps import reconcile_crons_after_migrate
@@ -19,10 +19,6 @@ if t.TYPE_CHECKING:
     import pytest_django.fixtures
 
 pytestmark = pytest.mark.django_db(transaction=True)
-
-
-def live_database() -> str:
-    return str(connections["default"].settings_dict["NAME"])
 
 
 def run_scheduled(source: str, name: str) -> None:
@@ -63,7 +59,7 @@ def test_reconcile_creates_owned_cron_jobs_under_pg_cron(
     )
     run_cron_sync()
 
-    live_db = live_database()
+    live_db = utils.fetch_live_database()
     assert [r[0] for r in utils.fetch_managed_jobs(live_db)] == [
         catalog.build_jobname(live_db, Source.SETTINGS, "a"),
         catalog.build_jobname(live_db, Source.SETTINGS, "b"),
@@ -92,14 +88,14 @@ def test_reconcile_emits_jobs_for_admin_rows_created_without_signal(
     )
     assert (
         utils.fetch_cron_job(
-            catalog.build_jobname(live_database(), Source.ADMIN, "seeded")
+            catalog.build_jobname(utils.fetch_live_database(), Source.ADMIN, "seeded")
         )
         is None
     )
 
     run_cron_sync()
 
-    rows = utils.fetch_managed_jobs(live_database(), source=Source.ADMIN)
+    rows = utils.fetch_managed_jobs(utils.fetch_live_database(), source=Source.ADMIN)
     assert len(rows) == 1
     _, schedule, _, active = rows[0]
     assert schedule == "0 3 * * *"
@@ -127,7 +123,7 @@ def test_reconcile_admin_rows_is_idempotent(
     run_cron_sync()
     run_cron_sync()
 
-    live_db = live_database()
+    live_db = utils.fetch_live_database()
     jobs = utils.fetch_managed_jobs(live_db, source=Source.ADMIN)
     assert len(jobs) == 1
     jobname, schedule, _, active = jobs[0]
@@ -153,7 +149,9 @@ def test_reconcile_prunes_owned_settings_job_whose_row_vanished(
     ).schedule_pg_cron_job()
     assert (
         utils.fetch_cron_job(
-            catalog.build_jobname(live_database(), Source.SETTINGS, "orphan")
+            catalog.build_jobname(
+                utils.fetch_live_database(), Source.SETTINGS, "orphan"
+            )
         )
         is not None
     )
@@ -162,7 +160,9 @@ def test_reconcile_prunes_owned_settings_job_whose_row_vanished(
 
     assert (
         utils.fetch_cron_job(
-            catalog.build_jobname(live_database(), Source.SETTINGS, "orphan")
+            catalog.build_jobname(
+                utils.fetch_live_database(), Source.SETTINGS, "orphan"
+            )
         )
         is None
     )
@@ -183,7 +183,7 @@ def test_reconcile_prunes_admin_job_whose_row_vanished(
     ).schedule_pg_cron_job()
     assert (
         utils.fetch_cron_job(
-            catalog.build_jobname(live_database(), Source.ADMIN, "orphan")
+            catalog.build_jobname(utils.fetch_live_database(), Source.ADMIN, "orphan")
         )
         is not None
     )
@@ -192,7 +192,7 @@ def test_reconcile_prunes_admin_job_whose_row_vanished(
 
     assert (
         utils.fetch_cron_job(
-            catalog.build_jobname(live_database(), Source.ADMIN, "orphan")
+            catalog.build_jobname(utils.fetch_live_database(), Source.ADMIN, "orphan")
         )
         is None
     )
@@ -211,7 +211,7 @@ def test_reconcile_is_noop_without_absurd_backend(
     # must NOT raise
     reconcile_crons_after_migrate(sender=apps.get_app_config("django_absurd_pg_cron"))
 
-    assert utils.fetch_managed_jobs(live_database()) == []
+    assert utils.fetch_managed_jobs(utils.fetch_live_database()) == []
 
 
 def test_reconcile_missing_row_fires_clean_noop(
@@ -262,7 +262,7 @@ def test_reconcile_skips_on_malformed_schedule_spec(
         sender=apps.get_app_config("django_absurd_pg_cron")
     )  # must NOT raise
 
-    assert utils.fetch_managed_jobs(live_database()) == []
+    assert utils.fetch_managed_jobs(utils.fetch_live_database()) == []
 
 
 def test_reconcile_skips_on_bad_dotted_path(
@@ -276,7 +276,7 @@ def test_reconcile_skips_on_bad_dotted_path(
         sender=apps.get_app_config("django_absurd_pg_cron")
     )  # must NOT raise
 
-    assert utils.fetch_managed_jobs(live_database()) == []
+    assert utils.fetch_managed_jobs(utils.fetch_live_database()) == []
 
 
 def test_pg_cron_app_registered_after_core() -> None:
@@ -296,7 +296,7 @@ def test_migrate_provisions_queues_and_reconciles_crons(
     call_command("migrate", verbosity=0)
 
     assert set(get_absurd_client().list_queues()) == {"default", "other", "reports"}
-    live_db = live_database()
+    live_db = utils.fetch_live_database()
     assert [r[0] for r in utils.fetch_managed_jobs(live_db)] == [
         catalog.build_jobname(live_db, Source.SETTINGS, "a")
     ]

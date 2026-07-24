@@ -1,6 +1,6 @@
 import pytest
 from django.core.management import call_command
-from django.db import connection, connections
+from django.db import connection
 from pytest_django.fixtures import SettingsWrapper
 
 from django_absurd.flush import flush_absurd_state
@@ -12,10 +12,6 @@ from tests.pg_cron import utils
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
-def live_database() -> str:
-    return str(connections["default"].settings_dict["NAME"])
-
-
 def test_flush_absurd_state_drop_schema_true_unschedules_everything_blanket(
     settings: SettingsWrapper,
 ) -> None:
@@ -25,7 +21,7 @@ def test_flush_absurd_state_drop_schema_true_unschedules_everything_blanket(
     )
     assert (
         utils.fetch_cron_job(
-            catalog.build_jobname(live_database(), Source.ADMIN, "direct")
+            catalog.build_jobname(utils.fetch_live_database(), Source.ADMIN, "direct")
         )
         is not None
     )
@@ -61,7 +57,7 @@ def test_flush_absurd_state_drop_schema_false_scopes_to_owned_jobs_only(
     assert not ScheduledTask.objects.filter(name="direct", source="a").exists()
     assert (
         utils.fetch_cron_job(
-            catalog.build_jobname(live_database(), Source.ADMIN, "direct")
+            catalog.build_jobname(utils.fetch_live_database(), Source.ADMIN, "direct")
         )
         is None
     )

@@ -1,6 +1,5 @@
 import pytest
 import pytest_django.fixtures
-from django.db import connections
 
 from django_absurd.pg_cron import catalog
 from django_absurd.pg_cron.choices import Source
@@ -8,10 +7,6 @@ from django_absurd.pg_cron.models import ScheduledTask
 from tests.pg_cron import utils
 
 pytestmark = pytest.mark.django_db(transaction=True)
-
-
-def live_database() -> str:
-    return str(connections["default"].settings_dict["NAME"])
 
 
 def test_settings_and_admin_schedule_may_share_a_name(
@@ -32,7 +27,7 @@ def test_settings_and_admin_schedule_may_share_a_name(
         task="tests.tasks.add",
         cron="0 3 * * *",
     )
-    live_db = live_database()
+    live_db = utils.fetch_live_database()
     assert (
         utils.fetch_cron_job(catalog.build_jobname(live_db, Source.SETTINGS, "nightly"))
         is not None

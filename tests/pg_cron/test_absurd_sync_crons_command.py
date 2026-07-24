@@ -5,7 +5,6 @@ import pytest
 import pytest_django.fixtures
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.db import connections
 
 from django_absurd.backends import get_absurd_backends
 from django_absurd.pg_cron import catalog
@@ -15,10 +14,6 @@ from django_absurd.pg_cron.reconcile import sync_crons
 from tests.pg_cron import utils
 
 pytestmark = pytest.mark.django_db(transaction=True)
-
-
-def live_database() -> str:
-    return str(connections["default"].settings_dict["NAME"])
 
 
 def test_sync_crons_command_malformed_schedule_raises_commanderror(
@@ -43,7 +38,7 @@ def test_sync_crons_command_creates_cron_jobs(
     )
     call_command("absurd_sync_crons")
 
-    live_db = live_database()
+    live_db = utils.fetch_live_database()
     jobs = [r[0] for r in utils.fetch_managed_jobs(live_db)]
     assert catalog.build_jobname(live_db, Source.SETTINGS, "a") in jobs
     assert catalog.build_jobname(live_db, Source.SETTINGS, "b") in jobs
@@ -76,7 +71,7 @@ def test_sync_crons_command_is_idempotent(
     call_command("absurd_sync_crons")
     call_command("absurd_sync_crons")
 
-    assert len(utils.fetch_managed_jobs(live_database())) == 1
+    assert len(utils.fetch_managed_jobs(utils.fetch_live_database())) == 1
 
 
 def test_teardown_removes_owned_cron_jobs(
@@ -91,11 +86,11 @@ def test_teardown_removes_owned_cron_jobs(
     )
     be = get_absurd_backends()["default"]
     sync_crons(be)
-    assert len(utils.fetch_managed_jobs(live_database())) == 2
+    assert len(utils.fetch_managed_jobs(utils.fetch_live_database())) == 2
 
     call_command("absurd_sync_crons", teardown=True, no_input=True)
 
-    assert utils.fetch_managed_jobs(live_database()) == []
+    assert utils.fetch_managed_jobs(utils.fetch_live_database()) == []
     assert not ScheduledTask.objects.filter(source="s").exists()
 
     out = capsys.readouterr().out
@@ -117,7 +112,7 @@ def test_teardown_command_deletes_admin_job_and_row_after_confirmation(
     )
     assert (
         utils.fetch_cron_job(
-            catalog.build_jobname(live_database(), Source.ADMIN, "killme")
+            catalog.build_jobname(utils.fetch_live_database(), Source.ADMIN, "killme")
         )
         is not None
     )
@@ -131,7 +126,7 @@ def test_teardown_command_deletes_admin_job_and_row_after_confirmation(
 
     assert (
         utils.fetch_cron_job(
-            catalog.build_jobname(live_database(), Source.ADMIN, "killme")
+            catalog.build_jobname(utils.fetch_live_database(), Source.ADMIN, "killme")
         )
         is None
     )
@@ -156,7 +151,9 @@ def test_teardown_admin_schedule_does_not_resurrect_on_next_sync(
     call_command("absurd_sync_crons")  # reconcile + admin re-emit
     assert (
         utils.fetch_cron_job(
-            catalog.build_jobname(live_database(), Source.ADMIN, "gone-for-good")
+            catalog.build_jobname(
+                utils.fetch_live_database(), Source.ADMIN, "gone-for-good"
+            )
         )
         is None
     )
@@ -187,7 +184,7 @@ def test_teardown_command_aborts_without_confirmation(
     assert "Aborted." in capsys.readouterr().out  # (stdout also holds input()'s prompt)
     assert (
         utils.fetch_cron_job(
-            catalog.build_jobname(live_database(), Source.ADMIN, "keepme")
+            catalog.build_jobname(utils.fetch_live_database(), Source.ADMIN, "keepme")
         )
         is not None
     )

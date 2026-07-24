@@ -14,10 +14,6 @@ from tests.pg_cron import utils
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
-def live_database() -> str:
-    return str(connections["default"].settings_dict["NAME"])
-
-
 def test_creates_job_with_schedule_and_constant_command(
     settings: SettingsWrapper,
 ) -> None:
@@ -26,7 +22,7 @@ def test_creates_job_with_schedule_and_constant_command(
     )
     sync_crons(get_absurd_backends()["default"])
 
-    live_db = live_database()
+    live_db = utils.fetch_live_database()
     rows = utils.fetch_managed_jobs(live_db)
     assert len(rows) == 1
     jobname, schedule, command, active = rows[0]
@@ -43,7 +39,7 @@ def test_sync_is_idempotent(settings: SettingsWrapper) -> None:
     sync_crons(get_absurd_backends()["default"])
     sync_crons(get_absurd_backends()["default"])
 
-    live_db = live_database()
+    live_db = utils.fetch_live_database()
     rows = utils.fetch_managed_jobs(live_db)
     assert len(rows) == 1
     assert rows[0][0] == catalog.build_jobname(live_db, Source.SETTINGS, "a")
@@ -64,7 +60,7 @@ def test_prune_removes_undeclared_job_but_keeps_foreign(
         }
     )
     sync_crons(get_absurd_backends()["default"])
-    live_db = live_database()
+    live_db = utils.fetch_live_database()
     assert {r[0] for r in utils.fetch_managed_jobs(live_db)} == {
         catalog.build_jobname(live_db, Source.SETTINGS, "a"),
         catalog.build_jobname(live_db, Source.SETTINGS, "b"),
@@ -94,7 +90,7 @@ def test_prune_tolerates_already_unscheduled_job(
         }
     )
     sync_crons(get_absurd_backends()["default"])
-    live_db = live_database()
+    live_db = utils.fetch_live_database()
 
     # Pre-remove job b's cron.job row out-of-band; prune must swallow the
     # "could not find valid entry" error and still complete.
@@ -126,7 +122,7 @@ def test_prune_swallows_job_vanished_after_stale_scan(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     sync_crons(get_absurd_backends()["default"])
-    live_db = live_database()
+    live_db = utils.fetch_live_database()
 
     with connection.cursor() as cur:
         cur.execute(
@@ -170,7 +166,7 @@ def test_rearm_reenables_disabled_job(settings: SettingsWrapper) -> None:
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     sync_crons(get_absurd_backends()["default"])
-    live_db = live_database()
+    live_db = utils.fetch_live_database()
 
     with connection.cursor() as cur:
         cur.execute(
@@ -206,7 +202,7 @@ def test_injection_args_are_quoted_and_schema_survives(
     )
     sync_crons(get_absurd_backends()["default"])
 
-    rows = utils.fetch_managed_jobs(live_database())
+    rows = utils.fetch_managed_jobs(utils.fetch_live_database())
     assert len(rows) == 1
     assert rows[0][2] == "select public.django_absurd_run_scheduled('s', 'evil')"
 

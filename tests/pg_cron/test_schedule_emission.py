@@ -3,7 +3,6 @@ from pathlib import Path
 import pytest
 import pytest_django.fixtures
 from django.core.management import call_command
-from django.db import connections
 
 from django_absurd.pg_cron import catalog
 from django_absurd.pg_cron.choices import Source
@@ -17,10 +16,6 @@ LOADED_SCHEDULE_FIXTURE = str(
 )
 
 
-def live_database() -> str:
-    return str(connections["default"].settings_dict["NAME"])
-
-
 def test_saving_admin_schedule_schedules_the_job(
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
@@ -32,7 +27,7 @@ def test_saving_admin_schedule_schedules_the_job(
         cron="0 2 * * *",
         enabled=True,
     )
-    rows = utils.fetch_managed_jobs(live_database(), source=Source.ADMIN)
+    rows = utils.fetch_managed_jobs(utils.fetch_live_database(), source=Source.ADMIN)
     assert len(rows) == 1
     _, schedule, _, active = rows[0]
     assert schedule == "0 2 * * *"
@@ -51,7 +46,7 @@ def test_saving_disabled_admin_schedule_is_inactive(
         enabled=False,
     )
     job = utils.fetch_cron_job(
-        catalog.build_jobname(live_database(), Source.ADMIN, "paused")
+        catalog.build_jobname(utils.fetch_live_database(), Source.ADMIN, "paused")
     )
     assert job is not None
     assert job[1] is False
@@ -71,7 +66,9 @@ def test_saving_settings_schedule_also_schedules_the_job(
     )
     assert (
         utils.fetch_cron_job(
-            catalog.build_jobname(live_database(), Source.SETTINGS, "via_reconcile")
+            catalog.build_jobname(
+                utils.fetch_live_database(), Source.SETTINGS, "via_reconcile"
+            )
         )
         is not None
     )
@@ -87,7 +84,7 @@ def test_deleting_admin_schedule_unschedules_the_job(
         task="tests.tasks.add",
         cron="0 2 * * *",
     )
-    gone = catalog.build_jobname(live_database(), Source.ADMIN, "gone")
+    gone = catalog.build_jobname(utils.fetch_live_database(), Source.ADMIN, "gone")
     assert utils.fetch_cron_job(gone) is not None
     scheduled_task.delete()
     assert utils.fetch_cron_job(gone) is None
@@ -109,7 +106,9 @@ def test_saving_schedule_without_absurd_backend_is_a_noop(
     )
     assert (
         utils.fetch_cron_job(
-            catalog.build_jobname(live_database(), Source.SETTINGS, "orphan_row")
+            catalog.build_jobname(
+                utils.fetch_live_database(), Source.SETTINGS, "orphan_row"
+            )
         )
         is None
     )
@@ -170,7 +169,7 @@ def test_loaddata_schedules_the_job(
     settings.TASKS = utils.build_pg_cron_tasks({})
     call_command("loaddata", LOADED_SCHEDULE_FIXTURE)
     assert ScheduledTask.objects.filter(source="a", name="loaded").exists()
-    rows = utils.fetch_managed_jobs(live_database(), source=Source.ADMIN)
+    rows = utils.fetch_managed_jobs(utils.fetch_live_database(), source=Source.ADMIN)
     assert len(rows) == 1
     _, schedule, _, active = rows[0]
     assert schedule == "0 5 * * *"

@@ -26,10 +26,6 @@ pytestmark = pytest.mark.django_db(transaction=True)
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def live_database() -> str:
-    return str(connections["default"].settings_dict["NAME"])
-
-
 def migrate_real_db_in_subprocess(*, sync_on_migrate: bool | None) -> None:
     # sync_on_migrate=None omits the env var entirely, exercising the real shipped
     # default rather than an explicit True standing in for it.
@@ -89,7 +85,7 @@ def test_migrate_syncs_by_default_on_a_real_non_test_database(
     assert (
         utils.fetch_cron_job(
             catalog.build_jobname(
-                live_database(), scheduled_task.source, scheduled_task.name
+                utils.fetch_live_database(), scheduled_task.source, scheduled_task.name
             )
         )
         is not None
@@ -119,7 +115,7 @@ def test_migrate_skips_sync_by_default_on_a_test_database(
 
     call_command("migrate", verbosity=0)
 
-    assert utils.fetch_managed_jobs(live_database()) == []
+    assert utils.fetch_managed_jobs(utils.fetch_live_database()) == []
     assert ScheduledTask.objects.filter(source="s").count() == 0
 
 
@@ -133,7 +129,7 @@ def test_migrate_syncs_on_a_test_database_when_explicitly_enabled(
 
     call_command("migrate", verbosity=0)
 
-    live_db = live_database()
+    live_db = utils.fetch_live_database()
     assert [r[0] for r in utils.fetch_managed_jobs(live_db)] == [
         catalog.build_jobname(live_db, Source.SETTINGS, "nightly")
     ]
@@ -154,7 +150,7 @@ def test_scheduled_task_create_and_delete_are_unaffected_by_either_setting(
     assert (
         utils.fetch_cron_job(
             catalog.build_jobname(
-                live_database(), scheduled_task.source, scheduled_task.name
+                utils.fetch_live_database(), scheduled_task.source, scheduled_task.name
             )
         )
         is not None
@@ -163,7 +159,9 @@ def test_scheduled_task_create_and_delete_are_unaffected_by_either_setting(
     scheduled_task.delete()
     assert (
         utils.fetch_cron_job(
-            catalog.build_jobname(live_database(), Source.ADMIN, "direct_create")
+            catalog.build_jobname(
+                utils.fetch_live_database(), Source.ADMIN, "direct_create"
+            )
         )
         is None
     )

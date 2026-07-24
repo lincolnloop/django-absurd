@@ -1,7 +1,6 @@
 import typing as t
 
 import pytest
-from django.db import connections
 
 if t.TYPE_CHECKING:
     from pytest_django.fixtures import SettingsWrapper
@@ -12,10 +11,6 @@ from django_absurd.pg_cron.reconcile import sync_crons, teardown_crons
 from tests.pg_cron import utils
 
 pytestmark = pytest.mark.django_db(transaction=True)
-
-
-def live_database() -> str:
-    return str(connections["default"].settings_dict["NAME"])
 
 
 def test_teardown_removes_all_owned_cron_jobs_and_settings_rows(
@@ -30,12 +25,12 @@ def test_teardown_removes_all_owned_cron_jobs_and_settings_rows(
     be = get_absurd_backends()["default"]
     sync_crons(be)
 
-    assert len(utils.fetch_managed_jobs(live_database())) == 2
+    assert len(utils.fetch_managed_jobs(utils.fetch_live_database())) == 2
     assert ScheduledTask.objects.filter(source="s").count() == 2
 
     teardown_crons()
 
-    assert utils.fetch_managed_jobs(live_database()) == []
+    assert utils.fetch_managed_jobs(utils.fetch_live_database()) == []
     assert not ScheduledTask.objects.filter(source="s").exists()
 
 
@@ -68,5 +63,5 @@ def test_teardown_is_idempotent(settings: "SettingsWrapper") -> None:
     teardown_crons()
     teardown_crons()  # must not raise
 
-    assert utils.fetch_managed_jobs(live_database()) == []
+    assert utils.fetch_managed_jobs(utils.fetch_live_database()) == []
     assert not ScheduledTask.objects.filter(source="s").exists()

@@ -10,13 +10,11 @@ self-heal), so concurrent writers converge without one.
 
 import typing as t
 
-from django.db import DatabaseError, InternalError, connections
+import psycopg
+from django.db import connections
 
 from django_absurd.connection import open_central_connection
 from django_absurd.pg_cron.detection import is_pg_cron_inert
-
-if t.TYPE_CHECKING:
-    import psycopg
 
 
 def build_jobname(database: str, source: str, name: str = "") -> str:
@@ -113,12 +111,15 @@ def unschedule_jobids(cur: "psycopg.Cursor[t.Any]", jobids: list[int]) -> None:
     The central connection is autocommit, so each ``cron.unschedule`` is its own
     transaction: if the ``cron.job`` row was removed out-of-band, cron.unschedule raises
     InternalError (SQLSTATE XX000) without poisoning later statements — swallow it and
-    continue. Matched on SQLSTATE (not message) for lc_messages independence; the B1
-    wrapper preserves the psycopg cause so ``__cause__.sqlstate`` survives.
+    continue. We catch the RAW ``psycopg.Error`` here: ``open_central_connection``'s
+    ``wrap_database_errors`` only translates exceptions escaping the whole ``with``
+    block, so a ``try`` around an individual ``cur.execute`` sees the untranslated
+    psycopg exception (SQLSTATE on the exception itself, ``__cause__`` is None). Matched
+    on SQLSTATE (not message) for lc_messages independence.
     """
     for jobid in jobids:
         try:
             cur.execute("select cron.unschedule(%s)", [jobid])
-        except (InternalError, DatabaseError) as exc:
-            if getattr(exc.__cause__, "sqlstate", None) != "XX000":
+        except psycopg.Error as exc:
+            if exc.sqlstate != "XX000":
                 raise

@@ -4,8 +4,16 @@ seam ships no read verbs)."""
 
 import typing as t
 
+from django.db import connections
+
 from django_absurd.connection import open_central_connection
 from tests.utils import make_tasks_settings
+
+
+def fetch_live_database() -> str:
+    """The LIVE default-connection database name (a test run's mirrored name) — the
+    ``<db>`` segment catalog jobnames are namespaced by."""
+    return str(connections["default"].settings_dict["NAME"])
 
 
 def build_pg_cron_tasks(
