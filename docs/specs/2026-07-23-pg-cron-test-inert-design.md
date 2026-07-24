@@ -62,12 +62,14 @@ See the `pg-cron` skill. Load-bearing:
   scoped `DELETE FROM cron.job_run_details WHERE database=…` need no extra grant.)
 - `DROP DATABASE` on a job's target succeeds (launcher holds no session on non-metadata
   DBs) → the `--create-db` eviction hack disappears for app test DBs.
-- **End-to-end scenario PROVEN live** (pg_cron example, central
-  `cron.database_name=postgres`, `CreateExtension` temporarily removed): a 1-second
-  `pingpong` scheduled onto the main `demo` DB kept firing into `demo` throughout a full
-  run of the example pytest suite, **never** fired into `test_demo`, and **survived**
-  the run + auto-cleanup — while the suite migrated `test_demo` with NO
-  `CREATE EXTENSION` and passed. This is the whole thesis, confirmed.
+- **End-to-end scenario PROVEN live, airtight** (pg_cron example, central
+  `cron.database_name=postgres`, `CreateExtension` temporarily removed, the drain test
+  given a `sleep(5)` window): a 1-second `pingpong` on the main `demo` DB fired **35×,
+  all `succeeded`, all `database=demo`** during a real suite run in which `test_demo`
+  did genuine committed work (enqueue `ping` → wait 5s → `absurd_drain_queue` → task
+  `SUCCESSFUL`). `pingpong` **never** touched `test_demo` (no rows, no table), the
+  schedule **survived** the run + auto-cleanup, and `test_demo` migrated with NO
+  `CREATE EXTENSION`. The whole thesis, confirmed.
 
 ## Architecture
 
