@@ -70,6 +70,13 @@ See the `pg-cron` skill. Load-bearing:
   `SUCCESSFUL`). `pingpong` **never** touched `test_demo` (no rows, no table), the
   schedule **survived** the run + auto-cleanup, and `test_demo` migrated with NO
   `CREATE EXTENSION`. The whole thesis, confirmed.
+- **Clean isolation test PROVEN** (the definitive form): a cron on the main `demo` DB
+  that ENQUEUES a real Absurd `ping` task every second accumulated **46 tasks in
+  `demo`'s queue**, while a test that drained a **real, migrated `test_demo` queue**
+  (without enqueuing anything) found **0** — `before == after == 0`, the drain grabbed
+  nothing. A main-DB schedule producing genuine tasks leaks **zero** into the test DB's
+  queue. **This becomes the shipped regression test — in `tests/pg_cron/` (the lib
+  suite), as its own isolated test**, not the example.
 
 ## Architecture
 
@@ -293,12 +300,14 @@ helper + **psycopg→Django error translation**, B1) · `backends.py`
 (`CRON_DATABASE_NAME`, `PG_CRON_ON_TEST_DB` in AbsurdBackendOptions) ·
 `pytest_plugin.py` (`absurd_load_schedules` fixture, #101, must commit) ·
 `tests/pg_cron/*` (run on an ordinary test DB now; convert emission tests to
-`transaction=True`) + new inert-mode tests on plain `db` · `Dockerfile.pg_cron` /
-`compose.yaml` (central `cron.database_name`, e.g. `postgres`; `CREATE EXTENSION` +
-grants via `/docker-entrypoint-initdb.d` — runs only on a FRESH volume, so existing dev
-volumes need recreation) · `docs/WHY.md` (reverse the extension section) ·
-`django_absurd/AGENTS.md` + `docs/web/cron-jobs.md` (operator setup: central DB +
-grants + one-scheduling-role) · `CLAUDE.md` (the `--create-db` eviction dance
+`transaction=True`) + new inert-mode tests on plain `db` + **a dedicated isolation
+regression test (its own isolated test): a task-producing schedule bound to the main DB
+→ drain the test DB → assert 0 tasks executed / 0 leaked** (proven live) ·
+`Dockerfile.pg_cron` / `compose.yaml` (central `cron.database_name`, e.g. `postgres`;
+`CREATE EXTENSION` + grants via `/docker-entrypoint-initdb.d` — runs only on a FRESH
+volume, so existing dev volumes need recreation) · `docs/WHY.md` (reverse the extension
+section) · `django_absurd/AGENTS.md` + `docs/web/cron-jobs.md` (operator setup: central
+DB + grants + one-scheduling-role) · `CLAUDE.md` (the `--create-db` eviction dance
 
 - "test DB must equal cron.database_name" doctrine become obsolete) ·
   `.claude/skills/pg-cron` (update the "In this repo" section) · follow-up: simplify the
