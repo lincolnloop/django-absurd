@@ -61,11 +61,10 @@ See the `pg-cron` skill. Load-bearing:
   `cron.job_run_details` are SELECT/DELETE to PUBLIC under RLS, so the seam's reads +
   scoped `DELETE FROM cron.job_run_details WHERE database=…` need no extra grant.)
   `cron.schedule` / `cron.unschedule` remain **PUBLIC-EXECUTE** (only
-  `schedule_in_database`
-
-* `alter_job` are revoked), so USAGE + the one grant is genuinely complete — provided
-  the seam uses `schedule_in_database` (not bare `cron.schedule`) everywhere, including
-  the grammar probe (`validators.py:96`), keeping it inside the granted set.
+  `schedule_in_database` and `alter_job` are revoked), so USAGE + the one grant is
+  genuinely complete — provided the seam uses `schedule_in_database` (not bare
+  `cron.schedule`) everywhere, including the grammar probe (`validators.py:96`), keeping
+  it inside the granted set.
 
 - `DROP DATABASE` on a job's target succeeds (launcher holds no session on non-metadata
   DBs) → the `--create-db` eviction hack disappears for app test DBs.
