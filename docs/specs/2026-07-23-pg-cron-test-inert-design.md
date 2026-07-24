@@ -179,23 +179,34 @@ stay unsurfaced (status quo).
 ### Cleanup lifecycle: teardown sweep AND session-start sweep (both required)
 
 Test-created schedules (opt-in) live as `cron.job` rows in the SHARED central catalog,
-target-bound to the test DB. Two sweeps, both keyed
-`WHERE database = <this test DB name>`
+target-bound to the test DB. Two sweeps — same operation
+(`unschedule WHERE database = <this test DB name> AND jobname LIKE '_dj:%'`, through the
+catalog seam as the test's role; RLS scopes to it), at two different times:
 
-- the `_dj:` prefix, run through the catalog seam as the test's role (RLS scopes to it):
-
-1. **Per-test teardown** (via the auto-cleanup hook, after every committing test) —
-   unschedule the test's jobs so they don't linger.
-2. **Session/worker START sweep (essential, not optional)** — before a worker runs any
-   test, unschedule any job targeting its test DB name. This is load-bearing because
-   **test DB names are REUSED**: `--reuse-db` keeps `test_<db>`, and `--create-db`
-   recreates the same name. So a run that **crashes before teardown** orphans a job in
-   the shared central catalog keyed on that name; when the NEXT run's `test_<db>` exists
-   again, the launcher fires the orphan INTO it — the scheduler writes tasks the new run
-   never asked for → cross-run contamination. Teardown-only cleanup can't catch this
-   (the crash skipped it); the start sweep clears the prior orphan before the new run
-   begins. Optionally also prune own-user jobs whose
+1. **Per-test teardown** — via the existing `_post_teardown` auto-cleanup hook, after
+   every committing test. For cross-function isolation: an opt-in test's schedule must
+   not bleed into the next test on the reused DB.
+2. **Session/worker START sweep (essential, not optional)** — a **session-scoped
+   (per-xdist-worker) fixture** in the pytest plugin, hooked after `django_db_setup` (so
+   the test-DB name is known); runs ONCE, opening the **central connection** (raw
+   psycopg via the catalog seam — NOT the Django ORM), unschedules any job targeting
+   this worker's test-DB name. Load-bearing because **test DB names are REUSED**
+   (`--reuse-db` keeps `test_<db>`; `--create-db` recreates the same name): a run that
+   **crashes before teardown** orphans a job keyed on that name, and the next run's
+   `test_<db>` gets the launcher firing the orphan INTO it — the scheduler writes tasks
+   the new run never asked for → cross-run contamination (PROVEN live). Teardown-only
+   can't catch this (the crash skipped it); the start sweep clears the prior orphan
+   before the new run begins. Optionally also prune own-user jobs whose
    `database NOT IN (SELECT datname FROM pg_database)`.
+
+**Speed:** the inert-by-default gate makes both free in normal runs — inert tests can't
+create schedules, so the per-test hook's first action is the in-memory
+`pg_cron_inert(alias)` check → NO central connection, NO query, zero round-trips (and
+the start-sweep fixture no-ops too). Only opt-in (`PG_CRON_ON_TEST_DB=True`) runs pay —
+one start sweep per worker + per-test unschedules — and those are rare and already need
+a real pg_cron server. (In opt-in mode the per-test teardown MAY further short-circuit
+unless the test actually emitted — a cheap flag — but the gate + rarity likely make that
+unnecessary.)
 
 ### Scoped flush (was a blanket wipe)
 
