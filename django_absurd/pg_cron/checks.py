@@ -9,19 +9,13 @@ from django.core.exceptions import ValidationError
 
 from django_absurd.backends import get_absurd_backends, get_declared_queues
 from django_absurd.checks import E007_HINT_QUEUE, E007_MSG
-from django_absurd.pg_cron.choices import Source
 from django_absurd.pg_cron.validators import (
     validate_declared_queue,
-    validate_jobname_length,
     validate_name_charset,
 )
 
 E007_HINT_PG_CRON_NAME = (
     "Schedule names must match [A-Za-z0-9_-]+ when using the pg_cron scheduler."
-)
-E007_HINT_PG_CRON_JOBNAME = (
-    "Shorten the schedule name so the composed job name"
-    " (_dj:s:<name>) fits within 63 bytes."
 )
 
 
@@ -72,19 +66,6 @@ def check_pg_cron_name(name: t.Any) -> list[CheckMessage]:
                 id="absurd.E007",
             )
         )
-    # jobname length is composite (source:name); only meaningful once the name
-    # charset is clean, so skip it when the name is already flagged.
-    if not errors:
-        try:
-            validate_jobname_length(Source.SETTINGS, name)
-        except ValidationError as exc:
-            errors.append(
-                Error(
-                    f"{E007_MSG} Schedule {name!r}: {exc.message}",
-                    hint=E007_HINT_PG_CRON_JOBNAME,
-                    id="absurd.E007",
-                )
-            )
     return errors
 
 

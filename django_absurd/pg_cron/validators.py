@@ -2,9 +2,9 @@
 
 Each raises `django.core.exceptions.ValidationError`. `ScheduledTask.clean()` +
 field `validators=[...]` enforce them model-first; the system checks call the
-same callables and wrap failures into `absurd.E007`. The field-level validators
-(name charset, jobname length) are pure; the contextual one
-(`validate_pg_cron_cron`) reads the database.
+same callables and wrap failures into `absurd.E007`. The field-level validator
+(name charset) is pure; the contextual one (`validate_pg_cron_cron`) reads the
+database.
 """
 
 import typing as t
@@ -41,17 +41,6 @@ def build_jobname(name: str, source: str = Source.SETTINGS) -> str:
 def build_jobname_prefix(source: str = Source.SETTINGS) -> str:
     """Return the LIKE prefix used to prune pg_cron jobs for a source lane."""
     return f"_dj:{source}:"
-
-
-def validate_jobname_length(source: str, name: str) -> None:
-    jobname = build_jobname(name, source)
-    size = len(jobname.encode())
-    if size > 63:
-        msg = (
-            f"job name exceeds 63 bytes (composed name {jobname!r} is {size} bytes;"
-            " Postgres silently truncates longer names)."
-        )
-        raise ValidationError(msg)
 
 
 def validate_declared_queue(

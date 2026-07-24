@@ -451,31 +451,6 @@ def test_posting_add_with_tampered_source_is_forced_to_admin(
     assert ScheduledTask.objects.get(name="tamper").source == "a"
 
 
-def test_editing_over_long_name_row_is_form_error_not_500(
-    admin_user: User,
-    client: Client,
-    settings: "pytest_django.fixtures.SettingsWrapper",
-) -> None:
-    # A row whose name overflows the 63-byte jobname budget (created out-of-band, so it
-    # skipped full_clean) must surface a form error on edit, not HTTP 500 — clean()
-    # keys the jobname-length error to NON_FIELD_ERRORS, not the read-only "name" field.
-    seed(settings)
-    client.force_login(admin_user)
-    row = ScheduledTask.objects.create(
-        source="a",
-        name="x" * 60,
-        task="tests.tasks.add",
-        cron="0 3 * * *",
-    )
-    response = client.post(
-        get_change_url(row.pk), {**CHANGE_PAYLOAD, "cron": "0 4 * * *"}
-    )
-    assert response.status_code == 200
-    content = response.content.decode()
-    assert "job name exceeds 63 bytes (composed name" in content
-    assert "Postgres silently truncates longer names)." in content
-
-
 def test_editing_blank_args_kwargs_falls_back_to_defaults(
     admin_user: User,
     client: Client,

@@ -1,7 +1,7 @@
 import typing as t
 from contextlib import contextmanager
 
-from django.core.exceptions import NON_FIELD_ERRORS, ValidationError
+from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import DatabaseError, InternalError, connections, models, transaction
 
@@ -16,7 +16,6 @@ from django_absurd.pg_cron.validators import (
     build_jobname,
     build_jobname_prefix,
     validate_declared_queue,
-    validate_jobname_length,
     validate_name_charset,
     validate_pg_cron_cron,
 )
@@ -199,14 +198,6 @@ class ScheduledTask(models.Model):
 
     def clean(self) -> None:
         errors: dict[str, list[str]] = {}
-        # NON_FIELD_ERRORS, not "name": it is read-only on the change form, so a
-        # field-keyed error there would raise "no field named ..." (HTTP 500). The
-        # jobname length is a composite (source:name) rule anyway.
-        try:
-            validate_jobname_length(self.source, self.name)
-        except ValidationError as exc:
-            errors.setdefault(NON_FIELD_ERRORS, []).extend(exc.messages)
-
         backend = get_absurd_backend()
         if backend is not None:
             errors.update(self.validate_against_backend(backend))

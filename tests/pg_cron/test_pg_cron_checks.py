@@ -140,31 +140,6 @@ def test_pg_cron_bad_name_charset_rejected(
     assert "Schedule name contains characters other than [A-Za-z0-9_-]." in out
 
 
-def test_pg_cron_jobname_too_long_rejected(
-    capsys: pytest.CaptureFixture[str],
-    settings: pytest_django.fixtures.SettingsWrapper,
-) -> None:
-    """Composed jobname exceeding 63 bytes rejected under pg_cron."""
-    # name long enough to push _dj:s:<name> > 63 bytes
-    # "_dj:s:" = 6 chars, so name needs > 57 chars
-    long_name = "a" * 58
-    out = run_pg_cron_check(
-        settings,
-        capsys,
-        {
-            "queues": BASE_QUEUES,
-            "schedule": {
-                long_name: {
-                    "task": "tests.tasks.add",
-                    "cron": "0 2 * * *",
-                }
-            },
-        },
-    )
-    assert "absurd.E007" in out
-    assert "job name exceeds 63 bytes" in out
-
-
 def test_pg_cron_undeclared_task_queue_rejected(
     capsys: pytest.CaptureFixture[str],
     settings: pytest_django.fixtures.SettingsWrapper,
