@@ -5,7 +5,6 @@ from django.apps import AppConfig, apps
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management.color import color_style
-from django.db import connections
 from django.db.models.signals import (
     post_delete,
     post_migrate,
@@ -16,14 +15,12 @@ from django.db.utils import InternalError, OperationalError, ProgrammingError
 from django.utils.connection import ConnectionDoesNotExist
 
 from django_absurd.backends import get_absurd_backends
-from django_absurd.pg_cron import signals
+from django_absurd.pg_cron import detection, signals
 
 if t.TYPE_CHECKING:
     from django_absurd.backends import AbsurdBackend
 
 logger = logging.getLogger("django_absurd")
-
-ORIGINAL_DATABASE_NAMES: dict[str, str] = {}
 
 
 class PgCronConfig(AppConfig):
@@ -34,7 +31,9 @@ class PgCronConfig(AppConfig):
     def ready(self) -> None:
         for db_alias, db_config in settings.DATABASES.items():
             # str(): django-stubs types NAME as Collection[str], not str.
-            ORIGINAL_DATABASE_NAMES.setdefault(db_alias, str(db_config["NAME"]))
+            detection.ORIGINAL_DATABASE_NAMES.setdefault(
+                db_alias, str(db_config["NAME"])
+            )
 
         # Side-effect import: running the module registers its @register'd E007 checks.
         import django_absurd.pg_cron.checks  # noqa: F401, PLC0415
@@ -125,8 +124,6 @@ def reconcile_crons_after_migrate(
 
 
 def should_sync_schedules(backend: "AbsurdBackend") -> bool:
-    live_name = str(connections[backend.database].settings_dict["NAME"])
-    is_test_db = live_name != ORIGINAL_DATABASE_NAMES.get(backend.database)
-    if is_test_db:
+    if detection.is_test_database(backend.database):
         return bool(backend.options.get("SYNC_SCHEDULES_ON_TEST_DB", False))
     return bool(backend.options.get("SYNC_SCHEDULES_ON_MIGRATE", True))
