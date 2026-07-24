@@ -152,7 +152,12 @@ run inside that wrapper to keep `__cause__.sqlstate`.
 
 ### Jobname namespacing (mandatory, defeats upsert-steal)
 
-`_dj:<target_db>:<source>:<name>`. Teardown double-scoped:
+`_dj:<target_db>:<source>:<name>`, built by ONE constructor
+`build_jobname(database, source, name="")` (with `name=""` → the `starts_with` prefix;
+the old `build_jobname_prefix` is deleted). The builder MOVES from `validators.py` to
+`catalog.py` — it's a name constructor, not a validator, and the seam is its only
+caller. The `<db>` is always **implicit**: the seam resolves the LIVE app DB name once
+(from the connection) and no public caller passes it. Teardown double-scoped:
 `WHERE database = %s AND starts_with(jobname, '_dj:' || %s || ':')` — use `starts_with`,
 NOT `LIKE` (`_` is a LIKE wildcard and appears in every test DB name like `test_x_gw1`;
 the existing code already uses `starts_with`). Collision-free across xdist workers,
@@ -388,16 +393,18 @@ django-absurd is the sole scheduler; the mirror hazard is gone by target-DB bind
 
 `pg_cron/catalog.py` (new seam) · `pg_cron/<leaf>.py` (detection: `is_test_database` +
 `test_environment_active`) · `pg_cron/models.py` (fold `active` into
-`schedule_in_database`, DROP `alter_job`; db-namespaced jobnames; `starts_with`
-teardown; drop the `validate_jobname_length` call), `reconcile.py` (route via catalog),
-`validators.py` (db-namespace builders; DELETE `validate_jobname_length`), `signals.py`
-(contract rewrite; `on_commit`; swallow-and-log), `apps.py`, `checks.py` (route via
-catalog; gate; composition + `Tags.database` central-extension checks) ·
-`pg_cron/migrations/0001` (drop `CreateExtension`) · `flush.py` (scoped to live db name)
-· `queues.py` / `connection.py` (central-connection helper + **psycopg→Django error
-translation**, B1) · `backends.py` (`CRON_DATABASE_NAME`, `PG_CRON_ON_TEST_DB` in
-AbsurdBackendOptions) · `management/commands/absurd_sync_crons.py` (route via catalog;
-`CommandError` when inert)
+`schedule_in_database`, DROP `alter_job`; `starts_with` teardown; drop the
+`validate_jobname_length` call), `reconcile.py` (route via catalog), `catalog.py` (owns
+the single db-namespaced `build_jobname`), `validators.py` (DELETE the
+`build_jobname`/`build_jobname_prefix` constructors — moved to catalog — and
+`validate_jobname_length`), `signals.py` (contract rewrite; `on_commit`;
+swallow-and-log), `apps.py`, `checks.py` (route via catalog; gate; composition +
+`Tags.database` central-extension checks) · `pg_cron/migrations/0001` (drop
+`CreateExtension`) · `flush.py` (scoped to live db name) · `queues.py` / `connection.py`
+(central-connection helper + **psycopg→Django error translation**, B1) · `backends.py`
+(`CRON_DATABASE_NAME`, `PG_CRON_ON_TEST_DB` in AbsurdBackendOptions) ·
+`management/commands/absurd_sync_crons.py` (route via catalog; `CommandError` when
+inert)
 
 - `tests/pg_cron/test_absurd_sync_crons_command.py` (assert inert `CommandError` + live
   sync) · `pytest_plugin.py` (`absurd_load_schedules` fixture, #101, must commit; + the
