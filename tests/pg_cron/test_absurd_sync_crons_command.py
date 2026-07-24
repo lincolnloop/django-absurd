@@ -16,6 +16,23 @@ from tests.pg_cron import utils
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
+@pytest.mark.parametrize("kwargs", [{}, {"no_input": True, "teardown": True}])
+def test_command_errors_when_inert(
+    kwargs: dict[str, bool],
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
+    """Both sync and --teardown refuse to run when pg_cron scheduling is inert
+    (a test DB / active test run without PG_CRON_ON_TEST_DB)."""
+    settings.TASKS = utils.build_pg_cron_tasks({}, pg_cron_on_test_db=False)
+    with pytest.raises(CommandError) as excinfo:
+        call_command("absurd_sync_crons", **kwargs)
+    assert str(excinfo.value) == (
+        "Refusing to reconcile pg_cron jobs: scheduling is inert here — this is a "
+        "test database or an active test run and PG_CRON_ON_TEST_DB is not enabled "
+        "for backend 'default'."
+    )
+
+
 def test_sync_crons_command_malformed_schedule_raises_commanderror(
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:

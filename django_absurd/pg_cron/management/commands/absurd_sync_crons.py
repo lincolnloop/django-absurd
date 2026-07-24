@@ -3,6 +3,7 @@ import typing as t
 from django.core.management.base import BaseCommand, CommandError
 
 from django_absurd.management.base import resolve_backend
+from django_absurd.pg_cron.detection import is_pg_cron_inert
 from django_absurd.pg_cron.reconcile import (
     sync_admin_crons,
     sync_crons,
@@ -32,6 +33,14 @@ class Command(BaseCommand):
 
     def handle(self, *args: t.Any, **options: t.Any) -> str | None:
         backend = resolve_backend()
+
+        if is_pg_cron_inert(backend.database):
+            msg = (
+                "Refusing to reconcile pg_cron jobs: scheduling is inert here — this "
+                "is a test database or an active test run and PG_CRON_ON_TEST_DB is "
+                f"not enabled for backend '{backend.alias}'."
+            )
+            raise CommandError(msg)
 
         if options["teardown"]:
             if not options["no_input"] and not self.confirm_teardown(backend.alias):

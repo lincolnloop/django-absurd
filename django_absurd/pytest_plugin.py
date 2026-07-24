@@ -27,6 +27,38 @@ def pytest_configure(config: pytest.Config) -> None:
     install_absurd_cleanup()
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _sweep_orphaned_pg_cron_jobs(
+    django_db_setup: object,
+    django_db_blocker: t.Any,
+) -> None:
+    """Once per xdist worker, clear crash-orphaned django-absurd ``_dj:`` jobs left on
+    the reused test-DB name in the shared central catalog.
+
+    ``--reuse-db`` keeps the test database between runs, so a run that crashed mid-test
+    (before its ``_post_teardown`` flush) can leave the previous run's jobs bound to
+    this DB name still scheduled. This session-autouse start-sweep clears them once,
+    before any test runs.
+
+    Import-safe: ships in core, but only touches pg_cron when the app is installed —
+    the ``apps.is_installed`` guard runs BEFORE ``catalog`` is imported, so the no-op
+    branch never chains into pg_cron models in a project without the app. When the app
+    is present but scheduling is inert (opt-in off), ``flush_database_jobs`` itself
+    no-ops, so this is free there too.
+    """
+    from django.apps import apps  # noqa: PLC0415
+
+    from django_absurd.backends import PG_CRON_APP_NAME  # noqa: PLC0415
+
+    if not apps.is_installed(PG_CRON_APP_NAME):
+        return
+
+    from django_absurd.pg_cron import catalog  # noqa: PLC0415
+
+    with django_db_blocker.unblock():
+        catalog.flush_database_jobs("default")
+
+
 @pytest.fixture
 def absurd_drain_queue() -> t.Callable[..., None]:
     """Burst-drain a queue synchronously, in-process.
