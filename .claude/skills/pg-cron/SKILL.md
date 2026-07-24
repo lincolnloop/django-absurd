@@ -20,10 +20,12 @@ Upstream: https://github.com/citusdata/pg_cron (README is the primary API doc; t
 - A single **background worker** runs jobs. It is enabled by
   `shared_preload_libraries = pg_cron` (a restart-only GUC) and connects to the database
   named by `cron.database_name` (GUC, default `postgres`, restart to change).
-- **The extension may be installed in only ONE database per cluster** — the one named by
-  `cron.database_name`. `CREATE EXTENSION pg_cron` from any other DB raises
-  `can only create extension in database <cron.database_name>`. That database holds the
-  `cron` schema: the functions and the metadata tables.
+- **`CREATE EXTENSION pg_cron` is required** — pg_cron does nothing without it — **but
+  it is installable in only ONE database per cluster**: the one named by
+  `cron.database_name`. Running it from any other DB raises
+  `can only create extension in database <cron.database_name>`. Every deployment needs
+  exactly one `CREATE EXTENSION pg_cron`, in that database, which then holds the `cron`
+  schema (functions + metadata tables).
 - Jobs can still _run their command_ in other databases — see cross-database jobs below.
 
 ## Scheduling API
