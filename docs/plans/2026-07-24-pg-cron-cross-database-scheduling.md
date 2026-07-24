@@ -1070,8 +1070,41 @@ requirement; describe `tests/pg_cron` running on an ordinary test DB against a c
 
 - [ ] **Step 3: Capture the why**
 
-Run the `capture-why` skill to reverse the WHY.md extension section (do NOT run
-`archive-specs`).
+Run the `capture-why` skill to reverse the WHY.md "Extension in the app migration
+(fail-fast)" section and capture the new durable rationale. Write it as _why_, not _how_
+(no symbol/file names — must survive renames). The load-bearing points to capture:
+
+- **Why the app/test DB never holds the extension.** `cron.database_name` is a single
+  cluster-wide GUC and `CREATE EXTENSION pg_cron` is legal only in that one database. If
+  the extension lived in the app DB, every `test_<db>` (and every xdist `test_<db>_gwN`)
+  would have to BE that one database — which breaks pytest-xdist and standard `test_`
+  isolation. So the extension is operator-managed once on a central metadata DB, and
+  jobs run cross-DB via `schedule_in_database(database => <app db>)`. Fail-fast moved
+  from a migrate-time `CREATE EXTENSION` to a deploy-time system check.
+- **Why a plain test DB therefore has no `cron` schema — and why the seam is inert by
+  default under tests.** Because a normal test DB never has the extension, any attempt
+  to touch `cron.*` there would raise "schema cron does not exist". So the scheduling
+  seam **gates itself off (no-ops) under tests by default** — common tests never connect
+  to pg_cron and never error; they simply do nothing cron-related. Tests that genuinely
+  need to exercise scheduling **opt in** (a per-backend option), which flips the seam
+  live and routes it to the real central catalog.
+- **Why reaching the central catalog uses a connection Django's test runner can't see.**
+  The central metadata DB must be stable infrastructure, present with its extension. A
+  second Django `DATABASES` alias would be captured by the test runner's database setup
+  — created as an empty, extension-less `test_<name>` per run and per xdist worker —
+  which would defeat the point. So the seam reaches the central DB through a short-lived
+  connection derived from the app connection's own parameters (same server, zero extra
+  config) with only the database name swapped, deliberately outside the test-DB
+  lifecycle. This same path serves production and tests uniformly.
+- **Why disabling a schedule cannot rely on the re-schedule call alone** (the
+  `alter_job` retention): the cross-DB schedule call only honors the active flag when it
+  first creates a job; re-scheduling an existing job ignores it. So an explicit
+  set-active step is required to make disabling an existing schedule actually take
+  effect — and in a deployment where the scheduling role does not own the central
+  extension, that step needs its own grant (single-DB deployments, where the app role
+  owns the extension, need nothing extra).
+
+Do NOT run `archive-specs`.
 
 - [ ] **Step 4: Cross-check + commit**
 
