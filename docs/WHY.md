@@ -365,7 +365,8 @@ The pytest integration loads as a plugin imported before Django is configured, o
 pytest run in any environment where the package is installed — Django project or not.
 That forces strict import-safety: the plugin touches nothing Django at import time and
 defers every Django-dependent import to call time. The non-pytest (`manage.py test`)
-path is not auto-wired yet; unittest users opt in through a mixin.
+path is not auto-wired yet; unittest users opt in by calling the same install hook from
+a test-runner subclass.
 
 ## Deliberately not doing (yet)
 

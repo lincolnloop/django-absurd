@@ -87,6 +87,10 @@ duplicate that material here.
   survive a machine restart or a new session) — bring it up FIRST; don't diagnose it as
   anything cleverer.
 - Full Python×Django matrix + min-max mypy: `uvx --with tox-uv tox`.
+- `pytest-xdist` is a dev dependency; every suite — including `tests/pg_cron`, now that
+  its test DB is ordinary and cross-DB — runs safely under `-n<N>` (e.g.
+  `uv run pytest tests/pg_cron -n4`). Pass `-n` directly; it isn't baked into any
+  suite's `addopts`.
 - Each suite runs with `--reuse-db` (addopts); add `--create-db` to rebuild after a
   migration change — including `tests/pg_cron`: its test DB is an ordinary one that
   pg_cron's launcher holds no session on (the launcher only ever connects to the central

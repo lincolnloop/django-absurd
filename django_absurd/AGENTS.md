@@ -150,6 +150,11 @@ System check IDs:
 - `absurd.E009` — `OPTIONS["DEFAULT_MAX_ATTEMPTS"]` is not an integer `>= 1`.
 - `absurd.E010` — invalid `CLEANUP` configuration (not a `{"schedule": …}` map, or
   unknown keys; cron grammar checked at `check` time for beat, at sync for pg_cron).
+- `absurd.E011` — `OPTIONS["SYNC_SCHEDULES_ON_TEST_DB"]` is `True` without
+  `OPTIONS["PG_CRON_ON_TEST_DB"]`. See [Test databases](#pg_cron-backend).
+- `absurd.E012` — the central `cron.database_name` database (auto-discovered) is
+  unreachable or missing the `pg_cron` extension; a deploy-time check, see
+  [Validate](#validate_1).
 - `absurd.W002` (Warning) — a queue's declared `storage_mode` differs from the database;
   `storage_mode` is immutable once the queue exists.
 - `absurd.W003` (Warning) — `"django_absurd.pg_cron"` is in `INSTALLED_APPS` but ordered
@@ -522,8 +527,9 @@ historical model isn't the signal's sender), `bulk_create`, `QuerySet.update`, r
 don't emit directly, but `migrate` (and `absurd_sync_crons`) reconciles admin rows, so
 their jobs materialize then. A settings schedule and an admin schedule **may** share a
 name: they are distinct, source-namespaced jobs (`_dj:<db>:s:…` vs `_dj:<db>:a:…`,
-namespaced by the Absurd database name and the source abbreviated to keep the job name
-short). Removing admin-authored jobs at teardown is a guarded action (see Reconcile).
+namespaced by the Absurd database name and a one-letter source abbreviation — `s` for
+settings, `a` for admin). Removing admin-authored jobs at teardown is a guarded action
+(see Reconcile).
 
 ### Validate
 

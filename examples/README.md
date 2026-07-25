@@ -40,5 +40,4 @@ docker compose run --rm app pytest
 **pg_cron** runs the same way — no special setup. The extension lives on the central
 `cron.database_name` (`postgres`) database, installed once by the compose `db` image;
 each demo's own database (and pytest-django's ordinary `test_*` database) holds no
-extension and is scheduled into cross-database. (Before the cross-database refactor this
-needed a `CRON_DATABASE_NAME=test_demo` override — no longer.)
+extension and is scheduled into cross-database.

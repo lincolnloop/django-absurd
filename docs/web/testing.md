@@ -101,13 +101,17 @@ gets claimed.
 
 Auto-cleanup only tears down; it has no say over whether a
 [`SCHEDULE`](cron-jobs.md#declare-a-schedule) entry lands in `pg_cron` in the first
-place. By default, `migrate`'s automatic reconcile is
-[skipped on a test database](cron-jobs.md#test-databases) — `SYNC_SCHEDULES_ON_TEST_DB`
-defaults to `False`, precisely so a `SCHEDULE` doesn't start firing for real against
-test data. A test that genuinely needs a real job in
-[pg_cron](cron-jobs.md#database-side-pg_cron) either sets
-`OPTIONS["SYNC_SCHEDULES_ON_TEST_DB"] = True` or calls
-`call_command("absurd_sync_crons")` explicitly. Either way, cleanup clears whatever
-ended up in `cron.job` / `ScheduledTask` — settings-synced, admin-authored, or created
-directly by the test itself — it clears whatever's present, regardless of how it got
-there.
+place. By default every `cron.*` write for a backend is
+[inert on a test database or during an active test run](cron-jobs.md#test-databases) —
+detected automatically, no settings changes needed — precisely so a `SCHEDULE` doesn't
+start firing for real against test data.
+
+A test that genuinely needs a real job in [pg_cron](cron-jobs.md#database-side-pg_cron)
+needs `OPTIONS["PG_CRON_ON_TEST_DB"] = True` for that backend first — that's the opt-in
+out of inertness. With it set, either let `migrate`'s automatic reconcile run (also
+requires `OPTIONS["SYNC_SCHEDULES_ON_TEST_DB"] = True`) or call
+`call_command("absurd_sync_crons")` explicitly — without `PG_CRON_ON_TEST_DB`,
+`absurd_sync_crons` refuses to run (`CommandError`) rather than silently doing nothing.
+Either way, cleanup clears whatever ended up in `cron.job` / `ScheduledTask` —
+settings-synced, admin-authored, or created directly by the test itself — it clears
+whatever's present, regardless of how it got there.
