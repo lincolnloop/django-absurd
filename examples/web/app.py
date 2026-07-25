@@ -220,5 +220,5 @@ def task_detail(request: HttpRequest, result_id: str) -> HttpResponse | str:
     """
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     app.run()

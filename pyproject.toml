@@ -156,6 +156,9 @@ select = ["ALL"]
   "S603",  # Allow subprocess calls in tests
   "SLF001",  # Allow private member access in tests (e.g. _meta)
 ]
+"examples/*/app.py" = [
+  "INP001",  # single-file nanodjango demo apps are intentionally not packages
+]
 
 [tool.ruff.lint.flake8-import-conventions]
 banned-from = [
