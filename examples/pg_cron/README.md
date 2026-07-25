@@ -4,8 +4,9 @@ Demonstrates DB-side scheduling with django-absurd and nanodjango.
 
 - Postgres fires `ping` every minute via pg_cron — no beat process needed.
 - The worker drains the queue and logs `pong 🏓` each run.
-- The `pg_cron` extension is installed once, centrally, by `pg_cron_init.sql` on
-  container startup — not by a django-absurd migration. django-absurd schedules jobs
+- The `pg_cron` extension is installed once, centrally, by a
+  `/docker-entrypoint-initdb.d` script that `Dockerfile.pg_cron` writes on container
+  startup — not by a django-absurd migration. django-absurd schedules jobs
   cross-database into the app's own `demo` database, which never holds the extension.
 - The compose `db` service sets `shared_preload_libraries=pg_cron` and
   `cron.database_name=postgres` (Postgres server prerequisites for pg_cron); `demo` is a

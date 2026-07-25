@@ -2,8 +2,9 @@
 
 Postgres fires `ping` every minute directly via pg_cron (no beat process); the
 worker drains it, logs 'pong 🏓', and returns 'pong' as the task result. The
-`django_absurd.pg_cron` app's migration creates the extension. Watch Tasks/Runs
-in the admin.
+extension lives on the central `postgres` database (installed by the compose db
+image, not a migration); `demo` holds no extension and is scheduled into
+cross-database. Watch Tasks/Runs in the admin.
 
     docker compose up
     http://localhost:8000/   → the admin (Tasks / Runs / …); login admin / admin

@@ -367,8 +367,8 @@ services:
 pg_cron runs against the `postgres` database by default (`cron.database_name` defaults
 to `postgres`); pass `-c cron.database_name=<db>` to point it elsewhere. Either way, run
 the `CREATE EXTENSION` + grants above once against whichever database that names — see
-this repo's own `pg_cron_init.sql` (run via Postgres's `/docker-entrypoint-initdb.d`)
-for a worked example.
+this repo's own `Dockerfile.pg_cron`, which writes a `/docker-entrypoint-initdb.d`
+script (`\connect postgres` + `CREATE EXTENSION`) for a worked example.
 
 **Enabling:**
 
