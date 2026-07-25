@@ -189,11 +189,22 @@ def test_unschedule_jobids_reraises_unexpected_error() -> None:
 @pytest.mark.usefixtures("_inert")
 @pytest.mark.parametrize(
     "verb",
-    ["prune_jobs", "schedule_job", "unschedule_job", "unschedule_jobs_for_database"],
+    [
+        "flush_database_jobs",
+        "probe_cron_grammar",
+        "prune_jobs",
+        "schedule_job",
+        "unschedule_job",
+        "unschedule_jobs_for_database",
+    ],
 )
 def test_verbs_are_noop_when_inert(verb: str) -> None:
     live_db = utils.fetch_live_database()
     calls = {
+        "flush_database_jobs": lambda: catalog.flush_database_jobs("default"),
+        "probe_cron_grammar": lambda: catalog.probe_cron_grammar(
+            "default", cron="5 seconds"
+        ),
         "prune_jobs": lambda: catalog.prune_jobs(
             "default", source=Source.SETTINGS, keep_names=[]
         ),
