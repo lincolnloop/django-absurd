@@ -28,10 +28,7 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _sweep_orphaned_pg_cron_jobs(
-    django_db_setup: object,
-    django_db_blocker: t.Any,
-) -> None:
+def _sweep_orphaned_pg_cron_jobs(request: pytest.FixtureRequest) -> None:
     """Once per xdist worker, clear crash-orphaned django-absurd ``_dj:`` jobs left on
     the reused test-DB name in the shared central catalog.
 
@@ -40,23 +37,32 @@ def _sweep_orphaned_pg_cron_jobs(
     this DB name still scheduled. This session-autouse start-sweep clears them once,
     before any test runs.
 
-    Import-safe: ships in core, but only touches pg_cron when the app is installed —
-    the ``apps.is_installed`` guard runs BEFORE ``catalog`` is imported, so the no-op
-    branch never chains into pg_cron models in a project without the app. When the app
-    is present but scheduling is inert (opt-in off), ``flush_database_jobs`` itself
-    no-ops, so this is free there too.
+    Import-safe: takes ONLY ``request`` so the guard runs BEFORE any Django/DB fixture
+    is resolved. Pytest resolves declared fixture parameters before the body runs, so
+    declaring ``django_db_setup``/``django_db_blocker`` as parameters would defeat the
+    guard — in a project that has django-absurd installed but isn't a fully-configured
+    Django + pytest-django stack, resolving ``django_db_setup`` either skips the whole
+    session (Django unconfigured) or errors (pytest-django absent). Guarding first, then
+    pulling the DB fixtures lazily via ``getfixturevalue`` keeps this a clean no-op for
+    a non-Django or unconfigured project. When the pg_cron app is present but scheduling
+    is inert (opt-in off), ``flush_database_jobs`` itself no-ops, so it's free too.
     """
     from django.apps import apps  # noqa: PLC0415
+    from django.conf import settings  # noqa: PLC0415
 
     from django_absurd.backends import PG_CRON_APP_NAME  # noqa: PLC0415
 
-    if not apps.is_installed(PG_CRON_APP_NAME):
+    if not settings.configured or not apps.is_installed(PG_CRON_APP_NAME):
         return
 
+    request.getfixturevalue("django_db_setup")  # force test-DB setup ordering
+    django_db_blocker = request.getfixturevalue("django_db_blocker")
+
     from django_absurd.pg_cron import catalog  # noqa: PLC0415
+    from django_absurd.queues import resolve_absurd_database  # noqa: PLC0415
 
     with django_db_blocker.unblock():
-        catalog.flush_database_jobs("default")
+        catalog.flush_database_jobs(resolve_absurd_database())
 
 
 @pytest.fixture

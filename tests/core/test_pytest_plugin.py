@@ -1,4 +1,5 @@
 import importlib
+import inspect
 import typing as t
 
 import pytest
@@ -171,6 +172,19 @@ def test_absurd_drain_queue_processes_an_enqueued_task(
     snap = utils.get_task_result(result.id)
     assert snap is not None
     assert snap.state == "completed"
+
+
+def test_start_sweep_declares_only_request_so_the_guard_runs_first() -> None:
+    # Import-safety invariant: the session start-sweep must take ONLY ``request``.
+    # Declaring ``django_db_setup``/``django_db_blocker`` as parameters would make
+    # pytest resolve them BEFORE the body's ``settings.configured`` /
+    # ``apps.is_installed`` guard, which in a non-Django or pytest-django-less project
+    # skips or errors the whole session. The DB fixtures are pulled lazily via
+    # ``getfixturevalue`` only after the guard passes.
+    # django-stubs/pytest type the fixture as FixtureFunctionDefinition, which doesn't
+    # model the ``__wrapped__`` original-function handle; reach it through t.Any.
+    fixture: t.Any = pytest_plugin._sweep_orphaned_pg_cron_jobs
+    assert list(inspect.signature(fixture.__wrapped__).parameters) == ["request"]
 
 
 def test_plugin_module_imports_cleanly() -> None:
