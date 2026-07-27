@@ -88,8 +88,7 @@ definition-site change.
 
 A field, not a `__slots__` entry — `Task.using()` is `dataclasses.replace()`, which
 rebuilds from fields only. As a field, params survive `using()`/`replace()`, `deepcopy`,
-and pickling, and participate in `__eq__`/`repr`, which is also what makes the
-double-bind guard's signal reliable across a `.using()` call.
+and pickling, and participate in `__eq__`/`repr`.
 
 Cost: **one `# type: ignore[misc]` on the class definition**, because django-stubs
 declares `Task` as `@dataclass(kw_only=True)` while the runtime is
