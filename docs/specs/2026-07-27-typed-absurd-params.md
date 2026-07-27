@@ -238,9 +238,18 @@ Behavioral, through real entrypoints. No monkeypatching; assert complete message
     with narrow ignores. Keep the negative expressions out of collected test bodies (or
     inside `pytest.raises`) — they raise at import otherwise.
 
-`tests/core/test_params.py`: the `to_kwargs` dataclass unit tests go, replaced by
-behavioral assertions on spawned options; the above-`@task` test is respelled.
-`tests/tasks.py` has 5 decorator sites; `tests/core/` has ~13 kwarg call sites.
+Items 1–4 already exist and their assertions are stable — `test_enqueue.py` covers all
+three precedence layers (5 / 7 / 9) plus headers, retry strategy, and dedupe, and
+`tests/pg_cron/test_pg_cron_options.py` covers the reconcile path's own merge including
+"7, not 5" (our `DEFAULT_MAX_ATTEMPTS` beating the SDK's default). Only their setup and
+call syntax change, and the four `# type: ignore[call-arg]` comments come out. Items
+5–11 are new.
+
+`tests/core/test_params.py`: the `to_kwargs` dataclass unit tests are deleted outright —
+the behavioral equivalents already live in `test_enqueue.py` — and the above-`@task`
+test is respelled. `tests/tasks.py` has 5 decorator sites; `tests/core/` has ~13 kwarg
+call sites. `test_spawn_params_not_passed_to_task_func` stays as a regression guard,
+though after the change the separation is structural.
 
 ## Alternatives considered
 
