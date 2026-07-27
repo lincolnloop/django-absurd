@@ -149,6 +149,15 @@ duplicate that material here.
 - Don't lie to the checker to buy a tidier static error (e.g. hiding a method behind
   `if not t.TYPE_CHECKING` so it looks absent). Prefer a construction that is true at
   both layers.
+- **Don't write defensive Python for what the checker and the docs already cover.** No
+  runtime type/range/enum validation of values users pass — a wrong signature or wrong
+  value should blow up the way Python or Postgres blows up. Re-stating the SDK's types
+  in our own guards is duplicated policy that drifts from the pinned SQL.
+- Curated errors are for a **different category**: the caller is at the wrong door, not
+  holding the wrong data — a param that belongs on `.using()`, a per-invocation field
+  used at a definition site. Python's own message can't point at the right API, so those
+  get a message naming the rule and showing the fix. Wrong _data_ gets no such
+  treatment.
 
 ## Runtime
 

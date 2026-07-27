@@ -38,9 +38,14 @@ mypy 2.3.0 strict / django-stubs 6.0.7:
 
 ## Public surface
 
+`absurd_params` is exported from the package root —
+`from django_absurd import absurd_params` — alongside `get_absurd_context` and
+`emit_event`, since it is the most-used public symbol. `django_absurd.params` keeps
+working as its home module.
+
 ```python
 from django.tasks import task
-from django_absurd.params import absurd_params
+from django_absurd import absurd_params
 
 
 @task
@@ -166,12 +171,34 @@ Highest wins: **per-invocation → task-level default → `DEFAULT_MAX_ATTEMPTS`
 
 ## Guards
 
+**The runtime layer is the contract; the static layer is a bonus.** Users may run no
+type checker at all, so every rule here raises a correct, self-explanatory Python error
+on its own — no guard may rely on a checker having caught it first.
+
 | Condition                              | Static                                    | Runtime                                                     |
 | -------------------------------------- | ----------------------------------------- | ----------------------------------------------------------- |
 | Unknown / unsupported keyword          | `[call-overload]`                         | curated `TypeError` (below)                                 |
 | Per-invocation field used as decorator | `[arg-type]` — `__call__` accepts `Never` | curated `TypeError` (below)                                 |
 | Params applied above `@task`           | `Task` is not `Callable` → `[arg-type]`   | curated `TypeError` — apply below `@task`                   |
+| `bind` on a non-`Task`                 | `[arg-type]`                              | curated `TypeError` pointing at the decorator form          |
 | Non-Absurd backend                     | —                                         | no-op returning the input instance; `WARNING` once per task |
+
+**No value validation.** We do not check that `max_attempts` is an `int`, that
+`retry_strategy["kind"]` is one of the three known values, or anything else about the
+data. That is what the type checker and the docs are for, and writing defensive Python
+to re-state the SDK's own types would be duplicated policy that drifts from the pinned
+SQL. Wrong data fails where it lands — `max_attempts=0` on Postgres
+(`max_attempts must be >= 1`), `max_attempts="nope"` on the cast.
+
+Known consequence, accepted: an unrecognized `retry_strategy["kind"]` is validated
+nowhere. `fail_run` does `coalesce(v_retry_strategy->>'kind', 'none')` and falls through
+to `v_delay_seconds := 0`, so a typo retries with no backoff rather than erroring. Type
+checkers catch it (the SDK types `kind` as a `Literal`); users without one read the
+docs.
+
+What the guards above do cover is a different category — mistakes where the caller is at
+the wrong door, not holding the wrong data. Python's own message can't point at the
+right API, so those are curated.
 
 Every runtime message names the rule and shows the fix. Unsupported keywords arrive
 through `**unsupported` in the implementation signature, so they are freely worded; the
@@ -249,7 +276,10 @@ Internal call site: `scheduler.py:78` (beat).
   "default + per-call" / "per-call only" column already encodes the overload split,
   which is now signature-enforced.
 - `django_absurd/AGENTS.md` — same two snippets; note the return is an ordinary `Task`.
+  Its module docstring list in `__init__.py` mentions "enqueue params/decorators" and
+  now also exports the symbol.
 - `docs/web/cron-jobs.md:244` — names `@absurd_default_params`.
+- Examples import from the package root (`from django_absurd import absurd_params`).
 - Link the decorator fields to Absurd's
   [task definition](https://earendil-works.github.io/absurd/) defaults
   (`default_max_attempts`, `default_cancellation`) without claiming field parity:
