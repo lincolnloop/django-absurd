@@ -149,10 +149,12 @@ duplicate that material here.
 - Don't lie to the checker to buy a tidier static error (e.g. hiding a method behind
   `if not t.TYPE_CHECKING` so it looks absent). Prefer a construction that is true at
   both layers.
-- **Don't write defensive Python for what the checker and the docs already cover.** No
-  runtime type/range/enum validation of values users pass — a wrong signature or wrong
-  value should blow up the way Python or Postgres blows up. Re-stating the SDK's types
-  in our own guards is duplicated policy that drifts from the pinned SQL.
+- **Validate where it's important; don't go crazy.** Worth validating: configuration
+  (`absurd.E009` on `DEFAULT_MAX_ATTEMPTS`), user-authored data that persists (pg_cron
+  schedule grammar, model `full_clean`), and anything whose failure is silent or lands
+  far from its cause. Not worth it: re-stating the SDK's own types at a call site when a
+  wrong value blows up loudly on its own — a wrong signature or wrong type should fail
+  the way Python or Postgres fails it, and duplicated policy drifts from the pinned SQL.
 - Curated errors are for a **different category**: the caller is at the wrong door, not
   holding the wrong data — a param that belongs on `.using()`, a per-invocation field
   used at a definition site. Python's own message can't point at the right API, so those
