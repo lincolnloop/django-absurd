@@ -107,6 +107,16 @@ Params are represented internally as the existing `SpawnKwargs` dict. `NotSet`/`
 remains the signature default sentinel; `absurd_params()` with no fields is legal and
 yields no params.
 
+The field needs no privacy wrapper: `frozen` already makes it read-only
+(`FrozenInstanceError cannot assign to field 'absurd_params'`) and it defaults to `None`
+on unbound tasks. A `_absurd_params` field behind a property would only move the
+underscore into the constructor keyword.
+
+Two storage locations, deliberately: the decorator writes a function attribute, `bind`
+writes the field. Folding decorator defaults into the field at construction would
+collapse them into one location but make every task arrive already-bound, which is the
+double-bind guard's only signal.
+
 `absurd_params` is a bare noun, deviating from CLAUDE.md's verb rule for function names.
 Deliberate, for the symmetry of one name at both sites.
 
@@ -115,10 +125,12 @@ Deliberate, for the symmetry of one name at both sites.
 Highest wins: **per-invocation → task-level default → `DEFAULT_MAX_ATTEMPTS`**
 (`max_attempts` only) — the order `build_merged_spawn_options` already implements.
 
-- `AbsurdBackend.enqueue` reads per-call params from
-  `getattr(task, "absurd_params", None)` and defaults from
-  `getattr(task.func, "absurd_params", None)`. Both need the 3-arg form. The
-  `kwargs.pop` goes away.
+- `AbsurdBackend.enqueue` reads per-call params behind `isinstance(task, AbsurdTask)`,
+  which narrows to the fully-typed field (`SpawnKwargs | None`) — no `getattr`, no
+  `Any`, no ignore, and reading it off a bare `Task` is a static error. Task-level
+  defaults stay a function-attribute read, since a function cannot declare attributes;
+  that is where `params.py`'s existing `[attr-defined]` ignore lives. The `kwargs.pop`
+  goes away.
 - `pg_cron/reconcile.py:48` has its own merge path reading the function attribute; it
   gets the same rename and its own `setdefault` floor stays.
 - The merge copies nested mutable values. Insurance rather than a requirement today,
@@ -164,13 +176,13 @@ import for every task in projects that swap backends per environment.
 
 ## Migration
 
-| Site             | Before                                                                     | After                                                                                |
-| ---------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Decorator        | `@absurd_default_params(max_attempts=7)`                                   | `@absurd_params(max_attempts=7)`                                                     |
-| Per-call         | `add.enqueue(1, 2, absurd_spawn_params=AbsurdSpawnParams(max_attempts=9))` | `absurd_params(max_attempts=9).bind(add).enqueue(1, 2)`                              |
-| Per-call, strict | same + `# type: ignore[call-arg]`                                          | no ignore                                                                            |
-| With `.using()`  | kwarg inside `.enqueue()` alongside `**kwargs`                             | `absurd_params(...).bind(task.using(...)).enqueue(*args, **kwargs)`                  |
-| Backend read     | `kwargs.pop(...)` + `getattr(task.func, "absurd_default_params", None)`    | `getattr(task, "absurd_params", None)` + `getattr(task.func, "absurd_params", None)` |
+| Site             | Before                                                                     | After                                                                                  |
+| ---------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Decorator        | `@absurd_default_params(max_attempts=7)`                                   | `@absurd_params(max_attempts=7)`                                                       |
+| Per-call         | `add.enqueue(1, 2, absurd_spawn_params=AbsurdSpawnParams(max_attempts=9))` | `absurd_params(max_attempts=9).bind(add).enqueue(1, 2)`                                |
+| Per-call, strict | same + `# type: ignore[call-arg]`                                          | no ignore                                                                              |
+| With `.using()`  | kwarg inside `.enqueue()` alongside `**kwargs`                             | `absurd_params(...).bind(task.using(...)).enqueue(*args, **kwargs)`                    |
+| Backend read     | `kwargs.pop(...)` + `getattr(task.func, "absurd_default_params", None)`    | `isinstance(task, AbsurdTask)` narrowing + `getattr(task.func, "absurd_params", None)` |
 
 Internal call site: `scheduler.py:78` (beat).
 
