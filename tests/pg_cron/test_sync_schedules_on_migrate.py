@@ -13,8 +13,10 @@ import pytest
 from django.core.management import call_command
 from django.db import connections
 
+from django_absurd.pg_cron import catalog
+from django_absurd.pg_cron.choices import Source
 from django_absurd.pg_cron.models import ScheduledTask
-from tests.pg_cron.utils import build_pg_cron_tasks
+from tests.pg_cron import utils
 
 if t.TYPE_CHECKING:
     import pytest_django.fixtures
@@ -80,7 +82,14 @@ def test_migrate_syncs_by_default_on_a_real_non_test_database(
     # (True), not an explicit True standing in for it.
     migrate_real_db_in_subprocess(sync_on_migrate=None)
     scheduled_task = ScheduledTask.objects.get(name="nightly", source="s")
-    assert scheduled_task.get_pg_cron_job() is not None
+    assert (
+        utils.fetch_cron_job(
+            catalog.build_jobname(
+                utils.fetch_live_database(), scheduled_task.source, scheduled_task.name
+            )
+        )
+        is not None
+    )
 
 
 def test_migrate_skips_sync_on_a_real_database_when_explicitly_disabled(
@@ -96,7 +105,7 @@ def test_migrate_skips_sync_on_a_real_database_when_explicitly_disabled(
 def test_migrate_skips_sync_by_default_on_a_test_database(
     settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
-    settings.TASKS = build_pg_cron_tasks(
+    settings.TASKS = utils.build_pg_cron_tasks(
         {"nightly": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     # No SYNC_SCHEDULES_ON_TEST_DB key at all (build_pg_cron_tasks's own default is
@@ -106,27 +115,30 @@ def test_migrate_skips_sync_by_default_on_a_test_database(
 
     call_command("migrate", verbosity=0)
 
-    assert ScheduledTask.pg_cron.get_managed_jobs() == []
+    assert utils.fetch_managed_jobs(utils.fetch_live_database()) == []
     assert ScheduledTask.objects.filter(source="s").count() == 0
 
 
 def test_migrate_syncs_on_a_test_database_when_explicitly_enabled(
     settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
-    settings.TASKS = build_pg_cron_tasks(
+    settings.TASKS = utils.build_pg_cron_tasks(
         {"nightly": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     settings.TASKS["default"]["OPTIONS"]["SYNC_SCHEDULES_ON_TEST_DB"] = True
 
     call_command("migrate", verbosity=0)
 
-    assert [r[0] for r in ScheduledTask.pg_cron.get_managed_jobs()] == ["_dj:s:nightly"]
+    live_db = utils.fetch_live_database()
+    assert [r[0] for r in utils.fetch_managed_jobs(live_db)] == [
+        catalog.build_jobname(live_db, Source.SETTINGS, "nightly")
+    ]
 
 
 def test_scheduled_task_create_and_delete_are_unaffected_by_either_setting(
     settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
-    settings.TASKS = build_pg_cron_tasks({})
+    settings.TASKS = utils.build_pg_cron_tasks({})
     settings.TASKS["default"]["OPTIONS"]["SYNC_SCHEDULES_ON_TEST_DB"] = False
 
     scheduled_task = ScheduledTask.objects.create(
@@ -135,7 +147,21 @@ def test_scheduled_task_create_and_delete_are_unaffected_by_either_setting(
         task="tests.tasks.add",
         cron="0 2 * * *",
     )
-    assert scheduled_task.get_pg_cron_job() is not None
+    assert (
+        utils.fetch_cron_job(
+            catalog.build_jobname(
+                utils.fetch_live_database(), scheduled_task.source, scheduled_task.name
+            )
+        )
+        is not None
+    )
 
     scheduled_task.delete()
-    assert ScheduledTask.pg_cron.get_job("direct_create", "a") is None
+    assert (
+        utils.fetch_cron_job(
+            catalog.build_jobname(
+                utils.fetch_live_database(), Source.ADMIN, "direct_create"
+            )
+        )
+        is None
+    )

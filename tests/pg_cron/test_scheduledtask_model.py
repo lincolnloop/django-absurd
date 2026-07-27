@@ -2,7 +2,22 @@ import pytest
 from django.db import IntegrityError, transaction
 from pytest_django.fixtures import SettingsWrapper
 
+from django_absurd.pg_cron.choices import Source
 from django_absurd.pg_cron.models import ScheduledTask
+from tests.pg_cron import utils
+
+
+@pytest.mark.django_db(transaction=True)
+def test_long_schedule_name_passes_full_clean(settings: SettingsWrapper) -> None:
+    settings.TASKS = utils.build_pg_cron_tasks({}, pg_cron_on_test_db=True)
+    task = ScheduledTask(
+        name="n" * 300,
+        source=Source.ADMIN,
+        task="tests.pg_cron.tasks.add",
+        queue="default",
+        cron="5 seconds",
+    )
+    task.full_clean()  # no ValidationError — length is unbounded
 
 
 def test_full_clean_skips_backend_validation_when_no_backend_configured(

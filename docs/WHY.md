@@ -146,22 +146,26 @@ declares nothing in the database, so there is nothing for an admin to show.
 Settings-lane rows stay read-only in the admin (settings, not the admin, is their source
 of truth); admin-authored `source="admin"` rows are writable.
 
-The two lanes never clobber each other: `sync_crons` is scoped to `source="settings"`
-and never touches admin rows, and the `_dj:settings:<name>` / `_dj:admin:<name>`
-job-name split gives `pg_cron`'s prune the same scoping. The fire wrapper takes `source`
-as a parameter, so both lanes fire through one path. Admin authoring is validation-heavy
-by nature — the schedule rules that run at `check` time against settings also run at
-row-save time — and a saved row must (un)schedule its `pg_cron` job immediately rather
-than at the next migrate/sync, so emission is wired to save/delete signals (runtime job
-emission the settings lane never needed).
+The two lanes never clobber each other: `sync_crons` is scoped to the settings source
+and never touches admin rows, and a job-name split namespaced by both the app database
+and the source (settings vs. admin) gives `pg_cron`'s prune that same scoping — and lets
+one central catalog safely hold jobs for many different app databases at once. The fire
+wrapper takes `source` as a parameter, so both lanes fire through one path. Admin
+authoring is validation-heavy by nature — the schedule rules that run at `check` time
+against settings also run at row-save time — and a saved row must (un)schedule its
+`pg_cron` job immediately rather than at the next migrate/sync, so emission is wired to
+save/delete signals (runtime job emission the settings lane never needed).
 
 ### Static checks, validate at sync
 
-`manage.py check` stays DB-free. Grammar, privilege, and extension facts are validated
-by the real `cron.schedule` at sync time — loud in the command, skip-with-log at
-migrate. A DB-probe variant of a scheduler-misconfiguration check (verifying the
-extension is present at check time) was considered and dropped: a connectivity error at
-`check` time is not a scheduling problem and should not block deployments.
+A plain `manage.py check` stays DB-free: schedule-content problems (bad task path, bad
+cron expression, undeclared queue) are validated statically, and grammar/privilege facts
+are validated by the real `cron.schedule_in_database` at sync time — loud in the
+command, skip-with-log at migrate. Whether the central extension itself is present is a
+different kind of fact — deployment topology, not schedule content — so its check is
+scoped to run only alongside `migrate` and an explicit `check --database`, never a plain
+DB-free `check`: a connectivity error there is a deploy-readiness signal, not something
+that should block routine, DB-free invocations of `check`.
 
 Scheduler selection itself is derived, not a separate setting: `AbsurdBackend.scheduler`
 reads `INSTALLED_APPS` (`django_absurd.pg_cron` present → `"pg_cron"`, absent →
@@ -177,26 +181,56 @@ croniter (which supports a 6-field leading-seconds form). `pg_cron` has its own 
 — a 5-field cron OR the interval form `"[1-59] seconds"` — and `pg_cron` itself is the
 authority. croniter can't parse `"30 seconds"` and would false-reject it, so croniter is
 scoped to beat only: the DB-free `manage.py check` no longer croniter-validates
-`pg_cron` crons. Their grammar is verified by the real `cron.schedule` at sync (and, for
-admin-authored rows, a save-time savepoint trial). Consequently `pg_cron` sub-minute
-(down to `1 seconds`) is allowed — an admin authoring one accepts the high
+`pg_cron` crons. Their grammar is verified by the real `cron.schedule_in_database` at
+sync (and, for admin-authored rows, a save-time savepoint trial). Consequently `pg_cron`
+sub-minute (down to `1 seconds`) is allowed — an admin authoring one accepts the high
 `cron.job_run_details` growth. (An earlier design rejected a _croniter 6-field_ "N
 seconds" shim; that is different — the shim faked seconds on top of croniter's grammar,
 whereas this is `pg_cron`'s own native interval syntax.)
 
-### Extension in the app migration (fail-fast)
+### The extension never lives on the app database (cross-database scheduling)
 
-The `django_absurd.pg_cron` app migration runs `CREATE EXTENSION IF NOT EXISTS pg_cron`
-as its first operation. Empirically: when the extension is already present (managed
-Postgres, or pre-created as superuser), the statement is a no-op — no superuser needed.
-When it is absent and the migrate role is not a superuser, it fails loudly with
-`permission denied / must be superuser`. That fail-fast is exactly right for an opt-in
-app: adding it to `INSTALLED_APPS` on a DB that isn't pg_cron-ready breaks visibly at
-`migrate` time, not silently at reconcile time.
+`cron.database_name` is a single cluster-wide setting, and the extension it names can
+only be created in that one database. An earlier design created the extension inside the
+app's own migration — but if the extension lived on the app database, every test
+database (and every parallel test worker's own copy) would have to _be_ that one special
+database, which is fundamentally incompatible with standard test-database isolation and
+running tests in parallel. So the extension is instead operator-managed once, on a
+central metadata database, and every schedule is created cross-database, naming the app
+database as the target explicitly rather than assuming "here." Fail-fast for a
+misconfigured or missing extension moved from migration time to a deploy-time check
+instead, since a migration can no longer be the thing that creates it.
 
-`shared_preload_libraries = pg_cron` (a server restart GUC) and `cron.database_name` are
-still operator-side prerequisites that a migration can't deliver. Those stay documented
-as manual setup steps.
+A plain test database therefore never has the schema the extension provides. Because of
+that, any attempt to touch it there would error immediately ("no such schema") — so the
+scheduling code deliberately treats itself as a no-op whenever it detects a test
+database or an active test run, unless a test explicitly opts in. This means the common
+case — a test that has nothing to do with scheduling — never touches the extension and
+never errors; scheduling code silently does nothing. Only a test that specifically wants
+to exercise real scheduling flips that switch, and only for the backend it names.
+
+Reaching the central database can't go through Django's own multi-database
+configuration, because Django's test runner manages every database it knows about —
+creating a fresh, empty, extension-less copy of it per test run and per parallel worker.
+Routing through that machinery would recreate the exact problem this design avoids. So
+the connection to the central database is opened directly, borrowed from the same
+connection parameters as the app database (same server, same credentials) with only the
+target database name swapped — a connection Django's test infrastructure never sees or
+manages. That path is identical in production and under test, which is what makes the
+test-side opt-out safe: nothing about how the central database is reached changes
+between the two.
+
+Finally, disabling a previously-scheduled job needs its own dedicated call, not just a
+repeat of the schedule call with different arguments. Scheduling is an upsert, but the
+enabled/disabled flag it accepts only takes effect the first time a job is created — an
+update to an existing job's schedule doesn't change whether it's enabled. So turning a
+job off requires a second, explicit step, and a deployment where the scheduling role
+doesn't own the central extension outright needs a grant for that second step
+specifically (a deployment where it does own the extension needs no extra grant at all).
+
+`shared_preload_libraries = pg_cron` (a server restart GUC), installing the extension,
+and the grants above remain operator-side prerequisites that nothing in django-absurd
+can deliver for you. Those stay documented as manual setup steps.
 
 ### Sync-on-migrate is gated against test databases, opt-in per side
 
@@ -331,7 +365,8 @@ The pytest integration loads as a plugin imported before Django is configured, o
 pytest run in any environment where the package is installed — Django project or not.
 That forces strict import-safety: the plugin touches nothing Django at import time and
 defers every Django-dependent import to call time. The non-pytest (`manage.py test`)
-path is not auto-wired yet; unittest users opt in through a mixin.
+path is not auto-wired yet; unittest users opt in by calling the same install hook from
+a test-runner subclass.
 
 ## Deliberately not doing (yet)
 

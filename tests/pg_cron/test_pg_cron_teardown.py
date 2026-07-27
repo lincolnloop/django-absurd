@@ -8,7 +8,7 @@ if t.TYPE_CHECKING:
 from django_absurd.backends import get_absurd_backends
 from django_absurd.pg_cron.models import ScheduledTask
 from django_absurd.pg_cron.reconcile import sync_crons, teardown_crons
-from tests.utils import make_tasks_settings
+from tests.pg_cron import utils
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -16,8 +16,8 @@ pytestmark = pytest.mark.django_db(transaction=True)
 def test_teardown_removes_all_owned_cron_jobs_and_settings_rows(
     settings: "SettingsWrapper",
 ) -> None:
-    settings.TASKS = make_tasks_settings(
-        schedule={
+    settings.TASKS = utils.build_pg_cron_tasks(
+        {
             "a": {"task": "tests.tasks.add", "cron": "0 2 * * *"},
             "b": {"task": "tests.tasks.add", "cron": "0 3 * * *"},
         }
@@ -25,12 +25,12 @@ def test_teardown_removes_all_owned_cron_jobs_and_settings_rows(
     be = get_absurd_backends()["default"]
     sync_crons(be)
 
-    assert len(ScheduledTask.pg_cron.get_managed_jobs()) == 2
+    assert len(utils.fetch_managed_jobs(utils.fetch_live_database())) == 2
     assert ScheduledTask.objects.filter(source="s").count() == 2
 
     teardown_crons()
 
-    assert ScheduledTask.pg_cron.get_managed_jobs() == []
+    assert utils.fetch_managed_jobs(utils.fetch_live_database()) == []
     assert not ScheduledTask.objects.filter(source="s").exists()
 
 
@@ -43,8 +43,8 @@ def test_teardown_leaves_admin_rows_intact(
         task="tests.tasks.add",
         cron="0 4 * * *",
     )
-    settings.TASKS = make_tasks_settings(
-        schedule={"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
+    settings.TASKS = utils.build_pg_cron_tasks(
+        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     be = get_absurd_backends()["default"]
     sync_crons(be)
@@ -55,13 +55,13 @@ def test_teardown_leaves_admin_rows_intact(
 
 
 def test_teardown_is_idempotent(settings: "SettingsWrapper") -> None:
-    settings.TASKS = make_tasks_settings(
-        schedule={"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
+    settings.TASKS = utils.build_pg_cron_tasks(
+        {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
     be = get_absurd_backends()["default"]
     sync_crons(be)
     teardown_crons()
     teardown_crons()  # must not raise
 
-    assert ScheduledTask.pg_cron.get_managed_jobs() == []
+    assert utils.fetch_managed_jobs(utils.fetch_live_database()) == []
     assert not ScheduledTask.objects.filter(source="s").exists()

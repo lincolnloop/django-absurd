@@ -13,8 +13,11 @@ if t.TYPE_CHECKING:
     from bs4.element import ResultSet
 
 from django_absurd.backends import get_absurd_backends
+from django_absurd.pg_cron import catalog
+from django_absurd.pg_cron.choices import Source
 from django_absurd.pg_cron.models import ScheduledTask
 from django_absurd.pg_cron.reconcile import sync_crons
+from tests.pg_cron import utils
 from tests.utils import HasContent
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -22,10 +25,12 @@ pytestmark = pytest.mark.django_db(transaction=True)
 CHANGELIST = reverse_lazy("admin:django_absurd_pg_cron_scheduledtask_changelist")
 ADD = reverse_lazy("admin:django_absurd_pg_cron_scheduledtask_add")
 
+
 TASKS = {
     "default": {
         "BACKEND": "django_absurd.backends.AbsurdBackend",
         "OPTIONS": {
+            "PG_CRON_ON_TEST_DB": True,
             "QUEUES": {"default": {}, "other": {}, "reports": {}},
             "SCHEDULE": {
                 "nightly": {"task": "tests.tasks.add", "cron": "0 2 * * *"},
@@ -434,7 +439,14 @@ def test_posting_add_creates_admin_schedule_and_schedules_job(
     response = client.post(ADD, {**CHANGE_PAYLOAD, "name": "fromadmin"})
     assert response.status_code == 302
     assert ScheduledTask.objects.get(name="fromadmin").source == "a"
-    assert ScheduledTask.pg_cron.get_job("fromadmin", "a") is not None
+    assert (
+        utils.fetch_cron_job(
+            catalog.build_jobname(
+                utils.fetch_live_database(), Source.ADMIN, "fromadmin"
+            )
+        )
+        is not None
+    )
 
 
 def test_posting_add_with_tampered_source_is_forced_to_admin(
@@ -449,31 +461,6 @@ def test_posting_add_with_tampered_source_is_forced_to_admin(
     response = client.post(ADD, {**CHANGE_PAYLOAD, "name": "tamper", "source": "s"})
     assert response.status_code == 302
     assert ScheduledTask.objects.get(name="tamper").source == "a"
-
-
-def test_editing_over_long_name_row_is_form_error_not_500(
-    admin_user: User,
-    client: Client,
-    settings: "pytest_django.fixtures.SettingsWrapper",
-) -> None:
-    # A row whose name overflows the 63-byte jobname budget (created out-of-band, so it
-    # skipped full_clean) must surface a form error on edit, not HTTP 500 — clean()
-    # keys the jobname-length error to NON_FIELD_ERRORS, not the read-only "name" field.
-    seed(settings)
-    client.force_login(admin_user)
-    row = ScheduledTask.objects.create(
-        source="a",
-        name="x" * 60,
-        task="tests.tasks.add",
-        cron="0 3 * * *",
-    )
-    response = client.post(
-        get_change_url(row.pk), {**CHANGE_PAYLOAD, "cron": "0 4 * * *"}
-    )
-    assert response.status_code == 200
-    content = response.content.decode()
-    assert "job name exceeds 63 bytes (composed name" in content
-    assert "Postgres silently truncates longer names)." in content
 
 
 def test_editing_blank_args_kwargs_falls_back_to_defaults(
@@ -576,9 +563,9 @@ def test_posting_edit_reschedules_the_job_with_the_new_cron(
         {**CHANGE_PAYLOAD, "task": "tests.tasks.add", "cron": "30 6 * * *"},
     )
     assert response.status_code == 302
-    job = ScheduledTask.pg_cron.get_job("reschedule", "a")
-    assert job is not None
-    _, schedule, _, _ = job
+    jobs = utils.fetch_managed_jobs(utils.fetch_live_database(), source=Source.ADMIN)
+    assert len(jobs) == 1
+    _, schedule, _, _ = jobs[0]
     assert schedule == "30 6 * * *"
 
 
@@ -591,13 +578,23 @@ def test_deleting_admin_schedule_via_admin_unschedules_the_job(
     client.force_login(admin_user)
     client.post(ADD, {**CHANGE_PAYLOAD, "name": "deleteme"})
     pk = ScheduledTask.objects.get(name="deleteme").pk
-    assert ScheduledTask.pg_cron.get_job("deleteme", "a") is not None
+    assert (
+        utils.fetch_cron_job(
+            catalog.build_jobname(utils.fetch_live_database(), Source.ADMIN, "deleteme")
+        )
+        is not None
+    )
 
     delete_url = reverse("admin:django_absurd_pg_cron_scheduledtask_delete", args=[pk])
     response = client.post(delete_url, {"post": "yes"})
     assert response.status_code == 302
     assert not ScheduledTask.objects.filter(name="deleteme").exists()
-    assert ScheduledTask.pg_cron.get_job("deleteme", "a") is None
+    assert (
+        utils.fetch_cron_job(
+            catalog.build_jobname(utils.fetch_live_database(), Source.ADMIN, "deleteme")
+        )
+        is None
+    )
 
 
 def test_deleting_settings_schedule_via_admin_is_forbidden(

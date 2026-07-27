@@ -8,3 +8,13 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends postgresql-18-cron=1.6.7-3.pgdg13+1; \
     rm -rf /var/lib/apt/lists/*
+
+# Runs once on a fresh volume. initdb scripts run against POSTGRES_DB (`postgres` for the
+# test image, `demo` for the demo) — both set `cron.database_name=postgres`, so \connect
+# the central DB explicitly. CREATE EXTENSION is all the owner role needs; a NON-owner
+# scheduling role (managed Postgres) also needs GRANT USAGE ON SCHEMA cron + EXECUTE on
+# cron.schedule_in_database and cron.alter_job — see django_absurd/AGENTS.md.
+RUN printf '%s\n' \
+    '\connect postgres' \
+    'CREATE EXTENSION IF NOT EXISTS pg_cron;' \
+    > /docker-entrypoint-initdb.d/10-pg_cron-central.sql

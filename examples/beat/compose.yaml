@@ -23,7 +23,7 @@ services:
       - PGPASSWORD=postgres
       - PGDATABASE=postgres
     volumes: &mounts
-      - ./app.py:/app/app.py
+      - ./:/app
       - ../../django_absurd:/src/django_absurd
 
   worker:

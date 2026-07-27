@@ -78,6 +78,7 @@ class AbsurdBackendOptions(t.TypedDict, total=False):
     ADMIN_SITE: tuple[str, ...]
     SCHEDULE: dict[str, dict[str, object]]
     CLEANUP: dict[str, str]
+    PG_CRON_ON_TEST_DB: bool
 
 
 class AbsurdBackend(BaseTaskBackend):

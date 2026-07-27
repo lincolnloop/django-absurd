@@ -23,3 +23,21 @@ docker compose up
 Each demo installs django-absurd from this checkout (editable path dependency), so it
 exercises the local source, and `nanodjango run` applies migrations and creates the
 `admin`/`admin` superuser on startup.
+
+## Running the tests
+
+Each demo has a pytest suite (high-level HTTP for `web`; enqueue-and-drain for the
+scheduled `beat`/`pg_cron` tasks — the schedulers themselves are covered in
+django-absurd's own tests). Tests run **inside each demo's own Docker stack**, against
+its own compose database:
+
+```bash
+cd examples/web        # or: cd examples/beat, cd examples/pg_cron
+docker compose up -d db
+docker compose run --rm app pytest
+```
+
+**pg_cron** runs the same way — no special setup. The extension lives on the central
+`cron.database_name` (`postgres`) database, installed once by the compose `db` image;
+each demo's own database (and pytest-django's ordinary `test_*` database) holds no
+extension and is scheduled into cross-database.

@@ -56,17 +56,18 @@ Use this to set [retention](https://earendil-works.github.io/absurd/storage/)
 
 All optional:
 
-| Option                      | Default                          | What it does                                                                                                                                                        |
-| --------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `DATABASE`                  | `"default"`                      | Which [`DATABASES`](https://docs.djangoproject.com/en/6.0/ref/settings/#databases) alias to use.                                                                    |
-| `DEFAULT_MAX_ATTEMPTS`      | `5`                              | Retry ceiling per task; must be an integer `>= 1` (override per task/call — see [Tasks](tasks.md#retries-spawn-options)).                                           |
-| `QUEUES`                    | —                                | Map of queue name → policy (above). Mutually exclusive with the top-level list.                                                                                     |
-| `CLEANUP`                   | —                                | Map `{"schedule": "<cron>"}` to run cleanup on cadence (beat: in-process; pg_cron: native job). Omit to skip. See [Cleanup](cleanup.md#schedule-recurring-cleanup). |
-| `SCHEDULE`                  | —                                | Recurring task schedules (beat or pg_cron). See [Cron Jobs](cron-jobs.md).                                                                                          |
-| `SYNC_SCHEDULES_ON_MIGRATE` | `True`                           | (pg_cron) Reconcile `SCHEDULE` into pg_cron on `migrate`. See [Cron Jobs](cron-jobs.md#test-databases).                                                             |
-| `SYNC_SCHEDULES_ON_TEST_DB` | `False`                          | (pg_cron) Allow that migrate-time sync on a test database. See [Cron Jobs](cron-jobs.md#test-databases).                                                            |
-| `ENABLE_ADMIN`              | `True`                           | Register the read-only Absurd models in the Django admin.                                                                                                           |
-| `ADMIN_SITE`                | `("django.contrib.admin.site",)` | Dotted paths to the `AdminSite`(s) to register on.                                                                                                                  |
+| Option                      | Default                          | What it does                                                                                                                                                         |
+| --------------------------- | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE`                  | `"default"`                      | Which [`DATABASES`](https://docs.djangoproject.com/en/6.0/ref/settings/#databases) alias to use.                                                                     |
+| `DEFAULT_MAX_ATTEMPTS`      | `5`                              | Retry ceiling per task; must be an integer `>= 1` (override per task/call — see [Tasks](tasks.md#retries-spawn-options)).                                            |
+| `QUEUES`                    | —                                | Map of queue name → policy (above). Mutually exclusive with the top-level list.                                                                                      |
+| `CLEANUP`                   | —                                | Map `{"schedule": "<cron>"}` to run cleanup on cadence (beat: in-process; pg_cron: native job). Omit to skip. See [Cleanup](cleanup.md#schedule-recurring-cleanup).  |
+| `SCHEDULE`                  | —                                | Recurring task schedules (beat or pg_cron). See [Cron Jobs](cron-jobs.md).                                                                                           |
+| `SYNC_SCHEDULES_ON_MIGRATE` | `True`                           | (pg_cron) Reconcile `SCHEDULE` into pg_cron on `migrate`. See [Cron Jobs](cron-jobs.md#test-databases).                                                              |
+| `SYNC_SCHEDULES_ON_TEST_DB` | `False`                          | (pg_cron) Allow that migrate-time sync on a test database. See [Cron Jobs](cron-jobs.md#test-databases).                                                             |
+| `PG_CRON_ON_TEST_DB`        | `False`                          | (pg_cron) Opt in to real `cron.*` writes on a test database / active test run — otherwise every such write is a no-op. See [Cron Jobs](cron-jobs.md#test-databases). |
+| `ENABLE_ADMIN`              | `True`                           | Register the read-only Absurd models in the Django admin.                                                                                                            |
+| `ADMIN_SITE`                | `("django.contrib.admin.site",)` | Dotted paths to the `AdminSite`(s) to register on.                                                                                                                   |
 
 ## Non-default database
 
@@ -94,5 +95,7 @@ wrong. Fix what it reports rather than silencing it:
 | `absurd.E007` | Invalid `SCHEDULE` entry (see [Cron Jobs](cron-jobs.md)).                                                                                                                                  |
 | `absurd.E009` | `OPTIONS["DEFAULT_MAX_ATTEMPTS"]` is not an integer `>= 1`.                                                                                                                                |
 | `absurd.E010` | Invalid `CLEANUP` configuration (not a `{"schedule": …}` map, or unknown keys; cron grammar checked for beat, at sync for pg_cron) (see [Cleanup](cleanup.md#schedule-recurring-cleanup)). |
+| `absurd.E011` | `SYNC_SCHEDULES_ON_TEST_DB` is `True` without `PG_CRON_ON_TEST_DB` (see [Cron Jobs](cron-jobs.md#test-databases)).                                                                         |
+| `absurd.E012` | The central `cron.database_name` database is unreachable or missing the `pg_cron` extension — a deploy-time check (see [Cron Jobs](cron-jobs.md#references)).                              |
 | `absurd.W002` | (Warning) A queue's declared `storage_mode` differs from the database; `storage_mode` is immutable once the queue exists.                                                                  |
 | `absurd.W003` | (Warning) `django_absurd.pg_cron` is ordered before `django_absurd` in `INSTALLED_APPS` (see [Cron Jobs](cron-jobs.md)).                                                                   |

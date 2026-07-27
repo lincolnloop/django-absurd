@@ -17,6 +17,7 @@ dev = [
   "pytest-cov==7.1.0",
   "pytest-django==4.12.0",
   "pytest-socket==0.8.0",
+  "pytest-xdist==3.8.0",
   "pytest==9.1.1",
   "ruff==0.15.22",
   "types-croniter==6.2.4.20260711",
@@ -155,6 +156,9 @@ select = ["ALL"]
   "S603",  # Allow subprocess calls in tests
   "SLF001",  # Allow private member access in tests (e.g. _meta)
 ]
+"examples/*/app.py" = [
+  "INP001",  # single-file nanodjango demo apps are intentionally not packages
+]
 
 [tool.ruff.lint.flake8-import-conventions]
 banned-from = [
@@ -168,6 +172,9 @@ typing = "t"
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"
+
+[tool.ruff.lint.pylint]
+max-args = 6
 
 [tool.uv]
 # Mirror Renovate's minimumReleaseAge cooloff for local/CI resolution.

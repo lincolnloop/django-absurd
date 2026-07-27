@@ -9,7 +9,11 @@ services:
       - -c
       - shared_preload_libraries=pg_cron
       - -c
-      - cron.database_name=demo
+      # The CENTRAL pg_cron DB (extension + cron.* catalog live here). The app's own
+      # `demo` DB holds no extension and is scheduled cross-database into. The test run
+      # uses this SAME central DB — its test DB is ordinary + extension-less, so no
+      # settings override is needed to reach it.
+      - cron.database_name=postgres
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
@@ -33,7 +37,7 @@ services:
       - PGPASSWORD=postgres
       - PGDATABASE=demo
     volumes: &mounts
-      - ./app.py:/app/app.py
+      - ./:/app
       - ../../django_absurd:/src/django_absurd
 
   worker:

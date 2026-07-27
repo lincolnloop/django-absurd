@@ -1,37 +1,66 @@
 import pytest
 from django.core.management import call_command
-from django.db import connection
+from pytest_django.fixtures import SettingsWrapper
 
+from django_absurd.connection import open_central_connection
 from django_absurd.flush import flush_absurd_state
+from django_absurd.pg_cron import catalog
+from django_absurd.pg_cron.choices import Source
 from django_absurd.pg_cron.models import ScheduledTask
+from tests.pg_cron import utils
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
-def test_flush_absurd_state_drop_schema_true_unschedules_everything_blanket() -> None:
-    scheduled_task = ScheduledTask.objects.create(
+def test_flush_absurd_state_drop_schema_true_scopes_to_this_database(
+    settings: SettingsWrapper,
+) -> None:
+    settings.TASKS = utils.build_pg_cron_tasks({})
+    ScheduledTask.objects.create(
         source="a", name="direct", task="tests.tasks.add", cron="0 2 * * *"
     )
-    assert scheduled_task.get_pg_cron_job() is not None
-    with connection.cursor() as cur:
+    assert (
+        utils.fetch_cron_job(
+            catalog.build_jobname(utils.fetch_live_database(), Source.ADMIN, "direct")
+        )
+        is not None
+    )
+    with open_central_connection("default") as cur:
         cur.execute(
             "select cron.schedule(%s, %s, %s)",
             ["unrelated_job", "0 3 * * *", "select 1"],
         )
 
-    flush_absurd_state(drop_schema=True)
+    try:
+        flush_absurd_state(drop_schema=True)
 
-    assert not ScheduledTask.objects.filter(name="direct", source="a").exists()
-    with connection.cursor() as cur:
-        cur.execute("select jobname from cron.job")
-        assert cur.fetchall() == []  # blanket: even the unrelated job is gone
+        assert not ScheduledTask.objects.filter(name="direct", source="a").exists()
+        assert (
+            utils.fetch_cron_job(
+                catalog.build_jobname(
+                    utils.fetch_live_database(), Source.ADMIN, "direct"
+                )
+            )
+            is None
+        )
+        with open_central_connection("default") as cur:
+            cur.execute(
+                "select jobname from cron.job where jobname = %s", ["unrelated_job"]
+            )
+            assert cur.fetchone() is not None  # scoped: the unrelated job survives
+    finally:
+        with open_central_connection("default") as cur:
+            cur.execute("select cron.unschedule('unrelated_job')")  # don't leak it
 
 
-def test_flush_absurd_state_drop_schema_false_scopes_to_owned_jobs_only() -> None:
-    scheduled_task = ScheduledTask.objects.create(
+def test_flush_absurd_state_drop_schema_false_scopes_to_owned_jobs_only(
+    settings: SettingsWrapper,
+) -> None:
+    settings.TASKS = utils.build_pg_cron_tasks({})
+    ScheduledTask.objects.create(
         source="a", name="direct", task="tests.tasks.add", cron="0 2 * * *"
     )
-    with connection.cursor() as cur:
+    with open_central_connection("default") as cur:
         cur.execute(
             "select cron.schedule(%s, %s, %s)",
             ["unrelated_job", "0 3 * * *", "select 1"],
@@ -40,8 +69,13 @@ def test_flush_absurd_state_drop_schema_false_scopes_to_owned_jobs_only() -> Non
     flush_absurd_state()
 
     assert not ScheduledTask.objects.filter(name="direct", source="a").exists()
-    assert scheduled_task.get_pg_cron_job() is None
-    with connection.cursor() as cur:
+    assert (
+        utils.fetch_cron_job(
+            catalog.build_jobname(utils.fetch_live_database(), Source.ADMIN, "direct")
+        )
+        is None
+    )
+    with open_central_connection("default") as cur:
         cur.execute(
             "select jobname from cron.job where jobname = %s", ["unrelated_job"]
         )
@@ -56,25 +90,29 @@ def test_flush_absurd_state_drop_schema_false_never_touches_job_run_details() ->
     # drop_schema=False must never touch it); a hardcoded runid or an absolute-count
     # assertion breaks the moment this test (or the suite) runs more than once against
     # the same --reuse-db database.
-    with connection.cursor() as cur:
+    with open_central_connection("default") as cur:
         cur.execute("select count(*) from cron.job_run_details")
-        before = cur.fetchone()[0]
+        count_row = cur.fetchone()
+        assert count_row is not None
+        before = count_row[0]
         cur.execute(
             "insert into cron.job_run_details (jobid, job_pid, database,"
             " username, command, status, return_message, start_time, end_time)"
             " values (0, 0, current_database(), current_user, 'select 1',"
             " 'succeeded', '', now(), now()) returning runid"
         )
-        runid = cur.fetchone()[0]
+        runid_row = cur.fetchone()
+        assert runid_row is not None
+        runid = runid_row[0]
 
     try:
         flush_absurd_state()
 
-        with connection.cursor() as cur:
+        with open_central_connection("default") as cur:
             cur.execute("select count(*) from cron.job_run_details")
-            assert cur.fetchone()[0] == before + 1  # untouched
+            assert cur.fetchone() == (before + 1,)  # untouched
     finally:
-        with connection.cursor() as cur:
+        with open_central_connection("default") as cur:
             cur.execute("delete from cron.job_run_details where runid = %s", [runid])
 
 

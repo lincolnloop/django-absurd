@@ -2,20 +2,18 @@
 
 Each raises `django.core.exceptions.ValidationError`. `ScheduledTask.clean()` +
 field `validators=[...]` enforce them model-first; the system checks call the
-same callables and wrap failures into `absurd.E007`. The field-level validators
-(name charset, jobname length) are pure; the contextual one
-(`validate_pg_cron_cron`) reads the database.
+same callables and wrap failures into `absurd.E007`. The field-level validator
+(name charset) is pure; the contextual one (`validate_pg_cron_cron`) reads the
+database.
 """
 
 import typing as t
-import uuid
 
 from django.core.exceptions import ValidationError
 from django.core.validators import RegexValidator
-from django.db import DatabaseError, connections, transaction
 from django.utils.module_loading import import_string
 
-from django_absurd.pg_cron.choices import Source
+from django_absurd.pg_cron import catalog
 from django_absurd.validators import validate_task_path
 
 NAME_CHARSET_MESSAGE = "Schedule name contains characters other than [A-Za-z0-9_-]."
@@ -31,27 +29,6 @@ def validate_name_charset(value: t.Any) -> None:
     if not isinstance(value, str):
         raise ValidationError(NAME_CHARSET_MESSAGE)
     NAME_CHARSET_VALIDATOR(value)
-
-
-def build_jobname(name: str, source: str = Source.SETTINGS) -> str:
-    """Return the pg_cron job name for a scheduled task."""
-    return f"_dj:{source}:{name}"
-
-
-def build_jobname_prefix(source: str = Source.SETTINGS) -> str:
-    """Return the LIKE prefix used to prune pg_cron jobs for a source lane."""
-    return f"_dj:{source}:"
-
-
-def validate_jobname_length(source: str, name: str) -> None:
-    jobname = build_jobname(name, source)
-    size = len(jobname.encode())
-    if size > 63:
-        msg = (
-            f"job name exceeds 63 bytes (composed name {jobname!r} is {size} bytes;"
-            " Postgres silently truncates longer names)."
-        )
-        raise ValidationError(msg)
 
 
 def validate_declared_queue(
@@ -76,26 +53,9 @@ def validate_declared_queue(
 
 
 def validate_pg_cron_cron(cron: str, database: str) -> None:
-    """Validate a pg_cron schedule expression by asking pg_cron itself.
-
-    pg_cron owns its grammar (a 5-field cron or the interval form ``<n> seconds``),
-    so rather than a hand-rolled matcher we schedule a throwaway job inside an atomic
-    block that is always rolled back — nothing persists. If cron.schedule rejects the
-    expression, surface pg_cron's own error message on the cron field. The atomic is a
-    savepoint when an enclosing transaction exists (the admin wraps the whole request;
-    a model's save-time full_clean may run inside one) and a real transaction otherwise;
-    set_rollback rolls it back either way, so the probe never leaves a row.
-    """
-    # Unique per call so concurrent probes never collide on the pg_cron job name
-    # (each is rolled back, but a shared name would still contend on the same row).
-    probe_jobname = f"_dj:__probe__:{uuid.uuid4()}"
-    try:
-        with transaction.atomic(using=database):
-            with connections[database].cursor() as cur:
-                cur.execute(
-                    "select cron.schedule(%s, %s, %s)",
-                    [probe_jobname, cron, "select 1"],
-                )
-            transaction.set_rollback(True, using=database)
-    except DatabaseError as exc:
-        raise ValidationError(str(exc).strip()) from exc
+    """Validate a pg_cron schedule expression by asking pg_cron itself, via the catalog
+    seam's ``probe_cron_grammar`` (schedule a throwaway job on the central connection,
+    then unschedule it). Delegates so grammar probing shares the single cross-database
+    write path; it re-raises pg_cron's own error as ``ValidationError`` on the cron
+    field."""
+    catalog.probe_cron_grammar(database, cron=cron)
