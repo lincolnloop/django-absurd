@@ -265,15 +265,19 @@ three precedence layers (5 / 7 / 9) plus headers, retry strategy, and dedupe, an
 | `tests/pg_cron/test_pg_cron_options.py` | 1    | comment only                                     |
 
 `tests/core/test_params.py` (10 refs) is the exception. Correct usage behaves
-identically; what changes is how misuse is signalled:
+identically, and decorator misuse still fails at import with a `TypeError`. What changes
+is which expression raises it:
 
 - `test_to_kwargs_emits_only_set_fields` and
   `test_spawnparams_carries_per_invocation_fields` — subject deleted. The second is
   covered by `test_headers_reach_spawn` / `test_idempotency_key_dedups`; the first is
   why item 12 exists.
-- `test_decorator_rejects_per_invocation_kwarg` — **the raise moves.** Today the factory
-  call raises (the dataclass rejects the field); now that call is legal and the error
-  appears on application. Rewritten, not respelled.
+- `test_decorator_rejects_per_invocation_kwarg` — rewritten, not respelled. Today the
+  bare factory call raises (the dataclass rejects the field); now it is legal, because
+  that is the per-call form `bind` needs. The test must apply the result to a function
+  to trigger the failure. For a user writing the decorator nothing observable changes:
+  both the call and the application sit on one line, run at import, and raise
+  `TypeError` — only the message differs.
 - `test_decorator_attaches_default_to_task_func` — asserts internals; deleted in favour
   of the existing behavioral `test_max_attempts_uses_decorator_default`.
 - `test_decorator_above_task_raises` — survives; still `TypeError`, new message.
