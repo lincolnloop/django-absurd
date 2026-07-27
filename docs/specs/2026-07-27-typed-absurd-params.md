@@ -194,11 +194,23 @@ A judgment about _this_ surface, not a blanket rule: configuration still gets sy
 checks (`absurd.E009` on `DEFAULT_MAX_ATTEMPTS`) and persisted user data still gets
 validators (pg_cron schedule grammar, `full_clean`).
 
-One accepted consequence: an unrecognized `retry_strategy["kind"]` is validated nowhere.
-`fail_run` does `coalesce(v_retry_strategy->>'kind', 'none')` and falls through to
-`v_delay_seconds := 0`, so a typo retries with no backoff instead of erroring. Type
-checkers catch it (the SDK types `kind` as a `Literal`). Worth revisiting if it bites,
-since a silent failure is the usual trigger for adding a check.
+Two accepted consequences around `retry_strategy`, both to be recorded in a comment at
+its declaration rather than guarded:
+
+- **An unrecognized `kind` is validated nowhere.** `fail_run` does
+  `coalesce(v_retry_strategy->>'kind', 'none')` and falls through to
+  `v_delay_seconds := 0`, so a typo retries with no backoff instead of erroring. Type
+  checkers catch it — the SDK types `kind` as a `Literal`.
+- **An omitted `kind` raises, though the type says it is optional.** `RetryStrategy` is
+  `TypedDict, total=False`, but `_serialize_retry_strategy` does `strategy["kind"]`
+  unconditionally, so `retry_strategy={"base_seconds": 5}` type-checks under both mypy
+  and pyright and then dies at enqueue with `KeyError: 'kind'` from inside `absurd_sdk`.
+  No checker can flag this; the SDK's type is simply wrong. Left to error.
+
+Also worth knowing, same source: the SDK silently **drops** unknown keys in
+`retry_strategy` and `cancellation` (a typo'd `factor` is a no-op), and passes bad value
+types straight through — a non-numeric `base_seconds` reaches the payload and only fails
+inside `fail_run`, i.e. on the first retry rather than at enqueue.
 
 What the guards above do cover is a different category — mistakes where the caller is at
 the wrong door, not holding the wrong data. Python's own message can't point at the
@@ -376,5 +388,6 @@ the change the separation is structural.
 ## Follow-ups
 
 - Reserve a header namespace when #116 starts carrying `run_after` in headers.
-- Revisit validating `retry_strategy["kind"]` if the silent zero-backoff degradation
-  bites.
+- Report upstream to Absurd: `RetryStrategy["kind"]` should be `Required`, or
+  `_serialize_retry_strategy` should default it to `"none"` the way `fail_run` already
+  does. Currently a type-legal value raises `KeyError`.
