@@ -96,6 +96,11 @@ commit where it last lived — recoverable from git any time.
 - 2026-07-21 — sync-schedules-on-migrate: test-database-gated automatic `pg_cron` sync
   at migrate time →
   [view @d49eb31](https://github.com/lincolnloop/django-absurd/blob/d49eb31405cd55fbeeea1e601756d0c1c7acf332/docs/specs/2026-07-21-sync-schedules-on-migrate-design.md)
+- 2026-07-23 — pg-cron-test-inert-design: cross-database `pg_cron` scheduling —
+  operator-managed extension on the central `cron.database_name`, jobs bound to the app
+  DB via `schedule_in_database` with db-namespaced jobnames (upsert-steal defense), and
+  a seam that stays inert under tests unless opted in →
+  [view @4dde493](https://github.com/lincolnloop/django-absurd/blob/4dde493f4a6981f5146ba5feaf5f973ce76103ab/docs/specs/2026-07-23-pg-cron-test-inert-design.md)
 
 ## Plans
 
@@ -160,3 +165,6 @@ commit where it last lived — recoverable from git any time.
 - 2026-07-22 — absurd-db-autodetect implementation plan (abandoned fixture-autodetect
   approach; superseded by the shipped post-teardown monkeypatch) →
   [view @d49eb31](https://github.com/lincolnloop/django-absurd/blob/d49eb31405cd55fbeeea1e601756d0c1c7acf332/docs/plans/2026-07-22-absurd-db-autodetect.md)
+- 2026-07-24 — pg-cron-cross-database-scheduling implementation plan (10-task TDD build
+  of the inert cross-database `pg_cron` design) →
+  [view @4dde493](https://github.com/lincolnloop/django-absurd/blob/4dde493f4a6981f5146ba5feaf5f973ce76103ab/docs/plans/2026-07-24-pg-cron-cross-database-scheduling.md)
