@@ -23,18 +23,18 @@ mypy 2.3.0 strict / django-stubs 6.0.7:
 
 ## Decisions
 
-| Question                   | Decision                                                                                                                         |
-| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| Settings layer             | `DEFAULT_MAX_ATTEMPTS` stays the only settings-level param (`max_attempts` only). No new `OPTIONS` key.                          |
-| Decorator field set        | `max_attempts`, `retry_strategy`, `cancellation` — unchanged.                                                                    |
-| Per-invocation field set   | Decorator fields + `headers` + `idempotency_key` — unchanged.                                                                    |
-| Old spellings              | Hard break. `@absurd_default_params`, the kwarg, and both param dataclasses are deleted.                                         |
-| Return value               | A real `Task`: `isinstance` holds, `aenqueue`/`call`/`get_result`/`using` inherited, original untouched.                         |
-| Enqueue-site spelling      | `.bind(task)`. `__call__` exists only for the decorator site, so the two never overlap.                                          |
-| Per-site separation        | Static, via an overload pair on `absurd_params`; runtime guards back it up for untyped callers.                                  |
-| Double apply / double bind | Merge, later value winning per field. No guard — mirrors `Task.using()` and enables composition.                                 |
-| Non-Absurd backend         | No-op returning the input instance; `WARNING` once per task, deduped on `task.module_path`.                                      |
-| Typing tests               | Negative cases pinned with narrow `# type: ignore[...]` under `warn_unused_ignores`. Authorized for the typing-test module only. |
+| Question                   | Decision                                                                                                                                                   |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Settings layer             | `DEFAULT_MAX_ATTEMPTS` stays the only settings-level param (`max_attempts` only). No new `OPTIONS` key.                                                    |
+| Decorator field set        | `max_attempts`, `retry_strategy`, `cancellation` — unchanged.                                                                                              |
+| Per-invocation field set   | Decorator fields + `headers` + `idempotency_key` — unchanged.                                                                                              |
+| Old spellings              | Hard break. `@absurd_default_params`, the kwarg, and both param dataclasses are deleted.                                                                   |
+| Return value               | A real `Task`: `isinstance` holds, `aenqueue`/`call`/`get_result`/`using` inherited, original untouched.                                                   |
+| Enqueue-site spelling      | `.bind(task)`. `__call__` exists only for the decorator site, so the two never overlap.                                                                    |
+| Per-site separation        | Static, via an overload pair on `absurd_params`; runtime guards back it up for untyped callers.                                                            |
+| Double apply / double bind | Merge, later value winning per field. No guard — mirrors `Task.using()` and enables composition.                                                           |
+| Non-Absurd backend         | No-op returning the input instance; `WARNING` once per task, deduped on `task.module_path`.                                                                |
+| Ignores in tests           | Any test constructing statically-invalid usage may carry narrow `# type: ignore[...]`; `warn_unused_ignores` fails the build if the error stops occurring. |
 
 ## Public surface
 
@@ -62,10 +62,14 @@ Typing contract (interface only — implementation is TDD'd):
   `Unpack`/TypedDict at the public surface; `SpawnKwargs` stays internal, mirroring the
   SDK's `**merged` call.
   - decorator fields → returns `AbsurdParams`
-  - plus `headers`/`idempotency_key` → returns `BoundParams`
-- `BoundParams` exposes `bind(target: Task[P, R]) -> Task[P, R]`.
-- `AbsurdParams` extends it, adding
-  `__call__(target: Callable[P, R]) -> Callable[P, R]`.
+  - plus `headers`/`idempotency_key` → returns `PerCallParams`
+- Both are **siblings** over a `ParamsBase` carrying
+  `bind(target: Task[P, R]) -> Task[P, R]`. Not a subclass relationship: `PerCallParams`
+  declares `__call__(target: Never) -> NoReturn` (to raise the curated definition-site
+  message), and `NoReturn` is the bottom type, so no subclass can widen that return —
+  mypy rejects it as
+  `Return type "Callable[P, R]" of "__call__" incompatible with return type "Never" in supertype [override]`.
+- `AbsurdParams` adds the real `__call__(target: Callable[P, R]) -> Callable[P, R]`.
 
 Properties this buys:
 
@@ -162,21 +166,58 @@ Highest wins: **per-invocation → task-level default → `DEFAULT_MAX_ATTEMPTS`
 
 ## Guards
 
-| Condition                              | Static                                  | Runtime                                                                                                |
-| -------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Unknown keyword                        | `[call-overload]`                       | `TypeError`; `queue`/`queue_name`/`priority`/`backend` name `.using()`, `run_after` cites defer (#116) |
-| Per-invocation field used as decorator | `"BoundParams" not callable [operator]` | Python's `TypeError: 'BoundParams' object is not callable`                                             |
-| Params applied above `@task`           | `Task` is not `Callable` → `[arg-type]` | `AbsurdParams`: curated "apply below `@task`"; `BoundParams`: Python's not-callable                    |
-| Non-Absurd backend                     | —                                       | no-op returning the input instance; `WARNING` once per task                                            |
+| Condition                              | Static                                    | Runtime                                                     |
+| -------------------------------------- | ----------------------------------------- | ----------------------------------------------------------- |
+| Unknown / unsupported keyword          | `[call-overload]`                         | curated `TypeError` (below)                                 |
+| Per-invocation field used as decorator | `[arg-type]` — `__call__` accepts `Never` | curated `TypeError` (below)                                 |
+| Params applied above `@task`           | `Task` is not `Callable` → `[arg-type]`   | curated `TypeError` — apply below `@task`                   |
+| Non-Absurd backend                     | —                                         | no-op returning the input instance; `WARNING` once per task |
+
+Every runtime message names the rule and shows the fix. Unsupported keywords arrive
+through `**unsupported` in the implementation signature, so they are freely worded; the
+factory runs before any target exists, so those cannot name the task:
+
+```
+TypeError: 'queue' is not an Absurd param — queue routing belongs to Django:
+
+    send_report.using(queue_name="reports")
+
+Absurd params: max_attempts, retry_strategy, cancellation, headers, idempotency_key.
+```
+
+```
+TypeError: 'run_after' is not an Absurd param, and deferred enqueue is not supported by
+this backend (supports_defer = False). See
+https://github.com/lincolnloop/django-absurd/issues/116.
+```
+
+```
+TypeError: 'max_attemps' is not an Absurd param. Did you mean 'max_attempts'?
+```
+
+The last is `difflib.get_close_matches` over the five field names, mirroring what mypy
+prints for typed callers.
+
+The definition-site message does know its target:
+
+```
+TypeError: idempotency_key can only be set per invocation, not on a task definition.
+Bind it at enqueue time instead:
+
+    absurd_params(idempotency_key=...).bind(send_report).enqueue(...)
+```
+
+Getting that message requires `__call__` to exist while remaining a static error, so it
+is declared as accepting `t.Never` and returning `t.NoReturn`: mypy rejects every call
+(`expected "Never"`), and the body raises the curated message. Declaring `__call__` only
+under `if not t.TYPE_CHECKING` would yield a tidier static message (`not callable`) at
+the cost of telling the checker something false about runtime; rejected on those
+grounds, and the runtime message is identical either way.
 
 The implementation signature spells out all five keyword-only params plus
 `**unsupported`, so `inspect.signature` stays informative while unknown keys reach the
 curated message instead of Python's bare `TypeError`. Runtime guards exist for untyped
 callers and `**dict` splatting, which evades static checking.
-
-Rows 2 and 3 deliberately accept Python's own message: the static `[operator]` error
-exists _because_ `BoundParams` has no `__call__`, and adding one for nicer wording would
-destroy it.
 
 Stacked decorators and repeated binds are not guarded — they merge (see Mechanism).
 
