@@ -149,8 +149,14 @@ of truth); admin-authored `source="admin"` rows are writable.
 The two lanes never clobber each other: `sync_crons` is scoped to the settings source
 and never touches admin rows, and a job-name split namespaced by both the app database
 and the source (settings vs. admin) gives `pg_cron`'s prune that same scoping — and lets
-one central catalog safely hold jobs for many different app databases at once. The fire
-wrapper takes `source` as a parameter, so both lanes fire through one path. Admin
+one central catalog safely hold jobs for many different app databases at once. That
+database namespace is a safety requirement, not tidiness: `pg_cron`'s job catalog is
+unique on the job name and role alone, not scoped by database, so scheduling a job whose
+name already exists silently retargets that job to the newly-named database. Without the
+database baked into every name, a job scheduled from a test database (or a second app
+database) would hijack an identically-named production job and point it at the wrong
+data; namespacing makes each database's jobs disjoint so that retarget can't happen. The
+fire wrapper takes `source` as a parameter, so both lanes fire through one path. Admin
 authoring is validation-heavy by nature — the schedule rules that run at `check` time
 against settings also run at row-save time — and a saved row must (un)schedule its
 `pg_cron` job immediately rather than at the next migrate/sync, so emission is wired to
