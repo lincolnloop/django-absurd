@@ -124,8 +124,10 @@ makes composition legal (`bind` a partially-configured task, specialize it later
 Getting it wrong is the caller's problem. `bind` lives only on the params object;
 nothing is added to the task's surface.
 
-`absurd_params` is a bare noun, deviating from CLAUDE.md's verb rule for function names.
-Deliberate, for the symmetry of one name at both sites.
+`absurd_params` is a bare noun, which CLAUDE.md's verb rule normally forbids. Accepted:
+it is a decorator reused at both sites, and `bind` carries the verb. `bind` over `apply`
+(Celery's `apply()` executes a task — actively misleading), `attach` (implies mutating
+the target), `on` (vague), `for_task` (stutters before `.enqueue`).
 
 ## Precedence and merge
 
@@ -238,18 +240,46 @@ Behavioral, through real entrypoints. No monkeypatching; assert complete message
     with narrow ignores. Keep the negative expressions out of collected test bodies (or
     inside `pytest.raises`) — they raise at import otherwise.
 
+12. An unset field is **omitted** from the spawn payload, not sent as null. Replaces the
+    deleted `test_to_kwargs_emits_only_set_fields`, whose intent nothing else covers.
+
 Items 1–4 already exist and their assertions are stable — `test_enqueue.py` covers all
 three precedence layers (5 / 7 / 9) plus headers, retry strategy, and dedupe, and
 `tests/pg_cron/test_pg_cron_options.py` covers the reconcile path's own merge including
-"7, not 5" (our `DEFAULT_MAX_ATTEMPTS` beating the SDK's default). Only their setup and
-call syntax change, and the four `# type: ignore[call-arg]` comments come out. Items
-5–11 are new.
+"7, not 5" (our `DEFAULT_MAX_ATTEMPTS` beating the SDK's default). Items 5–12 are new.
 
-`tests/core/test_params.py`: the `to_kwargs` dataclass unit tests are deleted outright —
-the behavioral equivalents already live in `test_enqueue.py` — and the above-`@task`
-test is respelled. `tests/tasks.py` has 5 decorator sites; `tests/core/` has ~13 kwarg
-call sites. `test_spawn_params_not_passed_to_task_func` stays as a regression guard,
-though after the change the separation is structural.
+### Existing-test inventory
+
+37 references across 10 files. Nine files are pure syntax — no assertion moves:
+
+| File                                    | Refs | Change                                           |
+| --------------------------------------- | ---- | ------------------------------------------------ |
+| `tests/tasks.py`                        | 6    | 5 decorator lines + import                       |
+| `tests/core/test_enqueue.py`            | 7    | 6 call sites + import                            |
+| `tests/core/test_durable.py`            | 3    | call sites                                       |
+| `tests/core/test_results.py`            | 2    | call site; its `type: ignore[call-arg]` goes too |
+| `tests/core/test_async_worker.py`       | 2    | call site                                        |
+| `tests/core/test_orm_models.py`         | 2    | call site                                        |
+| `tests/core/test_pytest_plugin.py`      | 2    | call site                                        |
+| `tests/core/test_admin/utils.py`        | 2    | call site                                        |
+| `tests/pg_cron/test_pg_cron_options.py` | 1    | comment only                                     |
+
+`tests/core/test_params.py` (10 refs) is the exception. Correct usage behaves
+identically; what changes is how misuse is signalled:
+
+- `test_to_kwargs_emits_only_set_fields` and
+  `test_spawnparams_carries_per_invocation_fields` — subject deleted. The second is
+  covered by `test_headers_reach_spawn` / `test_idempotency_key_dedups`; the first is
+  why item 12 exists.
+- `test_decorator_rejects_per_invocation_kwarg` — **the raise moves.** Today the factory
+  call raises (the dataclass rejects the field); now that call is legal and the error
+  appears on application. Rewritten, not respelled.
+- `test_decorator_attaches_default_to_task_func` — asserts internals; deleted in favour
+  of the existing behavioral `test_max_attempts_uses_decorator_default`.
+- `test_decorator_above_task_raises` — survives; still `TypeError`, new message.
+
+`test_spawn_params_not_passed_to_task_func` stays as a regression guard, though after
+the change the separation is structural.
 
 ## Alternatives considered
 
