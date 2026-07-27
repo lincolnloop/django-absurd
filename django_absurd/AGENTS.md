@@ -677,11 +677,10 @@ undeclared alias is skipped, matching Django's own per-alias flush scoping.
 
 ### `manage.py test` (non-pytest)
 
-The pytest wiring above doesn't cover Django's own `manage.py test`/
+The pytest wiring above is pytest-specific — Django's own `manage.py test`/
 [`DiscoverRunner`](https://docs.djangoproject.com/en/stable/topics/testing/advanced/#django.test.runner.DiscoverRunner)
-— not auto-wired in this release
-([issue #96](https://github.com/lincolnloop/django-absurd/issues/96)). Call the same
-hook yourself, from a runner subclass:
+has no equivalent auto-hook (pytest is django-absurd's primary test surface). Wire the
+same public hook yourself, from a runner subclass:
 
 ```python
 from django.test.runner import DiscoverRunner
