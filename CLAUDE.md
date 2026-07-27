@@ -116,11 +116,39 @@ duplicate that material here.
   so a single override isolates one rule.
 - **Assert the COMPLETE error message, never a fragment** (fragments are unreadable and
   brittle); assert the full stable portion up to any volatile tail.
+- **Narrow `# type: ignore[...]` is expected when a test deliberately passes something
+  the checker rejects** — our runtime error states are part of the public contract
+  (users may not type-check at all), so they must be exercised. This is the one place
+  ignores don't need asking for; keep them narrow (specific error code) and on the
+  offending line only. `warn_unused_ignores` (on via `strict`) fails the build if the
+  error stops occurring, so a stale ignore can't hide a regressed guard.
 - **Always alphabetize** `@pytest.mark.parametrize` values and fixture `params`.
 - **Alphabetize a test function's own fixture parameters** too (e.g.
   `def test_x(admin_user: User, client: Client)`, not `client` then `admin_user`) — no
   ruff/flake8-pytest-style rule enforces this (checked; no `PT0xx` rule covers parameter
   order), so it's a manual convention only.
+
+## Typing is an extra layer, not the contract
+
+- **Type checking is optional for our users.** They may run mypy, pyright, or nothing at
+  all. Downstream projects are under no obligation to type-check.
+- **We are on mypy specifically**, not by preference: `django-stubs` ships a mypy plugin
+  (`plugins = ["mypy_django_plugin.main"]`) that resolves settings and models, and no
+  other checker can load it. So our own gate is mypy strict.
+- That asymmetry means public API typing should stay **checker-agnostic** where it can —
+  plain overloads and explicit signatures rather than mypy-specific behavior — so
+  pyright users get the same errors. Verify with `uvx pyright` when designing a typed
+  surface.
+- So **runtime behavior is the contract.** Every rule we enforce must raise a correct,
+  self-explanatory Python error on its own — never rely on a checker having caught it
+  first. Annotations, overloads, and `Never`/`NoReturn` tricks are a bonus layer that
+  catches mistakes earlier for the users who opt in.
+- When a nicer static message and a nicer runtime message conflict, **the runtime
+  message wins**. Errors state the rule and show the fix (see the system-check
+  convention above: problem in `msg`, resolution in `hint`).
+- Don't lie to the checker to buy a tidier static error (e.g. hiding a method behind
+  `if not t.TYPE_CHECKING` so it looks absent). Prefer a construction that is true at
+  both layers.
 
 ## Runtime
 
