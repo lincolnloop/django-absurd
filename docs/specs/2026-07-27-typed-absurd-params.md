@@ -32,7 +32,7 @@ mypy 2.3.0 strict / django-stubs 6.0.7:
 | Return value               | A real `Task`: `isinstance` holds, `aenqueue`/`call`/`get_result`/`using` inherited, original untouched.                         |
 | Enqueue-site spelling      | `.bind(task)`. `__call__` exists only for the decorator site, so the two never overlap.                                          |
 | Per-site separation        | Static, via an overload pair on `absurd_params`; runtime guards back it up for untyped callers.                                  |
-| Double apply / double bind | Raise.                                                                                                                           |
+| Double apply / double bind | Merge, later value winning per field. No guard — mirrors `Task.using()` and enables composition.                                 |
 | Non-Absurd backend         | No-op returning the input instance; `WARNING` once per task, deduped on `task.module_path`.                                      |
 | Typing tests               | Negative cases pinned with narrow `# type: ignore[...]` under `warn_unused_ignores`. Authorized for the typing-test module only. |
 
@@ -112,10 +112,18 @@ The field needs no privacy wrapper: `frozen` already makes it read-only
 on unbound tasks. A `_absurd_params` field behind a property would only move the
 underscore into the constructor keyword.
 
-Two storage locations, deliberately: the decorator writes a function attribute, `bind`
-writes the field. Folding decorator defaults into the field at construction would
-collapse them into one location but make every task arrive already-bound, which is the
-double-bind guard's only signal.
+**One read location.** The decorator writes a function attribute because it has no task
+yet, but `AbsurdTask.__post_init__` folds that into the field, so `enqueue` and
+`reconcile` both consult a single attribute. The fold uses `setdefault` semantics —
+defaults fill absent keys only — which makes it idempotent: `.using()` is `replace()`,
+which re-runs `__post_init__`, and an overwriting fold would silently clobber per-call
+values on any `bind(...).using(...)`.
+
+No double-apply guards. Stacking the decorator or binding twice merges, later value
+winning per field — consistent with `Task.using()`, which is freely re-appliable, and it
+makes composition legal (`bind` a partially-configured task, specialize it later).
+Getting it wrong is the caller's problem. `bind` lives only on the params object;
+nothing is added to the task's surface.
 
 `absurd_params` is a bare noun, deviating from CLAUDE.md's verb rule for function names.
 Deliberate, for the symmetry of one name at both sites.
@@ -139,6 +147,12 @@ Highest wins: **per-invocation → task-level default → `DEFAULT_MAX_ATTEMPTS`
   `_normalize_cancellation`) while passing `headers` by reference. It becomes a
   requirement the moment anything writes a header in-place — the SDK's `before_spawn`
   hook (`absurd_sdk/__init__.py:1478`) or #116's planned `run_after` header.
+- **Both `setdefault("max_attempts", …)` calls stay.** They are not duplicating the
+  SDK's own `default_max_attempts = 5`; they are the infinite-retry guard.
+  `absurd.fail_run` retries while `v_max_attempts is null`, and `spawn_task` only reads
+  the key when present (`if p_options ? 'max_attempts'`), so an omitted value lands as
+  NULL = retry forever. This already bit us on a pg_cron schedule. The same reason keeps
+  `ScheduledTask.max_attempts`'s field default a concrete number.
 - The SDK carries its own fallbacks in `_prepare_spawn` (`registration` defaults, then
   `self._default_max_attempts = 5`). They never fire because `build_absurd_client` makes
   a registry-empty client per enqueue and both merge paths `setdefault` `max_attempts`
@@ -152,8 +166,6 @@ Highest wins: **per-invocation → task-level default → `DEFAULT_MAX_ATTEMPTS`
 | Unknown keyword                        | `[call-overload]`                       | `TypeError`; `queue`/`queue_name`/`priority`/`backend` name `.using()`, `run_after` cites defer (#116) |
 | Per-invocation field used as decorator | `"BoundParams" not callable [operator]` | Python's `TypeError: 'BoundParams' object is not callable`                                             |
 | Params applied above `@task`           | `Task` is not `Callable` → `[arg-type]` | `AbsurdParams`: curated "apply below `@task`"; `BoundParams`: Python's not-callable                    |
-| Decorator applied twice                | —                                       | `TypeError` naming fields already set                                                                  |
-| `.bind()` on an already-bound task     | —                                       | `TypeError` naming fields already set                                                                  |
 | Non-Absurd backend                     | —                                       | no-op returning the input instance; `WARNING` once per task                                            |
 
 The implementation signature spells out all five keyword-only params plus
@@ -164,6 +176,8 @@ callers and `**dict` splatting, which evades static checking.
 Rows 2 and 3 deliberately accept Python's own message: the static `[operator]` error
 exists _because_ `BoundParams` has no `__call__`, and adding one for nicer wording would
 destroy it.
+
+Stacked decorators and repeated binds are not guarded — they merge (see Mechanism).
 
 Off-backend detection is `isinstance(task.get_backend(), AbsurdBackend)` —
 `get_backend()` is a dict lookup. Logging goes to `logging.getLogger("django_absurd")`,
@@ -210,15 +224,18 @@ Behavioral, through real entrypoints. No monkeypatching; assert complete message
 4. `headers` and `idempotency_key` per call; two enqueues with one key spawn one task.
 5. The bound object is a `Task` — `isinstance`, and `aenqueue` works through it.
 6. Params survive `.bind(task).using(queue_name=...)` — both orderings reach the spawned
-   task identically.
+   task identically, and a decorator default is not clobbered by the re-fold `replace()`
+   triggers.
 7. A task defined on a non-Absurd backend and routed in via `.using(backend=...)` binds
    and spawns with its params.
-8. One test per guard row.
-9. Off-backend no-op: an immediate-backend task returns the input instance, logs once,
-   stays quiet on a second bind, and still enqueues and runs to completion. Mixed
-   backends (one Absurd, one immediate) routed via `.using(backend=...)`. Uses a task no
-   other test touches, since the dedup is process-wide and xdist-order-sensitive.
-10. Typing tests: correct usage at both sites stays mypy-clean; negative cases pinned
+8. Repeated binds merge, later value winning per field; a stacked decorator merges the
+   same way.
+9. One test per guard row.
+10. Off-backend no-op: an immediate-backend task returns the input instance, logs once,
+    stays quiet on a second bind, and still enqueues and runs to completion. Mixed
+    backends (one Absurd, one immediate) routed via `.using(backend=...)`. Uses a task
+    no other test touches, since the dedup is process-wide and xdist-order-sensitive.
+11. Typing tests: correct usage at both sites stays mypy-clean; negative cases pinned
     with narrow ignores. Keep the negative expressions out of collected test bodies (or
     inside `pytest.raises`) — they raise at import otherwise.
 
