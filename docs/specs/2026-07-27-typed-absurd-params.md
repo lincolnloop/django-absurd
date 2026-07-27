@@ -30,7 +30,7 @@ mypy 2.3.0 strict / django-stubs 6.0.7:
 | Per-invocation field set   | Decorator fields + `headers` + `idempotency_key` — unchanged.                                                                                              |
 | Old spellings              | Hard break. `@absurd_default_params`, the kwarg, and both param dataclasses are deleted.                                                                   |
 | Return value               | A real `Task`: `isinstance` holds, `aenqueue`/`call`/`get_result`/`using` inherited, original untouched.                                                   |
-| Enqueue-site spelling      | `.bind(task)`. `__call__` exists only for the decorator site, so the two never overlap.                                                                    |
+| Enqueue-site spelling      | `.bind(task)`. Only the decorator-legal form has a usable `__call__`; the per-call form's exists solely to raise a curated message.                        |
 | Per-site separation        | Static, via an overload pair on `absurd_params`; runtime guards back it up for untyped callers.                                                            |
 | Double apply / double bind | Merge, later value winning per field. No guard — mirrors `Task.using()` and enables composition.                                                           |
 | Non-Absurd backend         | No-op returning the input instance; `WARNING` once per task, deduped on `task.module_path`.                                                                |
