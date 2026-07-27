@@ -1,7 +1,8 @@
 # Typed Absurd params: one `absurd_params`, two sites
 
-Status: designed, not built. Replaces `@absurd_default_params` and the
-`absurd_spawn_params=` kwarg.
+Status: designed, not built. Tracked in
+[#119](https://github.com/lincolnloop/django-absurd/issues/119). Replaces
+`@absurd_default_params` and the `absurd_spawn_params=` kwarg.
 
 ## Problem
 
@@ -375,4 +376,5 @@ the change the separation is structural.
 ## Follow-ups
 
 - Reserve a header namespace when #116 starts carrying `run_after` in headers.
-- File a GitHub issue for this work; none exists (closest is #23, closed).
+- Revisit validating `retry_strategy["kind"]` if the silent zero-backoff degradation
+  bites.
