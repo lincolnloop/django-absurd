@@ -72,7 +72,7 @@ absurd_params(
 task.
 
 Django's own options — routing (`.using(queue_name=...)`), `backend`, … — stay on
-`.using()`, never on `absurd_params`. The two compose in either order:
+`.using()`, never on `absurd_params`. Routing composes with binding in either order:
 
 ```python
 absurd_params(max_attempts=5).bind(send_report.using(queue_name="reports")).enqueue(42)
@@ -84,7 +84,9 @@ Binding onto a task whose backend isn't the Absurd backend is a no-op: `bind` re
 that task unchanged and logs one `WARNING` (deduped per task). This keys on the task's
 _current_ backend, not where it was defined — a task defined elsewhere but routed in
 with `.using(backend="default")` binds and spawns normally; a task defined on the Absurd
-backend but routed out with `.using(backend=...)` is the no-op.
+backend but routed out with `.using(backend=...)` is the no-op. So change a task's
+backend before binding, not after — binding first and rerouting the backend afterward
+hits that same no-op and silently drops the params.
 
 Precedence for `max_attempts`: per-invocation → decorator default →
 [`OPTIONS["DEFAULT_MAX_ATTEMPTS"]`](configuration.md#backend-options) (5).
