@@ -65,6 +65,22 @@ def test_per_invocation_field_cannot_decorate() -> None:
     assert str(excinfo.value) == expected
 
 
+def test_per_invocation_fields_join_and_pick_first_in_message() -> None:
+    expected = (
+        "headers, idempotency_key can only be set per invocation, not on a task "
+        "definition. Bind it at enqueue time instead:\n\n"
+        "    absurd_params(headers=...).bind(send_report).enqueue(...)"
+    )
+
+    def send_report(user_id: int) -> None:
+        return None
+
+    params = absurd_params(headers={}, idempotency_key="k")
+    with pytest.raises(TypeError) as excinfo:
+        params(send_report)  # type: ignore[arg-type]
+    assert str(excinfo.value) == expected
+
+
 def test_params_above_task_are_rejected() -> None:
     expected = (
         "apply @absurd_params below @task, not above it:\n\n"

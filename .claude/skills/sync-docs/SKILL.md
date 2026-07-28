@@ -42,8 +42,8 @@ A change triggers a doc pass if it touches any of:
 - a **management command** or one of its flags (`absurd_worker`, `absurd_sync_queues`,
   …)
 - **settings**: `TASKS`, backend `OPTIONS`, defaults (e.g. `DEFAULT_MAX_ATTEMPTS`)
-- the **enqueue / params API** (`AbsurdSpawnParams`, `@absurd_default_params`, reserved
-  kwargs)
+- the **enqueue / params API** (`absurd_params(...)` as a decorator below `@task` or via
+  `absurd_params(...).bind(task).enqueue(...)`)
 - the **setup / run flow** (what a user must run, and in what order)
 - **system checks** (which fire, their messages/hints)
 - backend **capabilities** (`supports_*`)

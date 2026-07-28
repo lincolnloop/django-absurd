@@ -14,7 +14,7 @@ from django_absurd import absurd_params
 from django_absurd.connection import register_jsonb_loader
 from django_absurd.queues import get_absurd_client
 from django_absurd.tasks import AbsurdTask
-from tests import tasks
+from tests import tasks, utils
 
 if t.TYPE_CHECKING:
     from absurd_sdk import RetryStrategy
@@ -159,6 +159,17 @@ def test_max_attempts_uses_backend_default_when_unset() -> None:
     register_jsonb_loader(connections["default"].connection)
     claimed = get_absurd_client().claim_tasks(batch_size=1)
     assert claimed[0]["max_attempts"] == 5
+
+
+def test_max_attempts_uses_custom_backend_default(settings: SettingsWrapper) -> None:
+    # 7 is our own DEFAULT_MAX_ATTEMPTS, not absurd_sdk's own client-level fallback
+    # of 5 — pins backends.py's setdefault("max_attempts", self.default_max_attempts).
+    settings.TASKS = utils.make_tasks_settings(default_max_attempts=7)
+    call_command("absurd_sync_queues")
+    tasks.add.enqueue(1, 2)
+    register_jsonb_loader(connections["default"].connection)
+    claimed = get_absurd_client().claim_tasks(batch_size=1)
+    assert claimed[0]["max_attempts"] == 7
 
 
 def test_max_attempts_uses_decorator_default() -> None:

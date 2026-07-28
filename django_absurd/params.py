@@ -33,7 +33,7 @@ class ParamsBase:
     kwargs: SpawnKwargs
 
     def bind(self, target: "Task[P, R]") -> "Task[P, R]":
-        """Return a copy of ``target`` carrying these params, merged over its own."""
+        """Attach these params to ``target``, or raise/no-op if it can't carry them."""
         if not isinstance(target, Task):
             msg = (
                 f"absurd_params(...).bind() takes a Task, got "
