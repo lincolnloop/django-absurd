@@ -33,7 +33,7 @@ mypy 2.3.0 strict / django-stubs 6.0.7:
 | Return value               | A real `Task`: `isinstance` holds, `aenqueue`/`call`/`get_result`/`using` inherited, original untouched.                                                   |
 | Enqueue-site spelling      | `.bind(task)`. Only the decorator-legal form has a usable `__call__`; the per-call form's exists solely to raise a curated message.                        |
 | Per-site separation        | Static, via an overload pair on `absurd_params`; runtime guards back it up for untyped callers.                                                            |
-| Double apply / double bind | Merge, later value winning per field. No guard — mirrors `Task.using()` and enables composition.                                                           |
+| Double apply / double bind | Merge, later value winning per field. No guard — mirrors `Task.using()`. Not intended usage, not documented.                                               |
 | Non-Absurd backend         | No-op returning the input instance; `WARNING` once per task, deduped on `task.module_path`.                                                                |
 | Ignores in tests           | Any test constructing statically-invalid usage may carry narrow `# type: ignore[...]`; `warn_unused_ignores` fails the build if the error stops occurring. |
 
