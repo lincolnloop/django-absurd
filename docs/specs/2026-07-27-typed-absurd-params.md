@@ -129,10 +129,9 @@ which re-runs `__post_init__`, and an overwriting fold would silently clobber pe
 values on any `bind(...).using(...)`.
 
 No double-apply guards. Stacking the decorator or binding twice merges, later value
-winning per field — consistent with `Task.using()`, which is freely re-appliable, and it
-makes composition legal (`bind` a partially-configured task, specialize it later).
-Getting it wrong is the caller's problem. `bind` lives only on the params object;
-nothing is added to the task's surface.
+winning per field — consistent with `Task.using()`, which is freely re-appliable. Not
+intended usage and not a feature we document; we simply don't care if someone does it.
+`bind` lives only on the params object; nothing is added to the task's surface.
 
 `absurd_params` is a bare noun, which CLAUDE.md's verb rule normally forbids. Accepted:
 it is a decorator reused at both sites, and `bind` carries the verb. `bind` over `apply`
@@ -205,7 +204,8 @@ its declaration rather than guarded:
   `TypedDict, total=False`, but `_serialize_retry_strategy` does `strategy["kind"]`
   unconditionally, so `retry_strategy={"base_seconds": 5}` type-checks under both mypy
   and pyright and then dies at enqueue with `KeyError: 'kind'` from inside `absurd_sdk`.
-  No checker can flag this; the SDK's type is simply wrong. Left to error.
+  No checker can flag this; the SDK's type is simply wrong. Left to error — validating
+  it is YAGNI complexity for now, revisitable if users ask.
 
 Also worth knowing, same source: the SDK silently **drops** unknown keys in
 `retry_strategy` and `cancellation` (a typo'd `factor` is a no-op), and passes bad value
@@ -216,30 +216,30 @@ What the guards above do cover is a different category — mistakes where the ca
 the wrong door, not holding the wrong data. Python's own message can't point at the
 right API, so those are curated.
 
-Every runtime message names the rule and shows the fix. Unsupported keywords arrive
-through `**unsupported` in the implementation signature, so they are freely worded; the
-factory runs before any target exists, so those cannot name the task:
+Unsupported keywords arrive through `**unsupported` in the implementation signature, so
+they are freely worded; the factory runs before any target exists, so those cannot name
+the task. One plain shape for anything unrecognized — no fuzzy matching, no suggestions:
 
 ```
-TypeError: 'queue' is not an Absurd param — queue routing belongs to Django:
+TypeError: 'max_attemps' is an invalid argument for absurd_params. Valid arguments:
+max_attempts, retry_strategy, cancellation, headers, idempotency_key.
+```
+
+Routing and scheduling keys get the extra pointer, because they are real Absurd spawn
+options (`spawn(queue=...)`) — the message must say they are not allowed _here_, not
+that they do not exist:
+
+```
+TypeError: 'queue' cannot be set through absurd_params — queue routing belongs to Django:
 
     send_report.using(queue_name="reports")
-
-Absurd params: max_attempts, retry_strategy, cancellation, headers, idempotency_key.
 ```
 
 ```
-TypeError: 'run_after' is not an Absurd param, and deferred enqueue is not supported by
-this backend (supports_defer = False). See
+TypeError: 'run_after' cannot be set through absurd_params, and deferred enqueue is not
+supported by this backend (supports_defer = False). See
 https://github.com/lincolnloop/django-absurd/issues/116.
 ```
-
-```
-TypeError: 'max_attemps' is not an Absurd param. Did you mean 'max_attempts'?
-```
-
-The last is `difflib.get_close_matches` over the five field names, mirroring what mypy
-prints for typed callers.
 
 The definition-site message does know its target:
 
