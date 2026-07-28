@@ -17,12 +17,14 @@ from django_absurd.context import (
     get_absurd_context,
 )
 from django_absurd.events import emit_event
+from django_absurd.params import absurd_params
 
 ABSURD_SCHEMA_VERSION = "0.4.0"
 
 __all__ = [
     "ABSURD_SCHEMA_VERSION",
     "AbsurdTaskContext",
+    "absurd_params",
     "aget_absurd_context",
     "emit_event",
     "get_absurd_context",
