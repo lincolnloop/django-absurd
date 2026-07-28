@@ -11,7 +11,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  validate:
+  # The job id is the status-check context, so name it for what it gates — it has to
+  # be picked out of a list when added as a required check, and renaming it later
+  # would break that requirement.
+  pr-title:
     runs-on: ubuntu-latest
     permissions:
       pull-requests: read
