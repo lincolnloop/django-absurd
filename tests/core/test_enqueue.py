@@ -27,8 +27,9 @@ pytestmark = [
 
 @task(backend="immediate")
 @absurd_params(max_attempts=4)
-def add_on_immediate_backend(a: int, b: int) -> int:
-    return a + b
+def add_on_immediate_backend(a: int, b: int) -> t.Never:
+    msg = "routed onto Absurd and claimed, never run by a worker"
+    raise NotImplementedError(msg)
 
 
 def test_decorator_default_survives_a_replace() -> None:

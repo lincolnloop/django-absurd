@@ -2,16 +2,12 @@
 
 import dataclasses
 import enum
-import logging
 import typing as t
 
 from absurd_sdk import CancellationPolicy, JsonObject, RetryStrategy
 from django.tasks import Task
 
-from django_absurd.backends import AbsurdBackend
 from django_absurd.tasks import AbsurdTask, SpawnKwargs, build_merged_spawn_options
-
-logger = logging.getLogger("django_absurd")
 
 
 class NotSet(enum.Enum):
@@ -33,7 +29,7 @@ class ParamsBase:
     kwargs: SpawnKwargs
 
     def bind(self, target: "Task[P, R]") -> "Task[P, R]":
-        """Attach these params to ``target``, or raise/no-op if it can't carry them."""
+        """Attach these params to ``target``, merged over any it already carries."""
         if not isinstance(target, Task):
             msg = (
                 f"absurd_params(...).bind() takes a Task, got "
@@ -41,9 +37,8 @@ class ParamsBase:
                 "apply absurd_params(...) as a decorator below @task."
             )
             raise TypeError(msg)
-        if not isinstance(target.get_backend(), AbsurdBackend):
-            warn_off_backend_bind(target)
-            return target
+        # Attach regardless of the target's current backend: the task may be routed
+        # onto Absurd afterwards, and AbsurdTask.enqueue warns if it never is.
         # Rebuilt from Task's own fields rather than replace(): a task defined on
         # another backend and routed in with .using(backend=...) is a plain Task,
         # so there is no absurd_params field to replace.
@@ -158,8 +153,6 @@ FIELD_NAMES = (
 
 ROUTING_KEYWORDS = ("queue", "queue_name")
 
-WARNED_TASK_PATHS: set[str] = set()
-
 
 def build_unsupported_keyword_message(name: str) -> str:
     """Explain why a keyword outside the five supported fields was refused."""
@@ -171,17 +164,4 @@ def build_unsupported_keyword_message(name: str) -> str:
     return (
         f"{name!r} is an invalid argument for absurd_params. Valid arguments: "
         f"{', '.join(FIELD_NAMES)}."
-    )
-
-
-def warn_off_backend_bind(target: "Task[t.Any, t.Any]") -> None:
-    """Report, once per task, that binding params to a foreign backend did nothing."""
-    if target.module_path in WARNED_TASK_PATHS:
-        return
-    WARNED_TASK_PATHS.add(target.module_path)
-    logger.warning(
-        "absurd_params ignored: %s is on task backend %r, which is not an Absurd "
-        "backend",
-        target.module_path,
-        target.backend,
     )

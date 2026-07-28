@@ -80,12 +80,11 @@ absurd_params(max_attempts=5).bind(send_report.using(queue_name="reports")).enqu
 absurd_params(max_attempts=5).bind(send_report).using(queue_name="reports").enqueue(42)
 ```
 
-Binding onto a task whose backend isn't the Absurd backend is a no-op: `bind` returns
-that task unchanged and logs one `WARNING` (deduped per task). This keys on the task's
-_current_ backend, not where it was defined — a task defined elsewhere but routed in
-with `.using(backend="default")` binds and spawns normally; a task defined on the Absurd
-backend but routed out with `.using(backend=...)` is the no-op. `bind` reads the task's
-backend at the moment you call it, so change a task's backend before binding, not after.
+`bind` attaches the params whatever backend the task is currently on, so binding and
+`.using(backend=...)` also compose in either order. Only the Absurd backend reads them,
+though — so if the task is still on some other backend when you enqueue it, the params
+are silently inert and you get one `WARNING` naming the task and the backend it ran on
+(deduped per task). Enqueue it on the Absurd backend and there is nothing to warn about.
 
 Precedence for `max_attempts`: per-invocation → decorator default →
 [`OPTIONS["DEFAULT_MAX_ATTEMPTS"]`](configuration.md#backend-options) (5).

@@ -34,7 +34,7 @@ mypy 2.3.0 strict / django-stubs 6.0.7:
 | Enqueue-site spelling      | `.bind(task)`. Only the decorator-legal form has a usable `__call__`; the per-call form's exists solely to raise a curated message.                        |
 | Per-site separation        | Static, via an overload pair on `absurd_params`; runtime guards back it up for untyped callers.                                                            |
 | Double apply / double bind | Merge, later value winning per field. No guard — mirrors `Task.using()`. Not intended usage, not documented.                                               |
-| Non-Absurd backend         | No-op returning the input instance; `WARNING` once per task, deduped on `task.module_path`.                                                                |
+| Non-Absurd backend         | `bind` attaches regardless; `AbsurdTask.enqueue`/`aenqueue` emit a `WARNING` once per `task.module_path` if the params were still inert at spawn.          |
 | Ignores in tests           | Any test constructing statically-invalid usage may carry narrow `# type: ignore[...]`; `warn_unused_ignores` fails the build if the error stops occurring. |
 
 ## Public surface
@@ -177,13 +177,13 @@ Highest wins: **per-invocation → task-level default → `DEFAULT_MAX_ATTEMPTS`
 type checker at all, so every rule here raises a correct, self-explanatory Python error
 on its own — no guard may rely on a checker having caught it first.
 
-| Condition                              | Static                                    | Runtime                                                     |
-| -------------------------------------- | ----------------------------------------- | ----------------------------------------------------------- |
-| Unknown / unsupported keyword          | `[call-overload]`                         | curated `TypeError` (below)                                 |
-| Per-invocation field used as decorator | `[arg-type]` — `__call__` accepts `Never` | curated `TypeError` (below)                                 |
-| Params applied above `@task`           | `Task` is not `Callable` → `[arg-type]`   | curated `TypeError` — apply below `@task`                   |
-| `bind` on a non-`Task`                 | `[arg-type]`                              | curated `TypeError` pointing at the decorator form          |
-| Non-Absurd backend                     | —                                         | no-op returning the input instance; `WARNING` once per task |
+| Condition                              | Static                                    | Runtime                                            |
+| -------------------------------------- | ----------------------------------------- | -------------------------------------------------- |
+| Unknown / unsupported keyword          | `[call-overload]`                         | curated `TypeError` (below)                        |
+| Per-invocation field used as decorator | `[arg-type]` — `__call__` accepts `Never` | curated `TypeError` (below)                        |
+| Params applied above `@task`           | `Task` is not `Callable` → `[arg-type]`   | curated `TypeError` — apply below `@task`          |
+| `bind` on a non-`Task`                 | `[arg-type]`                              | curated `TypeError` pointing at the decorator form |
+| Non-Absurd backend                     | —                                         | params attach; `WARNING` at enqueue if still inert |
 
 **No value validation on this surface.** `absurd_params` does not check that
 `max_attempts` is an `int`, that `retry_strategy["kind"]` is a known value, or anything
@@ -269,9 +269,16 @@ callers and `**dict` splatting, which evades static checking.
 
 Stacked decorators and repeated binds are not guarded — they merge (see Mechanism).
 
-Off-backend detection is `isinstance(task.get_backend(), AbsurdBackend)` —
-`get_backend()` is a dict lookup. Logging goes to `logging.getLogger("django_absurd")`,
-which works today; #25 only changes formatting.
+Off-backend detection happens at **enqueue**, not at `bind`. `bind` cannot know whether
+params will apply: a task bound on the wrong backend and then routed onto Absurd applies
+them fine, so warning there would cry wolf over a legal ordering, while saying nothing
+about a task bound on Absurd and routed back out. `AbsurdTask.enqueue`/`aenqueue` check
+instead, where the answer is settled — the class stays ours through any `.using()`, so
+the hook survives routing onto a foreign backend. The check identifies an Absurd backend
+by the task class it builds (`type(backend).task_class is AbsurdTask`) rather than
+`isinstance(..., AbsurdBackend)`, which keeps `tasks.py` a leaf; importing the backend
+there would close a cycle. Logging goes to `logging.getLogger("django_absurd")`, which
+works today; #25 only changes formatting.
 
 The decorator site has no such guard, since it attaches before any backend is known. A
 task carrying only decorator defaults on a non-Absurd backend loses them silently.
@@ -324,10 +331,12 @@ Behavioral, through real entrypoints. No monkeypatching; assert complete message
 8. Repeated binds merge, later value winning per field; a stacked decorator merges the
    same way.
 9. One test per guard row.
-10. Off-backend no-op: an immediate-backend task returns the input instance, logs once,
-    stays quiet on a second bind, and still enqueues and runs to completion. Mixed
-    backends (one Absurd, one immediate) routed via `.using(backend=...)`. Uses a task
-    no other test touches, since the dedup is process-wide and xdist-order-sensitive.
+10. Off-backend: `bind` attaches and stays quiet; binding off-backend then routing in
+    keeps the params through to spawn; enqueuing while still off-backend warns once
+    (deduped) and the foreign backend still runs the task; a task bound on Absurd and
+    routed out warns too; enqueuing on Absurd stays quiet; `aenqueue` warns the same
+    way. Uses tasks no other test touches, since the dedup is process-wide and
+    xdist-order-sensitive.
 11. Typing tests: correct usage at both sites stays mypy-clean; negative cases pinned
     with narrow ignores. Keep the negative expressions out of collected test bodies (or
     inside `pytest.raises`) — they raise at import otherwise.

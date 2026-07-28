@@ -134,23 +134,70 @@ def test_repeated_binds_merge_with_the_later_value_winning() -> None:
     assert claimed["retry_strategy"] == strategy
 
 
-def test_binding_off_backend_is_a_deduped_no_op(
+def test_binding_off_backend_attaches_and_stays_quiet() -> None:
+    # bind no longer predicts whether params will apply — it attaches, and the
+    # enqueue-time guard observes whether they actually did.
+    bound = absurd_params(max_attempts=9).bind(make_group_on_immediate_backend)
+    assert isinstance(bound, AbsurdTask)
+    assert bound.absurd_params == {"max_attempts": 9}
+
+
+def test_binding_off_backend_then_routing_in_keeps_the_params() -> None:
+    call_command("absurd_sync_queues")
+    bound = absurd_params(max_attempts=9).bind(multiply_on_immediate_backend)
+    bound.using(backend="default").enqueue(3, 4)
+    register_jsonb_loader(connections["default"].connection)
+    claimed = get_absurd_client().claim_tasks(batch_size=1)
+    assert claimed[0]["max_attempts"] == 9
+
+
+def test_enqueuing_inert_params_off_backend_warns_once(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    bound = absurd_params(max_attempts=9).bind(make_group_on_immediate_backend)
     with caplog.at_level(logging.WARNING, logger="django_absurd"):
-        first = absurd_params(max_attempts=9).bind(make_group_on_immediate_backend)
-        second = absurd_params(max_attempts=9).bind(make_group_on_immediate_backend)
-    assert first is make_group_on_immediate_backend
-    assert second is make_group_on_immediate_backend
+        bound.enqueue("off-backend-ran")
+        bound.enqueue("off-backend-ran-again")
     assert caplog.messages == [
         "absurd_params ignored: tests.core.test_absurd_params."
-        "make_group_on_immediate_backend is on task backend 'immediate', "
+        "make_group_on_immediate_backend ran on task backend 'immediate', "
         "which is not an Absurd backend"
     ]
-    first.enqueue("off-backend-ran")
+    # The immediate backend still ran the task; only the params were inert.
     assert Group.objects.filter(name="off-backend-ran").exists()
+    assert Group.objects.filter(name="off-backend-ran-again").exists()
 
 
-def test_an_absurd_task_routed_off_backend_is_also_a_no_op() -> None:
-    routed = tasks.with_default_attempts.using(backend="immediate")
-    assert absurd_params(max_attempts=9).bind(routed) is routed
+def test_enqueuing_params_routed_off_backend_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Bound on Absurd, then routed out — silent before this guard existed.
+    bound = absurd_params(max_attempts=9).bind(tasks.echo)
+    with caplog.at_level(logging.WARNING, logger="django_absurd"):
+        bound.using(backend="immediate").enqueue("routed-out")
+    assert caplog.messages == [
+        "absurd_params ignored: tests.tasks.echo ran on task backend 'immediate', "
+        "which is not an Absurd backend"
+    ]
+
+
+def test_enqueuing_on_the_absurd_backend_stays_quiet(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    call_command("absurd_sync_queues")
+    with caplog.at_level(logging.WARNING, logger="django_absurd"):
+        absurd_params(max_attempts=9).bind(tasks.add).enqueue(1, 2)
+    assert caplog.messages == []
+
+
+def test_aenqueuing_inert_params_off_backend_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    bound = absurd_params(max_attempts=9).bind(multiply_on_immediate_backend)
+    with caplog.at_level(logging.WARNING, logger="django_absurd"):
+        asyncio.run(bound.aenqueue(3, 4))
+    assert caplog.messages == [
+        "absurd_params ignored: tests.core.test_absurd_params."
+        "multiply_on_immediate_backend ran on task backend 'immediate', "
+        "which is not an Absurd backend"
+    ]

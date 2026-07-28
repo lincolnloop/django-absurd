@@ -63,7 +63,7 @@ def test_per_invocation_field_cannot_decorate() -> None:
 
         @absurd_params(idempotency_key="k")  # type: ignore[arg-type]
         def send_report(user_id: int) -> None:
-            return None
+            """Decoration raises before this is ever callable."""
 
     assert str(excinfo.value) == expected
 
@@ -76,7 +76,7 @@ def test_per_invocation_fields_join_and_pick_first_in_message() -> None:
     )
 
     def send_report(user_id: int) -> None:
-        return None
+        """Only its name reaches the message; never called."""
 
     params = absurd_params(headers={}, idempotency_key="k")
     with pytest.raises(TypeError) as excinfo:
@@ -110,8 +110,8 @@ def test_stacked_decorators_merge_the_same_way() -> None:
 
     @absurd_params(max_attempts=4)
     @absurd_params(max_attempts=9, retry_strategy=strategy)
-    def stacked(a: int, b: int) -> int:
-        return a + b
+    def stacked(a: int, b: int) -> None:
+        """Only its folded absurd_params attribute is read; never called."""
 
     attached: t.Any = stacked
     assert attached.absurd_params == {"max_attempts": 4, "retry_strategy": strategy}

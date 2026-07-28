@@ -49,8 +49,9 @@ def routed() -> str:
 
 @task
 @absurd_params(max_attempts=7)
-def with_default_attempts(a: int, b: int) -> int:
-    return a + b
+def with_default_attempts(a: int, b: int) -> t.Never:
+    msg = "path-resolved for its decorator; never run"
+    raise NotImplementedError(msg)
 
 
 @task

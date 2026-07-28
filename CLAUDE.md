@@ -84,6 +84,35 @@ duplicate that material here.
     suite's `conftest.py` and a sibling test before writing new ones.
   - **Don't wrap two lines in a helper.** Inline short setup (claiming a task, opening a
     cursor) at each call site rather than hiding it behind an indirection.
+  - **A function that is never invoked gets no real body.** When a task or a decorator
+    target exists only for its object, signature, decorator, or import path — enqueued
+    but never run, or only inspected — a working body is dead code and a coverage miss.
+    Applies to `@task` fixtures and to throwaway `def send_report(...)` stubs in guard
+    tests alike. Two forms:
+    - **`raise NotImplementedError` with a reason** — the default. Write it as the
+      two-line errmsg-lint idiom and annotate `-> t.Never`:
+
+      ```python
+      def capped(a: int, b: int) -> t.Never:
+          msg = "path-resolved for its decorator; never run"
+          raise NotImplementedError(msg)
+      ```
+
+      `[tool.coverage.report] exclude_also` in `pyproject.toml` carries a regex for
+      exactly this shape, so **both** lines are excluded — it costs nothing in coverage
+      and still fails loudly if something ever does call it.
+
+    - **A docstring and no body** — fine for a throwaway local stub. Also costs no
+      counted lines, but the return annotation must be `-> None` or mypy raises
+      `[empty-body]`, and an accidental call silently returns `None`.
+
+    Save real bodies for tasks a worker or the immediate backend actually executes.
+    **Check across every suite before concluding a shared fixture is never invoked** —
+    `tests/tasks.py` is imported by all of them but each suite is a separate coverage
+    run, so a body that looks dead under `tests/core` may be executed by `tests/pg_cron`
+    (`capped` and `on_reports` are). Codecov combines the runs; a single local suite
+    does not.
+
   - Name a variable for the thing it holds (its type/role), not a generic placeholder.
 - **Test management commands AND system checks by running them**:
   `call_command("check", "django_absurd")` / `call_command("absurd_sync_queues")`,

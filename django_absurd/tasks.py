@@ -7,10 +7,15 @@ django_absurd.backends without a cycle.
 
 import copy
 import dataclasses
+import logging
 import typing as t
 
 from absurd_sdk import CancellationPolicy, JsonObject, RetryStrategy
-from django.tasks.base import Task
+from django.tasks.base import Task, TaskResult
+
+logger = logging.getLogger("django_absurd")
+
+WARNED_TASK_PATHS: set[str] = set()
 
 
 class SpawnKwargs(t.TypedDict, total=False):
@@ -56,6 +61,16 @@ class AbsurdTask(TaskBase):  # type: ignore[misc]  # stub declares Task non-froz
 
     absurd_params: SpawnKwargs | None = None
 
+    def enqueue(self, *args: t.Any, **kwargs: t.Any) -> "TaskResult[t.Any, t.Any]":
+        warn_if_params_are_inert(self)
+        return super().enqueue(*args, **kwargs)
+
+    async def aenqueue(
+        self, *args: t.Any, **kwargs: t.Any
+    ) -> "TaskResult[t.Any, t.Any]":
+        warn_if_params_are_inert(self)
+        return await super().aenqueue(*args, **kwargs)
+
     def __post_init__(self) -> None:
         defaults = getattr(self.func, "absurd_params", None)
         # Fold whenever either layer exists, not just when defaults do: the merge is
@@ -69,6 +84,30 @@ class AbsurdTask(TaskBase):  # type: ignore[misc]  # stub declares Task non-froz
                 build_merged_spawn_options(defaults, self.absurd_params),
             )
         super().__post_init__()
+
+
+def warn_if_params_are_inert(task: AbsurdTask) -> None:
+    """Report, once per task, that a spawn about to happen will drop its params.
+
+    Checked at enqueue rather than at ``bind``, because only here is it settled: a task
+    bound on the wrong backend and then routed onto Absurd applies its params fine, and
+    warning at bind time would cry wolf over it. Identifying the backend by the task
+    class it builds, rather than ``isinstance(..., AbsurdBackend)``, keeps this module a
+    leaf — importing the backend here would close a cycle through ``backends.py``.
+    """
+    if task.absurd_params is None:
+        return
+    if getattr(type(task.get_backend()), "task_class", None) is AbsurdTask:
+        return
+    if task.module_path in WARNED_TASK_PATHS:
+        return
+    WARNED_TASK_PATHS.add(task.module_path)
+    logger.warning(
+        "absurd_params ignored: %s ran on task backend %r, which is not an Absurd "
+        "backend",
+        task.module_path,
+        task.backend,
+    )
 
 
 def build_merged_spawn_options(
