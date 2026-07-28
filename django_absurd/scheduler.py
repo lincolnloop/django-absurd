@@ -14,7 +14,7 @@ from django.utils.module_loading import import_string
 from django_absurd.backends import AbsurdBackend
 from django_absurd.cleanup import cleanup_queues
 from django_absurd.connection import validate_backend
-from django_absurd.params import AbsurdSpawnParams
+from django_absurd.params import absurd_params
 
 logger = logging.getLogger("django_absurd")
 
@@ -72,13 +72,9 @@ def spawn_scheduled(schedule: Schedule, slot: dt.datetime) -> None:
         if schedule.queue is not None:
             overrides["queue_name"] = schedule.queue
         task = task.using(**overrides)
-        task.enqueue(
-            *schedule.args,
-            **schedule.kwargs,
-            absurd_spawn_params=AbsurdSpawnParams(
-                idempotency_key=derive_idempotency_key(schedule, slot)
-            ),
-        )
+        absurd_params(idempotency_key=derive_idempotency_key(schedule, slot)).bind(
+            task
+        ).enqueue(*schedule.args, **schedule.kwargs)
     finally:
         close_old_connections()
 

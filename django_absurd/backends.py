@@ -113,10 +113,7 @@ class AbsurdBackend(BaseTaskBackend):
             if isinstance(task, AbsurdTask)
             else getattr(task.func, "absurd_params", None)
         )
-        spawn_params = kwargs.pop("absurd_spawn_params", None)
-        merged = build_merged_spawn_options(
-            params, spawn_params.to_kwargs() if spawn_params is not None else None
-        )
+        merged = build_merged_spawn_options(params, None)
         merged.setdefault("max_attempts", self.default_max_attempts)
         try:
             # Savepoint so a misconfig DB error (below) rolls back only the spawn,

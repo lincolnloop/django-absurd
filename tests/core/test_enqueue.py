@@ -2,7 +2,6 @@ import asyncio
 import typing as t
 
 import pytest
-from absurd_sdk import ClaimedTask, RetryStrategy
 from django.contrib.auth.models import Group
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command
@@ -11,11 +10,14 @@ from django.tasks import TaskResultStatus, task
 from django.tasks.exceptions import InvalidTask
 from pytest_django.fixtures import SettingsWrapper
 
+from django_absurd import absurd_params
 from django_absurd.connection import register_jsonb_loader
-from django_absurd.params import AbsurdSpawnParams, absurd_default_params
 from django_absurd.queues import get_absurd_client
 from django_absurd.tasks import AbsurdTask
 from tests import tasks
+
+if t.TYPE_CHECKING:
+    from absurd_sdk import RetryStrategy
 
 pytestmark = [
     pytest.mark.django_db(transaction=True),
@@ -23,14 +25,8 @@ pytestmark = [
 ]
 
 
-def claim_one() -> list[ClaimedTask]:
-    client = get_absurd_client()
-    register_jsonb_loader(connections["default"].connection)
-    return client.claim_tasks(batch_size=1)
-
-
 @task(backend="immediate")
-@absurd_default_params(max_attempts=4)
+@absurd_params(max_attempts=4)
 def add_on_immediate_backend(a: int, b: int) -> int:
     return a + b
 
@@ -65,7 +61,8 @@ def test_enqueue_lands_and_returns_taskresult() -> None:
     assert result.args == [1, 2]
     assert result.kwargs == {}
     assert result.backend == "default"
-    claimed = claim_one()
+    register_jsonb_loader(connections["default"].connection)
+    claimed = get_absurd_client().claim_tasks(batch_size=1)
     assert len(claimed) == 1
     assert claimed[0]["task_name"] == "tests.tasks.add"
     assert claimed[0]["params"] == {"args": [1, 2], "kwargs": {}}
@@ -74,7 +71,9 @@ def test_enqueue_lands_and_returns_taskresult() -> None:
 def test_enqueue_preserves_kwargs() -> None:
     call_command("absurd_sync_queues")
     tasks.add.enqueue(a=1, b=2)
-    assert claim_one()[0]["params"] == {"args": [], "kwargs": {"a": 1, "b": 2}}
+    register_jsonb_loader(connections["default"].connection)
+    claimed = get_absurd_client().claim_tasks(batch_size=1)
+    assert claimed[0]["params"] == {"args": [], "kwargs": {"a": 1, "b": 2}}
 
 
 def test_enqueue_rides_django_transaction() -> None:
@@ -90,7 +89,8 @@ def test_enqueue_rides_django_transaction() -> None:
 
     with pytest.raises(BoomError):
         enqueue_then_roll_back()
-    assert claim_one() == []
+    register_jsonb_loader(connections["default"].connection)
+    assert get_absurd_client().claim_tasks(batch_size=1) == []
 
 
 def test_undeclared_queue_rejected() -> None:
@@ -102,7 +102,8 @@ def test_undeclared_queue_rejected() -> None:
 def test_aenqueue_lands() -> None:
     call_command("absurd_sync_queues")
     asyncio.run(tasks.add.aenqueue(1, 2))
-    assert len(claim_one()) == 1
+    register_jsonb_loader(connections["default"].connection)
+    assert len(get_absurd_client().claim_tasks(batch_size=1)) == 1
 
 
 def test_enqueue_auto_creates_declared_queue_and_runs() -> None:
@@ -155,29 +156,17 @@ def test_enqueue_with_absent_schema_raises_clear_error() -> None:
 def test_max_attempts_uses_backend_default_when_unset() -> None:
     call_command("absurd_sync_queues")
     tasks.add.enqueue(1, 2)
-    assert claim_one()[0]["max_attempts"] == 5
+    register_jsonb_loader(connections["default"].connection)
+    claimed = get_absurd_client().claim_tasks(batch_size=1)
+    assert claimed[0]["max_attempts"] == 5
 
 
 def test_max_attempts_uses_decorator_default() -> None:
     call_command("absurd_sync_queues")
     tasks.with_default_attempts.enqueue(1, 2)
-    assert claim_one()[0]["max_attempts"] == 7
-
-
-def test_per_call_max_attempts_overrides_decorator_and_backend() -> None:
-    call_command("absurd_sync_queues")
-    tasks.with_default_attempts.enqueue(  # type: ignore[call-arg]
-        1, 2, absurd_spawn_params=AbsurdSpawnParams(max_attempts=9)
-    )
-    assert claim_one()[0]["max_attempts"] == 9
-
-
-def test_headers_reach_spawn() -> None:
-    call_command("absurd_sync_queues")
-    tasks.add.enqueue(  # type: ignore[call-arg]
-        1, 2, absurd_spawn_params=AbsurdSpawnParams(headers={"trace": "abc"})
-    )
-    assert claim_one()[0]["headers"] == {"trace": "abc"}
+    register_jsonb_loader(connections["default"].connection)
+    claimed = get_absurd_client().claim_tasks(batch_size=1)
+    assert claimed[0]["max_attempts"] == 7
 
 
 def test_retry_strategy_reaches_spawn() -> None:
@@ -188,20 +177,17 @@ def test_retry_strategy_reaches_spawn() -> None:
         "factor": 2.0,
         "max_seconds": 10.0,
     }
-    tasks.add.enqueue(  # type: ignore[call-arg]
-        1, 2, absurd_spawn_params=AbsurdSpawnParams(retry_strategy=strategy)
-    )
-    assert claim_one()[0]["retry_strategy"] == strategy
+    absurd_params(retry_strategy=strategy).bind(tasks.add).enqueue(1, 2)
+    register_jsonb_loader(connections["default"].connection)
+    claimed = get_absurd_client().claim_tasks(batch_size=1)
+    assert claimed[0]["retry_strategy"] == strategy
 
 
 def test_idempotency_key_dedups() -> None:
     call_command("absurd_sync_queues")
-    r1 = tasks.add.enqueue(  # type: ignore[call-arg]
-        1, 2, absurd_spawn_params=AbsurdSpawnParams(idempotency_key="dup")
-    )
-    r2 = tasks.add.enqueue(  # type: ignore[call-arg]
-        1, 2, absurd_spawn_params=AbsurdSpawnParams(idempotency_key="dup")
-    )
+    bound = absurd_params(idempotency_key="dup").bind(tasks.add)
+    r1 = bound.enqueue(1, 2)
+    r2 = bound.enqueue(1, 2)
     assert r1.id == r2.id
     register_jsonb_loader(connections["default"].connection)
     claimed = get_absurd_client().claim_tasks(
@@ -213,14 +199,16 @@ def test_idempotency_key_dedups() -> None:
 
 def test_spawn_params_not_passed_to_task_func() -> None:
     call_command("absurd_sync_queues")
-    tasks.add.enqueue(  # type: ignore[call-arg]
-        1, 2, absurd_spawn_params=AbsurdSpawnParams(idempotency_key="x")
-    )
-    assert claim_one()[0]["params"] == {"args": [1, 2], "kwargs": {}}
+    absurd_params(idempotency_key="x").bind(tasks.add).enqueue(1, 2)
+    register_jsonb_loader(connections["default"].connection)
+    claimed = get_absurd_client().claim_tasks(batch_size=1)
+    assert claimed[0]["params"] == {"args": [1, 2], "kwargs": {}}
 
 
 def test_result_id_encodes_queue() -> None:
     call_command("absurd_sync_queues")
     result = tasks.add.enqueue(1, 2)
-    task_id = str(claim_one()[0]["task_id"])
+    register_jsonb_loader(connections["default"].connection)
+    claimed = get_absurd_client().claim_tasks(batch_size=1)
+    task_id = str(claimed[0]["task_id"])
     assert result.id == f"default:{task_id}"

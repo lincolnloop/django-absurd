@@ -12,10 +12,9 @@ if t.TYPE_CHECKING:
 
     import pytest_django.fixtures
 
-from django_absurd import pytest_plugin
+from django_absurd import absurd_params, pytest_plugin
 from django_absurd.flush import flush_absurd_state
 from django_absurd.models import Queue, Task
-from django_absurd.params import AbsurdSpawnParams
 from django_absurd.test import install_absurd_cleanup
 from tests import tasks, utils
 
@@ -49,8 +48,8 @@ def test_flush_absurd_state_truncates_a_partitioned_queues_idempotency_table(
         queues={"part": {"storage_mode": "partitioned"}}
     )
     call_command("absurd_sync_queues")
-    tasks.add.using(queue_name="part").enqueue(  # type: ignore[call-arg]
-        1, 2, absurd_spawn_params=AbsurdSpawnParams(idempotency_key="k")
+    absurd_params(idempotency_key="k").bind(tasks.add.using(queue_name="part")).enqueue(
+        1, 2
     )
     task_model: t.Any = Task
     assert task_model.objects.filter(queue="part").count() == 1

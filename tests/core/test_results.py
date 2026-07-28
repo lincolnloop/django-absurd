@@ -10,8 +10,8 @@ from django.db import connections, transaction
 from django.tasks import TaskResultStatus
 from django.tasks.exceptions import TaskResultDoesNotExist
 
+from django_absurd import absurd_params
 from django_absurd.backends import AbsurdBackend, get_absurd_backends
-from django_absurd.params import AbsurdSpawnParams
 from django_absurd.queues import get_absurd_client
 from tests import tasks
 from tests.models import Payload
@@ -74,9 +74,7 @@ def test_refresh_round_trip() -> None:
 
 def test_get_result_failed_has_errors() -> None:
     call_command("absurd_sync_queues")
-    r = tasks.boom.enqueue(
-        absurd_spawn_params=AbsurdSpawnParams(max_attempts=1)  # type: ignore[call-arg]
-    )
+    r = absurd_params(max_attempts=1).bind(tasks.boom).enqueue()
     run_absurd_worker()
     got = backend().get_result(r.id)
     assert got.status == TaskResultStatus.FAILED
