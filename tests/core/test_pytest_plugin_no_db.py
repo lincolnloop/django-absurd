@@ -1,6 +1,6 @@
 import pytest
 
-from tests.tasks import add
+from tests import tasks
 
 
 @pytest.fixture(autouse=True)
@@ -10,7 +10,7 @@ def _enable_db() -> None:
 
 def test_absurd_access_blocked_without_db() -> None:
     with pytest.raises(RuntimeError) as excinfo:
-        add.enqueue(1, 2)
+        tasks.add.enqueue(1, 2)
     assert str(excinfo.value) == (
         'Database access not allowed, use the "django_db" mark, or the "db" or '
         '"transactional_db" fixtures to enable it.'

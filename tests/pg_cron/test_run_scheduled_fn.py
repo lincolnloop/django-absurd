@@ -5,18 +5,18 @@ from django.core.management import call_command
 from django.db import connection
 
 from django_absurd.pg_cron.models import ScheduledTask
+from tests import tasks
 from tests.models import Payload
-from tests.tasks import capped, on_reports
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
 def test_capped_task_returns_sum() -> None:
-    assert capped.func(3, 4) == 7
+    assert tasks.capped.func(3, 4) == 7
 
 
 def test_on_reports_task_returns_string() -> None:
-    assert on_reports.func() == "on_reports"
+    assert tasks.on_reports.func() == "on_reports"
 
 
 def fire_wrapper(source: str, name: str) -> None:

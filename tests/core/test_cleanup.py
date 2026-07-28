@@ -18,7 +18,7 @@ from django_absurd.backends import get_absurd_backends
 from django_absurd.cleanup import QueueCleanup, cleanup_queues
 from django_absurd.queues import get_absurd_client
 from django_absurd.scheduler import run_beat
-from tests.tasks import add, routed
+from tests import tasks
 
 if t.TYPE_CHECKING:
     import pytest_django.fixtures
@@ -105,7 +105,7 @@ def test_cleanup_deletes_aged_terminal_tasks(
     settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     sync_queue(settings)
-    add.enqueue(2, 3)
+    tasks.add.enqueue(2, 3)
     drain()
     assert cleanup() == [
         {"queue_name": "default", "tasks_deleted": 1, "events_deleted": 0}
@@ -117,7 +117,7 @@ def test_cleanup_skips_non_terminal_tasks(
     settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     sync_queue(settings)
-    add.enqueue(2, 3)  # pending — worker not run, so not terminal
+    tasks.add.enqueue(2, 3)  # pending — worker not run, so not terminal
     assert cleanup() == [
         {"queue_name": "default", "tasks_deleted": 0, "events_deleted": 0}
     ]
@@ -133,7 +133,7 @@ def test_cleanup_respects_batch_limit(
 ) -> None:
     sync_queue(settings, cleanup_limit=2)
     for _ in range(3):
-        add.enqueue(2, 3)
+        tasks.add.enqueue(2, 3)
     drain()
     assert cleanup() == [
         {"queue_name": "default", "tasks_deleted": 2, "events_deleted": 0}
@@ -151,8 +151,8 @@ def test_cleanup_targets_specific_queue(
     settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     sync_queue(settings, names=("default", "other"))
-    add.enqueue(2, 3)  # default
-    routed.enqueue()  # routed is @task(queue_name="other")
+    tasks.add.enqueue(2, 3)  # default
+    tasks.routed.enqueue()  # routed is @task(queue_name="other")
     drain("default")
     drain("other")
     assert cleanup(["default"]) == [
@@ -169,7 +169,7 @@ def test_cleanup_command_reports_per_queue_counts(
     settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     sync_queue(settings)
-    add.enqueue(2, 3)
+    tasks.add.enqueue(2, 3)
     drain()
     capsys.readouterr()  # discard sync/worker output
     call_command("absurd_cleanup")
@@ -277,7 +277,7 @@ def test_beat_fires_cleanup_on_cadence(
 ) -> None:
     sync_queue(settings, cleanup={"schedule": "* * * * *"})
     backend = get_absurd_backends()["default"]
-    add.enqueue(2, 3)
+    tasks.add.enqueue(2, 3)
     drain()  # completed → aged-terminal (cleanup_ttl="0 seconds")
     run_beat_until(backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC))
     assert cleanup() == [
@@ -325,7 +325,7 @@ def test_beat_fires_cleanup_and_task_same_slot(
         }
     }
     call_command("absurd_sync_queues")
-    add.enqueue(2, 3)
+    tasks.add.enqueue(2, 3)
     drain()  # completed → aged-terminal, cleanup-eligible
     backend = get_absurd_backends()["default"]
     run_beat_until(backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC))

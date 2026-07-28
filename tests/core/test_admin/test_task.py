@@ -12,7 +12,7 @@ from pytest_django.fixtures import SettingsWrapper
 
 from django_absurd.admin_views import ADMIN_ENTITY_SPECS, build_admin_model
 from django_absurd.queues import get_absurd_client
-from tests.atasks import DURABLE_STEP_CALLS, asleep_for_once
+from tests import atasks, tasks
 from tests.core.test_admin.utils import (
     BACKEND,
     parse_html,
@@ -20,7 +20,6 @@ from tests.core.test_admin.utils import (
     seed,
     seed_mixed,
 )
-from tests.tasks import add, sawait_event_once
 
 if t.TYPE_CHECKING:
     from bs4 import ResultSet, Tag
@@ -114,8 +113,8 @@ def test_changelist_shows_dates_ordered_by_recent_activity(
     admin_user: User, client: Client
 ) -> None:
     call_command("absurd_sync_queues")  # index the default queue
-    older = add.enqueue(1, 1)
-    newer = add.enqueue(2, 2)  # enqueued later → more recent activity
+    older = tasks.add.enqueue(1, 1)
+    newer = tasks.add.enqueue(2, 2)  # enqueued later → more recent activity
     client.force_login(admin_user)
     resp = client.get(CHANGELIST)
     soup = parse_html(resp)
@@ -227,8 +226,8 @@ def test_detail_inlines_checkpoints_and_run_available_at(
     admin_user: User, client: Client
 ) -> None:
     call_command("absurd_sync_queues")
-    DURABLE_STEP_CALLS["n"] = 0
-    asleep_for_once.enqueue("admin-k")
+    atasks.DURABLE_STEP_CALLS["n"] = 0
+    atasks.asleep_for_once.enqueue("admin-k")
     call_command("absurd_worker", queue="default", burst=True)  # suspends
     client.force_login(admin_user)
 
@@ -258,7 +257,7 @@ def test_detail_inlines_waits_for_a_suspended_await_event(
     admin_user: User, client: Client
 ) -> None:
     call_command("absurd_sync_queues")
-    sawait_event_once.enqueue("wait-admin-demo")
+    tasks.sawait_event_once.enqueue("wait-admin-demo")
     call_command("absurd_worker", queue="default", burst=True)  # suspends
     client.force_login(admin_user)
 
@@ -335,7 +334,7 @@ def test_partitioned_queue_appears_in_changelist(
         }
     }
     call_command("absurd_sync_queues")
-    add.using(queue_name="part").enqueue(1, 1)
+    tasks.add.using(queue_name="part").enqueue(1, 1)
     call_command("absurd_worker", queue="part", burst=True)
     client.force_login(admin_user)
     resp = client.get(CHANGELIST)

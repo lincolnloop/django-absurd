@@ -17,8 +17,7 @@ from django_absurd.flush import flush_absurd_state
 from django_absurd.models import Queue, Task
 from django_absurd.params import AbsurdSpawnParams
 from django_absurd.test import install_absurd_cleanup
-from tests import utils
-from tests.tasks import add
+from tests import tasks, utils
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -30,7 +29,7 @@ TxnCase: t.Any = TransactionTestCase
 
 def test_flush_absurd_state_truncates_rows_by_default() -> None:
     call_command("absurd_sync_queues")
-    add.enqueue(1, 2)
+    tasks.add.enqueue(1, 2)
     task_model: t.Any = Task
     assert task_model.objects.filter(queue="default").count() == 1
 
@@ -50,7 +49,7 @@ def test_flush_absurd_state_truncates_a_partitioned_queues_idempotency_table(
         queues={"part": {"storage_mode": "partitioned"}}
     )
     call_command("absurd_sync_queues")
-    add.using(queue_name="part").enqueue(  # type: ignore[call-arg]
+    tasks.add.using(queue_name="part").enqueue(  # type: ignore[call-arg]
         1, 2, absurd_spawn_params=AbsurdSpawnParams(idempotency_key="k")
     )
     task_model: t.Any = Task
@@ -64,7 +63,7 @@ def test_flush_absurd_state_truncates_a_partitioned_queues_idempotency_table(
 
 def test_flush_absurd_state_drops_schema_when_requested() -> None:
     call_command("absurd_sync_queues")
-    add.enqueue(1, 2)
+    tasks.add.enqueue(1, 2)
 
     flush_absurd_state(drop_schema=True)
 
@@ -91,7 +90,7 @@ def test_flush_absurd_state_is_a_noop_on_an_unmigrated_schema(
 
 def test_post_teardown_hook_truncates_absurd_state() -> None:
     call_command("absurd_sync_queues")
-    add.enqueue(1, 2)
+    tasks.add.enqueue(1, 2)
     task_model: t.Any = Task
     assert task_model.objects.filter(queue="default").count() == 1
 
@@ -107,7 +106,7 @@ def test_post_teardown_hook_truncates_absurd_state() -> None:
 
 def test_post_teardown_hook_skips_undeclared_absurd_alias() -> None:
     call_command("absurd_sync_queues")
-    add.enqueue(1, 2)
+    tasks.add.enqueue(1, 2)
 
     class NoDatabasesCase(TransactionTestCase):
         databases = set[str]()
@@ -125,7 +124,7 @@ def test_post_teardown_hook_skips_without_an_absurd_backend(
     # Seed under the real Absurd backend, then swap TASKS to a non-Absurd backend so
     # the hook's unconfigured-backend guard (no AbsurdBackend) fires and skips flushing.
     call_command("absurd_sync_queues")
-    add.enqueue(1, 2)
+    tasks.add.enqueue(1, 2)
     task_model: t.Any = Task
     assert task_model.objects.filter(queue="default").count() == 1
 
@@ -167,7 +166,7 @@ def test_absurd_drain_queue_processes_an_enqueued_task(
     absurd_drain_queue: "collections.abc.Callable[..., None]",
 ) -> None:
     call_command("absurd_sync_queues")
-    result = add.enqueue(3, 4)
+    result = tasks.add.enqueue(3, 4)
     absurd_drain_queue()
     snap = utils.get_task_result(result.id)
     assert snap is not None

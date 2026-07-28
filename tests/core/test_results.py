@@ -13,8 +13,8 @@ from django.tasks.exceptions import TaskResultDoesNotExist
 from django_absurd.backends import AbsurdBackend, get_absurd_backends
 from django_absurd.params import AbsurdSpawnParams
 from django_absurd.queues import get_absurd_client
+from tests import tasks
 from tests.models import Payload
-from tests.tasks import add, boom, echo, sawait_event_once
 
 pytestmark = [
     pytest.mark.django_db(transaction=True),
@@ -32,7 +32,7 @@ def run_absurd_worker(queue: str = "default") -> None:
 
 def test_get_result_pending() -> None:
     call_command("absurd_sync_queues")
-    r = add.enqueue(2, 3)
+    r = tasks.add.enqueue(2, 3)
     got = backend().get_result(r.id)
     assert got.id == r.id
     assert got.status == TaskResultStatus.READY
@@ -44,7 +44,7 @@ def test_get_result_pending() -> None:
 
 def test_get_result_successful() -> None:
     call_command("absurd_sync_queues")
-    r = add.enqueue(2, 3)
+    r = tasks.add.enqueue(2, 3)
     run_absurd_worker()
     got = backend().get_result(r.id)
     assert got.status == TaskResultStatus.SUCCESSFUL
@@ -56,7 +56,7 @@ def test_get_result_successful() -> None:
 
 def test_get_result_suspended_on_indefinite_await_event() -> None:
     call_command("absurd_sync_queues")
-    r = sawait_event_once.enqueue("get-result-infinity-check")
+    r = tasks.sawait_event_once.enqueue("get-result-infinity-check")
     run_absurd_worker()
     got = backend().get_result(r.id)
     assert got.status == TaskResultStatus.RUNNING
@@ -64,7 +64,7 @@ def test_get_result_suspended_on_indefinite_await_event() -> None:
 
 def test_refresh_round_trip() -> None:
     call_command("absurd_sync_queues")
-    r = add.enqueue(2, 3)
+    r = tasks.add.enqueue(2, 3)
     assert r.status == TaskResultStatus.READY  # prior to running
     run_absurd_worker()
     r.refresh()
@@ -74,7 +74,7 @@ def test_refresh_round_trip() -> None:
 
 def test_get_result_failed_has_errors() -> None:
     call_command("absurd_sync_queues")
-    r = boom.enqueue(
+    r = tasks.boom.enqueue(
         absurd_spawn_params=AbsurdSpawnParams(max_attempts=1)  # type: ignore[call-arg]
     )
     run_absurd_worker()
@@ -87,8 +87,8 @@ def test_get_result_failed_has_errors() -> None:
 
 def test_via_task_get_result() -> None:
     call_command("absurd_sync_queues")
-    r = add.enqueue(2, 3)
-    got = add.get_result(r.id)  # public path; must not raise TaskResultMismatch
+    r = tasks.add.enqueue(2, 3)
+    got = tasks.add.get_result(r.id)  # public path; must not raise TaskResultMismatch
     assert got.id == r.id
 
 
@@ -137,7 +137,7 @@ def test_injection_in_queue_segment_is_safe() -> None:
 
 def test_aget_result_matches_get_result() -> None:
     call_command("absurd_sync_queues")
-    r = add.enqueue(2, 3)
+    r = tasks.add.enqueue(2, 3)
     got = asyncio.run(backend().aget_result(r.id))
     assert got.id == r.id
     assert got.status == TaskResultStatus.READY
@@ -179,7 +179,7 @@ def test_enqueue_does_not_poison_jsonfield_reads() -> None:
     # shared Django connection. A JSONField read on the same connection after any
     # enqueue call would raise TypeError. This test fails pre-fix.
     call_command("absurd_sync_queues")
-    add.enqueue(1, 2)
+    tasks.add.enqueue(1, 2)
     payload = Payload.objects.create(data={"key": "value", "n": 99})
     loaded = Payload.objects.get(pk=payload.pk)
     assert loaded.data == {"key": "value", "n": 99}
@@ -199,7 +199,7 @@ def test_enqueue_does_not_poison_jsonfield_reads() -> None:
 )
 def test_echo_return_value_round_trips(value: JsonValue) -> None:
     call_command("absurd_sync_queues")
-    r = echo.enqueue(value)
+    r = tasks.echo.enqueue(value)
     run_absurd_worker()
     got = backend().get_result(r.id)
     assert got.status == TaskResultStatus.SUCCESSFUL
@@ -209,7 +209,7 @@ def test_echo_return_value_round_trips(value: JsonValue) -> None:
 def test_echo_args_round_trip() -> None:
     call_command("absurd_sync_queues")
     nested = {"items": [1, None, False, "ünïçødé"], "sub": {"x": 0}}
-    r = echo.enqueue(nested)
+    r = tasks.echo.enqueue(nested)
     run_absurd_worker()
     got = backend().get_result(r.id)
     assert got.status == TaskResultStatus.SUCCESSFUL
@@ -218,7 +218,7 @@ def test_echo_args_round_trip() -> None:
 
 def test_echo_kwargs_round_trip() -> None:
     call_command("absurd_sync_queues")
-    r = echo.using(queue_name="default").enqueue(value={"k": [True, None, 42]})
+    r = tasks.echo.using(queue_name="default").enqueue(value={"k": [True, None, 42]})
     run_absurd_worker()
     got = backend().get_result(r.id)
     assert got.status == TaskResultStatus.SUCCESSFUL
@@ -230,4 +230,4 @@ def test_non_json_serializable_arg_rejected_at_enqueue() -> None:
     # time rather than silently producing a broken task row.
     call_command("absurd_sync_queues")
     with pytest.raises((TypeError, ValueError)):
-        echo.enqueue(dt.datetime.now(tz=dt.UTC))
+        tasks.echo.enqueue(dt.datetime.now(tz=dt.UTC))

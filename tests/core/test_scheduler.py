@@ -23,8 +23,8 @@ from django_absurd.scheduler import (
     run_beat,
     spawn_scheduled,
 )
+from tests import tasks
 from tests.models import Payload
-from tests.tasks import make_group as make_group_task
 from tests.utils import make_tasks_settings
 
 pytestmark = [
@@ -686,7 +686,7 @@ def test_plain_worker_runs_blocking_worker(
         }
     )
     call_command("absurd_sync_queues")
-    make_group_task.enqueue("plain-worker")
+    tasks.make_group.enqueue("plain-worker")
 
     def watch() -> None:
         deadline = time.monotonic() + 15
