@@ -72,9 +72,10 @@ def spawn_scheduled(schedule: Schedule, slot: dt.datetime) -> None:
         if schedule.queue is not None:
             overrides["queue_name"] = schedule.queue
         task = task.using(**overrides)
-        absurd_params(idempotency_key=derive_idempotency_key(schedule, slot)).bind(
-            task
-        ).enqueue(*schedule.args, **schedule.kwargs)
+        key = derive_idempotency_key(schedule, slot)
+        absurd_params(idempotency_key=key).bind(task).enqueue(
+            *schedule.args, **schedule.kwargs
+        )
     finally:
         close_old_connections()
 

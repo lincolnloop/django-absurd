@@ -166,13 +166,7 @@ def build_unsupported_keyword_message(name: str) -> str:
     if name in ROUTING_KEYWORDS:
         return (
             f"{name!r} cannot be set through absurd_params — queue routing belongs "
-            'to Django:\n\n    send_report.using(queue_name="reports")'
-        )
-    if name == "run_after":
-        return (
-            f"{name!r} cannot be set through absurd_params, and deferred enqueue is "
-            "not supported by this backend (supports_defer = False). See "
-            "https://github.com/lincolnloop/django-absurd/issues/116."
+            'to Django\'s Task API:\n\n    send_report.using(queue_name="reports")'
         )
     return (
         f"{name!r} is an invalid argument for absurd_params. Valid arguments: "

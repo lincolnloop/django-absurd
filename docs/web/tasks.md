@@ -71,8 +71,8 @@ absurd_params(
 `call`, `get_result`, and `using` all work through it exactly as they do on the original
 task.
 
-Django's own options — routing (`.using(queue_name=...)`), `backend`, … — stay on
-`.using()`, never on `absurd_params`. Routing composes with binding in either order:
+Django's own Task API options — routing (`.using(queue_name=...)`), `backend`, … — stay
+on `.using()`, never on `absurd_params`. Routing composes with binding in either order:
 
 ```python
 absurd_params(max_attempts=5).bind(send_report.using(queue_name="reports")).enqueue(42)

@@ -227,21 +227,24 @@ TypeError: 'max_attemps' is an invalid argument for absurd_params. Valid argumen
 max_attempts, retry_strategy, cancellation, headers, idempotency_key.
 ```
 
-Routing and scheduling keys get the extra pointer, because they are real Absurd spawn
-options (`spawn(queue=...)`) — the message must say they are not allowed _here_, not
-that they do not exist:
+Routing keys get the extra pointer, because they are real Absurd spawn options
+(`spawn(queue=...)`) — the message must say they are not allowed _here_, not that they
+do not exist. `queue_name` shares it: a user reaching for Django's spelling is at the
+same wrong door.
 
 ```
-TypeError: 'queue' cannot be set through absurd_params — queue routing belongs to Django:
+TypeError: 'queue' cannot be set through absurd_params — queue routing belongs to Django's Task API:
 
     send_report.using(queue_name="reports")
 ```
 
-```
-TypeError: 'run_after' cannot be set through absurd_params, and deferred enqueue is not
-supported by this backend (supports_defer = False). See
-https://github.com/lincolnloop/django-absurd/issues/116.
-```
+`run_after` gets **no** pointer, and that is the rule working rather than an exception
+to it. It is not an Absurd spawn option at all — `spawn` takes `max_attempts`,
+`retry_strategy`, `headers`, `queue`, `cancellation`, `idempotency_key` — it is purely a
+`Task.using()` kwarg. So it falls through to the generic invalid-argument message. Used
+properly it raises Django's own `InvalidTask("Backend does not support run_after.")`,
+since this backend sets `supports_defer = False`; the deferred-enqueue limitation is
+documented in `AGENTS.md` alongside the other backend capabilities.
 
 The definition-site message does know its target:
 

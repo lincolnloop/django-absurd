@@ -22,7 +22,7 @@ def test_unknown_keyword_is_rejected() -> None:
 def test_queue_is_rejected_with_a_pointer_to_using() -> None:
     expected = (
         "'queue' cannot be set through absurd_params — queue routing belongs to "
-        'Django:\n\n    send_report.using(queue_name="reports")'
+        'Django\'s Task API:\n\n    send_report.using(queue_name="reports")'
     )
     with pytest.raises(TypeError) as excinfo:
         absurd_params(queue="reports")  # type: ignore[call-overload]
@@ -32,18 +32,20 @@ def test_queue_is_rejected_with_a_pointer_to_using() -> None:
 def test_queue_name_gets_the_same_pointer() -> None:
     expected = (
         "'queue_name' cannot be set through absurd_params — queue routing belongs "
-        'to Django:\n\n    send_report.using(queue_name="reports")'
+        'to Django\'s Task API:\n\n    send_report.using(queue_name="reports")'
     )
     with pytest.raises(TypeError) as excinfo:
         absurd_params(queue_name="reports")  # type: ignore[call-overload]
     assert str(excinfo.value) == expected
 
 
-def test_run_after_is_rejected_with_the_defer_pointer() -> None:
+def test_a_django_only_option_gets_no_special_pointer() -> None:
+    # run_after is a Task.using() kwarg, not an Absurd spawn option, so it earns no
+    # curated pointer — only real spawn options do. Used properly it raises Django's
+    # own InvalidTask here, since this backend sets supports_defer = False.
     expected = (
-        "'run_after' cannot be set through absurd_params, and deferred enqueue is "
-        "not supported by this backend (supports_defer = False). See "
-        "https://github.com/lincolnloop/django-absurd/issues/116."
+        "'run_after' is an invalid argument for absurd_params. Valid arguments: "
+        "max_attempts, retry_strategy, cancellation, headers, idempotency_key."
     )
     with pytest.raises(TypeError) as excinfo:
         absurd_params(run_after=None)  # type: ignore[call-overload]
@@ -57,11 +59,12 @@ def test_per_invocation_field_cannot_decorate() -> None:
         "    absurd_params(idempotency_key=...).bind(send_report).enqueue(...)"
     )
 
-    def send_report(user_id: int) -> None:
-        return None
-
     with pytest.raises(TypeError) as excinfo:
-        absurd_params(idempotency_key="k")(send_report)  # type: ignore[arg-type]
+
+        @absurd_params(idempotency_key="k")  # type: ignore[arg-type]
+        def send_report(user_id: int) -> None:
+            return None
+
     assert str(excinfo.value) == expected
 
 
