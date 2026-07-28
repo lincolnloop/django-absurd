@@ -17,7 +17,7 @@ from django.utils.module_loading import import_string
 
 from django_absurd.admin_views import ADMIN_ENTITY_SPECS, build_queue_table_model
 from django_absurd.connection import build_absurd_client
-from django_absurd.params import AbsurdDefaultParams, SpawnKwargs
+from django_absurd.tasks import AbsurdTask, build_merged_spawn_options
 
 if t.TYPE_CHECKING:
     from django.tasks.base import Task
@@ -82,6 +82,7 @@ class AbsurdBackendOptions(t.TypedDict, total=False):
 
 
 class AbsurdBackend(BaseTaskBackend):
+    task_class = AbsurdTask
     supports_get_result = True
     supports_async_task = True
     supports_defer = False
@@ -103,9 +104,18 @@ class AbsurdBackend(BaseTaskBackend):
     ) -> "TaskResult[t.Any, t.Any]":
         self.validate_task(task)
         client = build_absurd_client(self.database)
+        # A task defined on another backend and routed in with .using(backend=...)
+        # keeps task_class = Task, so its decorator defaults are still only on the
+        # function. scheduler.py hits that path on every scheduled task.
+        params = (
+            task.absurd_params
+            if isinstance(task, AbsurdTask)
+            else getattr(task.func, "absurd_params", None)
+        )
         spawn_params = kwargs.pop("absurd_spawn_params", None)
-        defaults = getattr(task.func, "absurd_default_params", None)
-        merged = build_merged_spawn_options(defaults, spawn_params)
+        merged = build_merged_spawn_options(
+            params, spawn_params.to_kwargs() if spawn_params is not None else None
+        )
         merged.setdefault("max_attempts", self.default_max_attempts)
         try:
             # Savepoint so a misconfig DB error (below) rolls back only the spawn,
@@ -305,19 +315,7 @@ def get_declared_queues(backend: "AbsurdBackend") -> dict[str, CreateQueueOption
 
 def get_absurd_backends() -> dict[str, "AbsurdBackend"]:
     return {
-        alias: be
+        alias: backend
         for alias in task_backends
-        if isinstance((be := task_backends[alias]), AbsurdBackend)
+        if isinstance((backend := task_backends[alias]), AbsurdBackend)
     }
-
-
-def build_merged_spawn_options(
-    defaults: AbsurdDefaultParams | None,
-    per_call: AbsurdDefaultParams | None,
-) -> SpawnKwargs:
-    merged: SpawnKwargs = {}
-    if defaults is not None:
-        merged.update(defaults.to_kwargs())
-    if per_call is not None:
-        merged.update(per_call.to_kwargs())
-    return merged

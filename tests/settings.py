@@ -62,5 +62,6 @@ TASKS = {
     "default": {
         "BACKEND": "django_absurd.backends.AbsurdBackend",
         "QUEUES": ["default", "other", "reports"],
-    }
+    },
+    "immediate": {"BACKEND": "django.tasks.backends.immediate.ImmediateBackend"},
 }

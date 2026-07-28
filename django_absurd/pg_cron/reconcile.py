@@ -9,12 +9,13 @@ import typing as t
 from absurd_sdk import CancellationPolicy, JsonObject, RetryStrategy
 from django.utils.module_loading import import_string
 
-from django_absurd.backends import AbsurdBackend, build_merged_spawn_options
+from django_absurd.backends import AbsurdBackend
 from django_absurd.pg_cron import catalog
 from django_absurd.pg_cron.choices import Source
 from django_absurd.pg_cron.models import ScheduledTask
 from django_absurd.queues import resolve_absurd_database
 from django_absurd.scheduler import get_cleanup_schedule, get_settings_schedules
+from django_absurd.tasks import build_merged_spawn_options
 
 # Absurd's global queue-cleanup job. It rides the catalog seam like every other
 # schedule, on its own db-namespaced lane (source="c" → jobname
@@ -45,7 +46,7 @@ def resolve_spawn_options(backend: AbsurdBackend, task_path: str) -> JsonObject:
     from absurd_sdk import _normalize_spawn_options  # noqa: PLC0415
 
     task = import_string(task_path)
-    defaults = getattr(task.func, "absurd_default_params", None)
+    defaults = getattr(task.func, "absurd_params", None)
     merged = build_merged_spawn_options(defaults, None)
     merged.setdefault("max_attempts", backend.default_max_attempts)
     return _normalize_spawn_options(**merged)

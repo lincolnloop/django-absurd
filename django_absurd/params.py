@@ -7,6 +7,8 @@ import typing as t
 from absurd_sdk import CancellationPolicy, JsonObject, RetryStrategy
 from django.tasks import Task
 
+from django_absurd.tasks import SpawnKwargs
+
 
 class NotSet(enum.Enum):
     """Sentinel type for an unset field — distinct from None, which is a real value."""
@@ -19,18 +21,6 @@ NOT_SET = NotSet.TOKEN
 F = t.TypeVar("F")
 
 AbsurdFieldValue = int | RetryStrategy | CancellationPolicy | JsonObject | str
-
-
-class SpawnKwargs(t.TypedDict, total=False):
-    """The exact keyword-arg shape absurd_sdk's ``spawn``/``_normalize_spawn_options``
-    accept — mirrors their signatures field-for-field so ``**merged`` calls into them
-    type-check per field instead of collapsing to a union."""
-
-    max_attempts: int
-    retry_strategy: RetryStrategy
-    cancellation: CancellationPolicy
-    headers: JsonObject
-    idempotency_key: str
 
 
 @dataclasses.dataclass(frozen=True)
@@ -70,7 +60,7 @@ def absurd_default_params(
         if isinstance(func, Task):
             msg = "apply @absurd_default_params below @task, not above it"
             raise TypeError(msg)
-        func.absurd_default_params = params  # type: ignore[attr-defined]  # dynamic attribute on decorated callable
+        func.absurd_params = params.to_kwargs()  # type: ignore[attr-defined]  # dynamic attribute on decorated callable
         return func
 
     return set_default

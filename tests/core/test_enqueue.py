@@ -7,13 +7,14 @@ from django.contrib.auth.models import Group
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command
 from django.db import connection, connections, transaction
-from django.tasks import TaskResultStatus
+from django.tasks import TaskResultStatus, task
 from django.tasks.exceptions import InvalidTask
 from pytest_django.fixtures import SettingsWrapper
 
 from django_absurd.connection import register_jsonb_loader
-from django_absurd.params import AbsurdSpawnParams
+from django_absurd.params import AbsurdSpawnParams, absurd_default_params
 from django_absurd.queues import get_absurd_client
+from django_absurd.tasks import AbsurdTask
 from tests import tasks
 
 pytestmark = [
@@ -26,6 +27,33 @@ def claim_one() -> list[ClaimedTask]:
     client = get_absurd_client()
     register_jsonb_loader(connections["default"].connection)
     return client.claim_tasks(batch_size=1)
+
+
+@task(backend="immediate")
+@absurd_default_params(max_attempts=4)
+def add_on_immediate_backend(a: int, b: int) -> int:
+    return a + b
+
+
+def test_decorator_default_survives_a_replace() -> None:
+    # .using() is dataclasses.replace(), which re-runs __post_init__ and re-folds.
+    call_command("absurd_sync_queues")
+    tasks.with_default_attempts.using(priority=0).enqueue(1, 2)
+    register_jsonb_loader(connections["default"].connection)
+    claimed = get_absurd_client().claim_tasks(batch_size=1)
+    assert claimed[0]["max_attempts"] == 7
+
+
+def test_a_plain_task_routed_in_keeps_its_decorator_default() -> None:
+    # ImmediateBackend keeps task_class = Task and .using() preserves the class, so
+    # this reaches enqueue as a bare Task — the getattr branch, not the field branch.
+    call_command("absurd_sync_queues")
+    routed = add_on_immediate_backend.using(backend="default")
+    assert not isinstance(routed, AbsurdTask)
+    routed.enqueue(1, 2)
+    register_jsonb_loader(connections["default"].connection)
+    claimed = get_absurd_client().claim_tasks(batch_size=1)
+    assert claimed[0]["max_attempts"] == 4
 
 
 def test_enqueue_lands_and_returns_taskresult() -> None:

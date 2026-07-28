@@ -1,10 +1,7 @@
-import typing as t
-
 import pytest
 from django.tasks import task
 
 from django_absurd.params import (
-    AbsurdDefaultParams,
     AbsurdSpawnParams,
     absurd_default_params,
 )
@@ -31,11 +28,6 @@ def test_spawnparams_carries_per_invocation_fields() -> None:
 def test_decorator_rejects_per_invocation_kwarg() -> None:
     with pytest.raises(TypeError):
         absurd_default_params(idempotency_key="k")
-
-
-def test_decorator_attaches_default_to_task_func() -> None:
-    func_with_params: t.Any = good_default.func
-    assert func_with_params.absurd_default_params == AbsurdDefaultParams(max_attempts=7)
 
 
 def test_decorator_above_task_raises() -> None:
