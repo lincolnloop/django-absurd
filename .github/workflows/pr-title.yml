@@ -1,0 +1,27 @@
+---
+name: PR Title
+
+"on":
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+concurrency:
+  # Abort pending builds if there's an update.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The job id is the status-check context, so name it for what it gates — it has to
+  # be picked out of a list when added as a required check, and renaming it later
+  # would break that requirement.
+  pr-title:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      # Squash-merge puts the PR title on main, so a Conventional Commits title is
+      # what makes the release notes readable.
+      # yamllint disable-line rule:line-length
+      - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
