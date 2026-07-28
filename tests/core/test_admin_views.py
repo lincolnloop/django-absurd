@@ -13,7 +13,7 @@ from django_absurd.admin_views import (
     rebuild_admin_view,
 )
 from django_absurd.queues import get_absurd_client
-from tests.tasks import add
+from tests import tasks
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -24,8 +24,8 @@ CHECKS_SPEC: EntitySpec = next(s for s in ADMIN_ENTITY_SPECS if s.name == "check
 
 def seed_two_queues() -> None:
     call_command("absurd_sync_queues")
-    add.enqueue(2, 3)
-    add.using(queue_name="other").enqueue(7, 8)
+    tasks.add.enqueue(2, 3)
+    tasks.add.using(queue_name="other").enqueue(7, 8)
     call_command("absurd_worker", queue="default", burst=True)
     call_command("absurd_worker", queue="other", burst=True)
 

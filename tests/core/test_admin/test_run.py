@@ -8,8 +8,8 @@ from django.test import Client
 from django.urls import reverse, reverse_lazy
 
 from django_absurd.models import Run
+from tests import tasks
 from tests.core.test_admin.utils import parse_html, result_rows, seed_mixed
-from tests.tasks import add, sawait_event_once
 
 if t.TYPE_CHECKING:
     from bs4 import Tag
@@ -36,9 +36,9 @@ def test_changelist_shows_dates_ordered_by_recent_activity(
     client: Client,
 ) -> None:
     call_command("absurd_sync_queues")
-    older = add.enqueue(1, 1)
+    older = tasks.add.enqueue(1, 1)
     call_command("absurd_worker", queue="default", burst=True)  # older run starts
-    newer = add.enqueue(2, 2)
+    newer = tasks.add.enqueue(2, 2)
     call_command("absurd_worker", queue="default", burst=True)  # newer run starts later
     client.force_login(admin_user)
     response = client.get(CHANGELIST)
@@ -103,7 +103,7 @@ def test_changelist_and_detail_survive_indefinite_available_at(
     # un-guarded available_at column crashes both the changelist and the detail
     # page with a DataError before anything renders.
     call_command("absurd_sync_queues")
-    sawait_event_once.enqueue("admin-infinity-check")
+    tasks.sawait_event_once.enqueue("admin-infinity-check")
     call_command("absurd_worker", queue="default", burst=True)  # suspends indefinitely
 
     client.force_login(admin_user)

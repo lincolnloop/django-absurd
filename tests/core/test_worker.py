@@ -19,9 +19,8 @@ from django_absurd.worker import (
     run_blocking_worker,
     run_burst_worker,
 )
-from tests.atasks import aecho
+from tests import atasks, tasks
 from tests.jobs import record_from_jobs
-from tests.tasks import boom, make_group, report_args, report_attempt, routed
 from tests.utils import get_task_result, run_absurd_worker
 
 pytestmark = [
@@ -86,7 +85,7 @@ def test_worker_client_absent_schema_errors() -> None:
 
 def test_end_to_end_executes_and_records_result() -> None:
     call_command("absurd_sync_queues")
-    result = make_group.enqueue("alpha")
+    result = tasks.make_group.enqueue("alpha")
     run_absurd_worker()
     assert Group.objects.filter(name="alpha").exists()
     snap = get_task_result(result.id)
@@ -97,7 +96,7 @@ def test_end_to_end_executes_and_records_result() -> None:
 
 def test_failing_task_records_failure() -> None:
     call_command("absurd_sync_queues")
-    result = boom.enqueue()
+    result = tasks.boom.enqueue()
     run_absurd_worker()
     snap = get_task_result(result.id)
     assert snap is not None
@@ -106,7 +105,7 @@ def test_failing_task_records_failure() -> None:
 
 def test_takes_context_attempt_is_one_on_first_run() -> None:
     call_command("absurd_sync_queues")
-    result = report_attempt.enqueue()
+    result = tasks.report_attempt.enqueue()
     run_absurd_worker()
     snap = get_task_result(result.id)
     assert snap is not None
@@ -115,7 +114,7 @@ def test_takes_context_attempt_is_one_on_first_run() -> None:
 
 def test_takes_context_task_result_carries_real_args() -> None:
     call_command("absurd_sync_queues")
-    result = report_args.enqueue("x", "y")
+    result = tasks.report_args.enqueue("x", "y")
     run_absurd_worker()
     snap = get_task_result(result.id)
     assert snap is not None
@@ -124,14 +123,14 @@ def test_takes_context_task_result_carries_real_args() -> None:
 
 def test_using_queue_name_routes_to_worker_queue() -> None:
     call_command("absurd_sync_queues")
-    routed.using(queue_name="default").enqueue()
+    tasks.routed.using(queue_name="default").enqueue()
     run_absurd_worker()
     assert Group.objects.filter(name="routed").exists()
 
 
 def test_handler_logs_task_outcome(caplog: pytest.LogCaptureFixture) -> None:
     call_command("absurd_sync_queues")
-    make_group.enqueue("logged")
+    tasks.make_group.enqueue("logged")
     with caplog.at_level(logging.INFO, logger="django_absurd"):
         run_absurd_worker()
     assert "tests.tasks.make_group" in caplog.text
@@ -170,7 +169,7 @@ def test_queue_defaults_to_default(
             "QUEUES": ["default"],
         }
     }
-    make_group.enqueue("dflt")  # auto-creates the default queue
+    tasks.make_group.enqueue("dflt")  # auto-creates the default queue
     call_command("absurd_worker", burst=True)  # no --queue -> "default"
     out = capsys.readouterr().out
     assert out == "Started worker on queue 'default'.\n"
@@ -248,7 +247,7 @@ def test_command_parses_all_flags_with_defaults() -> None:
 
 def test_command_burst_runs_task_end_to_end() -> None:
     call_command("absurd_sync_queues")
-    result = make_group.enqueue("via-command")
+    result = tasks.make_group.enqueue("via-command")
     call_command("absurd_worker", queue="default", burst=True)
     assert Group.objects.filter(name="via-command").exists()
     snap = get_task_result(result.id)
@@ -398,7 +397,7 @@ def test_worker_non_burst_command_schema_absent_errors_migrate() -> None:
 def test_start_worker_drains_concurrently() -> None:
     call_command("absurd_sync_queues")
     for i in range(5):
-        make_group.enqueue(f"g{i}")
+        tasks.make_group.enqueue(f"g{i}")
 
     run_absurd_worker()
     assert Group.objects.filter(name__startswith="g").count() == 5
@@ -406,7 +405,7 @@ def test_start_worker_drains_concurrently() -> None:
 
 def test_async_task_runs_end_to_end() -> None:
     call_command("absurd_sync_queues")
-    r = aecho.enqueue("hi-async")
+    r = atasks.aecho.enqueue("hi-async")
     run_absurd_worker()
     snap = get_task_result(r.id)
     assert snap is not None
@@ -420,7 +419,7 @@ def test_blocking_worker_drains_then_stops() -> None:
     # THEN calls stop_worker() (the flag start_worker's loop polls).
     # run_blocking_worker returns once stopped.
     call_command("absurd_sync_queues")
-    results = [make_group.enqueue(f"blk-{i}") for i in range(3)]
+    results = [tasks.make_group.enqueue(f"blk-{i}") for i in range(3)]
     task_ids = [r.id.rsplit(":", 1)[-1] for r in results]
 
     async def drive() -> None:
@@ -443,7 +442,7 @@ def test_blocking_worker_drains_then_stops() -> None:
 def test_run_burst_worker_processes_a_task_and_returns_sync_result() -> None:
 
     call_command("absurd_sync_queues")
-    result = make_group.enqueue("via-function")
+    result = tasks.make_group.enqueue("via-function")
     sync_result = run_burst_worker("default")
     assert Group.objects.filter(name="via-function").exists()
     snap = get_task_result(result.id)

@@ -17,7 +17,7 @@ from django_absurd.admin_views import (
 from django_absurd.exceptions import QueueReadOnlyError
 from django_absurd.models import Checkpoint, Event, Run, Task, Wait
 from django_absurd.params import AbsurdSpawnParams
-from tests.tasks import add, boom
+from tests import tasks
 
 
 def test_models_importable_and_view_backed() -> None:
@@ -66,9 +66,9 @@ def test_admin_uses_the_models_py_classes() -> None:
 
 def seed_two_queues() -> None:
     call_command("absurd_sync_queues")
-    add.enqueue(2, 3)
-    add.using(queue_name="other").enqueue(7, 8)
-    boom.enqueue(  # type: ignore[call-arg]
+    tasks.add.enqueue(2, 3)
+    tasks.add.using(queue_name="other").enqueue(7, 8)
+    tasks.boom.enqueue(  # type: ignore[call-arg]
         absurd_spawn_params=AbsurdSpawnParams(max_attempts=1)
     )
     call_command("absurd_worker", queue="default", burst=True)

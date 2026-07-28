@@ -11,7 +11,7 @@ from django.urls import clear_url_caches
 
 from django_absurd.admin import register_absurd_admin
 from django_absurd.params import AbsurdSpawnParams
-from tests.tasks import add, boom
+from tests import tasks
 from tests.utils import HasContent
 
 if t.TYPE_CHECKING:
@@ -36,9 +36,9 @@ def register_admin() -> None:
 
 def seed() -> None:
     call_command("absurd_sync_queues")
-    add.enqueue(2, 3)
-    add.using(queue_name="other").enqueue(7, 8)
-    boom.enqueue()
+    tasks.add.enqueue(2, 3)
+    tasks.add.using(queue_name="other").enqueue(7, 8)
+    tasks.boom.enqueue()
     call_command("absurd_worker", queue="default", burst=True)
     call_command("absurd_worker", queue="other", burst=True)
 
@@ -48,10 +48,10 @@ def seed_mixed() -> tuple[
 ]:
     """Three default-queue tasks in distinct terminal/queued states."""
     call_command("absurd_sync_queues")
-    completed = add.enqueue(2, 3)
-    failed = boom.enqueue(  # type: ignore[call-arg]
+    completed = tasks.add.enqueue(2, 3)
+    failed = tasks.boom.enqueue(  # type: ignore[call-arg]
         absurd_spawn_params=AbsurdSpawnParams(max_attempts=1)
     )
     call_command("absurd_worker", queue="default", burst=True)
-    pending = add.enqueue(5, 6)  # enqueued after the burst → never claimed
+    pending = tasks.add.enqueue(5, 6)  # enqueued after the burst → never claimed
     return completed, failed, pending

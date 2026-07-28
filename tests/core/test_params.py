@@ -8,7 +8,7 @@ from django_absurd.params import (
     AbsurdSpawnParams,
     absurd_default_params,
 )
-from tests.tasks import add
+from tests import tasks
 
 
 # Module-level: validate_task rejects a @task with a "<locals>" qualname.
@@ -40,4 +40,4 @@ def test_decorator_attaches_default_to_task_func() -> None:
 
 def test_decorator_above_task_raises() -> None:
     with pytest.raises(TypeError):
-        absurd_default_params(max_attempts=7)(add)  # add is a Task -> wrong order
+        absurd_default_params(max_attempts=7)(tasks.add)  # add is a Task -> wrong order
