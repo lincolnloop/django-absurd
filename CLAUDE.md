@@ -16,6 +16,15 @@ duplicate that material here.
   pointless `_`-prefixed helpers; if a helper exists, give it a real verb-name.
 - Exception: autouse pytest fixtures never called directly (e.g. `_enable_db`) may keep
   the `_` + plain-name form.
+- **Test fixture tasks read at their call site, not their definition.** The shared ones
+  in `tests/tasks.py` / `tests/atasks.py` are always reached module-qualified
+  (`tasks.capped`, `tasks.routed` — see Testing conventions), so a terse adjective name
+  is fine there: the module supplies the missing noun. A task defined **locally in a
+  test module** has no such prefix, so it must carry the verb itself
+  (`make_group_on_immediate_backend`, `echo_int`), never a bare property or provenance
+  (`off_backend`, `defined_elsewhere`, `plain`, `folded`). When a test binds a resulting
+  `Task` _object_ to a local name, prefix it `task_` (`task_with_folded_defaults`) — the
+  object is a noun, the function is not.
 - **No leading-underscore module constants or helpers** — use plain names
   (`MUTABLE_OPTION_KEYS`, not `_MUTABLE_OPTION_KEYS`).
 - **Module layout:** put helper functions BELOW the public function(s) that use them.
@@ -38,6 +47,10 @@ duplicate that material here.
 - **Non-fixture test helpers live in a `utils.py`** module (never `support.py` or other
   invented names) — e.g. `tests/utils.py`, `tests/core/test_admin/utils.py`,
   `tests/pg_cron/utils.py`. Import the module (`from tests import utils`) and qualify.
+- **Same for the fixture task modules**: `from tests import tasks` /
+  `from tests import atasks`, then `tasks.add`, `tasks.routed`, `atasks.aecho`. Never
+  `from tests.tasks import routed` — a bare adjective at the call site says nothing
+  about what runs, and it forces rename-aliases like `make_group as make_group_task`.
 - **Shared fixtures live in the parent `tests/conftest.py`**, inherited by all three
   suites via `--confcutdir=..` in each suite's `pytest.toml` (each suite's rootdir is
   its own dir, so without `confcutdir` a parent conftest isn't discovered). Do NOT
@@ -60,8 +73,17 @@ duplicate that material here.
     for callers or tests to invoke. Exercise the effect through the write path and
     assert the outcome; don't unit-test the emitter in isolation. (Caveat:
     `QuerySet.update()` / `bulk_*` send no signals — call that out where it matters.)
+  - **Never unit-test an internal helper** (a merge function, a serializer, a builder).
+    Assert its behavior through the real objects that use it — construct a `Task`,
+    enqueue it, run the command, and check the outcome. A test that calls the helper
+    directly is a hollow implementation defence: it re-states the code, survives a wrong
+    design, and dies on any refactor. If a helper's behavior has no observable
+    expression yet, the test belongs in the later task that adds the surface that
+    expresses it.
   - Reuse existing fixtures/utilities rather than re-rolling equivalents; inventory a
     suite's `conftest.py` and a sibling test before writing new ones.
+  - **Don't wrap two lines in a helper.** Inline short setup (claiming a task, opening a
+    cursor) at each call site rather than hiding it behind an indirection.
   - Name a variable for the thing it holds (its type/role), not a generic placeholder.
 - **Test management commands AND system checks by running them**:
   `call_command("check", "django_absurd")` / `call_command("absurd_sync_queues")`,
@@ -86,7 +108,14 @@ duplicate that material here.
   connection is refused / `pg_isready` fails, the container is stopped (they don't
   survive a machine restart or a new session) — bring it up FIRST; don't diagnose it as
   anything cleverer.
-- Full Python×Django matrix + min-max mypy: `uvx --with tox-uv tox`.
+- **The two gates to run before a commit** — not five separate commands:
+  - `uvx --with tox-uv tox -e dev` — all three suites against the dev env only. Reach
+    for the bare `uvx --with tox-uv tox` (full Python×Django matrix + min-max mypy) only
+    when a change could plausibly break on another version, not while iterating.
+  - `uv run pre-commit run --all-files` — owns ruff-check, ruff-format, **mypy**, and
+    prettier. Never invoke `ruff` or `mypy` directly; pre-commit already runs them, and
+    a hand-rolled invocation drifts from the hook's flags and exclusions.
+  - Iterating on one file is still `uv run pytest <path> -v`.
 - `pytest-xdist` is a dev dependency; every suite — including `tests/pg_cron`, now that
   its test DB is ordinary and cross-DB — runs safely under `-n<N>` (e.g.
   `uv run pytest tests/pg_cron -n4`). Pass `-n` directly; it isn't baked into any
