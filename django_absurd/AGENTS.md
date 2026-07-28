@@ -170,7 +170,9 @@ by import path, so they can live in any importable module (no `tasks.py` require
 Enqueuing rides the surrounding Django transaction — a task spawned inside `atomic()` is
 rolled back if the block fails (enqueue-on-commit, automatic).
 
-Absurd parameters attach two ways, both through `absurd_params`:
+Absurd parameters attach two ways, both through `absurd_params` — exported from the
+package root (`from django_absurd import absurd_params`; its home module,
+`django_absurd.params`, keeps working too):
 
 - **Per-task defaults** — the `@absurd_params(...)` decorator, applied _below_ `@task`
   (applying it above a `Task` raises `TypeError`):
@@ -193,11 +195,23 @@ Absurd parameters attach two ways, both through `absurd_params`:
   absurd_params(idempotency_key="abc").bind(send_report).enqueue(...)
   ```
 
+  `bind` returns an ordinary `Task`: `isinstance(bound, Task)` holds, and
+  `aenqueue`/`call`/`get_result`/`using` all work through it exactly as on the original
+  task. Django's own options — routing (`.using(queue_name=...)`), `backend`,
+  `priority`, … — stay on `.using()`, never on `absurd_params`; binding and `.using()`
+  compose in either order. Binding onto a task defined on a non-Absurd backend is a
+  no-op: it returns that task unchanged and logs one `WARNING` (deduped per task).
+
 Parameter fields (see `django_absurd.params`): `max_attempts`, `retry_strategy`,
 `cancellation` (defaults and per-call), plus `headers` and `idempotency_key` (per-call
-only). Field types come from `absurd_sdk` (`RetryStrategy`, `CancellationPolicy`,
-`JsonObject`). Backend capabilities: result retrieval and async tasks are supported;
-deferred (run-later) enqueue and priority are not.
+only) — the split is enforced by an overload pair on `absurd_params`, not just
+convention. Field types come from `absurd_sdk` (`RetryStrategy`, `CancellationPolicy`,
+`JsonObject`). The decorator's `max_attempts` and `cancellation` mirror the defaults
+accepted by Absurd's own [task definition](https://earendil-works.github.io/absurd/)
+(`default_max_attempts`, `default_cancellation`), but not field-for-field: Absurd's
+`register_task` takes no `retry_strategy`, so that field is ours alone, applied at spawn
+time. Backend capabilities: result retrieval and async tasks are supported; deferred
+(run-later) enqueue and priority are not.
 
 ## Workers
 
