@@ -203,9 +203,8 @@ package root (`from django_absurd import absurd_params`; its home module,
   returns that task unchanged and logs one `WARNING` (deduped per task). This keys on
   the task's _current_ backend, not where it was defined — a task defined elsewhere but
   routed in with `.using(backend="default")` binds and spawns normally; a task defined
-  on the Absurd backend but routed out is the no-op. So change a task's backend before
-  binding, not after — binding first and rerouting the backend afterward hits that same
-  no-op and silently drops the params.
+  on the Absurd backend but routed out is the no-op. `bind` reads the task's backend at
+  the moment you call it, so change a task's backend before binding, not after.
 
 Parameter fields (see `django_absurd.params`): `max_attempts`, `retry_strategy`,
 `cancellation` (defaults and per-call), plus `headers` and `idempotency_key` (per-call
