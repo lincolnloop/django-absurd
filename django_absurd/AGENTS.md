@@ -197,10 +197,13 @@ package root (`from django_absurd import absurd_params`; its home module,
 
   `bind` returns an ordinary `Task`: `isinstance(bound, Task)` holds, and
   `aenqueue`/`call`/`get_result`/`using` all work through it exactly as on the original
-  task. Django's own options — routing (`.using(queue_name=...)`), `backend`,
-  `priority`, … — stay on `.using()`, never on `absurd_params`; binding and `.using()`
-  compose in either order. Binding onto a task defined on a non-Absurd backend is a
-  no-op: it returns that task unchanged and logs one `WARNING` (deduped per task).
+  task. Django's own options — routing (`.using(queue_name=...)`), `backend`, … — stay
+  on `.using()`, never on `absurd_params`; binding and `.using()` compose in either
+  order. Binding onto a task whose backend isn't the Absurd backend is a no-op: it
+  returns that task unchanged and logs one `WARNING` (deduped per task). This keys on
+  the task's _current_ backend, not where it was defined — a task defined elsewhere but
+  routed in with `.using(backend="default")` binds and spawns normally; a task defined
+  on the Absurd backend but routed out is the no-op.
 
 Parameter fields (see `django_absurd.params`): `max_attempts`, `retry_strategy`,
 `cancellation` (defaults and per-call), plus `headers` and `idempotency_key` (per-call
