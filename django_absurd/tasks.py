@@ -58,7 +58,11 @@ class AbsurdTask(TaskBase):  # type: ignore[misc]  # stub declares Task non-froz
 
     def __post_init__(self) -> None:
         defaults = getattr(self.func, "absurd_params", None)
-        if defaults is not None:
+        # Fold whenever either layer exists, not just when defaults do: the merge is
+        # also what copies nested values away from the caller, and a task built with
+        # params but no decorator defaults would otherwise store the caller's dict by
+        # reference. Both absent stays None rather than becoming {}.
+        if defaults is not None or self.absurd_params is not None:
             object.__setattr__(
                 self,
                 "absurd_params",

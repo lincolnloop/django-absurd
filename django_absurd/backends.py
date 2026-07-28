@@ -104,9 +104,10 @@ class AbsurdBackend(BaseTaskBackend):
     ) -> "TaskResult[t.Any, t.Any]":
         self.validate_task(task)
         client = build_absurd_client(self.database)
-        # A task defined on another backend and routed in with .using(backend=...)
-        # keeps task_class = Task, so its decorator defaults are still only on the
-        # function. scheduler.py hits that path on every scheduled task.
+        # The else covers a task DEFINED on a non-Absurd backend: it keeps
+        # task_class = Task, and .using(backend=...) preserves that class, so its
+        # decorator defaults are still only on the function. A task defined on this
+        # backend stays an AbsurdTask through any .using(), scheduler routing included.
         params = (
             task.absurd_params
             if isinstance(task, AbsurdTask)

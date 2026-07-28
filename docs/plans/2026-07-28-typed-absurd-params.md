@@ -166,8 +166,9 @@ All of the following were confirmed by running code against this venv.
 - `enqueue` reads params as: the field when `isinstance(task, AbsurdTask)`, else
   `getattr(task.func, "absurd_params", None)`. The `else` is load-bearing — a task
   defined on another backend and routed in with `.using(backend=...)` keeps
-  `task_class = Task` (`scheduler.py:74` hits this on every scheduled task). It gets its
-  own test below.
+  `task_class = Task`. Note a task defined on THIS backend stays an `AbsurdTask` through
+  any `.using()`, scheduler routing included, so only a foreign-backend task reaches the
+  `else`. It gets its own test below.
 - `merged` must be a fresh dict — `setdefault("max_attempts", …)` on the task's own
   field would mutate stored params. Route through `build_merged_spawn_options`, which
   returns a new dict, rather than mutating what you read.

@@ -110,7 +110,9 @@ with `warn_unused_ignores`, so a corrected stub turns it into `[unused-ignore]`.
 target already is one. A task defined on another backend keeps `task_class = Task`, and
 `.using(backend=...)` preserves that class, so a task routed into the Absurd backend
 arrives as a plain `Task` — and the off-backend guard does not catch it, since the
-backend _is_ Absurd. `scheduler.py:74` hits this path on every scheduled task.
+backend _is_ Absurd. `scheduler.py:74` is where such a task would arrive — though a task
+defined on the Absurd backend stays an `AbsurdTask` through that routing, so the
+plain-`Task` path needs a task defined elsewhere to reach it.
 
 Params are represented internally as the existing `SpawnKwargs` dict. `NotSet`/`NOT_SET`
 remains the signature default sentinel; `absurd_params()` with no fields is legal and
