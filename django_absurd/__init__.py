@@ -7,8 +7,9 @@ module. Read it with::
     print(files("django_absurd").joinpath("AGENTS.md").read_text())
 
 It covers requirements, the ``TASKS`` setting, migrations, the ``absurd_sync_queues`` /
-``absurd_worker`` management commands, system checks, enqueue params/decorators, and
-durable steps & sleep (``get_absurd_context`` / ``aget_absurd_context``).
+``absurd_worker`` management commands, system checks, enqueue params/decorators (the
+exported ``absurd_params``), and durable steps & sleep (``get_absurd_context`` /
+``aget_absurd_context``).
 """
 
 from django_absurd.context import (
@@ -17,12 +18,14 @@ from django_absurd.context import (
     get_absurd_context,
 )
 from django_absurd.events import emit_event
+from django_absurd.params import absurd_params
 
 ABSURD_SCHEMA_VERSION = "0.4.0"
 
 __all__ = [
     "ABSURD_SCHEMA_VERSION",
     "AbsurdTaskContext",
+    "absurd_params",
     "aget_absurd_context",
     "emit_event",
     "get_absurd_context",

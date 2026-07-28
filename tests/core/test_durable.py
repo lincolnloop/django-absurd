@@ -5,8 +5,7 @@ import time
 import pytest
 from django.core.management import call_command
 
-from django_absurd import aget_absurd_context, get_absurd_context
-from django_absurd.params import AbsurdSpawnParams
+from django_absurd import absurd_params, aget_absurd_context, get_absurd_context
 from tests import atasks, tasks, utils
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -51,8 +50,8 @@ def test_async_step_runs_and_returns_value() -> None:
 
 def test_async_headers_readable_from_ctx() -> None:
     call_command("absurd_sync_queues")
-    result = atasks.aheaders_tenant.enqueue(  # type: ignore[call-arg]
-        absurd_spawn_params=AbsurdSpawnParams(headers={"tenant": "acme"})
+    result = (
+        absurd_params(headers={"tenant": "acme"}).bind(atasks.aheaders_tenant).enqueue()
     )
     utils.run_absurd_worker()
     snap = utils.get_task_result(result.id)
@@ -115,9 +114,7 @@ def test_sync_step_runs_and_returns_value() -> None:
 
 def test_sync_headers_heartbeat_and_run_step_forms() -> None:
     call_command("absurd_sync_queues")
-    result = tasks.scoverage.enqueue(  # type: ignore[call-arg]
-        absurd_spawn_params=AbsurdSpawnParams(headers={"tenant": "acme"})
-    )
+    result = absurd_params(headers={"tenant": "acme"}).bind(tasks.scoverage).enqueue()
     utils.run_absurd_worker()
     snap = utils.get_task_result(result.id)
     assert snap is not None

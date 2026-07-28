@@ -8,6 +8,7 @@ from django.core.management import call_command
 from django.db.models import Count
 
 import django_absurd.models
+from django_absurd import absurd_params
 from django_absurd import models as dm
 from django_absurd.admin_views import (
     ADMIN_ENTITY_SPECS,
@@ -16,7 +17,6 @@ from django_absurd.admin_views import (
 )
 from django_absurd.exceptions import QueueReadOnlyError
 from django_absurd.models import Checkpoint, Event, Run, Task, Wait
-from django_absurd.params import AbsurdSpawnParams
 from tests import tasks
 
 
@@ -68,9 +68,7 @@ def seed_two_queues() -> None:
     call_command("absurd_sync_queues")
     tasks.add.enqueue(2, 3)
     tasks.add.using(queue_name="other").enqueue(7, 8)
-    tasks.boom.enqueue(  # type: ignore[call-arg]
-        absurd_spawn_params=AbsurdSpawnParams(max_attempts=1)
-    )
+    absurd_params(max_attempts=1).bind(tasks.boom).enqueue()
     call_command("absurd_worker", queue="default", burst=True)
     call_command("absurd_worker", queue="other", burst=True)
 

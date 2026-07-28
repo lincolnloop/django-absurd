@@ -7,8 +7,8 @@ from absurd_sdk import JsonValue
 from django.core.management import call_command
 from django.tasks import TaskResultStatus
 
+from django_absurd import absurd_params
 from django_absurd.backends import get_absurd_backends
-from django_absurd.params import AbsurdSpawnParams
 from tests import atasks, tasks
 from tests.models import Payload
 from tests.utils import get_task_result, run_absurd_worker
@@ -32,9 +32,7 @@ def test_async_return_value_round_trips(value: JsonValue) -> None:
 
 def test_async_failure_recorded() -> None:
     call_command("absurd_sync_queues")
-    r = atasks.aboom.enqueue(  # type: ignore[call-arg]
-        absurd_spawn_params=AbsurdSpawnParams(max_attempts=1)
-    )
+    r = absurd_params(max_attempts=1).bind(atasks.aboom).enqueue()
     run_absurd_worker()
     snap = get_task_result(r.id)
     assert snap is not None

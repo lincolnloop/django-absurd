@@ -6,8 +6,7 @@ from absurd_sdk import CancellationPolicy, JsonValue, RetryStrategy
 from django.contrib.auth.models import Group
 from django.tasks import TaskContext, task
 
-from django_absurd import get_absurd_context
-from django_absurd.params import absurd_default_params
+from django_absurd import absurd_params, get_absurd_context
 from tests.models import Payload
 
 SYNC_STEP_CALLS: dict[str, int] = {"n": 0}
@@ -49,9 +48,10 @@ def routed() -> str:
 
 
 @task
-@absurd_default_params(max_attempts=7)
-def with_default_attempts(a: int, b: int) -> int:
-    return a + b
+@absurd_params(max_attempts=7)
+def with_default_attempts(a: int, b: int) -> t.Never:
+    msg = "path-resolved for its decorator; never run"
+    raise NotImplementedError(msg)
 
 
 @task
@@ -65,7 +65,7 @@ def create_payload(data: JsonValue) -> int:
 
 
 @task
-@absurd_default_params(max_attempts=3)
+@absurd_params(max_attempts=3)
 def capped(a: int, b: int) -> int:
     return a + b
 
@@ -76,21 +76,21 @@ def on_reports() -> str:
 
 
 @task
-@absurd_default_params(retry_strategy=RetryStrategy(kind="exponential", base_seconds=2))
+@absurd_params(retry_strategy=RetryStrategy(kind="exponential", base_seconds=2))
 def retrying() -> t.Never:
     msg = "path-resolved for its decorator; never run"
     raise NotImplementedError(msg)
 
 
 @task
-@absurd_default_params(cancellation=CancellationPolicy(max_duration=30))
+@absurd_params(cancellation=CancellationPolicy(max_duration=30))
 def cancellable() -> t.Never:
     msg = "path-resolved for its decorator; never run"
     raise NotImplementedError(msg)
 
 
 @task(queue_name="reports")
-@absurd_default_params(
+@absurd_params(
     max_attempts=9,
     retry_strategy=RetryStrategy(kind="fixed", base_seconds=5),
     cancellation=CancellationPolicy(max_duration=45, max_delay=3),

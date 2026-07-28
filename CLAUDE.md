@@ -16,6 +16,15 @@ duplicate that material here.
   pointless `_`-prefixed helpers; if a helper exists, give it a real verb-name.
 - Exception: autouse pytest fixtures never called directly (e.g. `_enable_db`) may keep
   the `_` + plain-name form.
+- **Test fixture tasks read at their call site, not their definition.** The shared ones
+  in `tests/tasks.py` / `tests/atasks.py` are always reached module-qualified
+  (`tasks.capped`, `tasks.routed` — see Testing conventions), so a terse adjective name
+  is fine there: the module supplies the missing noun. A task defined **locally in a
+  test module** has no such prefix, so it must carry the verb itself
+  (`make_group_on_immediate_backend`, `echo_int`), never a bare property or provenance
+  (`off_backend`, `defined_elsewhere`, `plain`, `folded`). When a test binds a resulting
+  `Task` _object_ to a local name, prefix it `task_` (`task_with_folded_defaults`) — the
+  object is a noun, the function is not.
 - **No leading-underscore module constants or helpers** — use plain names
   (`MUTABLE_OPTION_KEYS`, not `_MUTABLE_OPTION_KEYS`).
 - **Module layout:** put helper functions BELOW the public function(s) that use them.
@@ -38,6 +47,10 @@ duplicate that material here.
 - **Non-fixture test helpers live in a `utils.py`** module (never `support.py` or other
   invented names) — e.g. `tests/utils.py`, `tests/core/test_admin/utils.py`,
   `tests/pg_cron/utils.py`. Import the module (`from tests import utils`) and qualify.
+- **Same for the fixture task modules**: `from tests import tasks` /
+  `from tests import atasks`, then `tasks.add`, `tasks.routed`, `atasks.aecho`. Never
+  `from tests.tasks import routed` — a bare adjective at the call site says nothing
+  about what runs, and it forces rename-aliases like `make_group as make_group_task`.
 - **Shared fixtures live in the parent `tests/conftest.py`**, inherited by all three
   suites via `--confcutdir=..` in each suite's `pytest.toml` (each suite's rootdir is
   its own dir, so without `confcutdir` a parent conftest isn't discovered). Do NOT
@@ -60,8 +73,46 @@ duplicate that material here.
     for callers or tests to invoke. Exercise the effect through the write path and
     assert the outcome; don't unit-test the emitter in isolation. (Caveat:
     `QuerySet.update()` / `bulk_*` send no signals — call that out where it matters.)
+  - **Never unit-test an internal helper** (a merge function, a serializer, a builder).
+    Assert its behavior through the real objects that use it — construct a `Task`,
+    enqueue it, run the command, and check the outcome. A test that calls the helper
+    directly is a hollow implementation defence: it re-states the code, survives a wrong
+    design, and dies on any refactor. If a helper's behavior has no observable
+    expression yet, the test belongs in the later task that adds the surface that
+    expresses it.
   - Reuse existing fixtures/utilities rather than re-rolling equivalents; inventory a
     suite's `conftest.py` and a sibling test before writing new ones.
+  - **Don't wrap two lines in a helper.** Inline short setup (claiming a task, opening a
+    cursor) at each call site rather than hiding it behind an indirection.
+  - **A function that is never invoked gets no real body.** When a task or a decorator
+    target exists only for its object, signature, decorator, or import path — enqueued
+    but never run, or only inspected — a working body is dead code and a coverage miss.
+    Applies to `@task` fixtures and to throwaway `def send_report(...)` stubs in guard
+    tests alike. Two forms:
+    - **`raise NotImplementedError` with a reason** — the default. Write it as the
+      two-line errmsg-lint idiom and annotate `-> t.Never`:
+
+      ```python
+      def capped(a: int, b: int) -> t.Never:
+          msg = "path-resolved for its decorator; never run"
+          raise NotImplementedError(msg)
+      ```
+
+      `[tool.coverage.report] exclude_also` in `pyproject.toml` carries a regex for
+      exactly this shape, so **both** lines are excluded — it costs nothing in coverage
+      and still fails loudly if something ever does call it.
+
+    - **A docstring and no body** — fine for a throwaway local stub. Also costs no
+      counted lines, but the return annotation must be `-> None` or mypy raises
+      `[empty-body]`, and an accidental call silently returns `None`.
+
+    Save real bodies for tasks a worker or the immediate backend actually executes.
+    **Check across every suite before concluding a shared fixture is never invoked** —
+    `tests/tasks.py` is imported by all of them but each suite is a separate coverage
+    run, so a body that looks dead under `tests/core` may be executed by `tests/pg_cron`
+    (`capped` and `on_reports` are). Codecov combines the runs; a single local suite
+    does not.
+
   - Name a variable for the thing it holds (its type/role), not a generic placeholder.
 - **Test management commands AND system checks by running them**:
   `call_command("check", "django_absurd")` / `call_command("absurd_sync_queues")`,
@@ -86,7 +137,14 @@ duplicate that material here.
   connection is refused / `pg_isready` fails, the container is stopped (they don't
   survive a machine restart or a new session) — bring it up FIRST; don't diagnose it as
   anything cleverer.
-- Full Python×Django matrix + min-max mypy: `uvx --with tox-uv tox`.
+- **The two gates to run before a commit** — not five separate commands:
+  - `uvx --with tox-uv tox -e dev` — all three suites against the dev env only. Reach
+    for the bare `uvx --with tox-uv tox` (full Python×Django matrix + min-max mypy) only
+    when a change could plausibly break on another version, not while iterating.
+  - `uv run pre-commit run --all-files` — owns ruff-check, ruff-format, **mypy**, and
+    prettier. Never invoke `ruff` or `mypy` directly; pre-commit already runs them, and
+    a hand-rolled invocation drifts from the hook's flags and exclusions.
+  - Iterating on one file is still `uv run pytest <path> -v`.
 - `pytest-xdist` is a dev dependency; every suite — including `tests/pg_cron`, now that
   its test DB is ordinary and cross-DB — runs safely under `-n<N>` (e.g.
   `uv run pytest tests/pg_cron -n4`). Pass `-n` directly; it isn't baked into any
@@ -116,11 +174,50 @@ duplicate that material here.
   so a single override isolates one rule.
 - **Assert the COMPLETE error message, never a fragment** (fragments are unreadable and
   brittle); assert the full stable portion up to any volatile tail.
+- **Narrow `# type: ignore[...]` is expected when a test deliberately passes something
+  the checker rejects** — our runtime error states are part of the public contract
+  (users may not type-check at all), so they must be exercised. This is the one place
+  ignores don't need asking for; keep them narrow (specific error code) and on the
+  offending line only. `warn_unused_ignores` (on via `strict`) fails the build if the
+  error stops occurring, so a stale ignore can't hide a regressed guard.
 - **Always alphabetize** `@pytest.mark.parametrize` values and fixture `params`.
 - **Alphabetize a test function's own fixture parameters** too (e.g.
   `def test_x(admin_user: User, client: Client)`, not `client` then `admin_user`) — no
   ruff/flake8-pytest-style rule enforces this (checked; no `PT0xx` rule covers parameter
   order), so it's a manual convention only.
+
+## Typing is an extra layer, not the contract
+
+- **Type checking is optional for our users.** They may run mypy, pyright, or nothing at
+  all. Downstream projects are under no obligation to type-check.
+- **We are on mypy specifically**, not by preference: `django-stubs` ships a mypy plugin
+  (`plugins = ["mypy_django_plugin.main"]`) that resolves settings and models, and no
+  other checker can load it. So our own gate is mypy strict.
+- That asymmetry means public API typing should stay **checker-agnostic** where it can —
+  plain overloads and explicit signatures rather than mypy-specific behavior — so
+  pyright users get the same errors. Verify with `uvx pyright` when designing a typed
+  surface.
+- So **runtime behavior is the contract.** Every rule we enforce must raise a correct,
+  self-explanatory Python error on its own — never rely on a checker having caught it
+  first. Annotations, overloads, and `Never`/`NoReturn` tricks are a bonus layer that
+  catches mistakes earlier for the users who opt in.
+- When a nicer static message and a nicer runtime message conflict, **the runtime
+  message wins**. Errors state the rule and show the fix (see the system-check
+  convention above: problem in `msg`, resolution in `hint`).
+- Don't lie to the checker to buy a tidier static error (e.g. hiding a method behind
+  `if not t.TYPE_CHECKING` so it looks absent). Prefer a construction that is true at
+  both layers.
+- **Validate where it's important; don't go crazy.** Worth validating: configuration
+  (`absurd.E009` on `DEFAULT_MAX_ATTEMPTS`), user-authored data that persists (pg_cron
+  schedule grammar, model `full_clean`), and anything whose failure is silent or lands
+  far from its cause. Not worth it: re-stating the SDK's own types at a call site when a
+  wrong value blows up loudly on its own — a wrong signature or wrong type should fail
+  the way Python or Postgres fails it, and duplicated policy drifts from the pinned SQL.
+- Curated errors are for a **different category**: the caller is at the wrong door, not
+  holding the wrong data — a param that belongs on `.using()`, a per-invocation field
+  used at a definition site. Python's own message can't point at the right API, so those
+  get a message naming the rule and showing the fix. Wrong _data_ gets no such
+  treatment.
 
 ## Runtime
 

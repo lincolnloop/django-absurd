@@ -170,34 +170,51 @@ by import path, so they can live in any importable module (no `tasks.py` require
 Enqueuing rides the surrounding Django transaction — a task spawned inside `atomic()` is
 rolled back if the block fails (enqueue-on-commit, automatic).
 
-Absurd parameters attach two ways — both live in `django_absurd.params`:
+Absurd parameters attach two ways, both through `absurd_params` — exported from the
+package root (`from django_absurd import absurd_params`; its home module,
+`django_absurd.params`, keeps working too):
 
-- **Per-task defaults** — the `@absurd_default_params(...)` decorator, applied _below_
-  `@task` (applying it above a `Task` raises `TypeError`):
+- **Per-task defaults** — the `@absurd_params(...)` decorator, applied _below_ `@task`
+  (applying it above a `Task` raises `TypeError`):
 
   ```python
   from django.tasks import task
-  from django_absurd.params import absurd_default_params
+  from django_absurd import absurd_params
 
   @task
-  @absurd_default_params(max_attempts=3)
+  @absurd_params(max_attempts=3)
   def send_report(...): ...
   ```
 
-- **Per-invocation** — pass an `AbsurdSpawnParams` as the `absurd_spawn_params` kwarg to
-  `.enqueue()`:
+- **Per-invocation** — `.bind(task)` an `absurd_params(...)` call onto the task before
+  enqueuing:
 
   ```python
-  from django_absurd.params import AbsurdSpawnParams
+  from django_absurd import absurd_params
 
-  send_report.enqueue(..., absurd_spawn_params=AbsurdSpawnParams(idempotency_key="abc"))
+  absurd_params(idempotency_key="abc").bind(send_report).enqueue(...)
   ```
+
+  `bind` returns an ordinary `Task`: `isinstance(bound, Task)` holds, and
+  `aenqueue`/`call`/`get_result`/`using` all work through it exactly as on the original
+  task. Django's own Task API options — routing (`.using(queue_name=...)`), `backend`, …
+  — stay on `.using()`, never on `absurd_params`; routing composes with binding in
+  either order. `bind` attaches the params whatever backend the task is currently on, so
+  binding and `.using(backend=...)` compose in either order too. Only the Absurd backend
+  reads them — if the task is still on another backend at enqueue, the params are
+  silently inert and `AbsurdTask.enqueue`/`aenqueue` log one `WARNING` naming the task
+  and the backend it ran on (deduped per task).
 
 Parameter fields (see `django_absurd.params`): `max_attempts`, `retry_strategy`,
 `cancellation` (defaults and per-call), plus `headers` and `idempotency_key` (per-call
-only). Field types come from `absurd_sdk` (`RetryStrategy`, `CancellationPolicy`,
-`JsonObject`). Backend capabilities: result retrieval and async tasks are supported;
-deferred (run-later) enqueue and priority are not.
+only) — the split is enforced by an overload pair on `absurd_params`, not just
+convention. Field types come from `absurd_sdk` (`RetryStrategy`, `CancellationPolicy`,
+`JsonObject`). The decorator's `max_attempts` and `cancellation` mirror the defaults
+accepted by Absurd's own [task definition](https://earendil-works.github.io/absurd/)
+(`default_max_attempts`, `default_cancellation`), but not field-for-field: Absurd's
+`register_task` takes no `retry_strategy`, so that field is ours alone, applied at spawn
+time. Backend capabilities: result retrieval and async tasks are supported; deferred
+(run-later) enqueue and priority are not.
 
 ## Workers
 
@@ -502,10 +519,10 @@ directly in the admin (create / edit / delete) via a **two-step flow**:
 1. **Add form** — fill only **Name**, **Task** (dotted import path), and **Cron**
    expression. On save, the remaining spawn options (`queue`, `max_attempts`, retry
    strategy, cancellation policy, `headers`, `idempotency_key`) are resolved from the
-   task's `@task` / `@absurd_default_params` decorators and stored. **Queue is
-   required** — a blank queue is rejected; it always resolves to a concrete queue. The
-   row is created **disabled** (`enabled=False`) so it does not fire yet. Resolution is
-   frozen at create: later decorator edits do not change existing rows.
+   task's `@task` / `@absurd_params` decorators and stored. **Queue is required** — a
+   blank queue is rejected; it always resolves to a concrete queue. The row is created
+   **disabled** (`enabled=False`) so it does not fire yet. Resolution is frozen at
+   create: later decorator edits do not change existing rows.
 
 2. **Change form** — review the resolved values, fill `args` / `kwargs` if the task
    needs them, and set **Enabled** to activate. Once enabled, saving or deleting the row

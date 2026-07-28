@@ -15,9 +15,8 @@ def test_max_attempts_from_decorator(
     settings.TASKS = make_tasks_settings()
     be = get_absurd_backends()["default"]
     s = Schedule(name="x", task="tests.tasks.capped", cron="0 2 * * *")
-    assert (
-        resolve_spawn_options(be, s.task)["max_attempts"] == 3
-    )  # capped => @absurd_default_params(max_attempts=3)
+    # capped => @absurd_params(max_attempts=3)
+    assert resolve_spawn_options(be, s.task)["max_attempts"] == 3
 
 
 def test_max_attempts_falls_back_to_backend_default(

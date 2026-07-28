@@ -240,11 +240,12 @@ truth. Admins can additionally author `ScheduledTask.Source.ADMIN` schedules via
 **Step 1 — Add form.** Fill only three fields: **Name**, **Task** (dotted import path to
 a [`@task`](tasks.md#define-a-task)), and **Cron** expression. On save, the remaining
 [spawn options](tasks.md#retries-spawn-options) — queue, `max_attempts`, retry strategy,
-cancellation policy, `headers`, `idempotency_key` — are resolved from the task's `@task`
-/ `@absurd_default_params` decorators and stored automatically. **Queue is required** —
-blank is rejected; it always resolves to a concrete declared queue. The row is created
-**disabled** (not yet firing). Resolution is frozen at create: later decorator edits do
-not change existing rows.
+cancellation policy, `headers`, `idempotency_key` — are resolved from the task's
+[`@task`](tasks.md#define-a-task) / [`@absurd_params`](tasks.md#retries-spawn-options)
+decorators and stored automatically. **Queue is required** — blank is rejected; it
+always resolves to a concrete declared queue. The row is created **disabled** (not yet
+firing). Resolution is frozen at create: later decorator edits do not change existing
+rows.
 
 **Step 2 — Change form.** Review the resolved values, fill `args` / `kwargs` if the task
 needs them, and check **Enabled** to go live. Once enabled, saving or deleting the row
