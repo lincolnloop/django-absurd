@@ -24,6 +24,24 @@ optional for our users.
 — read it before starting. Tracked in
 [#119](https://github.com/lincolnloop/django-absurd/issues/119).
 
+## Amendments after execution
+
+This plan was executed as written; two curated messages then changed during the
+pre-merge revdiff. **The spec is correct; the message text quoted below is not.**
+
+- **`run_after` no longer gets a curated pointer** (the message quoted in Task 2's
+  `test_run_after_is_rejected_with_the_defer_pointer` is gone). It is not an Absurd
+  spawn option — `spawn` takes `max_attempts`, `retry_strategy`, `headers`, `queue`,
+  `cancellation`, `idempotency_key` — it is purely a `Task.using()` kwarg, so it was
+  special-cased on a false premise. It now falls through to the generic invalid-argument
+  message, and the test is `test_a_django_only_option_gets_no_special_pointer`. Used
+  properly it raises Django's own `InvalidTask`, since `supports_defer = False`.
+- **The routing message and docs say "Django's Task API"**, not bare "Django" — the
+  distinction matters when a whole other API is in play.
+
+Also: Task 2's per-invocation-as-decorator test now applies `@absurd_params(...)` with
+real decorator syntax inside `pytest.raises`, rather than calling the params object.
+
 ## Prerequisite (NOT part of this plan)
 
 Every test snippet below reaches fixture tasks as `tasks.<name>` / `atasks.<name>`. That
