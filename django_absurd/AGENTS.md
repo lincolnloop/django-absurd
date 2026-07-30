@@ -676,10 +676,9 @@ all subclasses of `django_absurd.exceptions.DjangoAbsurdError`:
 - `TaskIdQueueMismatchError` — the test fixture's `get_result(task_id, queue=...)` was
   given a `"queue:uuid"` id and an explicit `queue=` that name different queues.
 
-Catch `DjangoAbsurdError` to handle any of django-absurd's own typed errors generically.
-It is not exhaustive, though: plenty of call sites in this package still raise a plain
-`ImproperlyConfigured`, `RuntimeError`, or `TypeError` directly (schema-not-installed,
-config validation, clock misuse) and are not (yet) part of this hierarchy.
+Catch `DjangoAbsurdError` to handle any of django-absurd's own typed errors generically;
+other failures (schema-not-installed, config validation, clock misuse) still raise plain
+`ImproperlyConfigured`/`RuntimeError`/`TypeError` outside the hierarchy.
 
 ## Testing
 
@@ -796,16 +795,13 @@ def test_a_task_sleeps_seven_days_then_completes(dj_absurd):
 **`drain()`** runs every currently-claimable task on `queue` to completion, in-process —
 no [worker](#workers) subprocess, no polling loop to manage. It's the fixture
 counterpart of `absurd_worker --burst`: it drains the backlog present at call time, then
-returns one `RunSnapshot` per run executed, in claim order. It takes no `concurrency`
-parameter — the burst drain runs lockstep batches rather than a rolling window, so the
-parameter would be a misnomer; worker concurrency stays covered through the
-`absurd_worker` CLI. It provisions nothing (unlike the CLI, which provisions declared
-queues on start): `migrate` provisions every declared queue already, so a test database
-arrives ready, but a queue a single test declares by overriding `TASKS` needs
-`call_command("absurd_sync_queues")` first or `drain()` raises
-`QueueNotProvisionedError` naming that command (a queue that isn't declared at all
-raises `QueueNotDeclaredError`) — see [Exceptions](#exceptions) above for the full
-typed-error taxonomy.
+returns one `RunSnapshot` per run executed, in claim order. It provisions nothing
+(unlike the CLI, which provisions declared queues on start): `migrate` provisions every
+declared queue already, so a test database arrives ready, but a queue a single test
+declares by overriding `TASKS` needs `call_command("absurd_sync_queues")` first or
+`drain()` raises `QueueNotProvisionedError` naming that command (a queue that isn't
+declared at all raises `QueueNotDeclaredError`) — see [Exceptions](#exceptions) above
+for the full typed-error taxonomy.
 
 **`get_result()` honours a prefixed id's own queue.** `task_id` accepts either a bare
 uuid or Django's own `TaskResult.id` (`"queue:uuid"`) — whatever `enqueue()` handed
@@ -813,32 +809,28 @@ back. When it carries a queue prefix, that prefix is what gets queried, not `que
 default:
 
 ```python
-result = reports_task.enqueue()          # id is "reports:<uuid>"
-dj_absurd.get_result(result.id)             # queries the "reports" queue, correctly
+result = reports_task.enqueue()   # id is "reports:<uuid>"
+dj_absurd.get_result(result.id)   # queries the "reports" queue
 ```
 
-Passing `queue=` explicitly — including `queue="default"` — is detectable (it defaults
-to an internal sentinel, not the literal string `"default"`); one that disagrees with a
-prefixed id's own queue raises `TaskIdQueueMismatchError` naming both instead of
-silently picking one. A bare uuid (no prefix) resolves an unpassed `queue` to
-`"default"`, same as always.
+An explicit `queue=` — even `queue="default"` — that disagrees with a prefixed id's own
+queue raises `TaskIdQueueMismatchError` naming both. A bare uuid resolves an unpassed
+`queue` to `"default"`, same as always.
 
 **Requires `transaction=True`**: Absurd's own work runs on a connection separate from
-the test's. Under a plain `db` test the enqueued row is invisible to that connection, so
-a drain silently no-ops, `get_result` returns `None`, and an `emit` never wakes its
-waiter; `drain`, `emit`, and `get_result` each detect the open transaction and raise
-rather than letting that confusing silence land far from its cause. In a multi-DB
-project, declare the Absurd alias in that same test's `databases` too — draining commits
-real state via the worker's own connection, and an undeclared alias means the cleanup
-guard above skips it, leaking that state into the next test.
+the test's; under a plain `db` test the enqueued row is invisible to it. `drain`,
+`emit`, and `get_result` detect the open transaction and raise rather than silently
+no-opping. In a multi-DB project, declare the Absurd alias in that same test's
+`databases` too — draining commits real state via the worker's own connection, and an
+undeclared alias means the cleanup guard above skips it, leaking that state into the
+next test.
 
 **Freeze BEFORE enqueueing.** `freeze_time` and its movers move both Python's clock (via
 [time-machine](https://github.com/adamchainz/time-machine)) and Postgres's
 `absurd.fake_now` GUC. Freezing to a PAST instant after rows already exist leaves those
 rows' deadlines in the database's future relative to the new frozen now, so nothing is
-claimable until a later `move_to`/`shift` passes them. Durable time only moves inside a
-`freeze_time` block — `drain`, `emit`, `get_result`, and `now` all work without ever
-touching the clock, and a test that never opens one pays nothing.
+claimable until a later `move_to`/`shift` passes them. A test that never opens a
+`freeze_time` block pays nothing: the other members never touch the clock.
 
 **Install time-machine yourself** — it is a dev/test dependency of _your_ project, not
 bundled with django-absurd and not one of its extras (`pip install time-machine`).

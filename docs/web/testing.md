@@ -44,11 +44,10 @@ def test_a_task_sleeps_seven_days_then_completes(dj_absurd):
 
 ### Requires `transaction=True`
 
-Absurd's own work runs on a connection separate from the test's. Under a plain
+Absurd's own work runs on a connection separate from the test's; under a plain
 [`db`](https://pytest-django.readthedocs.io/en/latest/helpers.html#db) test the enqueued
-row is invisible to that connection, so a drain silently no-ops, `get_result` returns
-`None`, and an `emit` never wakes its waiter. All three detect the open transaction and
-raise rather than letting that silence land far from its cause — use
+row is invisible to it. `drain`, `emit`, and `get_result` detect the open transaction
+and raise rather than silently no-opping — use
 `@pytest.mark.django_db(transaction=True)`.
 
 !!! warning "Multi-DB: declare the Absurd alias"
@@ -79,9 +78,9 @@ is the only thing a durable deadline is measured in.
 Both halves of the clock are released when the block ends, so a test can open several
 windows in sequence. Opening one INSIDE another raises instead of stacking — two frozen
 instants cannot both be "now" — and using a `FrozenTime` after its own block exited
-raises rather than silently re-freezing from real now. Durable time moves only inside a
-block; a test that never opens one pays nothing and leaks nothing. `FrozenTime` is
-importable from `django_absurd.test` for annotating your own helpers.
+raises rather than silently re-freezing from real now. A test that never opens a block
+pays nothing: the other members never touch the clock. `FrozenTime` is importable from
+`django_absurd.test` for annotating your own helpers.
 
 !!! warning "Install time-machine yourself"
 
@@ -97,10 +96,7 @@ importable from `django_absurd.test` for annotating your own helpers.
 Runs every currently-claimable task on `queue` to completion, in-process — no
 [worker](how-it-works.md#workers) subprocess, no polling loop to manage. It's the
 fixture counterpart of `absurd_worker --burst`: it drains the backlog present at call
-time, then returns one `RunSnapshot` per run executed, in claim order. It takes no
-`concurrency` parameter — the burst drain runs lockstep batches rather than a rolling
-window, so the parameter would be a misnomer; worker concurrency stays covered through
-the `absurd_worker` CLI.
+time, then returns one `RunSnapshot` per run executed, in claim order.
 
 It provisions nothing, unlike the CLI, which provisions declared queues on start.
 `migrate` provisions every declared queue already, so a test database arrives ready. A
@@ -108,7 +104,7 @@ queue a single test declares by overriding `TASKS` has no table yet — call
 `call_command("absurd_sync_queues")` first, or `drain()` raises
 `QueueNotProvisionedError` naming that command. Draining a queue that isn't declared at
 all raises `QueueNotDeclaredError` — see
-[Our own exceptions](workflows.md#our-own-exceptions) for the full typed-error taxonomy.
+[Our own exceptions](workflows.md#our-own-exceptions).
 
 ### `emit(name, payload=None, queue="default")`
 
@@ -125,14 +121,12 @@ Omit `queue` entirely to let the prefix win:
 
 ```python
 result = reports_task.enqueue()   # id is "reports:<uuid>"
-dj_absurd.get_result(result.id)   # queries the "reports" queue, correctly
+dj_absurd.get_result(result.id)   # queries the "reports" queue
 ```
 
-Passing `queue=` explicitly — including `queue="default"` — is detectable, since it
-defaults to an internal sentinel rather than the literal string `"default"`. If it
-disagrees with a prefixed id's own queue, `get_result` raises `TaskIdQueueMismatchError`
-naming both instead of silently picking one. A bare uuid resolves an unpassed `queue` to
-`"default"`.
+An explicit `queue=` — even `queue="default"` — that disagrees with a prefixed id's own
+queue raises `TaskIdQueueMismatchError` naming both. A bare uuid resolves an unpassed
+`queue` to `"default"`.
 
 A task-level view cannot express an in-flight [retry](tasks.md#retries-spawn-options):
 
@@ -146,9 +140,8 @@ A task-level view cannot express an in-flight [retry](tasks.md#retries-spawn-opt
   reachable from this snapshot.
 
 `drain()`'s `RunSnapshot` is how you tell these apart — it reports each run's own state
-right after that run executes, so a retry sequence reads attempt-by-attempt (attempt 1
-failed, attempt 2 failed, attempt 3 completed) instead of collapsing to one ambiguous
-final read.
+right after that run executes, so a retry sequence reads attempt-by-attempt instead of
+collapsing to one ambiguous final read.
 
 ### `now`
 
@@ -176,7 +169,8 @@ Its launcher runs in the central `cron.database_name` database
 ([Test databases](cron-jobs.md#test-databases)), on its own real clock, and interprets
 schedules in the [`cron.timezone`](cron-jobs.md#timezone) GUC — none of which a
 test-database GUC can reach. Testing a pg_cron schedule stays "reconcile it in, then
-inspect `cron.job`"; `freeze_time` doesn't apply to it.
+inspect `cron.job`" — see
+[Getting a `SCHEDULE` into pg_cron for a test](#getting-a-schedule-into-pg_cron-for-a-test).
 
 ## Cleanup is automatic
 

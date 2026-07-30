@@ -365,11 +365,9 @@ or the test fixture's `drain()`) raise typed errors under
 `django_absurd.exceptions.DjangoAbsurdError` — `QueueNotDeclaredError` and
 `QueueNotProvisionedError`. `enqueue` raises `QueueNotDeclaredError` too, but only when
 the backend's `QUEUES` option is empty/unset; with `QUEUES` configured, a typo'd queue
-name at enqueue is instead rejected earlier as Django's own `InvalidTask`, from
-`validate_task`. Catch `DjangoAbsurdError` to handle any of them generically. This is
-not every error the package can raise, though: plenty of call sites still raise a plain
-`ImproperlyConfigured`, `RuntimeError`, or `TypeError` directly and are outside this
-hierarchy for now.
+name at enqueue is instead rejected earlier as Django's own `InvalidTask`. Catch
+`DjangoAbsurdError` to handle any of them generically; other failures still raise plain
+`ImproperlyConfigured`/`RuntimeError`/`TypeError` outside the hierarchy.
 
 ## Enqueue a durable task
 
