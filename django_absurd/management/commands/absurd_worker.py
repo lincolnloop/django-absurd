@@ -6,13 +6,14 @@ from django.core.management.base import CommandError
 if t.TYPE_CHECKING:
     from django.core.management.base import CommandParser
 
+from django_absurd.exceptions import BackendNotConfiguredError, QueueNotDeclaredError
 from django_absurd.management.base import (
     BEAT_DISABLED_UNDER_PG_CRON,
     AbsurdReportCommand,
     resolve_backend,
 )
 from django_absurd.queues import provision_backend
-from django_absurd.worker import WorkerOptions, run_burst_worker, run_worker
+from django_absurd.worker import WorkerOptions, run_worker
 
 
 class Command(AbsurdReportCommand):
@@ -71,7 +72,10 @@ class Command(AbsurdReportCommand):
         )
 
     def handle(self, *args: t.Any, **options: t.Any) -> None:
-        backend = resolve_backend()
+        try:
+            backend = resolve_backend()
+        except BackendNotConfiguredError as exc:
+            raise CommandError(str(exc)) from exc
         queue = options["queue"]
 
         if options["burst"] and options["beat"]:
@@ -89,19 +93,10 @@ class Command(AbsurdReportCommand):
             worker_id=options["worker_id"],
         )
 
-        if options["burst"]:
-            result = run_burst_worker(queue, options=worker_options)
-            self.report_sync_result(result)
-            self.stdout.write(f"Started worker on queue '{queue}'.")
-            return
-
         if queue not in backend.queues:
-            valid = ", ".join(sorted(backend.queues))
-            msg = (
-                f"Queue '{queue}' is not declared for backend '{backend.alias}'."
-                f" Valid queues: {valid}"
+            raise CommandError(
+                str(QueueNotDeclaredError(queue, backend.alias, backend.queues))
             )
-            raise CommandError(msg)
 
         try:
             # Full provision on start so the admin views reflect every declared
@@ -115,6 +110,7 @@ class Command(AbsurdReportCommand):
         run_worker(
             backend,
             queue,
+            burst=options["burst"],
             run_beat=options["beat"],
             options=worker_options,
         )

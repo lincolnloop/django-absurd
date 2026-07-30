@@ -2,6 +2,7 @@ import asyncio
 import datetime as dt
 import logging
 
+import psycopg.errors
 import pytest
 from django.contrib.auth.models import Group
 from django.core.exceptions import ImproperlyConfigured
@@ -11,17 +12,23 @@ from django.db import connection
 from pytest_django.fixtures import SettingsWrapper
 
 from django_absurd.backends import AbsurdBackend, get_absurd_backends
+from django_absurd.exceptions import (
+    DjangoAbsurdError,
+    QueueNotDeclaredError,
+    QueueNotProvisionedError,
+)
 from django_absurd.models import Queue
 from django_absurd.queues import get_absurd_client
+from django_absurd.test import AbsurdTestRuntime
 from django_absurd.worker import (
     WorkerOptions,
     aworker_client,
+    drain_queue,
     run_blocking_worker,
-    run_burst_worker,
 )
 from tests import atasks, tasks
 from tests.jobs import record_from_jobs
-from tests.utils import get_task_result, run_absurd_worker
+from tests.utils import run_absurd_worker
 
 pytestmark = [
     pytest.mark.django_db(transaction=True),
@@ -83,40 +90,44 @@ def test_worker_client_absent_schema_errors() -> None:
         call_command("migrate", verbosity=0)  # restore absurd schema
 
 
-def test_end_to_end_executes_and_records_result() -> None:
-    call_command("absurd_sync_queues")
+def test_end_to_end_executes_and_records_result(dj_absurd: AbsurdTestRuntime) -> None:
+    dj_absurd.sync_queues()
     result = tasks.make_group.enqueue("alpha")
     run_absurd_worker()
     assert Group.objects.filter(name="alpha").exists()
-    snap = get_task_result(result.id)
+    snap = dj_absurd.get_result(result.id)
     assert snap is not None
     assert snap.state == "completed"
     assert snap.result == "alpha"
 
 
-def test_failing_task_records_failure() -> None:
-    call_command("absurd_sync_queues")
+def test_failing_task_records_failure(dj_absurd: AbsurdTestRuntime) -> None:
+    dj_absurd.sync_queues()
     result = tasks.boom.enqueue()
     run_absurd_worker()
-    snap = get_task_result(result.id)
+    snap = dj_absurd.get_result(result.id)
     assert snap is not None
     assert snap.state == "failed"
 
 
-def test_takes_context_attempt_is_one_on_first_run() -> None:
-    call_command("absurd_sync_queues")
+def test_takes_context_attempt_is_one_on_first_run(
+    dj_absurd: AbsurdTestRuntime,
+) -> None:
+    dj_absurd.sync_queues()
     result = tasks.report_attempt.enqueue()
     run_absurd_worker()
-    snap = get_task_result(result.id)
+    snap = dj_absurd.get_result(result.id)
     assert snap is not None
     assert snap.result == 1
 
 
-def test_takes_context_task_result_carries_real_args() -> None:
-    call_command("absurd_sync_queues")
+def test_takes_context_task_result_carries_real_args(
+    dj_absurd: AbsurdTestRuntime,
+) -> None:
+    dj_absurd.sync_queues()
     result = tasks.report_args.enqueue("x", "y")
     run_absurd_worker()
-    snap = get_task_result(result.id)
+    snap = dj_absurd.get_result(result.id)
     assert snap is not None
     assert snap.result == ["x", "y"]
 
@@ -137,25 +148,25 @@ def test_handler_logs_task_outcome(caplog: pytest.LogCaptureFixture) -> None:
     assert "completed" in caplog.text
 
 
-def test_unregistered_name_defers_not_crashes() -> None:
-    call_command("absurd_sync_queues")
+def test_unregistered_name_defers_not_crashes(dj_absurd: AbsurdTestRuntime) -> None:
+    dj_absurd.sync_queues()
     spawn = get_absurd_client("default").spawn(
         "not.a.real.task", {"args": [], "kwargs": {}}, queue="default"
     )
     run_absurd_worker()
-    snap = get_task_result(spawn["task_id"])
+    snap = dj_absurd.get_result(spawn["task_id"])
     assert snap is not None
     assert snap.state != "failed"
 
 
-def test_task_outside_tasks_py_runs() -> None:
+def test_task_outside_tasks_py_runs(dj_absurd: AbsurdTestRuntime) -> None:
     # record_from_jobs is in tests/jobs.py, NOT tests/tasks.py — the old scan would
     # never find it (it would defer forever). Lazy resolution runs it by module_path.
-    call_command("absurd_sync_queues")
+    dj_absurd.sync_queues()
     result = record_from_jobs.enqueue("from-jobs")
     run_absurd_worker()
     assert Group.objects.filter(name="from-jobs").exists()
-    snap = get_task_result(result.id)
+    snap = dj_absurd.get_result(result.id)
     assert snap is not None
     assert snap.result == "from-jobs"
 
@@ -245,12 +256,12 @@ def test_command_parses_all_flags_with_defaults() -> None:
     assert opts["worker_id"] is None
 
 
-def test_command_burst_runs_task_end_to_end() -> None:
-    call_command("absurd_sync_queues")
+def test_command_burst_runs_task_end_to_end(dj_absurd: AbsurdTestRuntime) -> None:
+    dj_absurd.sync_queues()
     result = tasks.make_group.enqueue("via-command")
     call_command("absurd_worker", queue="default", burst=True)
     assert Group.objects.filter(name="via-command").exists()
-    snap = get_task_result(result.id)
+    snap = dj_absurd.get_result(result.id)
     assert snap is not None
     assert snap.state == "completed"
 
@@ -381,9 +392,8 @@ def test_worker_command_schema_absent_errors_migrate() -> None:
 
 
 def test_worker_non_burst_command_schema_absent_errors_migrate() -> None:
-    # Non-burst path's own provision_backend/ImproperlyConfigured translation
-    # (run_burst_worker has an independent copy, covered by the burst test above) --
-    # errors before ever reaching the blocking worker loop.
+    # The provision_backend/ImproperlyConfigured translation errors before ever
+    # reaching the blocking worker loop.
     with connection.cursor() as cur:
         cur.execute("DROP SCHEMA IF EXISTS absurd CASCADE")
     try:
@@ -403,11 +413,11 @@ def test_start_worker_drains_concurrently() -> None:
     assert Group.objects.filter(name__startswith="g").count() == 5
 
 
-def test_async_task_runs_end_to_end() -> None:
-    call_command("absurd_sync_queues")
+def test_async_task_runs_end_to_end(dj_absurd: AbsurdTestRuntime) -> None:
+    dj_absurd.sync_queues()
     r = atasks.aecho.enqueue("hi-async")
     run_absurd_worker()
-    snap = get_task_result(r.id)
+    snap = dj_absurd.get_result(r.id)
     assert snap is not None
     assert snap.state == "completed"
     assert snap.result == "hi-async"
@@ -439,50 +449,102 @@ def test_blocking_worker_drains_then_stops() -> None:
     assert Group.objects.filter(name__startswith="blk-").count() == 3
 
 
-def test_run_burst_worker_processes_a_task_and_returns_sync_result() -> None:
-
-    call_command("absurd_sync_queues")
-    result = tasks.make_group.enqueue("via-function")
-    sync_result = run_burst_worker("default")
-    assert Group.objects.filter(name="via-function").exists()
-    snap = get_task_result(result.id)
-    assert snap is not None
-    assert snap.state == "completed"
-    assert sync_result.created == []
-    assert sync_result.reconciled == []
-
-
 @pytest.mark.parametrize(
-    "run_burst",
-    ["command", "function"],
+    ("entrypoint", "expected_error"),
+    [("command", CommandError), ("function", QueueNotDeclaredError)],
 )
-def test_undeclared_queue_is_rejected(run_burst: str) -> None:
-
+def test_undeclared_queue_is_rejected(
+    entrypoint: str, expected_error: type[Exception]
+) -> None:
+    # Same rule, two enforcing entrypoints, two vocabularies: the management command
+    # raises CommandError, drain_queue raises the package's own QueueNotDeclaredError.
     def invoke() -> None:
-        if run_burst == "command":
+        if entrypoint == "command":
             call_command("absurd_worker", queue="nope", burst=True)
         else:
-            run_burst_worker("nope")
+            drain_queue("nope")
 
-    with pytest.raises(CommandError) as exc:
+    with pytest.raises(expected_error) as exc:
         invoke()
     message = str(exc.value)
     expected = (
         "Queue 'nope' is not declared for backend 'default'. "
-        "Valid queues: default, other, reports"
+        "Valid queues: default, other, reports. "
+        "Add it to the QUEUES list in your TASKS backend settings."
     )
     assert message == expected
 
 
-def test_non_task_name_defers_not_crashes() -> None:
+def test_undeclared_queue_error_is_also_a_django_absurd_error() -> None:
+    # QueueNotDeclaredError is a DjangoAbsurdError: the base catches it too, pinning
+    # the base's purpose (a caller can catch the package's typed errors generically).
+    with pytest.raises(DjangoAbsurdError):
+        drain_queue("nope")
+
+
+def test_drain_queue_on_an_unprovisioned_queue_errors_sync_queues() -> None:
+    # Declared but never provisioned (no absurd_sync_queues, and _isolate_queues
+    # dropped every queue's tables): drain_queue does not provision, so the missing
+    # table surfaces as the curated error naming the command that fixes it. No
+    # enqueue() here — that one auto-creates the queue it writes to.
+    with pytest.raises(QueueNotProvisionedError) as exc:
+        drain_queue("default")
+
+    assert str(exc.value) == (
+        "Queue 'default' is declared but its Absurd table is not provisioned. "
+        "Run: manage.py absurd_sync_queues"
+    )
+
+
+def test_drain_queue_does_not_relabel_an_unrelated_missing_relation() -> None:
+    """A missing relation that is NOT one of this queue's own Absurd tables surfaces as
+    itself. Relabeling it "run absurd_sync_queues" would send the reader to the wrong
+    door, and dropping the cause would hide which relation is actually missing.
+
+    Driven the way it happens in production: an audit trigger on a queue table whose
+    target relation is gone. A plpgsql body carries no dependency on the tables it
+    names, so nothing blocks the drop and the failure lands when the trigger next fires
+    — from inside the claim, i.e. exactly where the curated error used to swallow it.
+    """
+    call_command("absurd_sync_queues")
+    tasks.add.enqueue(2, 3)
+    try:
+        with connection.cursor() as cur:
+            cur.execute(
+                "create or replace function absurd.record_audit_probe() "
+                "returns trigger language plpgsql as $$ begin "
+                "insert into absurd.audit_probe (run_id) values (new.run_id); "
+                "return new; end; $$"
+            )
+            cur.execute(
+                "create trigger audit_probe_after_claim after update "
+                "on absurd.r_default for each row "
+                "execute function absurd.record_audit_probe()"
+            )
+
+        with pytest.raises(psycopg.errors.UndefinedTable) as undefined:
+            drain_queue("default")
+
+        assert (
+            undefined.value.diag.message_primary
+            == 'relation "absurd.audit_probe" does not exist'
+        )
+    finally:
+        # cascade takes the trigger with it; `if exists` keeps the cleanup honest even
+        # if the trigger DDL above is what failed.
+        with connection.cursor() as cur:
+            cur.execute("drop function if exists absurd.record_audit_probe() cascade")
+
+
+def test_non_task_name_defers_not_crashes(dj_absurd: AbsurdTestRuntime) -> None:
     # A name that IMPORTS but is not a Task (asleep is the asyncio.sleep alias
     # in atasks) -> LazyTaskRegistry resolves it, sees it's not a Task, defers
     # (state not failed).
-    call_command("absurd_sync_queues")
+    dj_absurd.sync_queues()
     spawn = get_absurd_client("default").spawn(
         "tests.atasks.asleep", {"args": [], "kwargs": {}}, queue="default"
     )
     run_absurd_worker()
-    snap = get_task_result(spawn["task_id"])
+    snap = dj_absurd.get_result(spawn["task_id"])
     assert snap is not None
     assert snap.state != "failed"
