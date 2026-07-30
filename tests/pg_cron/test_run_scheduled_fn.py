@@ -28,7 +28,6 @@ def fire_wrapper(source: str, name: str) -> None:
 
 
 def test_fires_task_from_row() -> None:
-    call_command("absurd_sync_queues")
     ScheduledTask.objects.create(
         source="s",
         name="p",
@@ -64,7 +63,6 @@ def test_disabled_row_is_noop() -> None:
 
 
 def test_wrapper_rebuilds_retry_strategy_from_columns() -> None:
-    call_command("absurd_sync_queues")
     ScheduledTask.objects.create(
         source="s",
         name="retry_opts",
@@ -88,7 +86,6 @@ def test_wrapper_rebuilds_retry_strategy_from_columns() -> None:
 
 
 def test_wrapper_rebuilds_cancellation_from_columns() -> None:
-    call_command("absurd_sync_queues")
     ScheduledTask.objects.create(
         source="s",
         name="cancel_opts",
@@ -116,7 +113,6 @@ def test_wrapper_reassembles_options_from_columns() -> None:
     max_attempts isn't observable via worker side effects so we inspect the
     spawned task row directly via the absurd.tasks_view (params is a jsonb blob).
     """
-    call_command("absurd_sync_queues")
     ScheduledTask.objects.create(
         source="s",
         name="opts",

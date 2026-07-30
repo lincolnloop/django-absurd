@@ -23,7 +23,6 @@ CHECKS_SPEC: EntitySpec = next(s for s in ADMIN_ENTITY_SPECS if s.name == "check
 
 
 def seed_two_queues() -> None:
-    call_command("absurd_sync_queues")
     tasks.add.enqueue(2, 3)
     tasks.add.using(queue_name="other").enqueue(7, 8)
     call_command("absurd_worker", queue="default", burst=True)
@@ -31,7 +30,6 @@ def seed_two_queues() -> None:
 
 
 def test_zero_queue_view_is_empty() -> None:
-    call_command("absurd_sync_queues")  # tables exist but no tasks
     rebuild_admin_view(TASKS_SPEC, [], "default")
     tasks_model: t.Any = build_admin_model(TASKS_SPEC)
     assert tasks_model.objects.count() == 0

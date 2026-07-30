@@ -1,7 +1,6 @@
 import pytest
 from django.contrib.admin.utils import quote
 from django.contrib.auth.models import User
-from django.core.management import call_command
 from django.db import connections
 from django.test import Client
 from django.urls import reverse, reverse_lazy
@@ -19,7 +18,6 @@ def change_url(pk: str) -> str:
 
 
 def test_changelist_and_detail(admin_user: User, client: Client) -> None:
-    call_command("absurd_sync_queues")
     with connections["default"].cursor() as cur:
         cur.execute(
             'INSERT INTO absurd."e_default" (event_name, payload) VALUES (%s, %s)',
@@ -42,7 +40,6 @@ def test_changelist_and_detail(admin_user: User, client: Client) -> None:
 
 
 def test_emit_event_writes_a_visible_row(admin_user: User, client: Client) -> None:
-    call_command("absurd_sync_queues")
     emit_event("order.shipped:demo", {"id": 1}, queue="default")
     client.force_login(admin_user)
     soup = parse_html(client.get(CHANGELIST))

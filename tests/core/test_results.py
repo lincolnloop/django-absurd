@@ -13,6 +13,7 @@ from django.tasks.exceptions import TaskResultDoesNotExist
 from django_absurd import absurd_params
 from django_absurd.backends import AbsurdBackend, get_absurd_backends
 from django_absurd.queues import get_absurd_client
+from django_absurd.test import AbsurdTestRuntime
 from tests import tasks
 from tests.models import Payload
 
@@ -24,10 +25,6 @@ pytestmark = [
 
 def backend() -> AbsurdBackend:
     return get_absurd_backends()["default"]
-
-
-def run_absurd_worker(queue: str = "default") -> None:
-    call_command("absurd_worker", queue=queue, burst=True)
 
 
 def test_get_result_pending() -> None:
@@ -42,10 +39,10 @@ def test_get_result_pending() -> None:
     assert got.task.module_path == "tests.tasks.add"
 
 
-def test_get_result_successful() -> None:
-    call_command("absurd_sync_queues")
+def test_get_result_successful(dj_absurd: AbsurdTestRuntime) -> None:
+    dj_absurd.sync_queues()
     r = tasks.add.enqueue(2, 3)
-    run_absurd_worker()
+    assert [run.state for run in dj_absurd.drain()] == ["completed"]
     got = backend().get_result(r.id)
     assert got.status == TaskResultStatus.SUCCESSFUL
     assert got.return_value == 5
@@ -54,28 +51,30 @@ def test_get_result_successful() -> None:
     assert got.worker_ids  # non-empty
 
 
-def test_get_result_suspended_on_indefinite_await_event() -> None:
-    call_command("absurd_sync_queues")
+def test_get_result_suspended_on_indefinite_await_event(
+    dj_absurd: AbsurdTestRuntime,
+) -> None:
+    dj_absurd.sync_queues()
     r = tasks.sawait_event_once.enqueue("get-result-infinity-check")
-    run_absurd_worker()
+    assert [run.state for run in dj_absurd.drain()] == ["sleeping"]
     got = backend().get_result(r.id)
     assert got.status == TaskResultStatus.RUNNING
 
 
-def test_refresh_round_trip() -> None:
-    call_command("absurd_sync_queues")
+def test_refresh_round_trip(dj_absurd: AbsurdTestRuntime) -> None:
+    dj_absurd.sync_queues()
     r = tasks.add.enqueue(2, 3)
     assert r.status == TaskResultStatus.READY  # prior to running
-    run_absurd_worker()
+    assert [run.state for run in dj_absurd.drain()] == ["completed"]
     r.refresh()
     assert r.status == TaskResultStatus.SUCCESSFUL  # type: ignore[comparison-overlap]
     assert r.return_value == 5
 
 
-def test_get_result_failed_has_errors() -> None:
-    call_command("absurd_sync_queues")
+def test_get_result_failed_has_errors(dj_absurd: AbsurdTestRuntime) -> None:
+    dj_absurd.sync_queues()
     r = absurd_params(max_attempts=1).bind(tasks.boom).enqueue()
-    run_absurd_worker()
+    assert [run.state for run in dj_absurd.drain()] == ["failed"]
     got = backend().get_result(r.id)
     assert got.status == TaskResultStatus.FAILED
     assert len(got.errors) == 1
@@ -195,29 +194,31 @@ def test_enqueue_does_not_poison_jsonfield_reads() -> None:
         {"nested": [1, 2, {"a": None, "b": "ünïçødé"}]},
     ],
 )
-def test_echo_return_value_round_trips(value: JsonValue) -> None:
-    call_command("absurd_sync_queues")
+def test_echo_return_value_round_trips(
+    dj_absurd: AbsurdTestRuntime, value: JsonValue
+) -> None:
+    dj_absurd.sync_queues()
     r = tasks.echo.enqueue(value)
-    run_absurd_worker()
+    assert [run.result for run in dj_absurd.drain()] == [value]
     got = backend().get_result(r.id)
     assert got.status == TaskResultStatus.SUCCESSFUL
     assert got.return_value == value
 
 
-def test_echo_args_round_trip() -> None:
-    call_command("absurd_sync_queues")
+def test_echo_args_round_trip(dj_absurd: AbsurdTestRuntime) -> None:
+    dj_absurd.sync_queues()
     nested = {"items": [1, None, False, "ünïçødé"], "sub": {"x": 0}}
     r = tasks.echo.enqueue(nested)
-    run_absurd_worker()
+    assert [run.result for run in dj_absurd.drain()] == [nested]
     got = backend().get_result(r.id)
     assert got.status == TaskResultStatus.SUCCESSFUL
     assert got.return_value == nested
 
 
-def test_echo_kwargs_round_trip() -> None:
-    call_command("absurd_sync_queues")
+def test_echo_kwargs_round_trip(dj_absurd: AbsurdTestRuntime) -> None:
+    dj_absurd.sync_queues()
     r = tasks.echo.using(queue_name="default").enqueue(value={"k": [True, None, 42]})
-    run_absurd_worker()
+    assert [run.result for run in dj_absurd.drain()] == [{"k": [True, None, 42]}]
     got = backend().get_result(r.id)
     assert got.status == TaskResultStatus.SUCCESSFUL
     assert got.return_value == {"k": [True, None, 42]}
