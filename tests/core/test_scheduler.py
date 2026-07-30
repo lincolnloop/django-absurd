@@ -8,11 +8,11 @@ import zoneinfo
 
 import pytest
 import pytest_django.fixtures
+import time_machine
 from django.contrib.auth.models import Group
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.utils import timezone
-from freezegun import freeze_time
 
 from django_absurd.backends import AbsurdBackend, get_absurd_backends
 from django_absurd.scheduler import (
@@ -23,6 +23,7 @@ from django_absurd.scheduler import (
     run_beat,
     spawn_scheduled,
 )
+from django_absurd.test import AbsurdTestRuntime, FrozenTime
 from tests import tasks
 from tests.models import Payload
 from tests.utils import make_tasks_settings
@@ -31,6 +32,8 @@ pytestmark = [
     pytest.mark.django_db(transaction=True),
     pytest.mark.usefixtures("_isolate_queues"),
 ]
+
+BEAT_EPOCH = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
 
 
 def make_tasks_setting(
@@ -93,19 +96,21 @@ def test_settings_provider_no_schedule_key(
     assert get_settings_schedules(backend) == []
 
 
-@freeze_time("2026-01-01 01:59:00")
+@time_machine.travel(dt.datetime(2026, 1, 1, 1, 59, tzinfo=dt.UTC), tick=False)
 def test_get_next_datetime_same_day() -> None:
     expected = dt.datetime(2026, 1, 1, 2, 0, tzinfo=dt.UTC)
     assert get_next_datetime("0 2 * * *", timezone.now()) == expected
 
 
-@freeze_time("2026-01-01 02:00:00")
+@time_machine.travel(dt.datetime(2026, 1, 1, 2, 0, tzinfo=dt.UTC), tick=False)
 def test_get_next_datetime_rolls_forward() -> None:
     expected = dt.datetime(2026, 1, 2, 2, 0, tzinfo=dt.UTC)
     assert get_next_datetime("0 2 * * *", timezone.now()) == expected
 
 
-@freeze_time("2026-01-01 12:00:00")  # 06:00 in Chicago (UTC-6)
+@time_machine.travel(
+    dt.datetime(2026, 1, 1, 12, 0, tzinfo=dt.UTC), tick=False
+)  # 06:00 in Chicago (UTC-6)
 def test_get_next_datetime_uses_django_timezone(
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
@@ -117,7 +122,7 @@ def test_get_next_datetime_uses_django_timezone(
     assert result == expected
 
 
-@freeze_time("2026-01-01 12:00:00")
+@time_machine.travel(dt.datetime(2026, 1, 1, 12, 0, tzinfo=dt.UTC), tick=False)
 def test_get_next_datetime_six_field_leading_seconds() -> None:
     # A 6-field cron uses a LEADING seconds column, so "*/30 * * * * *" means every
     # 30 seconds -> next fire at :30, not every second (which is what a trailing-seconds
@@ -126,14 +131,14 @@ def test_get_next_datetime_six_field_leading_seconds() -> None:
     assert get_next_datetime("*/30 * * * * *", timezone.now()) == expected
 
 
-@freeze_time("2026-01-01 12:00:00")
+@time_machine.travel(dt.datetime(2026, 1, 1, 12, 0, tzinfo=dt.UTC), tick=False)
 def test_get_next_datetime_six_field_non_divisor_seconds() -> None:
     # Leading seconds holds for any step: "*/7 * * * * *" fires at :07, not :01.
     expected = dt.datetime(2026, 1, 1, 12, 0, 7, tzinfo=dt.UTC)
     assert get_next_datetime("*/7 * * * * *", timezone.now()) == expected
 
 
-@freeze_time("2026-01-01 12:00:00")
+@time_machine.travel(dt.datetime(2026, 1, 1, 12, 0, tzinfo=dt.UTC), tick=False)
 def test_get_next_datetime_six_field_zero_seconds() -> None:
     # Leading seconds=0 with a minute step fires on the minute boundary, not every
     # second: "0 */5 * * * *" -> next at 12:05:00.
@@ -141,23 +146,26 @@ def test_get_next_datetime_six_field_zero_seconds() -> None:
     assert get_next_datetime("0 */5 * * * *", timezone.now()) == expected
 
 
-# run_beat_until and tests below it use run_beat's injected wait/now seam
-# because a real threading.Event.wait can't be fast-forwarded by freezegun;
-# the command path is not deterministic enough for exact multi-slot counts.
+# run_beat_until and tests below it use run_beat's injected wait/now seam because
+# time-machine never patches time.monotonic() — the clock threading.Event.wait relies
+# on — so freezing wall time can't fast-forward a real wait; the command path is not
+# deterministic enough for exact multi-slot counts. The caller opens the dj_absurd
+# freeze_time() window (so any prior enqueue/drain shares the same frozen instant) and
+# hands in the FrozenTime handle for this helper to shift.
 def run_beat_until(
+    frozen_time: FrozenTime,
     backend: AbsurdBackend,
     cutoff: dt.datetime,
 ) -> None:
-    with freeze_time("2026-01-01 00:00:00") as frozen:
+    def fake_wait(timeout: float) -> bool:
+        frozen_time.shift(dt.timedelta(seconds=timeout))
+        return timezone.now() >= cutoff
 
-        def fake_wait(timeout: float) -> bool:
-            frozen.tick(dt.timedelta(seconds=timeout))
-            return timezone.now() >= cutoff
-
-        run_beat(backend, wait=fake_wait)
+    run_beat(backend, wait=fake_wait)
 
 
 def test_beat_fires_each_due_slot(
+    dj_absurd: AbsurdTestRuntime,
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     settings.TASKS = make_tasks_setting(
@@ -171,13 +179,17 @@ def test_beat_fires_each_due_slot(
     )
     backend = get_absurd_backends()["default"]
     call_command("absurd_sync_queues")
-    run_beat_until(backend, dt.datetime(2026, 1, 1, 0, 2, 30, tzinfo=dt.UTC))
-    call_command("absurd_worker", queue="default", burst=True)
-    expected_fires = 2  # slots 00:01 and 00:02
-    assert Payload.objects.count() == expected_fires
+    with dj_absurd.freeze_time(BEAT_EPOCH) as frozen_time:
+        run_beat_until(
+            frozen_time, backend, dt.datetime(2026, 1, 1, 0, 2, 30, tzinfo=dt.UTC)
+        )
+        call_command("absurd_worker", queue="default", burst=True)
+        expected_fires = 2  # slots 00:01 and 00:02
+        assert Payload.objects.count() == expected_fires
 
 
 def test_beat_fires_multiple_schedules_due_same_slot(
+    dj_absurd: AbsurdTestRuntime,
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     # Two distinct schedules sharing a cron slot both fire in the one tick pass.
@@ -197,9 +209,12 @@ def test_beat_fires_multiple_schedules_due_same_slot(
     )
     backend = get_absurd_backends()["default"]
     call_command("absurd_sync_queues")
-    run_beat_until(backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC))
-    call_command("absurd_worker", queue="default", burst=True)
-    assert set(Group.objects.values_list("name", flat=True)) == {"a", "b"}
+    with dj_absurd.freeze_time(BEAT_EPOCH) as frozen_time:
+        run_beat_until(
+            frozen_time, backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC)
+        )
+        call_command("absurd_worker", queue="default", burst=True)
+        assert set(Group.objects.values_list("name", flat=True)) == {"a", "b"}
 
 
 def test_beat_no_schedules_returns(
@@ -211,6 +226,7 @@ def test_beat_no_schedules_returns(
 
 
 def test_beat_isolates_failing_schedule(
+    dj_absurd: AbsurdTestRuntime,
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     settings.TASKS = make_tasks_setting(
@@ -225,13 +241,17 @@ def test_beat_isolates_failing_schedule(
     )
     backend = get_absurd_backends()["default"]
     call_command("absurd_sync_queues")
-    run_beat_until(backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC))
-    call_command("absurd_worker", queue="default", burst=True)
-    expected_good = 1  # "bad" raised in spawn (unimportable, logged); "good" still ran
-    assert Payload.objects.count() == expected_good
+    with dj_absurd.freeze_time(BEAT_EPOCH) as frozen_time:
+        run_beat_until(
+            frozen_time, backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC)
+        )
+        call_command("absurd_worker", queue="default", burst=True)
+        expected_good = 1  # "bad" raised in spawn (unimportable, logged); "good" ran
+        assert Payload.objects.count() == expected_good
 
 
 def test_beat_spawns_task_with_args(
+    dj_absurd: AbsurdTestRuntime,
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     settings.TASKS = make_tasks_setting(
@@ -245,12 +265,16 @@ def test_beat_spawns_task_with_args(
     )
     backend = get_absurd_backends()["default"]
     call_command("absurd_sync_queues")
-    run_beat_until(backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC))
-    call_command("absurd_worker", queue="default", burst=True)
-    assert Group.objects.filter(name="beat-args").exists()
+    with dj_absurd.freeze_time(BEAT_EPOCH) as frozen_time:
+        run_beat_until(
+            frozen_time, backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC)
+        )
+        call_command("absurd_worker", queue="default", burst=True)
+        assert Group.objects.filter(name="beat-args").exists()
 
 
 def test_beat_spawns_task_with_kwargs(
+    dj_absurd: AbsurdTestRuntime,
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     settings.TASKS = make_tasks_setting(
@@ -264,12 +288,16 @@ def test_beat_spawns_task_with_kwargs(
     )
     backend = get_absurd_backends()["default"]
     call_command("absurd_sync_queues")
-    run_beat_until(backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC))
-    call_command("absurd_worker", queue="default", burst=True)
-    assert Group.objects.filter(name="beat-kw").exists()
+    with dj_absurd.freeze_time(BEAT_EPOCH) as frozen_time:
+        run_beat_until(
+            frozen_time, backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC)
+        )
+        call_command("absurd_worker", queue="default", burst=True)
+        assert Group.objects.filter(name="beat-kw").exists()
 
 
 def test_beat_empty_queue_string_falls_back_to_task_queue(
+    dj_absurd: AbsurdTestRuntime,
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     """queue: "" normalises to the task's own queue (parity with pg_cron's
@@ -286,12 +314,16 @@ def test_beat_empty_queue_string_falls_back_to_task_queue(
     )
     backend = get_absurd_backends()["default"]
     call_command("absurd_sync_queues")
-    run_beat_until(backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC))
-    call_command("absurd_worker", queue="default", burst=True)
-    assert Group.objects.filter(name="beat-empty-q").exists()
+    with dj_absurd.freeze_time(BEAT_EPOCH) as frozen_time:
+        run_beat_until(
+            frozen_time, backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC)
+        )
+        call_command("absurd_worker", queue="default", burst=True)
+        assert Group.objects.filter(name="beat-empty-q").exists()
 
 
 def test_beat_routes_task_to_queue(
+    dj_absurd: AbsurdTestRuntime,
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     settings.TASKS = make_tasks_setting(
@@ -306,14 +338,18 @@ def test_beat_routes_task_to_queue(
     )
     backend = get_absurd_backends()["default"]
     call_command("absurd_sync_queues")
-    run_beat_until(backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC))
-    call_command("absurd_worker", queue="default", burst=True)
-    assert not Group.objects.filter(name="beat-routed").exists()
-    call_command("absurd_worker", queue="other", burst=True)
-    assert Group.objects.filter(name="beat-routed").exists()
+    with dj_absurd.freeze_time(BEAT_EPOCH) as frozen_time:
+        run_beat_until(
+            frozen_time, backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC)
+        )
+        call_command("absurd_worker", queue="default", burst=True)
+        assert not Group.objects.filter(name="beat-routed").exists()
+        call_command("absurd_worker", queue="other", burst=True)
+        assert Group.objects.filter(name="beat-routed").exists()
 
 
 def test_beat_routes_task_to_queue_non_default_alias(
+    dj_absurd: AbsurdTestRuntime,
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     settings.TASKS = {
@@ -334,11 +370,14 @@ def test_beat_routes_task_to_queue_non_default_alias(
     }
     backend = get_absurd_backends()["second"]
     call_command("absurd_sync_queues")
-    run_beat_until(backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC))
-    call_command("absurd_worker", queue="default", burst=True)
-    assert not Group.objects.filter(name="beat-non-default").exists()
-    call_command("absurd_worker", queue="other", burst=True)
-    assert Group.objects.filter(name="beat-non-default").exists()
+    with dj_absurd.freeze_time(BEAT_EPOCH) as frozen_time:
+        run_beat_until(
+            frozen_time, backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC)
+        )
+        call_command("absurd_worker", queue="default", burst=True)
+        assert not Group.objects.filter(name="beat-non-default").exists()
+        call_command("absurd_worker", queue="other", burst=True)
+        assert Group.objects.filter(name="beat-non-default").exists()
 
 
 def test_derive_idempotency_key_stable_same_inputs() -> None:
@@ -618,7 +657,9 @@ def test_worker_with_beat_runs_scheduled_task(
     watcher.start()
     # tick=True near a boundary: next "*/1" slot is ~1s away in real time, so beat fires
     # almost immediately; the live worker (fast poll) drains it.
-    with freeze_time("2026-01-01 00:00:59", tick=True):
+    with time_machine.travel(
+        dt.datetime(2026, 1, 1, 0, 0, 59, tzinfo=dt.UTC), tick=True
+    ):
         call_command("absurd_worker", queue="default", beat=True, poll_interval=0.05)
     watcher.join(timeout=5)
 
@@ -651,6 +692,7 @@ def test_beat_already_stopped_on_entry_skips_loop(
 
 
 def test_beat_skips_not_yet_due_schedule(
+    dj_absurd: AbsurdTestRuntime,
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     # Covers scheduler.py 99->98: if due <= current False branch.
@@ -672,15 +714,17 @@ def test_beat_skips_not_yet_due_schedule(
     )
     backend = get_absurd_backends()["default"]
     call_command("absurd_sync_queues")
-    # Cutoff at 00:01:30 → "due" slot 00:01 fires, "later" slot 02:00 does not.
-    run_beat_until(
-        backend,
-        dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC),
-    )
-    call_command("absurd_worker", queue="default", burst=True)
-    assert Payload.objects.count() == 1
-    assert Payload.objects.filter(data="due").exists()
-    assert not Payload.objects.filter(data="later").exists()
+    with dj_absurd.freeze_time(BEAT_EPOCH) as frozen_time:
+        # Cutoff at 00:01:30 → "due" slot 00:01 fires, "later" slot 02:00 does not.
+        run_beat_until(
+            frozen_time,
+            backend,
+            dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC),
+        )
+        call_command("absurd_worker", queue="default", burst=True)
+        assert Payload.objects.count() == 1
+        assert Payload.objects.filter(data="due").exists()
+        assert not Payload.objects.filter(data="later").exists()
 
 
 def test_plain_worker_runs_blocking_worker(
