@@ -94,7 +94,7 @@ duplicate that material here.
   `with dj_absurd.freeze_time() as frozen_time:`, then
   `frozen_time.shift(Δ)`/`move_to(instant)`, enqueueing INSIDE the block — **never
   `time.sleep`**. See
-  [Testing — the `dj_absurd` fixture](docs/web/testing.md#the-dj_absurd-fixture-durable-time-drain-and-read).
+  [Testing — the `dj_absurd` fixture](docs/web/testing.md#the-dj_absurd-fixture).
 - **No monkeypatching / `unittest.mock.patch`.** Test observable behavior, not
   internals. If a test needs to patch our own functions to reach a branch, restructure
   so a real input drives that branch instead.
