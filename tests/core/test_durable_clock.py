@@ -364,3 +364,47 @@ def test_freezing_without_time_machine_installed_raises(
     finally:
         sys.meta_path.remove(blocker)
         sys.modules[time_machine.__name__] = time_machine
+
+
+def test_freezing_a_past_instant_without_time_machine_installed_raises(
+    dj_absurd: AbsurdTestRuntime,
+) -> None:
+    """The BACKWARD branch (``FROZEN`` is already in the past): ``_apply_clock_move``
+    would otherwise write the Postgres GUC before ``_move_python_clock`` ever ran,
+    leaking it once the missing dependency was discovered. ``require_time_machine()``
+    probes before either clock write, so this variant must show NEITHER clock moved —
+    not just that the same error is raised.
+    """
+
+    class BlockTimeMachine(importlib.abc.MetaPathFinder):
+        def find_spec(
+            self,
+            fullname: str,
+            path: t.Sequence[str] | None = None,
+            target: object | None = None,
+        ) -> importlib.machinery.ModuleSpec | None:
+            msg = f"blocked for this test: {fullname}"
+            raise ImportError(msg)
+
+    blocker = BlockTimeMachine()
+    del sys.modules[time_machine.__name__]
+    sys.meta_path.insert(0, blocker)
+    try:
+        with (
+            pytest.raises(
+                ImproperlyConfigured,
+                match=(
+                    r"django-absurd: freezing durable time needs the time-machine "
+                    r"package\. Install it in your test environment: pip install "
+                    r"time-machine\."
+                ),
+            ),
+            contextlib.ExitStack() as stack,
+        ):
+            stack.enter_context(dj_absurd.freeze_time(FROZEN))
+    finally:
+        sys.meta_path.remove(blocker)
+        sys.modules[time_machine.__name__] = time_machine
+
+    assert utils.read_database_fake_now() is None
+    assert abs(dj_absurd.now - dt.datetime.now(dt.UTC)) < dt.timedelta(seconds=30)
