@@ -10,3 +10,5 @@ addopts = [
 ]
 pythonpath = ["../.."]
 testpaths = ["."]
+# See tests/core/pytest.toml: nothing here waits on a clock (whole suite runs in <1s).
+timeout = "10"

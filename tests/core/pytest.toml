@@ -19,3 +19,7 @@ markers = [
 ]
 pythonpath = ["../.."]
 testpaths = ["."]
+# Durable waits are frozen-clock now, so nothing here legitimately takes seconds; the
+# slowest test is ~1.2s. A cap this tight turns a reintroduced wall-clock sleep — or a
+# drain deadlocked on a half-moved clock — into a failure instead of a hung run.
+timeout = "10"

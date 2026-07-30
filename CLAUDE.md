@@ -41,6 +41,34 @@ duplicate that material here.
 - `msg` states the PROBLEM only; `hint` states the RESOLUTION. Never duplicate fix text
   in both.
 
+## Exception hierarchy
+
+- django-absurd raises its **own** exception types for its own failure modes, all under
+  `DjangoAbsurdError`, defined in `django_absurd/exceptions.py`. Prefer a specific type
+  over a bare stdlib/Django one when the condition is specific to this package.
+- The type name carries the condition (`QueueNotDeclaredError`,
+  `QueueNotProvisionedError`), and **the exception owns its message** — constructors
+  take the data, callers never assemble text and no `format_*` helper is imported to
+  build one.
+- Named for the distributing package, not the upstream SDK: `DjangoAbsurdError`, never
+  `AbsurdError`, because modules import from both `absurd_sdk` and `django_absurd` and
+  the short name reads as the SDK's.
+- Be honest about coverage: `except DjangoAbsurdError` catches the typed errors, not
+  every error the package can raise — plain `ImproperlyConfigured`/`RuntimeError`/
+  `TypeError` remain in `checks.py`, `connection.py`, `queues.py`, and `test.py`'s
+  guards for now.
+
+## Exception chaining
+
+- Re-raising a curated error inside an `except` always chains with `from exc` — never
+  `from None`. Add `as exc` to the handler if it doesn't already bind a name.
+  `from None` hides the real cause exactly when the curated message turns out to be the
+  wrong guess.
+- Pair this with narrowing the catch: classify first, re-raise the original untouched
+  when the error isn't about what your curated message claims, chain with `from exc`
+  when it is. `from exc` is not a licence to relabel broadly — see `names_a_queue_table`
+  in `django_absurd/queues.py` for the worked example of both together.
+
 ## Testing conventions
 
 - pytest, **function-based only** (never class-based).
@@ -61,6 +89,12 @@ duplicate that material here.
   access — do NOT decorate tests with `@pytest.mark.django_db`. Only add
   `@pytest.mark.django_db(transaction=True)` (or markers for multi-DB / reset-sequences)
   when a test needs transactions/commits or DDL (`migrate`, `create_queue`).
+- **A durable test (sleep, `await_event` timeout, retry backoff, a chain of several
+  sleeps) uses the `dj_absurd` pytest fixture's clock** —
+  `with dj_absurd.freeze_time() as frozen_time:`, then
+  `frozen_time.shift(Δ)`/`move_to(instant)`, enqueueing INSIDE the block — **never
+  `time.sleep`**. See
+  [Testing — the `dj_absurd` fixture](docs/web/testing.md#the-dj_absurd-fixture-durable-time-drain-and-read).
 - **No monkeypatching / `unittest.mock.patch`.** Test observable behavior, not
   internals. If a test needs to patch our own functions to reach a branch, restructure
   so a real input drives that branch instead.

@@ -8,6 +8,7 @@ from django.db.utils import OperationalError, ProgrammingError
 
 from django_absurd.admin_views import PRIVATE_ADMIN_APPS
 from django_absurd.backends import get_absurd_backends
+from django_absurd.queues import provision_backend
 
 
 class AbsurdConfig(AppConfig):
@@ -16,6 +17,10 @@ class AbsurdConfig(AppConfig):
     verbose_name = "Absurd"
 
     def ready(self) -> None:
+        # Side-effect import: running the module registers its @register'd checks. In
+        # here, not at module level — this module runs during app-registry population,
+        # before models load, and django_absurd.checks imports django_absurd.models, so
+        # a module-level import raises AppRegistryNotReady.
         import django_absurd.checks  # noqa: F401, PLC0415
 
         # The synthesized admin models live in PRIVATE_ADMIN_APPS, so their
@@ -34,8 +39,6 @@ def provision_queues_after_migrate(
     stdout: t.IO[str] | None = None,
     **kwargs: object,
 ) -> None:
-    from django_absurd.queues import provision_backend  # noqa: PLC0415
-
     style = color_style()
     for alias, backend in get_absurd_backends().items():
         try:

@@ -219,9 +219,11 @@ freed) → the warehouse system POSTs the webhook → the view emits the event o
 queue → the task's next claim finds it → resumes with the payload.
 
 `queue` must match the queue the waiting task actually runs on — it targets the
-client-level `emit_event`'s `queue_name`, not a database alias. An unknown queue raises
-`ImproperlyConfigured` immediately (fail fast on a typo). `emit_event` is sync; from an
-async view, wrap it in `sync_to_async`.
+client-level `emit_event`'s `queue_name`, not a database alias. An undeclared queue
+raises `QueueNotDeclaredError` immediately (fail fast on a typo); a declared but
+unprovisioned queue raises `QueueNotProvisionedError` naming
+`manage.py absurd_sync_queues` (see [Our own exceptions](#our-own-exceptions) below).
+`emit_event` is sync; from an async view, wrap it in `sync_to_async`.
 
 ### Sync
 
@@ -355,6 +357,19 @@ An event emitted long before a delayed `await_event` can be cleaned up by the qu
 
 `except TimeoutError:` silently catches nothing — `import absurd_sdk` and catch
 `absurd_sdk.TimeoutError`.
+
+### Our own exceptions
+
+django-absurd's own conditions (an undeclared or unprovisioned queue, from `emit_event`
+or the test fixture's `drain()`) raise typed errors under
+`django_absurd.exceptions.DjangoAbsurdError` — `QueueNotDeclaredError` and
+`QueueNotProvisionedError`. `enqueue` raises `QueueNotDeclaredError` too, but only when
+the backend's `QUEUES` option is empty/unset; with `QUEUES` configured, a typo'd queue
+name at enqueue is instead rejected earlier as Django's own `InvalidTask`, from
+`validate_task`. Catch `DjangoAbsurdError` to handle any of them generically. This is
+not every error the package can raise, though: plenty of call sites still raise a plain
+`ImproperlyConfigured`, `RuntimeError`, or `TypeError` directly and are outside this
+hierarchy for now.
 
 ## Enqueue a durable task
 

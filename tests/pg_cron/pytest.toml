@@ -14,3 +14,8 @@ addopts = [
 ]
 pythonpath = ["../.."]
 testpaths = ["."]
+# test_isolation_regression.py::test_producing_schedule_never_fires_into_this_test_db
+# legitimately takes 14-17s waiting for the real pg_cron launcher to complete a cycle,
+# and that time is variable, so 40s is roughly 2.4x the observed maximum -- loose
+# enough not to flake, tight enough to catch a genuine hang.
+timeout = "40"

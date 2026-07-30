@@ -1,5 +1,6 @@
 import importlib
 import inspect
+import pathlib
 import typing as t
 
 import pytest
@@ -8,17 +9,32 @@ from django.db import connections
 from django.test import TransactionTestCase
 
 if t.TYPE_CHECKING:
-    import collections.abc
-
     import pytest_django.fixtures
 
 from django_absurd import absurd_params, pytest_plugin
 from django_absurd.flush import flush_absurd_state
 from django_absurd.models import Queue, Task
-from django_absurd.test import install_absurd_cleanup
+from django_absurd.test import AbsurdTestRuntime, install_absurd_cleanup
 from tests import tasks, utils
 
 pytestmark = pytest.mark.django_db(transaction=True)
+
+# The leak-recovery tests below need a real session boundary — a session-scoped fixture
+# cannot be re-triggered inside the session that already ran it — so they drive a nested
+# pytest run through ``pytester``.
+pytest_plugins = ["pytester"]
+
+# Each inner run needs PYTHONPATH, so the inner interpreter can import
+# ``tests.core.settings``. Each inner run also needs an explicit settings module that
+# pins ``DATABASES["default"]["TEST"]["NAME"]`` to THIS run's own test database:
+# pytest-django takes its per-worker suffix from xdist's workerinput, which a serial
+# inner run has none of, so it would otherwise compute the unsuffixed name and touch a
+# database this test never planted a GUC on.
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+
+# A database that does not exist, for the inner run that has no Absurd backend: any
+# statement the plugin tried to issue there would fail to connect and error the session.
+ABSENT_DATABASE = "absurd_no_such_database"
 
 # django-stubs doesn't model TransactionTestCase's internal ``_post_teardown`` hook;
 # access it (and probe instances) through this alias to keep the mechanism assertions
@@ -27,7 +43,6 @@ TxnCase: t.Any = TransactionTestCase
 
 
 def test_flush_absurd_state_truncates_rows_by_default() -> None:
-    call_command("absurd_sync_queues")
     tasks.add.enqueue(1, 2)
     task_model: t.Any = Task
     assert task_model.objects.filter(queue="default").count() == 1
@@ -61,7 +76,6 @@ def test_flush_absurd_state_truncates_a_partitioned_queues_idempotency_table(
 
 
 def test_flush_absurd_state_drops_schema_when_requested() -> None:
-    call_command("absurd_sync_queues")
     tasks.add.enqueue(1, 2)
 
     flush_absurd_state(drop_schema=True)
@@ -87,8 +101,17 @@ def test_flush_absurd_state_is_a_noop_on_an_unmigrated_schema(
         connections["default"].close()
 
 
+def test_flush_absurd_state_resets_a_stranded_fake_now() -> None:
+    utils.set_database_fake_now("2036-01-01T00:00:00+00:00")
+    try:
+        flush_absurd_state()
+
+        assert utils.read_database_fake_now() is None
+    finally:
+        utils.reset_database_fake_now()
+
+
 def test_post_teardown_hook_truncates_absurd_state() -> None:
-    call_command("absurd_sync_queues")
     tasks.add.enqueue(1, 2)
     task_model: t.Any = Task
     assert task_model.objects.filter(queue="default").count() == 1
@@ -104,7 +127,6 @@ def test_post_teardown_hook_truncates_absurd_state() -> None:
 
 
 def test_post_teardown_hook_skips_undeclared_absurd_alias() -> None:
-    call_command("absurd_sync_queues")
     tasks.add.enqueue(1, 2)
 
     class NoDatabasesCase(TransactionTestCase):
@@ -161,19 +183,23 @@ def test_install_absurd_cleanup_wraps_a_fresh_post_teardown() -> None:
         TxnCase._post_teardown = installed
 
 
-def test_absurd_drain_queue_processes_an_enqueued_task(
-    absurd_drain_queue: "collections.abc.Callable[..., None]",
+def test_the_absurd_fixture_drains_an_enqueued_task(
+    dj_absurd: AbsurdTestRuntime,
 ) -> None:
-    call_command("absurd_sync_queues")
     result = tasks.add.enqueue(3, 4)
-    absurd_drain_queue()
-    snap = utils.get_task_result(result.id)
+    dj_absurd.drain()
+    snap = dj_absurd.get_result(result.id)
     assert snap is not None
     assert snap.state == "completed"
 
 
-def test_start_sweep_declares_only_request_so_the_guard_runs_first() -> None:
-    # Import-safety invariant: the session start-sweep must take ONLY ``request``.
+@pytest.mark.parametrize(
+    "fixture_name", ["_sweep_orphaned_pg_cron_jobs", "_sweep_stranded_fake_now"]
+)
+def test_start_sweeps_declare_only_request_so_the_guard_runs_first(
+    fixture_name: str,
+) -> None:
+    # Import-safety invariant: a session start-sweep must take ONLY ``request``.
     # Declaring ``django_db_setup``/``django_db_blocker`` as parameters would make
     # pytest resolve them BEFORE the body's ``settings.configured`` /
     # ``apps.is_installed`` guard, which in a non-Django or pytest-django-less project
@@ -181,8 +207,256 @@ def test_start_sweep_declares_only_request_so_the_guard_runs_first() -> None:
     # ``getfixturevalue`` only after the guard passes.
     # django-stubs/pytest type the fixture as FixtureFunctionDefinition, which doesn't
     # model the ``__wrapped__`` original-function handle; reach it through t.Any.
-    fixture: t.Any = pytest_plugin._sweep_orphaned_pg_cron_jobs
+    fixture: t.Any = getattr(pytest_plugin, fixture_name)
     assert list(inspect.signature(fixture.__wrapped__).parameters) == ["request"]
+
+
+def test_a_stranded_fake_now_is_swept_before_the_session_runs(
+    monkeypatch: pytest.MonkeyPatch, pytester: pytest.Pytester
+) -> None:
+    """A SIGKILLed run leaves the GUC behind; the next session must clear it."""
+    monkeypatch.setenv("PYTHONPATH", str(REPO_ROOT))
+    utils.set_database_fake_now("2036-01-01T00:00:00+00:00")
+    try:
+        real_name = connections["default"].settings_dict["NAME"]
+        pytester.makepyfile(
+            inner_settings=f"""
+            from tests.core.settings import *  # noqa: F403
+
+            DATABASES["default"]["TEST"]["NAME"] = {real_name!r}
+            """,
+            inner_test="""
+            import datetime as dt
+
+            import pytest
+
+            pytestmark = pytest.mark.django_db(transaction=True)
+
+
+            def test_clock_is_real(dj_absurd):
+                assert dj_absurd.now.year == dt.datetime.now(dt.UTC).year
+            """,
+        )
+
+        outcome = pytester.runpytest_subprocess("--reuse-db", "--ds=inner_settings")
+
+        outcome.assert_outcomes(passed=1)
+        assert utils.read_database_fake_now() is None
+    finally:
+        utils.reset_database_fake_now()
+
+
+def test_the_stranded_fake_now_sweep_skips_when_nothing_is_provisioned(
+    monkeypatch: pytest.MonkeyPatch, pytester: pytest.Pytester
+) -> None:
+    """A session with no ``django_db``-marked test anywhere provisions nothing for the
+    Absurd alias — ``NAME`` stays whatever the developer configured, never swapped to
+    a test database. Pointing that LIVE ``NAME`` at a database that does not exist
+    proves the sweep never issues its ``ALTER DATABASE``: were the skip to regress,
+    connecting to that nonexistent name would error the whole session before this
+    test's own body ever ran.
+    """
+    monkeypatch.setenv("PYTHONPATH", str(REPO_ROOT))
+    pytester.makepyfile(
+        inner_settings=f"""
+        from tests.core.settings import *  # noqa: F403
+
+        DATABASES["default"]["NAME"] = {ABSENT_DATABASE!r}
+        """,
+        inner_test="""
+        def test_no_db_backed_test_anywhere():
+            assert 1 + 1 == 2
+        """,
+    )
+
+    outcome = pytester.runpytest_subprocess("--ds=inner_settings")
+
+    outcome.assert_outcomes(passed=1)
+
+
+def test_the_orphaned_pg_cron_jobs_sweep_skips_when_nothing_is_provisioned(
+    monkeypatch: pytest.MonkeyPatch, pytester: pytest.Pytester
+) -> None:
+    """Mirrors the ``fake_now`` skip test above for ``_sweep_orphaned_pg_cron_jobs``'s
+    own unprovisioned-session guard.
+
+    That fixture only proceeds past its first guard when the pg_cron app is
+    INSTALLED, so the inner run needs ``tests.pg_cron.settings`` rather than this
+    suite's own — no new pytester harness, just tests/core's existing machinery
+    pointed at a different settings module (``tests/pg_cron`` has no pytester harness
+    of its own to mirror this into). A session with no ``django_db``-marked test
+    anywhere provisions nothing for the Absurd alias, so ``NAME`` stays whatever the
+    developer configured. Pointing that LIVE ``NAME`` at a database that does not
+    exist proves the sweep never issues its central-catalog ``DELETE``/unschedule:
+    were the skip to regress, connecting to that nonexistent name would error the
+    whole session before this test's own body ever ran.
+    """
+    monkeypatch.setenv("PYTHONPATH", str(REPO_ROOT))
+    pytester.makepyfile(
+        inner_settings=f"""
+        from tests.pg_cron.settings import *  # noqa: F403
+
+        DATABASES["default"]["NAME"] = {ABSENT_DATABASE!r}
+        """,
+        inner_test="""
+        def test_no_db_backed_test_anywhere():
+            assert 1 + 1 == 2
+        """,
+    )
+
+    outcome = pytester.runpytest_subprocess("--ds=inner_settings")
+
+    outcome.assert_outcomes(passed=1)
+
+
+def test_a_test_that_raises_inside_a_freeze_still_releases_the_clock(
+    monkeypatch: pytest.MonkeyPatch, pytester: pytest.Pytester
+) -> None:
+    """Proves recovery by SOME layer — the ``freeze_time`` block's own exit, the fixture
+    teardown behind it, or the flush reset. All three exist by now and all three fire
+    after the inner failing test; the sweep test above is the one that isolates the
+    sweep, since it runs before any inner test."""
+    monkeypatch.setenv("PYTHONPATH", str(REPO_ROOT))
+    real_name = connections["default"].settings_dict["NAME"]
+    pytester.makepyfile(
+        inner_settings=f"""
+        from tests.core.settings import *  # noqa: F403
+
+        DATABASES["default"]["TEST"]["NAME"] = {real_name!r}
+        """,
+        inner_test="""
+        import datetime as dt
+
+        import pytest
+
+        pytestmark = pytest.mark.django_db(transaction=True)
+
+
+        def test_shifts_then_fails(dj_absurd):
+            with dj_absurd.freeze_time() as frozen_time:
+                frozen_time.shift(dt.timedelta(days=7))
+                pytest.fail("deliberate")
+        """,
+    )
+    # The inner run plants a real-now+7d GUC on the database the OUTER session shares.
+    # Should every recovery layer regress at once, the reset below keeps the cost at one
+    # red test: a live fake_now over a real Python clock is the deadlock direction, and
+    # the next draining test in this session would hang unkillably instead of failing.
+    try:
+        outcome = pytester.runpytest_subprocess("--reuse-db", "--ds=inner_settings")
+
+        outcome.assert_outcomes(failed=1)
+        assert utils.read_database_fake_now() is None
+    finally:
+        utils.reset_database_fake_now()
+
+
+def test_freeze_time_refuses_a_test_with_no_db_marker(
+    monkeypatch: pytest.MonkeyPatch, pytester: pytest.Pytester
+) -> None:
+    """A test that never earned Django DB access must never reach ANY database through
+    ``freeze_time()``'s own raw connection — proven by pointing the LIVE ``NAME`` at a
+    database that does not exist. A second, marked test keeps ``django_db_setup`` and
+    the session sweep themselves working normally (their own aliases come from every
+    marked test in the whole session, not just this one), isolating the assertion to
+    the unmarked test's own guard: were it to regress, the raw connection would fail
+    trying to reach that nonexistent name, not raise this curated error.
+    """
+    monkeypatch.setenv("PYTHONPATH", str(REPO_ROOT))
+    real_name = connections["default"].settings_dict["NAME"]
+    pytester.makepyfile(
+        inner_settings=f"""
+        from tests.core.settings import *  # noqa: F403
+
+        DATABASES["default"]["NAME"] = {ABSENT_DATABASE!r}
+        DATABASES["default"]["TEST"]["NAME"] = {real_name!r}
+        """,
+        inner_test="""
+        import pytest
+
+
+        @pytest.mark.django_db(transaction=True)
+        def test_seed_the_alias():
+            pass
+
+
+        def test_no_marker(dj_absurd):
+            with pytest.raises(
+                RuntimeError,
+                match=(
+                    r"django-absurd: freeze_time\\(\\) needs real Django database "
+                    r"access to pin Postgres's clock on 'default', and this test "
+                    r"has none\\. Mark it "
+                    r"@pytest\\.mark\\.django_db\\(transaction=True\\)\\."
+                ),
+            ):
+                with dj_absurd.freeze_time():
+                    pass
+        """,
+    )
+
+    outcome = pytester.runpytest_subprocess("--reuse-db", "--ds=inner_settings")
+
+    outcome.assert_outcomes(passed=2)
+
+
+def test_the_start_sweep_no_ops_in_a_project_without_an_absurd_backend(
+    monkeypatch: pytest.MonkeyPatch, pytester: pytest.Pytester
+) -> None:
+    """The bail-out arm, for real: django-absurd installed, no Absurd backend.
+
+    The inner project points at a database that does not exist, so the promise — a
+    plugin that touches nothing when no Absurd backend is configured — is observable: a
+    clean session proves the sweep never resolved a database, let alone connected to
+    one. Past the guard it falls back to the ``default`` alias and tries, and failing to
+    connect errors every test in the session.
+    """
+    monkeypatch.setenv("PYTHONPATH", str(REPO_ROOT))
+    pytester.makepyfile(
+        inner_settings=f"""
+        from tests.core.settings import *  # noqa: F403
+
+        TASKS = {{"default": {{"BACKEND": "django.tasks.backends.dummy.DummyBackend"}}}}
+        DATABASES["default"]["NAME"] = {ABSENT_DATABASE!r}
+        """,
+        inner_test="""
+        from django_absurd.backends import get_absurd_backends
+
+
+        def test_no_absurd_backend_is_configured():
+            assert get_absurd_backends() == {}
+        """,
+    )
+
+    outcome = pytester.runpytest_subprocess("--reuse-db", "--ds=inner_settings")
+
+    outcome.assert_outcomes(passed=1)
+
+
+def test_a_pytest_run_with_no_django_settings_still_collects(
+    monkeypatch: pytest.MonkeyPatch, pytester: pytest.Pytester
+) -> None:
+    """The ``pytest11`` entry point loads on EVERY pytest run in any venv that has
+    django-absurd installed — Django project or not — and ``pytest_configure`` imports
+    ``django_absurd.test`` there. A module-level import in that module that reaches
+    ``django_absurd.models`` defines model classes against unconfigured settings, so the
+    run dies with ``INTERNALERROR: ImproperlyConfigured`` before collecting anything.
+
+    Only a subprocess with ``DJANGO_SETTINGS_MODULE`` removed can catch that: reloading
+    the plugin inside this already-configured session sees settings either way.
+    """
+    monkeypatch.setenv("PYTHONPATH", str(REPO_ROOT))
+    monkeypatch.delenv("DJANGO_SETTINGS_MODULE")
+    pytester.makepyfile(
+        inner_test="""
+        def test_django_is_never_configured():
+            assert 1 + 1 == 2
+        """
+    )
+
+    outcome = pytester.runpytest_subprocess()
+
+    outcome.assert_outcomes(passed=1)
 
 
 def test_plugin_module_imports_cleanly() -> None:
@@ -192,4 +466,4 @@ def test_plugin_module_imports_cleanly() -> None:
     # entry-point module imports cleanly and exposes its public surface.
     importlib.reload(pytest_plugin)
     assert callable(pytest_plugin.pytest_configure)
-    assert callable(pytest_plugin.absurd_drain_queue)
+    assert callable(pytest_plugin.dj_absurd)
