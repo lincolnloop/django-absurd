@@ -4,13 +4,10 @@ Backs both the automatic test cleanup (``django_absurd.test.install_absurd_clean
 which wraps ``TransactionTestCase._post_teardown``) and the ``absurd_flush`` management
 command — a plain, always-Django-dependent module.
 
-Both in-function imports below reach into ``django_absurd.pg_cron``, the OPTIONAL app,
-and stay in-function on purpose: core must not import it at module level, since the
-``apps.is_installed(PG_CRON_APP_NAME)`` guard is what decides whether it is in play at
-all. ``pg_cron.reconcile`` additionally imports ``pg_cron.models``, so a module-level
-import of it would make THIS module settings-dependent — and this module is imported at
-module level by ``django_absurd.test``, which pytest's plugin bootstrap imports on every
-run in every venv (see that module's import-safety note).
+Both in-function imports below reach ``django_absurd.pg_cron``, the OPTIONAL app
+gated by ``apps.is_installed``; ``pg_cron.reconcile`` also imports models, which
+would make this module settings-dependent — and ``django_absurd.test`` imports it
+at module level during pytest bootstrap (see that module's import-safety note).
 """
 
 import contextlib
@@ -24,7 +21,11 @@ from django.db import connections
 from django.db.utils import OperationalError, ProgrammingError
 
 from django_absurd.backends import PG_CRON_APP_NAME
-from django_absurd.queues import get_absurd_client, resolve_absurd_database
+from django_absurd.queues import (
+    QUEUE_TABLE_PREFIXES,
+    get_absurd_client,
+    resolve_absurd_database,
+)
 
 
 def flush_absurd_state(*, drop_schema: bool = False) -> None:
@@ -59,33 +60,25 @@ def flush_absurd_state(*, drop_schema: bool = False) -> None:
 
 
 def reset_fake_now(alias: str) -> None:
-    """Clear ``alias``'s database-level ``absurd.fake_now`` — the one implementation of
-    that statement, shared by the ``dj_absurd`` fixture's clock release, the post-test
-    flush, and the session-start sweep.
+    """Clear ``alias``'s database-level ``absurd.fake_now`` — the one implementation
+    of that statement, shared by the fixture's clock release, the post-test flush,
+    and the session-start sweep.
 
-    The GUC outlives the process that set it and every NEW session inherits it, so an
-    unreleased one silently moves durable time for the whole reused test database.
-
-    Targeted ``RESET`` of the one parameter, never ``RESET ALL`` — that would clobber
-    unrelated database-level settings. ``ALTER DATABASE`` rejects bind parameters, hence
-    the composed identifier, read at runtime so xdist's per-worker databases each get
-    their own.
-
-    On a DEDICATED autocommit connection, mirroring the freeze that set it
-    (``django_absurd.test.AbsurdTestRuntime._write_fake_now``): a caller can be inside
-    an open transaction — a test that froze the clock without
-    ``django_db(transaction=True)`` — where an ``ALTER DATABASE`` on Django's own
-    connection is rolled back with the test, stranding exactly the GUC this clears.
+    The GUC outlives the process that set it and every NEW session inherits it.
+    Targeted ``RESET`` of the one parameter, never ``RESET ALL`` (would clobber
+    unrelated database-level settings); ``ALTER DATABASE`` rejects bind parameters,
+    hence the composed identifier, read at runtime for xdist's per-worker databases.
+    Dedicated autocommit connection, mirroring the freeze that set it: on Django's
+    connection inside a test transaction the ``ALTER`` rolls back with the test,
+    stranding exactly the GUC this clears.
     """
     statement = psycopg.sql.SQL("alter database {name} reset absurd.fake_now").format(
         name=psycopg.sql.Identifier(connections[alias].settings_dict["NAME"])
     )
     params: dict[str, t.Any] = connections[alias].get_connection_params()
     params.pop("cursor_factory", None)
-    # ``context`` (Django's adapters) is kept, unlike in
-    # ``django_absurd.test.open_test_connection``, which drops it because its
-    # timestamptz loader relabels rather than converts. This connection is write-only —
-    # one ``ALTER DATABASE ... RESET`` — so no timestamptz is ever read back through it.
+    # ``context`` kept (unlike ``open_test_connection``): this connection is
+    # write-only, so its relabeling timestamptz loader can never fire.
     with connections[alias].wrap_database_errors:
         conn = psycopg.connect(**params, autocommit=True)
         try:
@@ -113,7 +106,6 @@ def clear_queues(*, drop_schema: bool) -> None:
 def teardown_owned_pg_cron_jobs() -> None:
     # Scoped clear (drop_schema=False) — the existing, already-tested
     # teardown_crons(include_admin=True), never a hand-rolled parallel implementation.
-    # In-function: optional app, AND reconcile imports pg_cron.models (see docstring).
     from django_absurd.pg_cron.reconcile import teardown_crons  # noqa: PLC0415
 
     teardown_crons(include_admin=True)
@@ -122,7 +114,7 @@ def teardown_owned_pg_cron_jobs() -> None:
 def truncate_queue_tables(queue: str) -> None:
     tables = [
         psycopg.sql.Identifier("absurd", f"{prefix}_{queue}")
-        for prefix in ("t", "r", "c", "e", "w")
+        for prefix in QUEUE_TABLE_PREFIXES
     ]
     with connections[resolve_absurd_database()].cursor() as cur:
         # `i_<queue>` only exists for a `partitioned` queue (see

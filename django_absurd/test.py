@@ -12,24 +12,15 @@ The project's no-monkeypatch rule governs test-code hygiene; this is library tes
 integration (pytest-django itself patches ``BaseDatabaseWrapper.ensure_connection``),
 so the patch here is deliberate.
 
-``AbsurdTestRuntime`` (returned by the ``dj_absurd`` pytest fixture in
-``django_absurd.pytest_plugin``) is the read/drain/clock facade for durable tests:
-``sync_queues``, ``get_result``, ``drain``, ``emit``, the transaction guard all four
-share, plus clock control (``freeze_time``, which yields a ``FrozenTime``, and
-``now``). Every other
-METHOD on that class is an internal and carries a leading underscore; its dataclass
-fields are plain state, not part of the public surface.
+``AbsurdTestRuntime`` (yielded by the ``dj_absurd`` fixture in
+``django_absurd.pytest_plugin``) is the read/drain/clock facade for durable tests;
+underscore-prefixed methods are internal, and its dataclass fields are plain state.
 
-**Import-safety constraint**: ``django_absurd.pytest_plugin.pytest_configure`` imports
-this module on EVERY pytest run in ANY venv that has django-absurd installed — Django
-project or not — so this module's top level must stay settings-free. Everything
-imported above is: the one import that would read ``INSTALLED_APPS`` is
-``django_absurd.models``, and it is confined to ``queues.reconcile_queue``'s own
-function body (see the comment there). Never add a module-level import here that
-reaches ``django_absurd.models``, ``.checks`` or ``.admin`` — the run would die with
-``INTERNALERROR: ImproperlyConfigured`` before collecting anything, in every non-Django
-project in the venv. ``tests/core/test_pytest_plugin.py``'s
-``test_a_pytest_run_with_no_django_settings_still_collects`` guards exactly that.
+**Import-safety constraint**: ``pytest_configure`` imports this module on every pytest
+run in any venv with django-absurd installed, so its top level must stay settings-free
+— never add a module-level import reaching ``django_absurd.models``/``.checks``/
+``.admin``. Full constraint and the one sanctioned choke point:
+``django_absurd.pytest_plugin``'s module docstring and ``queues.reconcile_queue``.
 """
 
 import datetime as dt
@@ -119,7 +110,7 @@ class TaskSnapshot:
     """Where one task stands: one row from ``t_<queue>``, left-joined to its last
     attempt's run for ``failure``.
 
-    Caveats, measured (see the design doc for the full reasoning):
+    Caveats, measured:
 
     - ``attempts`` counts attempts CREATED, not completed — a task retried once (one
       failure, one pending replacement) already reads ``attempts=2`` before the second
@@ -148,15 +139,11 @@ class RunSnapshot:
     """One run executed during a ``drain()``, in claim order.
 
     ``drain()`` reports what RUNS did; ``get_result()`` reports where a TASK stands —
-    conflating the two is what makes ``TaskSnapshot`` unable to express an in-flight
-    retry (see its own caveats). Per-run state is read right after THAT run's own
-    execution, never batched at drain end: a run that suspends (``sleeping``) or fails
-    (``failed``, with its own ``failure``) reports honestly, and a retry sequence reads
-    attempt-by-attempt instead of collapsing to one final verdict.
-
-    The same ``run_id`` can legitimately appear twice in one drain: an ``await_event``
-    waiter re-arms its own run, so it first appears ``sleeping`` and later
-    ``completed``.
+    which is why ``TaskSnapshot`` cannot express an in-flight retry (see its
+    caveats). State is read right after each run's own execution, never batched at
+    drain end, so a retry sequence reads attempt-by-attempt. The same ``run_id`` can
+    appear twice: an ``await_event`` waiter re-arms its own run — first ``sleeping``,
+    later ``completed``.
     """
 
     queue: str
@@ -173,19 +160,15 @@ class RunSnapshot:
 
 @dataclass(frozen=True)
 class FrozenTime:
-    """The handle ``AbsurdTestRuntime.freeze_time`` yields: durable time's two movers.
+    """Handle yielded by ``AbsurdTestRuntime.freeze_time``: durable time's only
+    movers.
 
-    ``move_to``/``shift`` are time-machine's own ``Coordinates`` vocabulary, and the
-    absence of a ``travel`` is deliberate — travelling implies ticking, while both
-    halves of this clock are frozen: ``absurd.fake_now`` is a static literal, so
-    Postgres never ticks, and a ticking Python clock would drift out of lockstep with
-    it.
-
-    ``move_to`` and ``shift`` are the whole surface. ``_apply_move`` behind them is the
-    window's own two-clock apply, bound when the freeze opened, so the handle carries no
-    clock state of its own — the runtime stays the single owner of what has to be
-    released. It also holds the window open/closed, so BOTH movers raise once the block
-    has exited rather than silently re-freezing real time behind the test's back.
+    ``move_to``/``shift`` are time-machine's ``Coordinates`` vocabulary; no ``travel``
+    because travelling implies ticking, and ``absurd.fake_now`` is a static literal —
+    a ticking Python clock would drift out of lockstep. ``_apply_move`` is the open
+    window's two-clock apply: the handle carries no clock state (the runtime owns
+    release) and both movers raise once the block has exited rather than silently
+    re-freezing real time.
     """
 
     _apply_move: t.Callable[[dt.datetime, dt.datetime | None], None]
@@ -207,9 +190,9 @@ class FrozenTime:
         there is one source of truth instead of bookkeeping of our own that could
         disagree with it.
 
-        That same reading is also passed through as the direction reference, so
+        That same reading passes through as the direction reference, so
         ``_apply_clock_move`` decides forward-vs-backward against the exact ``now()``
-        this method took, not a second, later one of its own.
+        this method took.
 
         Valid only while the ``freeze_time`` block that yielded this handle is open.
         """
@@ -221,20 +204,13 @@ class FrozenTime:
 class AbsurdTestRuntime:
     """Read/drain/clock facade returned by the ``dj_absurd`` pytest fixture.
 
-    Holds the Django database alias the Absurd backend runs on, and — for as long as a
-    ``freeze_time`` block is open — the time-machine coordinate driving Python's half of
-    the clock. Every per-queue method resolves its queue name from its own argument,
-    defaulting to ``"default"`` — except ``get_result``, which prefers a prefixed id's
-    own queue over an unpassed ``queue`` argument (see its own docstring), and
-    ``sync_queues``, which is whole-catalog and takes no queue at all.
-
     Public surface: ``freeze_time``, ``now``, ``sync_queues``, ``drain``, ``emit``,
-    ``get_result``.
-
-    ``time_travel`` is what release stops; ``traveller`` is what later moves take. Both
-    stay ``None`` outside a ``freeze_time`` block, which is how a drain-only test pays
-    nothing and cannot leak a frozen clock, and a live ``time_travel`` is what makes a
-    nested freeze detectable.
+    ``get_result``. Holds the Absurd backend's database alias and, while a
+    ``freeze_time`` block is open, the time-machine coordinate driving Python's half
+    of the clock. ``time_travel``/``traveller`` stay ``None`` outside a freeze — a
+    drain-only test pays nothing and cannot leak a frozen clock, and a live
+    ``time_travel`` is what makes a nested freeze detectable. ``time_travel`` is what
+    release stops; ``traveller`` is what later moves take.
     """
 
     alias: str
@@ -254,23 +230,16 @@ class AbsurdTestRuntime:
         self._release_clock()
 
     def sync_queues(self) -> None:
-        """Provision every queue declared on the Absurd backend — the runtime
-        counterpart of ``manage.py absurd_sync_queues``.
+        """Provision every declared queue — the runtime counterpart of ``manage.py
+        absurd_sync_queues``.
 
-        **Rarely needed, so don't reach for it defensively.** django-absurd provisions
-        the declared catalog from its own ``post_migrate`` receiver, and pytest-django
-        migrates the test database, so a test that enqueues on a declared queue already
-        has its tables. What needs this is a test that CHANGED the topology: a
-        ``settings`` override declaring a queue the migration never saw, or a fixture
-        that dropped the queues to isolate itself.
-
-        Whole-catalog, hence no ``queue`` argument — provisioning also rebuilds the
-        admin views over the FULL catalog, which reconciling one queue cannot express.
-
-        Transaction-guarded like the reads, for a different reason: ``create_queue`` is
-        DDL, so a sync inside an open transaction is invisible to the worker's own
-        connection and is rolled back with the test — provisioning that looks like it
-        happened and didn't.
+        Rarely needed: migrate already provisions the declared catalog. Reach for it
+        only when the test CHANGED topology — a ``settings`` override declaring a
+        queue the migration never saw, or a fixture that dropped the queues.
+        Whole-catalog (no ``queue`` argument) because provisioning also rebuilds the
+        admin views over the full catalog. Transaction-guarded because the DDL would
+        be invisible to the worker's connection and rolled back with the test —
+        provisioning that looks like it happened and didn't.
         """
         guard_against_open_transaction(self.alias, "sync_queues")
         backend = queues.get_absurd_backend()
@@ -283,23 +252,17 @@ class AbsurdTestRuntime:
     ) -> TaskSnapshot | None:
         """Look up one task by id, returning ``None`` if it doesn't exist.
 
-        ``task_id`` accepts either a Django ``TaskResult.id`` (``"queue:uuid"``) or a
-        bare uuid. A ``"queue:uuid"`` id's own prefix is HONOURED as the queue to
-        query when ``queue`` is left unpassed. ``queue`` defaults to the ``NOT_SET``
-        sentinel rather than the literal string ``"default"`` precisely so an
-        EXPLICITLY passed ``queue=`` — including ``queue="default"`` — is
-        distinguishable from an omitted one: pass one that disagrees with a prefixed
-        id's own queue and this raises ``TaskIdQueueMismatchError`` naming both,
-        instead of silently picking one. A bare uuid (no prefix) resolves ``queue`` to
-        ``"default"`` when left unpassed, same as always.
+        ``task_id`` is a Django ``TaskResult.id`` (``"queue:uuid"``) or a bare uuid.
+        A prefixed id's own queue wins when ``queue`` is unpassed; the default is the
+        ``NOT_SET`` sentinel (not ``"default"``) so an EXPLICITLY passed ``queue=`` —
+        even ``queue="default"`` — that disagrees with the prefix raises
+        ``TaskIdQueueMismatchError`` instead of silently picking a side. A bare uuid
+        resolves an unpassed ``queue`` to ``"default"``.
 
-        A declared-but-unprovisioned queue raises ``QueueNotProvisionedError`` —
-        the same facade ``drain()`` and ``emit()`` give that condition, rather than
-        Django's own ``ProgrammingError`` leaking through this one read. The ORM
-        wraps the underlying ``psycopg.errors.UndefinedTable``, so the classifier
-        reads it off ``exc.__cause__``, not the wrapper. Only a relation of THIS
-        queue's own earns the translation; an unrelated missing relation re-raises
-        as itself, chained, same as ``drain_queue``/``emit_event``.
+        A declared-but-unprovisioned queue raises ``QueueNotProvisionedError``, the
+        same facade ``drain()``/``emit()`` give it. The ORM wraps the underlying
+        ``UndefinedTable``, so the classifier reads ``exc.__cause__``; an unrelated
+        missing relation re-raises as itself, chained.
         """
         guard_against_open_transaction(self.alias, "get_result")
         raw_task_id = str(task_id)
@@ -355,25 +318,20 @@ class AbsurdTestRuntime:
         emit_event(name, payload, queue=queue)
 
     def drain(self, queue: str = "default") -> list[RunSnapshot]:
-        """Burst-drain ``queue`` synchronously, returning one ``RunSnapshot`` per run
-        executed, in claim order.
+        """Burst-drain ``queue`` synchronously, one ``RunSnapshot`` per run, in claim
+        order.
 
-        A run that suspended (durable sleep, ``await_event``) is still returned, with
-        ``state="sleeping"`` — the honest reading. The same run can appear twice: an
-        ``await_event`` waiter re-arms its own run when a same-drain emit wakes it, so
-        it first appears ``sleeping`` then ``completed``. Spawned children run in the
-        SAME drain (the burst loop claims until nothing is claimable), so they appear
-        too. ``drain() == []`` does not mean nothing happened — cancellation rules run
-        inside claiming itself and produce no claim row; use ``get_result`` for those.
+        A suspended run (durable sleep, ``await_event``) is returned with
+        ``state="sleeping"``. The same run can appear twice — an ``await_event``
+        waiter re-arms when a same-drain emit wakes it: first ``sleeping``, later
+        ``completed``. Spawned children run in the SAME drain. ``drain() == []`` does
+        not mean nothing happened — cancellation rules run inside claiming itself and
+        produce no claim row; use ``get_result`` for those.
 
-        The worker import stays in-function for COST and CONTAINMENT, not import-safety
-        (it is settings-free, verified): ``pytest_configure`` imports THIS module on
-        every pytest run in any venv with django-absurd installed, and
-        ``django_absurd.worker`` is the runtime execution engine — asyncio bridge,
-        thread pool, signal handling, and Django 6's brand-new ``django.tasks``. Only
-        ``drain()`` needs any of it, so a project that never drains should not load it
-        at pytest bootstrap, and a future ``django.tasks`` that reads settings at import
-        cannot break unrelated projects' test runs from here.
+        The worker import is in-function for cost and containment, not import-safety
+        (verified settings-free): only ``drain()`` needs the execution engine, so
+        pytest bootstrap in a non-draining project never loads the asyncio bridge,
+        thread pool, or ``django.tasks``.
         """
         guard_against_open_transaction(self.alias, "drain")
         from django_absurd import worker  # noqa: PLC0415
@@ -430,17 +388,11 @@ class AbsurdTestRuntime:
         ) -> None:
             """Apply a mover's destination, or refuse once the window has closed.
 
-            An escaped handle would otherwise re-freeze silently — the first move after
-            the block starts a FRESH travel from real now and rewrites the GUC, cleaned
-            up invisibly by the fixture's crash net. That is the exact failure shape
-            this whole facade exists to convert into a loud one.
-
-            ``reference`` passes through the SAME ``now()`` reading a caller already
-            took to build ``dest`` (a bare entry, ``shift()``), so direction is decided
-            against that one reading rather than a second, later one. ``None`` means
-            the caller had no such reading to reuse (an explicit ``move_to()``/entry
-            instant isn't derived from ``now()`` at all), and ``_apply_clock_move``
-            takes its own single reading in that case.
+            An escaped handle would otherwise re-freeze silently — a FRESH travel
+            from real now plus a rewritten GUC, cleaned up invisibly by the crash
+            net: the exact failure shape this facade exists to make loud.
+            ``reference`` is the ``now()`` reading the caller built ``dest`` from
+            (entry, ``shift``); ``None`` when ``dest`` wasn't derived from ``now()``.
             """
             if not window_open:
                 msg = (
@@ -478,45 +430,32 @@ class AbsurdTestRuntime:
         return instant
 
     def _apply_clock_move(
-        self, when: dt.datetime, reference: dt.datetime | None = None
+        self, when: dt.datetime, reference: dt.datetime | None
     ) -> None:
-        """Move BOTH clocks to ``when``, ordered by DIRECTION so an interrupted move
-        always lands ahead-on-Python — the benign side — never ahead-on-Postgres.
+        """Move BOTH clocks to ``when``, ordered by direction so an interrupted move
+        always lands Python-ahead — the benign side.
 
-        Postgres ahead of Python is the one unrecoverable direction: the run is
-        claimed, the SDK re-checks the wake on replay and re-suspends, and the burst
-        drain re-arms the same wake forever. Python ahead of Postgres just leaves a
-        sleeping run unclaimed — a merely-incomplete move, not a deadlock. Which order
-        lands which side ahead flips with the direction of the move itself:
+        Postgres-ahead is unrecoverable: the run is claimed, the SDK re-suspends on
+        replay, and the burst drain re-arms the same wake forever. Python-ahead just
+        leaves a sleeping run unclaimed. Which order lands which side ahead flips with
+        the move's direction:
 
-        - FORWARD (``when`` at or after the reference instant — the entry freeze to
-          real now, and every ``shift``): Python moves first, Postgres second. A
-          failure in between leaves Python ahead — benign. EQUAL counts as forward, so
-          a bare ``freeze_time()`` entry always takes this branch.
-        - BACKWARD (``when`` strictly before the reference instant — a ``move_to``
-          earlier than the current instant, entry to an explicit past instant
-          included): moving Python first would invert it — Postgres, left at the OLDER
-          instant, would end up ahead once Python jumped back. So Postgres moves first
-          here, Python second, keeping a failure in between on the same benign side.
+        - FORWARD (``when`` at/after ``reference``; entry and every ``shift``): Python
+          first, Postgres second. Equal counts as forward, so a bare ``freeze_time()``
+          entry takes this branch.
+        - BACKWARD (``when`` strictly before ``reference``): Postgres first — moving
+          Python first would leave Postgres at the older instant, i.e. ahead.
 
-        ``reference`` is a SINGLE ``now()`` reading, taken once by whichever caller
-        needed one to build ``when`` in the first place (a bare entry, ``shift()``) and
-        passed straight through — never re-read here. A second, later read would let
-        direction resolve by OS clock resolution instead of intent: at a bare entry,
-        ``when`` and the comparison instant would be built from two independent
-        ``now()`` calls, tying or not by chance rather than by rule. ``None`` means the
-        caller had no such reading to reuse (an explicit ``move_to()``/entry instant
-        isn't derived from ``now()`` at all), so this takes its own single reading —
-        still only one read total for that call.
+        ``reference`` is the caller's single ``now()`` reading, never re-read here — a
+        second read would let direction resolve by OS clock resolution instead of
+        intent. ``None``: the caller had no reading (explicit ``move_to``/entry
+        instant), so take one now.
 
-        Both validation arms matter. A non-``datetime`` would otherwise reach
-        ``astimezone`` and die with an unhelpful ``AttributeError``, and a string that
-        survived to the GUC is accepted by ``ALTER DATABASE`` only to explode inside
-        ``absurd.current_time()`` on every NEW session — far from the call that caused
-        it. A naive ``datetime`` is worse than useless: ``absurd.current_time()`` casts
-        the GUC text using the READING session's ``TimeZone``, and the worker's
-        connection inherits the server default, so on a server west of UTC a naive
-        instant puts Postgres ahead of Python — the deadlock direction.
+        Aware-or-raise: a non-``datetime`` would die later in ``astimezone`` or
+        explode inside ``absurd.current_time()`` on every NEW session, far from the
+        cause. A NAIVE one is worse — the GUC text is cast with the READING session's
+        ``TimeZone``, so a server west of UTC lands Postgres-ahead: the deadlock
+        direction.
         """
         if not isinstance(when, dt.datetime) or when.utcoffset() is None:
             msg = (
@@ -569,19 +508,14 @@ class AbsurdTestRuntime:
     def _write_fake_now(self, instant: dt.datetime) -> None:
         """Set ``absurd.fake_now`` at DATABASE level, then on Django's live session.
 
-        Database level because the burst worker opens its OWN connection per drain and
-        only a database default reaches it; session level as well because a database
-        default reaches only NEW sessions, so an ``enqueue()`` on Django's already-open
-        connection would keep stamping real time.
-
-        ``ALTER DATABASE`` rejects bind parameters, hence the composed literal — and the
-        literal always carries its UTC offset, so the cast inside
-        ``absurd.current_time()`` cannot depend on the reading session's ``TimeZone``.
-        The database name is read at runtime, so xdist's per-worker databases work.
-
-        ``_apply_clock_move`` has already run ``guard_against_blocked_database`` before
-        either clock moves, so a test with no earned DB access never reaches this
-        method's own raw connection at all.
+        Database level because the burst worker opens its OWN connection per drain —
+        only a database default reaches it; session level too because a default
+        reaches only NEW sessions, so ``enqueue()`` on Django's already-open
+        connection would keep stamping real time. ``ALTER DATABASE`` rejects bind
+        parameters, hence the composed literal; it always carries its UTC offset, so
+        the cast inside ``absurd.current_time()`` cannot depend on the reading
+        session's ``TimeZone``. Name read at runtime for xdist's per-worker
+        databases.
         """
         statement = psycopg.sql.SQL(
             "alter database {name} set absurd.fake_now = {instant}"
@@ -598,14 +532,13 @@ class AbsurdTestRuntime:
             )
 
     def _release_clock(self) -> None:
-        """Restore real time on both clocks — every ``freeze_time`` block's own exit,
-        and the fixture teardown behind a test that never reached it.
+        """Restore real time on both clocks; a runtime with no open freeze touches
+        nothing, so block exit and fixture teardown chain safely.
 
-        A runtime with no open freeze touches nothing, which is what makes the two
-        callers safe to chain: whichever runs first releases, the other returns. The
-        Postgres half is released even if stopping time-machine raises — a stopped
-        Python clock over a live ``absurd.fake_now`` is the deadlock direction, and
-        unlike the Python half the GUC outlives the process that set it.
+        The Postgres half is released even if stopping time-machine raises — a
+        stopped Python clock over a live ``absurd.fake_now`` is the deadlock
+        direction, and unlike the Python half the GUC outlives the process that set
+        it.
         """
         if self.time_travel is None:
             return
@@ -616,13 +549,9 @@ class AbsurdTestRuntime:
             self._reset_fake_now()
 
     def _reset_fake_now(self) -> None:
-        """Unset ``absurd.fake_now`` at database level, then on Django's session.
-
-        The database-level half is ``django_absurd.flush.reset_fake_now``, the single
-        implementation of that targeted ``RESET`` (never ``RESET ALL``), shared with the
-        post-test flush and the session-start sweep. The session-level half is a
-        different statement on a different connection — Django's own live session, which
-        a database-level default never reaches.
+        """Unset at database level via ``flush.reset_fake_now`` (the single
+        implementation), then on Django's own live session, which a database-level
+        default never reaches.
         """
         flush.reset_fake_now(self.alias)
         with connections[self.alias].cursor() as session_cursor:
@@ -636,8 +565,7 @@ def read_task_and_last_run(
 
     The same per-queue dynamic models the production read uses
     (``backends.fetch_task_and_run``), so the two cannot drift on column names or on
-    jsonb/timestamptz decoding — and no hand-written SQL to keep in step with Absurd's
-    own schema. Not ``fetch_task_and_run`` itself: that one raises
+    jsonb/timestamptz decoding. Not ``fetch_task_and_run`` itself: that one raises
     ``TaskResultDoesNotExist`` where this must report a missing task as ``None``, and it
     folds a missing per-queue table into that same error where ``get_result`` lets the
     original missing-relation error surface.
@@ -682,24 +610,16 @@ def decode_params(params: t.Any) -> tuple[list[t.Any], dict[str, t.Any]]:
 
 @contextmanager
 def open_test_connection(alias: str) -> t.Iterator[psycopg.Cursor[t.Any]]:
-    """Open a DEDICATED, short-lived, UTC-pinned connection for a test read.
+    """Open a dedicated, short-lived, UTC-pinned connection for a test read.
 
-    Built from ``get_connection_params()`` with BOTH ``cursor_factory`` and
-    ``context`` dropped — ``context`` carries Django's psycopg adapters, whose
-    timestamptz loader relabels rather than converts (``replace(tzinfo=...)``), which
-    is only correct when the session's ``TimeZone`` is already UTC. Inherited unpinned
-    on a non-UTC server it silently yields wall-clock digits mislabeled UTC — a
-    different instant. So the session is pinned to UTC itself right after connecting,
-    making every value read back through this connection UTC-aware by construction.
-
-    Not Django's own connection: a held connection never sees a database-level GUC
-    default applied after it opened, and a fresh one is needed on every read anyway
-    (mirrors ``django_absurd/connection.py:open_central_connection``).
-
-    Every remaining caller reads the CLOCK or writes the GUC that fakes it — ``now``,
-    ``_write_fake_now``, and the GUC oracles in ``tests/utils.py``. Nothing here reads a
-    jsonb column any more (task and run state come through the ORM), which is why this
-    registers no json loader of its own.
+    BOTH ``cursor_factory`` and ``context`` are dropped: ``context`` carries Django's
+    psycopg adapters, whose timestamptz loader RELABELS rather than converts
+    (``replace(tzinfo=...)``) — correct only when the session zone is UTC, so the
+    session is pinned to UTC right after connecting. Not Django's own connection: a
+    held session never sees a database-level GUC default applied after it opened, and
+    a fresh one is needed per read anyway (mirrors ``connection.py``'s
+    ``open_central_connection``). Callers read the clock or write the GUC — nothing
+    reads jsonb through this, hence no json loader.
     """
     params: dict[str, t.Any] = connections[alias].get_connection_params()
     params.pop("cursor_factory", None)
@@ -716,13 +636,11 @@ def open_test_connection(alias: str) -> t.Iterator[psycopg.Cursor[t.Any]]:
 def guard_against_open_transaction(alias: str, operation: str) -> None:
     """Raise if called from inside an open transaction on ``alias``.
 
-    Checked at CALL time, not fixture setup — a plain ``db`` test, a legitimate
-    ``django_db(transaction=True)`` test that happens to call from inside
-    ``transaction.atomic()``, a ``transactional_db``-only test, and a class-based
-    ``TestCase`` are all covered by ``in_atomic_block``, which a marker/fixture-name
-    check would miss. Uncommitted rows in an open transaction are invisible to
-    Absurd's own connection (worker, or this module's own fresh reads), so the
-    alternative is a confusing, silent wrong answer instead of a loud one.
+    Checked at CALL time, not fixture setup — every legitimate call shape is
+    covered by ``in_atomic_block``, which a marker/fixture-name check would miss.
+    Uncommitted rows in an open transaction are invisible to Absurd's own connection
+    (worker, or this module's own fresh reads), so the alternative is a confusing,
+    silent wrong answer instead of a loud one.
     """
     if connections[alias].in_atomic_block:
         msg = (
@@ -740,13 +658,11 @@ def guard_against_blocked_database(alias: str) -> None:
 
     Touches Django's OWN connection first — ``ensure_connection()``, the exact call
     pytest-django's DB blocker patches to refuse a test with no ``django_db`` marker —
-    before any raw psycopg connection gets a chance to run. Forcing ``django_db_setup``
-    ourselves would not be enough: pytest-django computes which aliases to provision
-    from the markers across the WHOLE collected session, so a session with no OTHER
-    ``django_db``-marked test touching ``alias`` would leave it unswapped from the live
-    settings database no matter how eagerly this fixture asked for setup. Reusing
-    pytest-django's own per-test block instead catches every such session shape, not
-    just the common one.
+    before any raw psycopg connection gets a chance to run. Forcing
+    ``django_db_setup`` would not be enough — pytest-django provisions aliases from
+    the WHOLE session's markers, so an unmarked-elsewhere session leaves ``alias``
+    unswapped. Reusing pytest-django's own per-test block instead catches every such
+    session shape, not just the common one.
     """
     try:
         connections[alias].ensure_connection()
