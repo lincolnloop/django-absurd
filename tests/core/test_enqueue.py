@@ -132,7 +132,7 @@ def test_enqueue_with_empty_queues_reports_undeclared(
             "OPTIONS": {"QUEUES": {}},
         }
     }
-    with pytest.raises(QueueNotDeclaredError, match="not declared") as exc:
+    with pytest.raises(QueueNotDeclaredError) as exc:
         tasks.add.enqueue(1, 2)
     assert str(exc.value) == (
         "Queue 'default' is not declared for backend 'default'. "

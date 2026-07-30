@@ -20,7 +20,7 @@ pytestmark = [
 
 
 def test_top_level_emit_event_unknown_queue_raises() -> None:
-    with pytest.raises(QueueNotDeclaredError, match="ghost") as exc:
+    with pytest.raises(QueueNotDeclaredError) as exc:
         emit_event("whatever", queue="ghost")
     assert str(exc.value) == (
         "Queue 'ghost' is not declared for backend 'default'. "

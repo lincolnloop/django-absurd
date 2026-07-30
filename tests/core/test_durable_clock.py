@@ -31,15 +31,14 @@ def test_a_week_long_sleep_resumes_after_shifting_a_week(
     dj_absurd: AbsurdTestRuntime,
 ) -> None:
     with dj_absurd.freeze_time() as frozen_time:
-        result = tasks.sleep_a_week.enqueue()
+        tasks.sleep_a_week.enqueue()
         assert [run.state for run in dj_absurd.drain()] == ["sleeping"]
 
         frozen_time.shift(dt.timedelta(days=7))
 
-        assert [run.state for run in dj_absurd.drain()] == ["completed"]
-        snapshot = dj_absurd.get_result(result.id)
-        assert snapshot is not None
-        assert snapshot.result == "woke"
+        assert [(run.state, run.result) for run in dj_absurd.drain()] == [
+            ("completed", "woke")
+        ]
 
 
 def test_shifting_short_of_the_wake_leaves_the_task_sleeping(
@@ -61,34 +60,32 @@ def test_shifting_short_of_the_wake_leaves_the_task_sleeping(
 
 def test_a_chain_of_two_sleeps_needs_two_shifts(dj_absurd: AbsurdTestRuntime) -> None:
     with dj_absurd.freeze_time() as frozen_time:
-        result = tasks.sleep_twice.enqueue()
+        tasks.sleep_twice.enqueue()
         dj_absurd.drain()
 
         frozen_time.shift(dt.timedelta(days=7))
         assert [run.state for run in dj_absurd.drain()] == ["sleeping"]
 
         frozen_time.shift(dt.timedelta(days=3))
-        assert [run.state for run in dj_absurd.drain()] == ["completed"]
-        snapshot = dj_absurd.get_result(result.id)
-        assert snapshot is not None
-        assert snapshot.result == "woke-twice"
+        assert [(run.state, run.result) for run in dj_absurd.drain()] == [
+            ("completed", "woke-twice")
+        ]
 
 
 def test_an_await_event_timeout_fires_after_shifting_past_it(
     dj_absurd: AbsurdTestRuntime,
 ) -> None:
     with dj_absurd.freeze_time() as frozen_time:
-        result = tasks.sawait_event_timeout.enqueue(
+        tasks.sawait_event_timeout.enqueue(
             "order.packed:never-arrives", timeout=tasks.WEEK_SECONDS
         )
         assert [run.state for run in dj_absurd.drain()] == ["sleeping"]
 
         frozen_time.shift(dt.timedelta(days=8))
-        dj_absurd.drain()
 
-        snapshot = dj_absurd.get_result(result.id)
-        assert snapshot is not None
-        assert snapshot.result == "timed-out"
+        assert [(run.state, run.result) for run in dj_absurd.drain()] == [
+            ("completed", "timed-out")
+        ]
 
 
 def test_a_retry_backoff_runs_the_next_attempt_after_shifting(
@@ -124,16 +121,14 @@ def test_an_expired_claim_is_swept_after_shifting_past_the_lease(
     dj_absurd: AbsurdTestRuntime,
 ) -> None:
     with dj_absurd.freeze_time() as frozen_time:
-        result = tasks.add.enqueue(2, 3)
+        tasks.add.enqueue(2, 3)
         utils.claim_one_run("default", claim_timeout=3600)
 
         frozen_time.shift(dt.timedelta(hours=2))
-        dj_absurd.drain()
 
-        snapshot = dj_absurd.get_result(result.id)
-        assert snapshot is not None
-        assert snapshot.state == "completed"
-        assert snapshot.attempts == 2
+        assert [(run.attempt, run.state) for run in dj_absurd.drain()] == [
+            (2, "completed")
+        ]
 
 
 def test_freeze_time_stamps_the_frozen_instant_on_enqueue(
@@ -180,11 +175,8 @@ def test_move_to_can_go_backward(dj_absurd: AbsurdTestRuntime) -> None:
 def test_leaving_the_block_releases_both_gucs_and_the_python_clock(
     dj_absurd: AbsurdTestRuntime,
 ) -> None:
-    """Both halves, so a test can open several windows in sequence.
-
-    The database-level GUC is what a NEW worker session inherits and what outlives the
-    process; the session-level one is what Django's own already-open connection stamps
-    an ``enqueue()`` with; time-machine is Python's half.
+    """Both halves, so a test can open several windows in sequence. The DB-level GUC,
+    session-level GUC, and Python-half distinction is documented on ``_write_fake_now``.
     """
     real_before = dt.datetime.now(dt.UTC)
 
@@ -338,13 +330,9 @@ def test_freezing_without_time_machine_installed_raises(
     dj_absurd: AbsurdTestRuntime,
 ) -> None:
     """A real import condition, not a patched attribute: the module is uncached and a
-    finder ahead of every other one refuses to supply it.
-
-    The finder is installed around the single ``freeze_time()`` entry and removed again,
-    and the only import that entry makes is ``time_machine`` (everything else it touches
-    is already cached), so it can refuse unconditionally and name whatever it was asked
-    for. The module-level ``import time_machine`` is what makes the uncache-and-restore
-    exact rather than conditional.
+    finder ahead of every other one refuses to supply it. The only import the single
+    ``freeze_time()`` entry makes is ``time_machine``, so the finder can refuse
+    unconditionally and the uncache-and-restore stays exact.
     """
 
     class BlockTimeMachine(importlib.abc.MetaPathFinder):

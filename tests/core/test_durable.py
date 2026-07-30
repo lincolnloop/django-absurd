@@ -63,43 +63,32 @@ def test_async_sleep_for_suspends_then_resumes_replaying_step(
     atasks.DURABLE_STEP_CALLS["n"] = 0
 
     with dj_absurd.freeze_time() as frozen_time:
-        result = atasks.asleep_for_once.enqueue("k")
+        atasks.asleep_for_once.enqueue("k")
 
         # drain 1: bump runs, then sleep -> suspend
         assert [run.state for run in dj_absurd.drain()] == ["sleeping"]
-        suspended = dj_absurd.get_result(result.id)
-        assert suspended is not None
-        assert suspended.state == "sleeping"
 
         frozen_time.shift(dt.timedelta(days=8))
 
         # drain 2: body replays, bump cached, completes
-        assert [run.state for run in dj_absurd.drain()] == ["completed"]
+        assert [(run.state, run.result) for run in dj_absurd.drain()] == [
+            ("completed", 1)
+        ]
 
-    done = dj_absurd.get_result(result.id)
-    assert done is not None
-    assert done.state == "completed"
-    assert done.result == 1
     assert atasks.DURABLE_STEP_CALLS["n"] == 1  # step body ran once across the replay
 
 
 def test_async_sleep_until_suspends_then_resumes(dj_absurd: AbsurdTestRuntime) -> None:
     with dj_absurd.freeze_time() as frozen_time:
-        result = atasks.asleep_until_once.enqueue("k")
+        atasks.asleep_until_once.enqueue("k")
 
         assert [run.state for run in dj_absurd.drain()] == ["sleeping"]
-        suspended = dj_absurd.get_result(result.id)
-        assert suspended is not None
-        assert suspended.state == "sleeping"
 
         frozen_time.shift(dt.timedelta(days=8))
 
-        assert [run.state for run in dj_absurd.drain()] == ["completed"]
-
-    done = dj_absurd.get_result(result.id)
-    assert done is not None
-    assert done.state == "completed"
-    assert done.result == "woke"
+        assert [(run.state, run.result) for run in dj_absurd.drain()] == [
+            ("completed", "woke")
+        ]
 
 
 def test_sync_step_runs_and_returns_value(dj_absurd: AbsurdTestRuntime) -> None:
@@ -127,41 +116,30 @@ def test_sync_sleep_for_suspends_then_resumes_replaying_step(
     tasks.SYNC_STEP_CALLS["n"] = 0
 
     with dj_absurd.freeze_time() as frozen_time:
-        result = tasks.ssleep_for_once.enqueue("k")
+        tasks.ssleep_for_once.enqueue("k")
 
         assert [run.state for run in dj_absurd.drain()] == ["sleeping"]
-        suspended = dj_absurd.get_result(result.id)
-        assert suspended is not None
-        assert suspended.state == "sleeping"
 
         frozen_time.shift(dt.timedelta(days=8))
 
-        assert [run.state for run in dj_absurd.drain()] == ["completed"]
+        assert [(run.state, run.result) for run in dj_absurd.drain()] == [
+            ("completed", 1)
+        ]
 
-    done = dj_absurd.get_result(result.id)
-    assert done is not None
-    assert done.state == "completed"
-    assert done.result == 1
     assert tasks.SYNC_STEP_CALLS["n"] == 1
 
 
 def test_sync_sleep_until_suspends_then_resumes(dj_absurd: AbsurdTestRuntime) -> None:
     with dj_absurd.freeze_time() as frozen_time:
-        result = tasks.ssleep_until_once.enqueue("k")
+        tasks.ssleep_until_once.enqueue("k")
 
         assert [run.state for run in dj_absurd.drain()] == ["sleeping"]
-        suspended = dj_absurd.get_result(result.id)
-        assert suspended is not None
-        assert suspended.state == "sleeping"
 
         frozen_time.shift(dt.timedelta(days=8))
 
-        assert [run.state for run in dj_absurd.drain()] == ["completed"]
-
-    done = dj_absurd.get_result(result.id)
-    assert done is not None
-    assert done.state == "completed"
-    assert done.result == "woke"
+        assert [(run.state, run.result) for run in dj_absurd.drain()] == [
+            ("completed", "woke")
+        ]
 
 
 def test_suspend_logged_as_lifecycle_not_failure(

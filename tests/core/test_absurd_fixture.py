@@ -1,4 +1,3 @@
-import re
 import uuid
 
 import psycopg
@@ -117,14 +116,9 @@ def test_get_result_does_not_relabel_an_unrelated_missing_relation(
 ) -> None:
     """Mirrors ``test_drain_queue_does_not_relabel_an_unrelated_missing_relation``
     (``tests/core/test_worker.py``): a missing relation that is NOT one of this
-    queue's own Absurd tables surfaces as itself, chained, rather than as the
-    curated unprovisioned-queue error.
-
-    ``get_result`` is a plain SELECT — Postgres has no SELECT trigger to hook the
-    way the write-path tests hook an audit trigger on a claim/emit. A view standing
-    in for ``t_default``, computing ``task_id`` through a function whose body reads
-    the missing relation, gets the same real failure: no mocking, landing exactly
-    where ``get_result``'s own query executes.
+    queue's own Absurd tables surfaces as itself, chained, not as the curated
+    unprovisioned-queue error. ``get_result`` is a plain SELECT — Postgres has no
+    SELECT trigger to hook, so a view stands in for ``t_default`` instead.
     """
     result = tasks.add.enqueue(2, 3)
     utils.run_absurd_worker()
@@ -228,62 +222,50 @@ def test_get_result_accepts_a_bare_uuid_with_an_explicit_non_default_queue(
     assert snapshot.state == "completed"
 
 
+@pytest.mark.parametrize("queue", ["default", "other"])
 def test_get_result_raises_when_queue_disagrees_with_the_id_prefix(
-    dj_absurd: AbsurdTestRuntime,
+    dj_absurd: AbsurdTestRuntime, queue: str
 ) -> None:
+    # queue="default" is the case an unpassed argument alone could never catch: the
+    # caller spelled out the same value the parameter would resolve to anyway.
+    # Distinguishing it from "not passed at all" is why queue defaults to the
+    # NOT_SET sentinel, not the literal string "default".
     result = tasks.on_reports.enqueue()  # id prefix is "reports"
 
-    with pytest.raises(
-        TaskIdQueueMismatchError,
-        match=(
-            rf"get_result\(\): task id '{re.escape(str(result.id))}' names queue "
-            r"'reports', but queue='other' was also passed and disagrees\. Pass "
-            r"only one, or make them agree\."
-        ),
-    ):
-        dj_absurd.get_result(result.id, queue="other")
+    with pytest.raises(TaskIdQueueMismatchError) as exc:
+        dj_absurd.get_result(result.id, queue=queue)
+
+    assert str(exc.value) == (
+        f"get_result(): task id '{result.id}' names queue "
+        f"'reports', but queue='{queue}' was also passed and disagrees. Pass "
+        "only one, or make them agree."
+    )
 
 
-def test_get_result_raises_when_an_explicit_default_queue_disagrees_with_the_id_prefix(
-    dj_absurd: AbsurdTestRuntime,
+@pytest.mark.parametrize("operation", ["drain", "emit", "get_result", "sync_queues"])
+def test_an_operation_inside_an_open_transaction_raises(
+    dj_absurd: AbsurdTestRuntime, operation: str
 ) -> None:
-    """The case an unpassed ``queue`` argument alone could never catch: the caller
-    wrote ``queue="default"`` explicitly, spelling out the same value the parameter
-    would resolve to anyway. Distinguishing this from "queue not passed at all" is
-    exactly why ``queue`` defaults to the ``NOT_SET`` sentinel rather than the literal
-    string ``"default"``."""
-    result = tasks.on_reports.enqueue()  # id prefix is "reports"
+    # One guard (guard_against_open_transaction), four real enforcing entrypoints.
+    def invoke() -> None:
+        if operation == "drain":
+            dj_absurd.drain()
+        elif operation == "emit":
+            dj_absurd.emit("order.packed:never-emitted")
+        elif operation == "get_result":
+            dj_absurd.get_result(uuid.uuid4())
+        else:
+            dj_absurd.sync_queues()
 
-    with pytest.raises(
-        TaskIdQueueMismatchError,
-        match=(
-            rf"get_result\(\): task id '{re.escape(str(result.id))}' names queue "
-            r"'reports', but queue='default' was also passed and disagrees\. Pass "
-            r"only one, or make them agree\."
-        ),
-    ):
-        dj_absurd.get_result(result.id, queue="default")
+    with transaction.atomic(), pytest.raises(RuntimeError) as exc:
+        invoke()
 
-
-def test_get_result_inside_an_open_transaction_raises(
-    dj_absurd: AbsurdTestRuntime,
-) -> None:
-    result = tasks.add.enqueue(2, 3)
-    utils.run_absurd_worker()
-
-    with (
-        transaction.atomic(),
-        pytest.raises(
-            RuntimeError,
-            match=(
-                r"django-absurd: get_result\(\) ran inside an open transaction, where "
-                r"uncommitted rows are invisible to Absurd's own connection\. Use "
-                r"@pytest\.mark\.django_db\(transaction=True\) and call outside "
-                r"transaction\.atomic\(\)\."
-            ),
-        ),
-    ):
-        dj_absurd.get_result(result.id)
+    assert str(exc.value) == (
+        f"django-absurd: {operation}() ran inside an open transaction, where "
+        "uncommitted rows are invisible to Absurd's own connection. Use "
+        "@pytest.mark.django_db(transaction=True) and call outside "
+        "transaction.atomic()."
+    )
 
 
 @pytest.mark.django_db(transaction=False)
@@ -401,22 +383,6 @@ def test_drain_returns_the_same_run_twice_when_an_emit_wakes_it(
     assert isinstance(waiter_runs[0].run_id, uuid.UUID)
 
 
-def test_drain_inside_an_open_transaction_raises(dj_absurd: AbsurdTestRuntime) -> None:
-    with (
-        transaction.atomic(),
-        pytest.raises(
-            RuntimeError,
-            match=(
-                r"django-absurd: drain\(\) ran inside an open transaction, where "
-                r"uncommitted rows are invisible to Absurd's own connection\. Use "
-                r"@pytest\.mark\.django_db\(transaction=True\) and call outside "
-                r"transaction\.atomic\(\)\."
-            ),
-        ),
-    ):
-        dj_absurd.drain()
-
-
 def test_emit_resolves_a_waiting_task(dj_absurd: AbsurdTestRuntime) -> None:
     result = tasks.sawait_event_once.enqueue("order.packed:via-fixture")
     assert [run.state for run in dj_absurd.drain()] == ["sleeping"]
@@ -427,22 +393,6 @@ def test_emit_resolves_a_waiting_task(dj_absurd: AbsurdTestRuntime) -> None:
     snapshot = dj_absurd.get_result(result.id)
     assert snapshot is not None
     assert snapshot.result == {"tracking": "abc"}
-
-
-def test_emit_inside_an_open_transaction_raises(dj_absurd: AbsurdTestRuntime) -> None:
-    with (
-        transaction.atomic(),
-        pytest.raises(
-            RuntimeError,
-            match=(
-                r"django-absurd: emit\(\) ran inside an open transaction, where "
-                r"uncommitted rows are invisible to Absurd's own connection\. Use "
-                r"@pytest\.mark\.django_db\(transaction=True\) and call outside "
-                r"transaction\.atomic\(\)\."
-            ),
-        ),
-    ):
-        dj_absurd.emit("order.packed:never-emitted")
 
 
 @pytest.mark.usefixtures("_isolate_queues")
@@ -465,24 +415,6 @@ def test_sync_queues_provisions_the_declared_queues(
     assert dj_absurd.drain() == []
     tasks.on_reports.enqueue()
     assert [run.result for run in dj_absurd.drain("reports")] == ["on_reports"]
-
-
-def test_sync_queues_inside_an_open_transaction_raises(
-    dj_absurd: AbsurdTestRuntime,
-) -> None:
-    with (
-        transaction.atomic(),
-        pytest.raises(
-            RuntimeError,
-            match=(
-                r"django-absurd: sync_queues\(\) ran inside an open transaction, where "
-                r"uncommitted rows are invisible to Absurd's own connection\. Use "
-                r"@pytest\.mark\.django_db\(transaction=True\) and call outside "
-                r"transaction\.atomic\(\)\."
-            ),
-        ),
-    ):
-        dj_absurd.sync_queues()
 
 
 def test_sync_queues_with_no_absurd_backend_raises(

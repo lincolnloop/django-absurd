@@ -113,12 +113,9 @@ def read_database_fake_now() -> str | None:
 
 
 def read_session_fake_now() -> str:
-    """Return ``absurd.fake_now`` as DJANGO's own open session sees it.
-
-    The session-level twin of ``read_database_fake_now``: a database-level default only
-    reaches NEW sessions, so this is what an ``enqueue()`` on Django's already-open
-    connection stamps a task with. A custom GUC a session has SET reads back as an empty
-    string once RESET, never as NULL.
+    """``absurd.fake_now`` as Django's own open session sees it — the session-level
+    twin of ``read_database_fake_now``, what an ``enqueue()`` stamps a task with. Reads
+    back as an empty string once RESET, never as NULL.
     """
     with connections["default"].cursor() as cursor:
         cursor.execute("select current_setting('absurd.fake_now', true)")
