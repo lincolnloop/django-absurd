@@ -17,6 +17,7 @@ from django.utils.module_loading import import_string
 
 from django_absurd.admin_views import ADMIN_ENTITY_SPECS, build_queue_table_model
 from django_absurd.connection import build_absurd_client
+from django_absurd.exceptions import QueueNotDeclaredError
 from django_absurd.tasks import AbsurdTask, build_merged_spawn_options
 
 if t.TYPE_CHECKING:
@@ -49,24 +50,41 @@ class TaskModel(t.Protocol):
 
     These models are built dynamically per queue (build_queue_table_model), so
     django-stubs cannot type their fields; this Protocol names the subset we read.
+
+    Optional here means NULLABLE IN ABSURD'S OWN SCHEMA, not merely nullable on the
+    dynamic model: build_queue_table_model declares every non-pk column null=True
+    because it cannot know better, while t_<queue> itself constrains task_id,
+    task_name, params, enqueue_at, state and attempts NOT NULL.
     """
 
+    task_id: uuid.UUID
     task_name: str
     params: TaskParams
-    enqueue_at: dt.datetime | None
+    enqueue_at: dt.datetime
     first_started_at: dt.datetime | None
     state: str
+    attempts: int
     completed_payload: JsonValue
     cancelled_at: dt.datetime | None
     last_attempt_run: uuid.UUID | None
 
 
 class RunModel(t.Protocol):
-    """The fields read off a per-queue Absurd run model instance."""
+    """The fields read off a per-queue Absurd run model instance.
 
+    Optional means nullable in ``r_<queue>`` itself, as on ``TaskModel``; ``state`` is
+    the one field below that Absurd constrains NOT NULL.
+
+    ``available_at`` is deliberately absent, and every read of this model defers it: an
+    indefinite ``await_event`` parks a run at Postgres's ``'infinity'``, which psycopg
+    refuses to decode.
+    """
+
+    state: str
     started_at: dt.datetime | None
     completed_at: dt.datetime | None
     failed_at: dt.datetime | None
+    result: JsonValue
     failure_reason: FailureReason | None
 
 
@@ -129,25 +147,23 @@ class AbsurdBackend(BaseTaskBackend):
             psycopg.errors.UndefinedTable,
             psycopg.errors.UndefinedFunction,
             psycopg.errors.InvalidSchemaName,
-        ):
+        ) as exc:
             declared = get_declared_queues(self)
             # validate_task() rejects an undeclared queue (InvalidTask) when the
             # backend declares queues. This guards the empty-QUEUES config (where
             # that check is skipped) and the declared[...] access below from KeyError.
             if task.queue_name not in declared:
-                msg = (
-                    f"Queue '{task.queue_name}' is not declared in TASKS QUEUES. "
-                    "Add it to the QUEUES list in your TASKS backend settings."
-                )
-                raise ImproperlyConfigured(msg) from None
+                raise QueueNotDeclaredError(
+                    task.queue_name, self.alias, self.queues
+                ) from exc
             try:
                 client.create_queue(task.queue_name, **declared[task.queue_name])
             except (
                 psycopg.errors.UndefinedFunction,
                 psycopg.errors.InvalidSchemaName,
-            ):
+            ) as exc:
                 msg = "Absurd schema is not installed. Run: manage.py migrate"
-                raise ImproperlyConfigured(msg) from None
+                raise ImproperlyConfigured(msg) from exc
             with transaction.atomic(using=self.database, savepoint=True):
                 spawn_result = client.spawn(
                     task.module_path,
@@ -216,8 +232,8 @@ def fetch_task_and_run(
             task: TaskModel | None = (
                 task_model.objects.using(database).filter(pk=task_id).first()
             )
-    except ProgrammingError:
-        raise TaskResultDoesNotExist(result_id) from None
+    except ProgrammingError as exc:
+        raise TaskResultDoesNotExist(result_id) from exc
     if task is None:
         raise TaskResultDoesNotExist(result_id)
     run: RunModel | None = None
@@ -233,8 +249,8 @@ def fetch_task_and_run(
                     .defer("available_at")
                     .first()
                 )
-        except ProgrammingError:
-            raise TaskResultDoesNotExist(result_id) from None
+        except ProgrammingError as exc:
+            raise TaskResultDoesNotExist(result_id) from exc
     try:
         with transaction.atomic(using=database, savepoint=True):
             worker_ids = list(
@@ -243,8 +259,8 @@ def fetch_task_and_run(
                 .order_by("attempt")
                 .values_list("claimed_by", flat=True)
             )
-    except ProgrammingError:
-        raise TaskResultDoesNotExist(result_id) from None
+    except ProgrammingError as exc:
+        raise TaskResultDoesNotExist(result_id) from exc
     return task, run, worker_ids
 
 
@@ -269,9 +285,9 @@ def build_task_result(
     failure_reason = run.failure_reason if run else None
     try:
         task_obj = import_string(task_name)
-    except ImportError:
+    except ImportError as exc:
         msg = f"task '{task_name}' is no longer importable"
-        raise ImproperlyConfigured(msg) from None
+        raise ImproperlyConfigured(msg) from exc
     if task_obj.queue_name != queue:
         task_obj = task_obj.using(queue_name=queue)
     status = map_state_to_status(state)

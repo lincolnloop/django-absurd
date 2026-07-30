@@ -34,6 +34,8 @@ import psycopg
 from django.core.exceptions import ImproperlyConfigured
 from django.db import DatabaseError, transaction
 
+from django_absurd.queues import resolve_absurd_database
+
 if t.TYPE_CHECKING:
     from django_absurd.pg_cron.models import ScheduledTask
 
@@ -49,7 +51,7 @@ def reject_cross_database_save(
     if is_foreign_database(using):
         msg = (
             f"ScheduledTask was written to database {using!r}, but Absurd schedules "
-            f"live only on {resolve_absurd_database_lazily()!r} "
+            f"live only on {resolve_absurd_database()!r} "
             "(the run-wrapper reads there). "
             "Cross-database schedule writes are not supported."
         )
@@ -104,10 +106,4 @@ def emit_schedule_change(catalog_op: t.Callable[[], None]) -> None:
 
 def is_foreign_database(using: str | None) -> bool:
     """True when a save/delete targeted a database other than the single absurd one."""
-    return using is not None and using != resolve_absurd_database_lazily()
-
-
-def resolve_absurd_database_lazily() -> str:
-    from django_absurd.queues import resolve_absurd_database  # noqa: PLC0415
-
-    return resolve_absurd_database()
+    return using is not None and using != resolve_absurd_database()

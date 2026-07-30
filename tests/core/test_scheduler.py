@@ -539,6 +539,17 @@ def test_absurd_beat_rejects_alias_flag(
         call_command("absurd_beat", "--alias", "default")
 
 
+def test_absurd_beat_no_backend_errors(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
+    settings.TASKS = {
+        "default": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}
+    }
+    with pytest.raises(CommandError) as exc:
+        call_command("absurd_beat")
+    assert str(exc.value) == "No Absurd backend configured."
+
+
 def test_worker_beat_rejects_burst(
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:

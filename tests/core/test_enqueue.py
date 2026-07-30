@@ -12,6 +12,7 @@ from pytest_django.fixtures import SettingsWrapper
 
 from django_absurd import absurd_params
 from django_absurd.connection import register_jsonb_loader
+from django_absurd.exceptions import QueueNotDeclaredError
 from django_absurd.queues import get_absurd_client
 from django_absurd.tasks import AbsurdTask
 from tests import tasks, utils
@@ -131,8 +132,13 @@ def test_enqueue_with_empty_queues_reports_undeclared(
             "OPTIONS": {"QUEUES": {}},
         }
     }
-    with pytest.raises(ImproperlyConfigured, match="not declared"):
+    with pytest.raises(QueueNotDeclaredError, match="not declared") as exc:
         tasks.add.enqueue(1, 2)
+    assert str(exc.value) == (
+        "Queue 'default' is not declared for backend 'default'. "
+        "Valid queues: (none). "
+        "Add it to the QUEUES list in your TASKS backend settings."
+    )
 
 
 def test_enqueue_auto_create_survives_outer_atomic() -> None:

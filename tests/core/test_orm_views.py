@@ -33,14 +33,12 @@ def view_oid(name: str) -> int | None:
 
 
 def test_rebuild_views_builds_all_five() -> None:
-    call_command("absurd_sync_queues")
     rebuild_views("default")
     for spec in ADMIN_ENTITY_SPECS:
         assert view_oid(spec.view_name) is not None
 
 
 def test_read_path_does_no_ddl() -> None:
-    call_command("absurd_sync_queues")
     rebuild_views("default")
     spec = next(s for s in ADMIN_ENTITY_SPECS if s.name == "tasks")
     before = view_oid(spec.view_name)
@@ -90,7 +88,6 @@ def test_provision_skips_when_schema_absent(
 
 
 def test_sync_command_rebuilds_views_with_new_queue() -> None:
-    call_command("absurd_sync_queues")
     task_model: t.Any = build_admin_model(
         next(s for s in ADMIN_ENTITY_SPECS if s.name == "tasks")
     )
@@ -109,9 +106,7 @@ def test_worker_start_rebuilds_when_it_created_queue() -> None:
     task_model: t.Any = build_admin_model(
         next(s for s in ADMIN_ENTITY_SPECS if s.name == "tasks")
     )
-    call_command("absurd_sync_queues")
     get_absurd_client().drop_queue("other")
-    call_command("absurd_sync_queues")
     call_command("absurd_worker", queue="other", burst=True)
     tasks.add.using(queue_name="other").enqueue(7, 8)
     call_command("absurd_worker", queue="other", burst=True)
@@ -119,7 +114,6 @@ def test_worker_start_rebuilds_when_it_created_queue() -> None:
 
 
 def test_dropped_queue_read_raises_typed_error() -> None:
-    call_command("absurd_sync_queues")
     rebuild_views("default")
     with connections["default"].cursor() as cur:
         cur.execute("DROP VIEW IF EXISTS absurd.tasks_view")
@@ -134,5 +128,5 @@ def test_dropped_queue_read_raises_typed_error() -> None:
         task_model.objects.exists()
     with pytest.raises(ViewNotProvisionedError):
         task_model.objects.aggregate(models.Count("natural_key"))
-    call_command("absurd_sync_queues")
+    call_command("absurd_sync_queues")  # rebuild the view this test dropped
     list(task_model.objects.all())

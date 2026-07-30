@@ -5,6 +5,7 @@ from types import FrameType
 
 from django.core.management.base import BaseCommand, CommandError
 
+from django_absurd.exceptions import BackendNotConfiguredError
 from django_absurd.management.base import BEAT_DISABLED_UNDER_PG_CRON, resolve_backend
 from django_absurd.scheduler import get_settings_schedules, run_beat
 
@@ -13,7 +14,10 @@ class Command(BaseCommand):
     help = "Start the Absurd beat scheduler."
 
     def handle(self, *args: t.Any, **options: t.Any) -> None:
-        backend = resolve_backend()
+        try:
+            backend = resolve_backend()
+        except BackendNotConfiguredError as exc:
+            raise CommandError(str(exc)) from exc
 
         if backend.scheduler == "pg_cron":
             raise CommandError(BEAT_DISABLED_UNDER_PG_CRON)

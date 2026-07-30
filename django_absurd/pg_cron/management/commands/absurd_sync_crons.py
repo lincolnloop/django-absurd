@@ -2,6 +2,7 @@ import typing as t
 
 from django.core.management.base import BaseCommand, CommandError
 
+from django_absurd.exceptions import BackendNotConfiguredError
 from django_absurd.management.base import resolve_backend
 from django_absurd.pg_cron.detection import is_pg_cron_inert
 from django_absurd.pg_cron.reconcile import (
@@ -32,7 +33,10 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args: t.Any, **options: t.Any) -> str | None:
-        backend = resolve_backend()
+        try:
+            backend = resolve_backend()
+        except BackendNotConfiguredError as exc:
+            raise CommandError(str(exc)) from exc
 
         if is_pg_cron_inert(backend.database):
             msg = (
