@@ -80,8 +80,8 @@ def on_reports() -> str:
 @task
 @absurd_params(retry_strategy=RetryStrategy(kind="exponential", base_seconds=2))
 def retrying() -> t.Never:
-    msg = "path-resolved for its decorator; never run"
-    raise NotImplementedError(msg)
+    msg = "boom"
+    raise ValueError(msg)
 
 
 @task

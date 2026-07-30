@@ -104,6 +104,35 @@ def test_a_retry_backoff_runs_the_next_attempt_after_shifting(
         assert [run.attempt for run in dj_absurd.drain()] == [2]
 
 
+def test_an_exponential_retry_backoff_doubles_the_delay_between_attempts(
+    dj_absurd: AbsurdTestRuntime,
+) -> None:
+    """``tasks.retrying`` is ``kind="exponential", base_seconds=2`` (factor defaults
+    to 2): Absurd's ``fail_run`` computes each delay as
+    ``base_seconds * factor ** (attempt - 1)`` with no jitter term in the pinned SQL,
+    so exact rungs are deterministic — 2s after attempt 1, 4s after attempt 2.
+
+    Each rung is proven with two shifts: one short of the delay (still nothing due)
+    and one that lands past it (the next attempt fires) — proving 4s is actually
+    longer than 2s, not just the same fixed delay repeating.
+    """
+    with dj_absurd.freeze_time() as frozen_time:
+        tasks.retrying.enqueue()
+        assert [run.attempt for run in dj_absurd.drain()] == [1]
+
+        frozen_time.shift(dt.timedelta(seconds=1))
+        assert dj_absurd.drain() == []  # short of the 2s delay after attempt 1
+
+        frozen_time.shift(dt.timedelta(seconds=2))
+        assert [run.attempt for run in dj_absurd.drain()] == [2]
+
+        frozen_time.shift(dt.timedelta(seconds=2))
+        assert dj_absurd.drain() == []  # short of the 4s delay after attempt 2
+
+        frozen_time.shift(dt.timedelta(seconds=3))
+        assert [run.attempt for run in dj_absurd.drain()] == [3]
+
+
 def test_a_cancelled_task_produces_an_empty_drain(dj_absurd: AbsurdTestRuntime) -> None:
     """Cancellation happens inside claim_task, before anything is claimed."""
     with dj_absurd.freeze_time() as frozen_time:
