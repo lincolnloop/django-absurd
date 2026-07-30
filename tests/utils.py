@@ -1,4 +1,5 @@
 import typing as t
+import uuid
 
 import psycopg
 import psycopg.sql
@@ -62,8 +63,8 @@ def run_absurd_worker(queue: str = "default", concurrency: int = 1) -> None:
     call_command("absurd_worker", queue=queue, burst=True, concurrency=concurrency)
 
 
-def claim_one_run(queue: str = "default", *, claim_timeout: int) -> None:
-    """Take a lease on one run without executing it.
+def claim_one_run(queue: str = "default", *, claim_timeout: int) -> uuid.UUID:
+    """Take a lease on one run without executing it, returning its run_id.
 
     Leaves the run ``running`` with a ``claim_expires_at`` ``claim_timeout`` seconds
     out, so advancing durable time past that lease lets the ``$ClaimTimeout`` sweep
@@ -72,7 +73,31 @@ def claim_one_run(queue: str = "default", *, claim_timeout: int) -> None:
     params = connections["default"].get_connection_params()
     conn = psycopg.connect(**params, autocommit=True)
     try:
-        Absurd(conn, queue_name=queue).claim_tasks(claim_timeout=claim_timeout)
+        claimed = Absurd(conn, queue_name=queue).claim_tasks(
+            claim_timeout=claim_timeout
+        )
+        return uuid.UUID(str(claimed[0]["run_id"]))
+    finally:
+        conn.close()
+
+
+def heartbeat_one_run(
+    run_id: uuid.UUID, queue: str = "default", *, seconds: int
+) -> None:
+    """Extend a claimed run's lease by ``seconds`` from now, via the same
+    ``absurd.extend_claim`` RPC ``TaskContext.heartbeat()`` calls.
+
+    A run claimed manually by ``claim_one_run`` (rather than actually executing) has
+    no live ``TaskContext`` to heartbeat through, so this calls the SQL function
+    directly on a fresh connection instead.
+    """
+    params = connections["default"].get_connection_params()
+    conn = psycopg.connect(**params, autocommit=True)
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "select absurd.extend_claim(%s, %s, %s)", (queue, run_id, seconds)
+            )
     finally:
         conn.close()
 

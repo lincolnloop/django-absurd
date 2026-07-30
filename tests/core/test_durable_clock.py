@@ -131,6 +131,33 @@ def test_an_expired_claim_is_swept_after_shifting_past_the_lease(
         ]
 
 
+def test_a_heartbeat_extends_the_claim_past_a_shift_that_would_otherwise_sweep_it(
+    dj_absurd: AbsurdTestRuntime,
+) -> None:
+    """Companion to the test above, without a heartbeat: there a shift past the
+    ORIGINAL lease sweeps and re-arms the run (attempt 2). Here the same shift lands
+    short of the HEARTBEAT-extended lease, so the run is neither swept nor re-claimed
+    — ``drain()`` finds nothing to do and the task is still on its first attempt.
+
+    A manually claimed run stands in for one mid-execution (a real ``drain()`` always
+    resolves synchronously to a terminal or sleeping state before returning, so there
+    is no way to let a running task's own code straddle a clock shift);
+    ``heartbeat_one_run`` calls the exact ``absurd.extend_claim`` RPC
+    ``TaskContext.heartbeat()`` calls, against that same manually claimed run.
+    """
+    with dj_absurd.freeze_time() as frozen_time:
+        result = tasks.add.enqueue(2, 3)
+        run_id = utils.claim_one_run("default", claim_timeout=60)
+        utils.heartbeat_one_run(run_id, "default", seconds=3600)
+
+        frozen_time.shift(dt.timedelta(minutes=30))
+
+        assert dj_absurd.drain() == []
+        snapshot = dj_absurd.get_result(result.id)
+        assert snapshot is not None
+        assert snapshot.attempts == 1
+
+
 def test_freeze_time_stamps_the_frozen_instant_on_enqueue(
     dj_absurd: AbsurdTestRuntime,
 ) -> None:
