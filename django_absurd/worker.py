@@ -55,12 +55,10 @@ class WorkerOptions:
 class DrainedRun:
     """One run executed during a burst drain, in claim order.
 
-    Identity (``run_id``/``task_id``/``task_name``/``attempt``/``params``) rides free
-    from the claim row the SDK's ``ClaimedTask`` already returns; ``state``/``result``/
-    ``failure`` cost one read per run, taken immediately after THAT run executes — never
-    batched at drain end, so a run that re-arms itself (an ``await_event`` waiter) keeps
-    its earlier ``sleeping`` appearance honest instead of it being overwritten by the
-    same run's later ``completed`` one.
+    ``state``/``result``/``failure`` cost one read per run, taken immediately after
+    THAT run executes — never batched at drain end, so a run that re-arms itself (an
+    ``await_event`` waiter) keeps its earlier ``sleeping`` appearance honest instead
+    of it being overwritten by the same run's later ``completed`` one.
 
     ``run_id``/``task_id`` are ``uuid.UUID`` at runtime even though the SDK's
     ``ClaimedTask`` stub types them ``str`` — psycopg deserializes the uuid columns.
@@ -119,21 +117,14 @@ class LazyTaskRegistry(dict[str, dict[str, t.Any]]):
 def drain_queue(queue: str = "default") -> list[DrainedRun]:
     """Burst-drain ``queue`` in-process, one ``DrainedRun`` per run, in claim order.
 
-    The entry point behind ``AbsurdTestRuntime.drain``, so it resolves the backend
-    itself and takes no ``WorkerOptions``: the fixture exposes no worker knobs, and
-    concurrency is covered through the ``absurd_worker`` CLI instead.
-
-    It provisions nothing. ``migrate`` already provisions every declared queue (see
-    ``apps.provision_queues_after_migrate``), so a test database arrives ready; a queue
-    declared mid-test through changed settings has no table yet, and that surfaces as
-    the same curated error ``events.emit_event`` raises for the condition rather than as
-    schema mutation from a call tests read results through.
-
-    Only a relation of THIS queue's own earns that translation. Any other missing
-    relation — a user's audit trigger pointing at a dropped table, a schema half
-    migrated — is re-raised as itself, because "run absurd_sync_queues" would send the
-    reader to the wrong door and would not fix it. The curated error chains the original
-    either way, so the failing relation stays visible in the traceback.
+    The entry point behind ``AbsurdTestRuntime.drain``: resolves the backend itself
+    and takes no ``WorkerOptions`` — worker knobs live on the ``absurd_worker`` CLI.
+    Provisions nothing: migrate already provisions every declared queue, so a queue
+    declared mid-test surfaces as the same ``QueueNotProvisionedError``
+    ``events.emit_event`` raises — not as schema DDL from a call tests read results
+    through. Only a relation of THIS queue's own earns that translation; any other
+    missing relation re-raises as itself (chained, so it stays visible), because
+    "run absurd_sync_queues" would send the reader to the wrong door.
     """
     backend = resolve_backend()
     if queue not in backend.queues:
@@ -226,15 +217,12 @@ async def aworker_client(
         yield client
     finally:
         await conn.close()
-        # fetch_run_outcome's ORM read runs through asgiref's THREAD-SENSITIVE
-        # executor — one process-wide thread, whatever the concurrency — so it opens a
-        # Django connection in a thread nothing else ever tears down, and that session
-        # would outlive the whole worker run. One session is enough to fail a
-        # ``DROP DATABASE``: measured, a pytest run without ``--reuse-db`` ends in
-        # "database ... is being accessed by other users" and strands the test database.
-        # Closing here rather than per read keeps it to one hop per run, and lands it in
-        # that same thread (both calls resolve the same executor, which is what
-        # thread_sensitive means). The blocking worker reads nothing, so it is free.
+        # fetch_run_outcome's ORM read runs on asgiref's thread-sensitive executor —
+        # one process-wide thread nothing else tears down — so its Django session
+        # would outlive the whole worker run, and one session fails DROP DATABASE
+        # (measured: a run without --reuse-db dies with "database ... is being
+        # accessed by other users"). Close once per run, here, in that same thread
+        # (both calls resolve the same executor). The blocking worker reads nothing.
         await sync_to_async(close_old_connections)()
 
 
@@ -290,24 +278,15 @@ async def execute_claimed_run(
 async def fetch_run_outcome(
     database: str, queue: str, run_id: str
 ) -> tuple[str, t.Any, t.Any]:
-    """Read one run's own current ``state``/``result``/``failure_reason``.
+    """Read one run's current ``state``/``result``/``failure_reason``.
 
-    No public SDK accessor keys a read by ``run_id`` (only by ``task_id``, which would
-    collapse a retry's several runs into one), so this reads the run row itself —
-    through the same per-queue dynamic model ``backends.fetch_task_and_run`` and
-    ``AbsurdTestRuntime.get_result`` read, rather than SQL of its own.
-
-    Django's ORM, so on DJANGO's connection rather than the worker's own async one:
-    ``aget`` is ``sync_to_async(get)``, a hop into a worker thread. That cost is only
-    ever paid by a BURST drain — ``execute_claimed_run`` is unreachable from the
-    blocking worker, which hands its whole loop to the SDK's ``start_worker`` — and next
-    to executing the task itself it is noise. The row is visible from another session
-    because the SDK writes it on an autocommit connection, so it is committed by the
-    time ``_execute_task`` returns.
-
-    ``aget``, not ``afirst``: the run was just claimed and executed, so a missing row is
-    a broken invariant that should raise, not read as ``None`` and fail later on an
-    attribute.
+    No public SDK accessor keys a read by ``run_id`` (only ``task_id``, which
+    collapses a retry's several runs), so read the run row through the same
+    per-queue dynamic model the other reads use — no SQL of its own. ORM means
+    Django's connection via a ``sync_to_async`` hop; only burst drains pay it, and
+    next to executing the task it is noise. The row is committed by the time
+    ``_execute_task`` returns (the SDK writes on autocommit). ``aget``, not
+    ``afirst``: a missing just-executed run is a broken invariant that should raise.
     """
     runs_spec = next(s for s in admin_views.ADMIN_ENTITY_SPECS if s.name == "runs")
     run_model: type[t.Any] = admin_views.build_queue_table_model(runs_spec, queue)

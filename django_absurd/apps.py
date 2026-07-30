@@ -17,10 +17,9 @@ class AbsurdConfig(AppConfig):
     verbose_name = "Absurd"
 
     def ready(self) -> None:
-        # Side-effect import: running the module registers its @register'd checks. In
-        # here, not at module level — this module runs during app-registry population,
-        # before models load, and django_absurd.checks imports django_absurd.models, so
-        # a module-level import raises AppRegistryNotReady.
+        # Side-effect import: registers the @register'd checks. In-function
+        # because checks imports models and ready() runs before models load
+        # (AppRegistryNotReady).
         import django_absurd.checks  # noqa: F401, PLC0415
 
         # The synthesized admin models live in PRIVATE_ADMIN_APPS, so their

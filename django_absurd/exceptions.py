@@ -13,21 +13,13 @@ ADMIN_VIEW_READONLY_MSG = (
 class DjangoAbsurdError(Exception):
     """Base for every typed error this package raises.
 
-    Named for the distributing package, deliberately not ``AbsurdError``: the
-    upstream ``absurd_sdk`` is the confusing name to anchor on here, since
-    ``worker.py`` imports from both it and ``django_absurd``, and the SDK's own
-    exceptions (``SuspendTask``, ``CancelledTask``, ``FailedTask``, plus a
-    ``TimeoutError`` that shadows the builtin) share no base of their own.
-
-    Deliberately not also a ``ValueError``/``ImproperlyConfigured`` subclass — alpha
-    status means no external compatibility to preserve, and the class name already
-    carries the condition (``QueueNotDeclaredError`` over a bare ``ValueError``).
-
-    Covers only the exceptions defined in this module — ``except DjangoAbsurdError``
-    is "anything this package raised as a typed error," not every error the package
-    can raise. Plenty of call sites still raise a plain
-    ``ImproperlyConfigured``/``RuntimeError``/``TypeError`` directly and are
-    unaffected by this base.
+    Named for the distributing package, not ``AbsurdError`` — modules import from
+    both ``absurd_sdk`` and ``django_absurd``, and the short name reads as the SDK's
+    (whose own exceptions share no base). Deliberately not also a
+    ``ValueError``/``ImproperlyConfigured`` subclass: alpha status, and the class
+    name carries the condition. ``except DjangoAbsurdError`` covers only this
+    module's typed errors — plain ``ImproperlyConfigured``/``RuntimeError``/
+    ``TypeError`` raised elsewhere in the package are unaffected.
     """
 
 
@@ -76,13 +68,9 @@ class QueueNotProvisionedError(DjangoAbsurdError):
 
 
 class TaskIdQueueMismatchError(DjangoAbsurdError):
-    """A ``"queue:uuid"`` task id's own queue prefix disagrees with an explicit
-    ``queue=`` argument passed alongside it.
-
-    Raised by ``AbsurdTestRuntime.get_result`` when ``task_id`` carries a queue prefix
-    (as Django's own ``TaskResult.id`` always does) and the caller ALSO passed a
-    ``queue=`` naming a different queue — an ambiguous request, not one this package
-    will silently resolve by picking either side.
+    """An explicit ``queue=`` disagrees with the queue prefix inside a
+    ``"queue:uuid"`` task id — ambiguous, so ``AbsurdTestRuntime.get_result`` raises
+    rather than silently picking a side.
     """
 
     def __init__(self, task_id: str, prefix_queue: str, queue: str) -> None:
@@ -95,13 +83,9 @@ class TaskIdQueueMismatchError(DjangoAbsurdError):
 
 
 class BackendNotConfiguredError(DjangoAbsurdError):
-    """No single Absurd backend could be resolved.
-
-    Raised by ``management.base.resolve_backend`` on zero or on several configured
-    backends, and by ``events.emit_event`` on the same zero-backends condition.
-    One type for both counts — this package supports exactly one Absurd backend per
-    project, so "zero" and "several" both boil down to the same fact for the caller:
-    there is no single backend to act on.
+    """No single Absurd backend could be resolved — zero or several configured. One
+    type for both counts: the package supports exactly one Absurd backend per
+    project, so either way there is no single backend to act on.
     """
 
     def __init__(self, backend_count: int) -> None:

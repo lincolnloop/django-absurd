@@ -35,10 +35,9 @@ class PgCronConfig(AppConfig):
                 db_alias, str(db_config["NAME"])
             )
 
-        # Side-effect import: running the module registers its @register'd E007 checks.
-        # In here, not at module level: this module runs during app-registry population,
-        # before models load, and pg_cron.checks reaches django_absurd.models via
-        # django_absurd.checks — a module-level import raises AppRegistryNotReady.
+        # Side-effect import: registers the @register'd checks. In-function
+        # because checks imports models and ready() runs before models load
+        # (AppRegistryNotReady).
         import django_absurd.pg_cron.checks  # noqa: F401, PLC0415
 
         scheduled_task = apps.get_model("django_absurd_pg_cron", "ScheduledTask")
