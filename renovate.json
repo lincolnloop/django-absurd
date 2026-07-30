@@ -1,6 +1,10 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["helpers:pinGitHubActionDigests", ":configMigration"],
+  "description": "Conventional Commits titles are required by the pr-title workflow, so semanticCommits is pinned on rather than left to auto-detection.",
+  "semanticCommits": "enabled",
+  "semanticCommitType": "chore",
+  "semanticCommitScope": "deps",
   "automerge": true,
   "automergeType": "pr",
   "platformAutomerge": true,
