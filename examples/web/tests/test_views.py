@@ -115,3 +115,9 @@ def test_pack_view_get_does_not_emit_the_event(
     assert dj_absurd.drain() == []  # nothing claimable: no event woke the waiter
     body = client.get(task_url).content.decode()
     assert "Working" in body  # still suspended — the GET delivered no event
+
+
+def test_pack_view_rejects_an_off_site_next(client: Client) -> None:
+    resp = client.get("/workflow/order-x/pack/?next=https://evil.example/steal")
+    assert resp.status_code == 302
+    assert resp.headers["Location"] == "/"
