@@ -51,7 +51,10 @@ def test_sync_crons_command_no_backend_errors(
     }
     with pytest.raises(CommandError) as excinfo:
         call_command("absurd_sync_crons")
-    assert str(excinfo.value) == "No Absurd backend configured."
+    assert str(excinfo.value) == (
+        "No Absurd backend configured. Add a django_absurd.backends.AbsurdBackend "
+        "entry to TASKS."
+    )
 
 
 def test_sync_crons_command_creates_cron_jobs(

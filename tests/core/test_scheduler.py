@@ -589,7 +589,10 @@ def test_absurd_beat_no_backend_errors(
     }
     with pytest.raises(CommandError) as exc:
         call_command("absurd_beat")
-    assert str(exc.value) == "No Absurd backend configured."
+    assert str(exc.value) == (
+        "No Absurd backend configured. Add a django_absurd.backends.AbsurdBackend "
+        "entry to TASKS."
+    )
 
 
 def test_worker_beat_rejects_burst(

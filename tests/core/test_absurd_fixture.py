@@ -424,4 +424,7 @@ def test_sync_queues_with_no_absurd_backend_raises(
     with pytest.raises(BackendNotConfiguredError) as exc:
         dj_absurd.sync_queues()
 
-    assert str(exc.value) == "No Absurd backend configured."
+    assert str(exc.value) == (
+        "No Absurd backend configured. Add a django_absurd.backends.AbsurdBackend "
+        "entry to TASKS."
+    )

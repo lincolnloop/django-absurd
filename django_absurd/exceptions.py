@@ -106,7 +106,10 @@ class BackendNotConfiguredError(DjangoAbsurdError):
 
     def __init__(self, backend_count: int) -> None:
         if backend_count == 0:
-            msg = "No Absurd backend configured."
+            msg = (
+                "No Absurd backend configured. Add a "
+                "django_absurd.backends.AbsurdBackend entry to TASKS."
+            )
         else:
             msg = (
                 "django-absurd supports one Absurd backend per project; "

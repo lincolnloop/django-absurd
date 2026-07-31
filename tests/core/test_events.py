@@ -35,7 +35,10 @@ def test_top_level_emit_event_no_backend_configured_raises(
     settings.TASKS = {"x": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}}
     with pytest.raises(BackendNotConfiguredError) as exc:
         emit_event("whatever")
-    assert str(exc.value) == "No Absurd backend configured."
+    assert str(exc.value) == (
+        "No Absurd backend configured. Add a django_absurd.backends.AbsurdBackend "
+        "entry to TASKS."
+    )
 
 
 def test_top_level_emit_event_unsynced_queue_raises(
