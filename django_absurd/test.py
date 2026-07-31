@@ -544,12 +544,11 @@ class AbsurdTestRuntime:
         databases.
 
         Both writes go through ``run_off_event_loop`` together, so under a running loop
-        they land on ONE off-loop connection rather than the session write landing on a
-        second one. Under a loop the session half reaches only that off-loop session
-        (closed on the way out) — an ``async def`` test cannot use Django's sync ORM on
-        its own connection anyway, and every session its work DOES use (``aenqueue``'s
-        ``sync_to_async`` thread, the SDK's own connection per drain) either opens after
-        this write or is opened fresh, inheriting the database-level default.
+        they land on ONE off-loop connection instead of two. There the session half
+        reaches only that off-loop session, which the hop then closes — the sessions an
+        ``async def`` test's work actually uses are covered by the hop's own recycling
+        of asgiref's thread-sensitive connection, so they reconnect and inherit the
+        database-level default just written.
         """
         statement = psycopg.sql.SQL(
             "alter database {name} set absurd.fake_now = {instant}"
@@ -769,9 +768,11 @@ def run_off_event_loop[T](work: t.Callable[[], T]) -> T:
     own in the worker thread.
 
     Callers keep their guards on THEIR OWN thread and call this for the DB work only:
-    ``in_atomic_block`` is per-connection and ``connections`` is thread-local, so a
-    transaction guard evaluated over here would inspect a connection the test never
-    used and pass every time.
+    ``in_atomic_block`` is per-connection and ``connections`` is thread-critical, so
+    ``guard_against_open_transaction`` evaluated over here would inspect a connection
+    the test never used and pass every time. The one guard that does hop is
+    ``guard_against_blocked_database``, which cannot run on the calling thread at all
+    and keeps its fidelity for the reason given there.
 
     Two sets of Django connections are closed on the way out, both of them sessions no
     test-runner teardown reaches, and one stranded session is enough to fail teardown's
