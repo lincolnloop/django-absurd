@@ -1,10 +1,10 @@
 import json
 
 import pytest
-from django.core.management import call_command
 from django.db import connection
 
 from django_absurd.pg_cron.models import ScheduledTask
+from django_absurd.test import AbsurdTestRuntime
 from tests import tasks
 from tests.models import Payload
 
@@ -27,7 +27,7 @@ def fire_wrapper(source: str, name: str) -> None:
         )
 
 
-def test_fires_task_from_row() -> None:
+def test_fires_task_from_row(dj_absurd: AbsurdTestRuntime) -> None:
     ScheduledTask.objects.create(
         source="s",
         name="p",
@@ -38,7 +38,7 @@ def test_fires_task_from_row() -> None:
         cron="* * * * *",
     )
     fire_wrapper("s", "p")
-    call_command("absurd_worker", queue="default", burst=True)
+    dj_absurd.drain()
     assert Payload.objects.count() == 1
 
 
@@ -46,7 +46,7 @@ def test_missing_row_is_noop() -> None:
     fire_wrapper("s", "nope")  # no exception
 
 
-def test_disabled_row_is_noop() -> None:
+def test_disabled_row_is_noop(dj_absurd: AbsurdTestRuntime) -> None:
     ScheduledTask.objects.create(
         source="s",
         name="off",
@@ -58,7 +58,7 @@ def test_disabled_row_is_noop() -> None:
         enabled=False,
     )
     fire_wrapper("s", "off")
-    call_command("absurd_worker", queue="default", burst=True)
+    dj_absurd.drain()
     assert Payload.objects.count() == 0
 
 
