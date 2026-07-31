@@ -96,54 +96,57 @@ def test_settings_provider_no_schedule_key(
     assert get_settings_schedules(backend) == []
 
 
-@time_machine.travel(dt.datetime(2026, 1, 1, 1, 59, tzinfo=dt.UTC), tick=False)
-def test_get_next_datetime_same_day() -> None:
-    expected = dt.datetime(2026, 1, 1, 2, 0, tzinfo=dt.UTC)
-    assert get_next_datetime("0 2 * * *", timezone.now()) == expected
+def test_get_next_datetime_same_day(dj_absurd: AbsurdTestRuntime) -> None:
+    with dj_absurd.freeze_time(dt.datetime(2026, 1, 1, 1, 59, tzinfo=dt.UTC)):
+        expected = dt.datetime(2026, 1, 1, 2, 0, tzinfo=dt.UTC)
+        assert get_next_datetime("0 2 * * *", timezone.now()) == expected
 
 
-@time_machine.travel(dt.datetime(2026, 1, 1, 2, 0, tzinfo=dt.UTC), tick=False)
-def test_get_next_datetime_rolls_forward() -> None:
-    expected = dt.datetime(2026, 1, 2, 2, 0, tzinfo=dt.UTC)
-    assert get_next_datetime("0 2 * * *", timezone.now()) == expected
+def test_get_next_datetime_rolls_forward(dj_absurd: AbsurdTestRuntime) -> None:
+    with dj_absurd.freeze_time(dt.datetime(2026, 1, 1, 2, 0, tzinfo=dt.UTC)):
+        expected = dt.datetime(2026, 1, 2, 2, 0, tzinfo=dt.UTC)
+        assert get_next_datetime("0 2 * * *", timezone.now()) == expected
 
 
-@time_machine.travel(
-    dt.datetime(2026, 1, 1, 12, 0, tzinfo=dt.UTC), tick=False
-)  # 06:00 in Chicago (UTC-6)
 def test_get_next_datetime_uses_django_timezone(
-    settings: pytest_django.fixtures.SettingsWrapper,
+    dj_absurd: AbsurdTestRuntime, settings: pytest_django.fixtures.SettingsWrapper
 ) -> None:
-    # cron interpreted in Django TIME_ZONE: 02:00 Chicago already passed -> tomorrow
-    settings.TIME_ZONE = "America/Chicago"
-    chicago = zoneinfo.ZoneInfo("America/Chicago")
-    expected = dt.datetime(2026, 1, 2, 2, 0, tzinfo=chicago)
-    result = get_next_datetime("0 2 * * *", timezone.now())
-    assert result == expected
+    # 06:00 in Chicago (UTC-6)
+    with dj_absurd.freeze_time(dt.datetime(2026, 1, 1, 12, 0, tzinfo=dt.UTC)):
+        # cron interpreted in Django TIME_ZONE: 02:00 Chicago already passed -> tomorrow
+        settings.TIME_ZONE = "America/Chicago"
+        chicago = zoneinfo.ZoneInfo("America/Chicago")
+        expected = dt.datetime(2026, 1, 2, 2, 0, tzinfo=chicago)
+        result = get_next_datetime("0 2 * * *", timezone.now())
+        assert result == expected
 
 
-@time_machine.travel(dt.datetime(2026, 1, 1, 12, 0, tzinfo=dt.UTC), tick=False)
-def test_get_next_datetime_six_field_leading_seconds() -> None:
+def test_get_next_datetime_six_field_leading_seconds(
+    dj_absurd: AbsurdTestRuntime,
+) -> None:
     # A 6-field cron uses a LEADING seconds column, so "*/30 * * * * *" means every
     # 30 seconds -> next fire at :30, not every second (which is what a trailing-seconds
     # reading of the same string produces).
-    expected = dt.datetime(2026, 1, 1, 12, 0, 30, tzinfo=dt.UTC)
-    assert get_next_datetime("*/30 * * * * *", timezone.now()) == expected
+    with dj_absurd.freeze_time(dt.datetime(2026, 1, 1, 12, 0, tzinfo=dt.UTC)):
+        expected = dt.datetime(2026, 1, 1, 12, 0, 30, tzinfo=dt.UTC)
+        assert get_next_datetime("*/30 * * * * *", timezone.now()) == expected
 
 
-@time_machine.travel(dt.datetime(2026, 1, 1, 12, 0, tzinfo=dt.UTC), tick=False)
-def test_get_next_datetime_six_field_non_divisor_seconds() -> None:
+def test_get_next_datetime_six_field_non_divisor_seconds(
+    dj_absurd: AbsurdTestRuntime,
+) -> None:
     # Leading seconds holds for any step: "*/7 * * * * *" fires at :07, not :01.
-    expected = dt.datetime(2026, 1, 1, 12, 0, 7, tzinfo=dt.UTC)
-    assert get_next_datetime("*/7 * * * * *", timezone.now()) == expected
+    with dj_absurd.freeze_time(dt.datetime(2026, 1, 1, 12, 0, tzinfo=dt.UTC)):
+        expected = dt.datetime(2026, 1, 1, 12, 0, 7, tzinfo=dt.UTC)
+        assert get_next_datetime("*/7 * * * * *", timezone.now()) == expected
 
 
-@time_machine.travel(dt.datetime(2026, 1, 1, 12, 0, tzinfo=dt.UTC), tick=False)
-def test_get_next_datetime_six_field_zero_seconds() -> None:
+def test_get_next_datetime_six_field_zero_seconds(dj_absurd: AbsurdTestRuntime) -> None:
     # Leading seconds=0 with a minute step fires on the minute boundary, not every
     # second: "0 */5 * * * *" -> next at 12:05:00.
-    expected = dt.datetime(2026, 1, 1, 12, 5, 0, tzinfo=dt.UTC)
-    assert get_next_datetime("0 */5 * * * *", timezone.now()) == expected
+    with dj_absurd.freeze_time(dt.datetime(2026, 1, 1, 12, 0, tzinfo=dt.UTC)):
+        expected = dt.datetime(2026, 1, 1, 12, 5, 0, tzinfo=dt.UTC)
+        assert get_next_datetime("0 */5 * * * *", timezone.now()) == expected
 
 
 # run_beat_until and tests below it use run_beat's injected wait/now seam because
