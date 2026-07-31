@@ -82,6 +82,22 @@ class TaskIdQueueMismatchError(DjangoAbsurdError):
         super().__init__(msg)
 
 
+class TaskNotFoundError(DjangoAbsurdError):
+    """``AbsurdTestRuntime.get_result`` found no task by that id on that queue.
+
+    Raised in place of a ``None`` return so a typo'd id, or a bare uuid resolved
+    against the wrong queue, names both instead of surfacing as an
+    ``AttributeError`` on a ``None`` read.
+    """
+
+    def __init__(self, task_id: str, queue: str) -> None:
+        msg = (
+            f"No task '{task_id}' found on queue '{queue}'. A bare uuid resolves "
+            "to queue 'default'; pass queue=... if the task ran on another queue."
+        )
+        super().__init__(msg)
+
+
 class BackendNotConfiguredError(DjangoAbsurdError):
     """No single Absurd backend could be resolved — zero or several configured. One
     type for both counts: the package supports exactly one Absurd backend per

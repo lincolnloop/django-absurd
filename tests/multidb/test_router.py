@@ -80,5 +80,4 @@ def test_roundtrip_drains_on_the_non_default_alias(
     result = sum_numbers.enqueue(1, 2)
     assert [run.result for run in dj_absurd.drain()] == [3]
     snapshot = dj_absurd.get_result(result.id)
-    assert snapshot is not None
     assert snapshot.result == 3

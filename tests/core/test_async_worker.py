@@ -26,7 +26,6 @@ def test_async_return_value_round_trips(
     r = atasks.aecho.enqueue(value)
     run_absurd_worker()
     snap = dj_absurd.get_result(r.id)
-    assert snap is not None
     assert snap.state == "completed"
     assert snap.result == value
 
@@ -35,7 +34,6 @@ def test_async_failure_recorded(dj_absurd: AbsurdTestRuntime) -> None:
     r = absurd_params(max_attempts=1).bind(atasks.aboom).enqueue()
     run_absurd_worker()
     snap = dj_absurd.get_result(r.id)
-    assert snap is not None
     assert snap.state == "failed"
 
 
@@ -43,7 +41,6 @@ def test_async_takes_context_attempt_is_one(dj_absurd: AbsurdTestRuntime) -> Non
     r = atasks.areport_attempt.enqueue()
     run_absurd_worker()
     snap = dj_absurd.get_result(r.id)
-    assert snap is not None
     assert snap.result == 1
 
 
@@ -52,7 +49,6 @@ def test_sync_orm_jsonfield_round_trips(dj_absurd: AbsurdTestRuntime) -> None:
     r = tasks.create_payload.enqueue({"sync": True, "x": [9, 8]})
     run_absurd_worker()
     snap = dj_absurd.get_result(r.id)
-    assert snap is not None
     pk = t.cast("int", snap.result)
     assert Payload.objects.get(pk=pk).data == {"sync": True, "x": [9, 8]}
 
@@ -62,7 +58,6 @@ def test_async_orm_jsonfield_round_trips(dj_absurd: AbsurdTestRuntime) -> None:
     r = atasks.acreate_payload.enqueue({"async": True, "y": {"z": None}})
     run_absurd_worker()
     snap = dj_absurd.get_result(r.id)
-    assert snap is not None
     pk = t.cast("int", snap.result)
     assert Payload.objects.get(pk=pk).data == {"async": True, "y": {"z": None}}
 
@@ -73,7 +68,6 @@ def test_async_task_queries_payload(dj_absurd: AbsurdTestRuntime) -> None:
     r = atasks.aread_payload.enqueue(obj.pk)
     run_absurd_worker()
     snap = dj_absurd.get_result(r.id)
-    assert snap is not None
     assert snap.state == "completed"
     assert snap.result == {"q": [1, {"x": None}], "u": "ünï"}
 
@@ -84,7 +78,6 @@ def test_aenqueue_async_task_runs_end_to_end(dj_absurd: AbsurdTestRuntime) -> No
     r = asyncio.run(atasks.aecho.aenqueue("via-aenqueue"))
     run_absurd_worker()
     snap = dj_absurd.get_result(r.id)
-    assert snap is not None
     assert snap.result == "via-aenqueue"
 
 
@@ -93,7 +86,6 @@ def test_aenqueue_sync_task_runs_end_to_end(dj_absurd: AbsurdTestRuntime) -> Non
     r = asyncio.run(tasks.echo.aenqueue({"via": "aenqueue-sync"}))
     run_absurd_worker()
     snap = dj_absurd.get_result(r.id)
-    assert snap is not None
     assert snap.result == {"via": "aenqueue-sync"}
 
 
@@ -113,8 +105,6 @@ def test_sync_and_async_in_one_worker_run(dj_absurd: AbsurdTestRuntime) -> None:
     run_absurd_worker()
     snap_s = dj_absurd.get_result(rs.id)
     snap_a = dj_absurd.get_result(ra.id)
-    assert snap_s is not None
-    assert snap_a is not None
     assert snap_s.result == {"mixed": "sync"}
     assert snap_a.result == {"mixed": "async"}
 

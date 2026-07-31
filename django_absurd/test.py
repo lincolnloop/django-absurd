@@ -45,6 +45,7 @@ from django_absurd.exceptions import (
     BackendNotConfiguredError,
     QueueNotProvisionedError,
     TaskIdQueueMismatchError,
+    TaskNotFoundError,
 )
 from django_absurd.params import NOT_SET, NotSet
 
@@ -255,8 +256,8 @@ class AbsurdTestRuntime:
 
     def get_result(
         self, task_id: str | uuid.UUID, queue: str | NotSet = NOT_SET
-    ) -> TaskSnapshot | None:
-        """Look up one task by id, returning ``None`` if it doesn't exist.
+    ) -> TaskSnapshot:
+        """Look up one task by id, raising ``TaskNotFoundError`` if it doesn't exist.
 
         ``task_id`` is a Django ``TaskResult.id`` (``"queue:uuid"``) or a bare uuid.
         A prefixed id's own queue wins when ``queue`` is unpassed; the default is the
@@ -271,7 +272,8 @@ class AbsurdTestRuntime:
         missing relation re-raises as itself, chained.
         """
         guard_against_open_transaction(self.alias, "get_result")
-        raw_task_id = str(task_id)
+        original_task_id = str(task_id)
+        raw_task_id = original_task_id
         if ":" in raw_task_id:
             prefix_queue, _, raw_task_id = raw_task_id.rpartition(":")
             if queue is not NOT_SET and queue != prefix_queue:
@@ -291,7 +293,7 @@ class AbsurdTestRuntime:
                 raise
             raise QueueNotProvisionedError(resolved_queue) from exc
         if task is None:
-            return None
+            raise TaskNotFoundError(task_id=original_task_id, queue=resolved_queue)
         args, kwargs = decode_params(task.params)
         return TaskSnapshot(
             queue=resolved_queue,

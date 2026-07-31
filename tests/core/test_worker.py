@@ -96,7 +96,6 @@ def test_end_to_end_executes_and_records_result(dj_absurd: AbsurdTestRuntime) ->
     run_absurd_worker()
     assert Group.objects.filter(name="alpha").exists()
     snap = dj_absurd.get_result(result.id)
-    assert snap is not None
     assert snap.state == "completed"
     assert snap.result == "alpha"
 
@@ -106,7 +105,6 @@ def test_failing_task_records_failure(dj_absurd: AbsurdTestRuntime) -> None:
     result = tasks.boom.enqueue()
     run_absurd_worker()
     snap = dj_absurd.get_result(result.id)
-    assert snap is not None
     assert snap.state == "failed"
 
 
@@ -117,7 +115,6 @@ def test_takes_context_attempt_is_one_on_first_run(
     result = tasks.report_attempt.enqueue()
     run_absurd_worker()
     snap = dj_absurd.get_result(result.id)
-    assert snap is not None
     assert snap.result == 1
 
 
@@ -128,7 +125,6 @@ def test_takes_context_task_result_carries_real_args(
     result = tasks.report_args.enqueue("x", "y")
     run_absurd_worker()
     snap = dj_absurd.get_result(result.id)
-    assert snap is not None
     assert snap.result == ["x", "y"]
 
 
@@ -155,7 +151,6 @@ def test_unregistered_name_defers_not_crashes(dj_absurd: AbsurdTestRuntime) -> N
     )
     run_absurd_worker()
     snap = dj_absurd.get_result(spawn["task_id"])
-    assert snap is not None
     assert snap.state != "failed"
 
 
@@ -167,7 +162,6 @@ def test_task_outside_tasks_py_runs(dj_absurd: AbsurdTestRuntime) -> None:
     run_absurd_worker()
     assert Group.objects.filter(name="from-jobs").exists()
     snap = dj_absurd.get_result(result.id)
-    assert snap is not None
     assert snap.result == "from-jobs"
 
 
@@ -262,7 +256,6 @@ def test_command_burst_runs_task_end_to_end(dj_absurd: AbsurdTestRuntime) -> Non
     call_command("absurd_worker", queue="default", burst=True)
     assert Group.objects.filter(name="via-command").exists()
     snap = dj_absurd.get_result(result.id)
-    assert snap is not None
     assert snap.state == "completed"
 
 
@@ -418,7 +411,6 @@ def test_async_task_runs_end_to_end(dj_absurd: AbsurdTestRuntime) -> None:
     r = atasks.aecho.enqueue("hi-async")
     run_absurd_worker()
     snap = dj_absurd.get_result(r.id)
-    assert snap is not None
     assert snap.state == "completed"
     assert snap.result == "hi-async"
 
@@ -546,5 +538,4 @@ def test_non_task_name_defers_not_crashes(dj_absurd: AbsurdTestRuntime) -> None:
     )
     run_absurd_worker()
     snap = dj_absurd.get_result(spawn["task_id"])
-    assert snap is not None
     assert snap.state != "failed"

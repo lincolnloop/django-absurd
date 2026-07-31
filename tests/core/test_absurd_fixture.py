@@ -11,6 +11,7 @@ from django_absurd.exceptions import (
     BackendNotConfiguredError,
     QueueNotProvisionedError,
     TaskIdQueueMismatchError,
+    TaskNotFoundError,
 )
 from django_absurd.test import AbsurdTestRuntime
 from tests import tasks, utils
@@ -24,7 +25,6 @@ def test_get_result_reports_a_completed_task(dj_absurd: AbsurdTestRuntime) -> No
 
     snapshot = dj_absurd.get_result(result.id)
 
-    assert snapshot is not None
     assert snapshot.queue == "default"
     assert snapshot.task_name == "tests.tasks.add"
     assert snapshot.args == [2, 3]
@@ -44,7 +44,6 @@ def test_get_result_reports_a_failed_task_with_its_failure(
 
     snapshot = dj_absurd.get_result(result.id)
 
-    assert snapshot is not None
     assert snapshot.state == "failed"
     assert snapshot.result is None
     assert snapshot.failure is not None
@@ -60,7 +59,6 @@ def test_get_result_decodes_jsonb_to_python_objects(
 
     snapshot = dj_absurd.get_result(result.id)
 
-    assert snapshot is not None
     assert snapshot.args == [{"k": "v", "n": 7}]
     assert not isinstance(snapshot.args[0], str)
     assert isinstance(snapshot.result, int)
@@ -78,17 +76,24 @@ def test_get_result_reads_a_task_suspended_on_an_indefinite_await_event(
 
     snapshot = dj_absurd.get_result(result.id)
 
-    assert snapshot is not None
     assert snapshot.state == "sleeping"
     assert snapshot.attempts == 1
     assert snapshot.result is None
     assert snapshot.failure is None
 
 
-def test_get_result_returns_none_for_an_unknown_task(
+def test_get_result_raises_for_an_unknown_task(
     dj_absurd: AbsurdTestRuntime,
 ) -> None:
-    assert dj_absurd.get_result(uuid.uuid4()) is None
+    task_id = uuid.uuid4()
+
+    with pytest.raises(TaskNotFoundError) as exc:
+        dj_absurd.get_result(task_id)
+
+    assert str(exc.value) == (
+        f"No task '{task_id}' found on queue 'default'. A bare uuid resolves to "
+        "queue 'default'; pass queue=... if the task ran on another queue."
+    )
 
 
 def test_get_result_raises_queue_not_provisioned_for_the_queues_own_missing_table(
@@ -178,7 +183,6 @@ def test_get_result_tolerates_params_that_are_not_our_shape(
 
     snapshot = dj_absurd.get_result(result.id)
 
-    assert snapshot is not None
     assert snapshot.args == []
     assert snapshot.kwargs == {}
 
@@ -190,7 +194,6 @@ def test_get_result_accepts_a_bare_uuid(dj_absurd: AbsurdTestRuntime) -> None:
 
     snapshot = dj_absurd.get_result(bare)
 
-    assert snapshot is not None
     assert snapshot.state == "completed"
 
 
@@ -202,7 +205,6 @@ def test_get_result_honours_a_non_default_queue_prefix_on_the_id(
 
     snapshot = dj_absurd.get_result(result.id)  # no queue= passed; the prefix must win
 
-    assert snapshot is not None
     assert snapshot.queue == "reports"
     assert snapshot.state == "completed"
     assert snapshot.result == "on_reports"
@@ -217,7 +219,6 @@ def test_get_result_accepts_a_bare_uuid_with_an_explicit_non_default_queue(
 
     snapshot = dj_absurd.get_result(bare, queue="other")
 
-    assert snapshot is not None
     assert snapshot.queue == "other"
     assert snapshot.state == "completed"
 
@@ -341,7 +342,6 @@ def test_drain_returns_every_attempt_of_a_default_retry_burn(
     assert {run.state for run in drained} == {"failed"}
     assert drained[0].failure is not None
     snapshot = dj_absurd.get_result(result.id)
-    assert snapshot is not None
     assert snapshot.state == "failed"
     assert snapshot.attempts == 5
 
@@ -391,7 +391,6 @@ def test_emit_resolves_a_waiting_task(dj_absurd: AbsurdTestRuntime) -> None:
 
     assert [run.state for run in dj_absurd.drain()] == ["completed"]
     snapshot = dj_absurd.get_result(result.id)
-    assert snapshot is not None
     assert snapshot.result == {"tracking": "abc"}
 
 

@@ -54,7 +54,6 @@ def test_shifting_short_of_the_wake_leaves_the_task_sleeping(
         assert dj_absurd.now == FROZEN + dt.timedelta(days=6)
         assert dj_absurd.drain() == []
         snapshot = dj_absurd.get_result(result.id)
-        assert snapshot is not None
         assert snapshot.state == "sleeping"
 
 
@@ -95,7 +94,6 @@ def test_a_retry_backoff_runs_the_next_attempt_after_shifting(
         result = tasks.fail_with_long_backoff.enqueue()
         assert [run.attempt for run in dj_absurd.drain()] == [1]
         mid_backoff = dj_absurd.get_result(result.id)
-        assert mid_backoff is not None
         assert mid_backoff.state == "sleeping"
         assert mid_backoff.failure is None
 
@@ -142,7 +140,6 @@ def test_a_cancelled_task_produces_an_empty_drain(dj_absurd: AbsurdTestRuntime) 
 
         assert dj_absurd.drain() == []
         snapshot = dj_absurd.get_result(result.id)
-        assert snapshot is not None
         assert snapshot.state == "cancelled"
 
 
@@ -183,7 +180,6 @@ def test_a_heartbeat_extends_the_claim_past_a_shift_that_would_otherwise_sweep_i
 
         assert dj_absurd.drain() == []
         snapshot = dj_absurd.get_result(result.id)
-        assert snapshot is not None
         assert snapshot.attempts == 1
 
 
@@ -194,7 +190,6 @@ def test_freeze_time_stamps_the_frozen_instant_on_enqueue(
         result = tasks.add.enqueue(2, 3)
 
         snapshot = dj_absurd.get_result(result.id)
-        assert snapshot is not None
         assert snapshot.enqueued_at == FROZEN
 
 
@@ -317,7 +312,6 @@ def test_freeze_time_honors_a_non_utc_aware_zone(dj_absurd: AbsurdTestRuntime) -
         assert dj_absurd.now == chicago.astimezone(dt.UTC) + dt.timedelta(days=7)
         assert dj_absurd.now.utcoffset() == dt.timedelta(0)
         snapshot = dj_absurd.get_result(result.id)
-        assert snapshot is not None
         assert snapshot.enqueued_at == chicago
         assert snapshot.state == "completed"
 
@@ -345,7 +339,6 @@ def test_the_clock_is_correct_on_a_server_whose_timezone_is_not_utc(
             assert dj_absurd.now == FROZEN
             assert dj_absurd.now.utcoffset() == dt.timedelta(0)
             snapshot = dj_absurd.get_result(result.id)
-            assert snapshot is not None
             assert snapshot.enqueued_at == FROZEN
     finally:
         with conn.cursor() as cursor:

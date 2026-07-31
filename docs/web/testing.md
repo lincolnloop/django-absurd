@@ -35,7 +35,6 @@ def test_a_task_sleeps_seven_days_then_completes(dj_absurd):
         assert [run.state for run in dj_absurd.drain()] == ["completed"]
 
         snapshot = dj_absurd.get_result(result.id)
-        assert snapshot is not None
         assert snapshot.state == "completed"
 ```
 
@@ -76,8 +75,10 @@ Both halves of the clock are released when the block ends, so a test can open se
 windows in sequence. Opening one INSIDE another raises instead of stacking — two frozen
 instants cannot both be "now" — and using a `FrozenTime` after its own block exited
 raises rather than silently re-freezing from real now. A test that never opens a block
-pays nothing: the other members never touch the clock. `FrozenTime` is importable from
-`django_absurd.test` for annotating your own helpers.
+pays nothing: the other members never touch the clock. `FrozenTime`, `AbsurdTestRuntime`
+(what `dj_absurd` itself is typed as), `TaskSnapshot`, and `RunSnapshot` are all
+importable from `django_absurd.test` for annotating your own helpers and fixture
+parameters.
 
 !!! warning "Install time-machine yourself"
 
@@ -110,6 +111,29 @@ queue a single test declares by overriding `TASKS` has no table yet — call
 the `absurd_sync_queues` command. Draining a queue that isn't declared at all raises
 `QueueNotDeclaredError` — see [Our own exceptions](workflows.md#our-own-exceptions).
 
+**`RunSnapshot` fields:**
+
+| Field              | Meaning                                                                          |
+| ------------------ | -------------------------------------------------------------------------------- |
+| `queue`, `task_id` | which task this run belongs to                                                   |
+| `run_id`           | this run's id — the same value appears twice for a re-armed `await_event` waiter |
+| `task_name`        | dotted task path                                                                 |
+| `args`, `kwargs`   | decoded from the enqueued params                                                 |
+| `attempt`          | 1-based attempt number                                                           |
+| `state`            | see state vocabulary below                                                       |
+| `result`           | the task's return value, once `completed`                                        |
+| `failure`          | `{"message": str, "name"?: str, "traceback"?: str}`, once `failed`               |
+
+**Observable `state` values:**
+
+| State       | Meaning                                                                                                                                     |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pending`   | claimable, not yet run                                                                                                                      |
+| `sleeping`  | suspended — a durable [sleep](workflows.md#sleep), an `await_event` wait, or a retry backoff (indistinguishable from a `RunSnapshot` alone) |
+| `completed` | finished successfully                                                                                                                       |
+| `failed`    | raised, and out of retries                                                                                                                  |
+| `cancelled` | cancelled before or during execution                                                                                                        |
+
 ### `emit(name, payload=None, queue="default")`
 
 Delivers an [event](workflows.md#events), resolving a task suspended in `await_event` —
@@ -118,10 +142,16 @@ the waiter resumes on the next `drain()`. An unprovisioned queue raises
 
 ### `get_result(task_id, queue=...)`
 
-Looks up one task, returning `TaskSnapshot | None`. `task_id` accepts either a bare uuid
-or Django's own `TaskResult.id` (`"queue:uuid"`) — whatever `enqueue()` handed back.
-When it carries a queue prefix, that prefix is what gets queried, not `queue`'s default.
-Omit `queue` entirely to let the prefix win:
+Where [`my_task.get_result(result.id)`](tasks.md#read-the-result) reads Django's own
+`TaskResult.status`, `dj_absurd.get_result` reads Absurd's own states directly —
+including `sleeping`, a state `TaskResult.status` can't show — and skips the worker
+round-trip; like Django's own method, it raises on a miss.
+
+Looks up one task, returning a `TaskSnapshot`, or raising `TaskNotFoundError` if none
+exists on that queue. `task_id` accepts either a bare uuid or Django's own
+`TaskResult.id` (`"queue:uuid"`) — whatever `enqueue()` handed back. When it carries a
+queue prefix, that prefix is what gets queried, not `queue`'s default. Omit `queue`
+entirely to let the prefix win:
 
 ```python
 result = reports_task.enqueue()   # id is "reports:<uuid>"
@@ -131,6 +161,19 @@ dj_absurd.get_result(result.id)   # queries the "reports" queue
 An explicit `queue=` — even `queue="default"` — that disagrees with a prefixed id's own
 queue raises `TaskIdQueueMismatchError` naming both. A bare uuid resolves an unpassed
 `queue` to `"default"`.
+
+**`TaskSnapshot` fields:**
+
+| Field              | Meaning                                                 |
+| ------------------ | ------------------------------------------------------- |
+| `queue`, `task_id` | which task this is (no queue prefix on `task_id`)       |
+| `task_name`        | dotted task path                                        |
+| `args`, `kwargs`   | decoded from the enqueued params                        |
+| `state`            | see the state vocabulary under `drain()` above          |
+| `attempts`         | attempts CREATED, not completed (see caveats below)     |
+| `enqueued_at`      | when `enqueue()` ran                                    |
+| `result`           | the task's return value, once `completed`               |
+| `failure`          | `None` except on a terminal failure (see caveats below) |
 
 A task-level view cannot express an in-flight [retry](tasks.md#retries-spawn-options):
 

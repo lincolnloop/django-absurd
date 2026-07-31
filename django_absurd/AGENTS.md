@@ -675,6 +675,8 @@ all subclasses of `django_absurd.exceptions.DjangoAbsurdError`:
   provisioned.
 - `TaskIdQueueMismatchError` — the test fixture's `get_result(task_id, queue=...)` was
   given a `"queue:uuid"` id and an explicit `queue=` that name different queues.
+- `TaskNotFoundError` — the test fixture's `get_result(task_id, queue=...)` found no
+  task by that id on that queue.
 
 Catch `DjangoAbsurdError` to handle any of django-absurd's own typed errors generically;
 other failures (schema-not-installed, config validation, clock misuse) still raise plain
@@ -752,22 +754,23 @@ completes" or a [durable sleep](#sleep), an [`await_event` timeout](#timeout), a
 backoff, or a chain of several sleeps. It returns an `AbsurdTestRuntime` with six
 members:
 
-| Member                                      | Does                                                              |
-| ------------------------------------------- | ----------------------------------------------------------------- |
-| `freeze_time(instant=None)`                 | context manager pinning durable time (`None` = real now at entry) |
-| `now`                                       | virtual now, timezone-aware, as Postgres itself reports it        |
-| `sync_queues()`                             | provision every declared queue (rarely needed; see below)         |
-| `drain(queue="default")`                    | burst-drain a queue, returning `list[RunSnapshot]`                |
-| `emit(name, payload=None, queue="default")` | deliver an event, resolving a task suspended in `await_event`     |
-| `get_result(task_id, queue=...)`            | look up one task, returning `TaskSnapshot \| None` (see below)    |
+| Member                                      | Does                                                                                         |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `freeze_time(instant=None)`                 | context manager pinning durable time (`None` = real now at entry)                            |
+| `now`                                       | virtual now, timezone-aware, as Postgres itself reports it                                   |
+| `sync_queues()`                             | provision every declared queue (rarely needed; see below)                                    |
+| `drain(queue="default")`                    | burst-drain a queue, returning `list[RunSnapshot]`                                           |
+| `emit(name, payload=None, queue="default")` | deliver an event, resolving a task suspended in `await_event`                                |
+| `get_result(task_id, queue=...)`            | look up one task, returning `TaskSnapshot` (raises `TaskNotFoundError` on a miss; see below) |
 
-`freeze_time` yields a `FrozenTime` handle (importable from `django_absurd.test`, for
-annotating helpers) whose `move_to(datetime)` and `shift(timedelta)` are the only way
-durable time moves — `shift` by absolute elapsed time, `move_to` to an absolute aware
-instant. Leaving the block releases both halves of the clock, so windows can be
-sequential; opening one inside another raises, since two frozen instants cannot both be
-"now", and a mover used after its own block exited raises rather than silently
-re-freezing from real now.
+`freeze_time` yields a `FrozenTime` handle. `FrozenTime`, `AbsurdTestRuntime` (what
+`dj_absurd` itself is typed as), `TaskSnapshot`, and `RunSnapshot` are all importable
+from `django_absurd.test`, for annotating helpers and fixture parameters.
+`move_to(datetime)` and `shift(timedelta)` are the only way durable time moves — `shift`
+by absolute elapsed time, `move_to` to an absolute aware instant. Leaving the block
+releases both halves of the clock, so windows can be sequential; opening one inside
+another raises, since two frozen instants cannot both be "now", and a mover used after
+its own block exited raises rather than silently re-freezing from real now.
 
 ```python
 import datetime as dt
@@ -786,7 +789,6 @@ def test_a_task_sleeps_seven_days_then_completes(dj_absurd):
         assert [run.state for run in dj_absurd.drain()] == ["completed"]
 
         snapshot = dj_absurd.get_result(result.id)
-        assert snapshot is not None
         assert snapshot.state == "completed"
 ```
 
@@ -807,10 +809,27 @@ declares by overriding `TASKS` needs `dj_absurd.sync_queues()` first or `drain()
 raises `QueueNotDeclaredError`) — see [Exceptions](#exceptions) above for the full
 typed-error taxonomy.
 
-**`get_result()` honours a prefixed id's own queue.** `task_id` accepts either a bare
-uuid or Django's own `TaskResult.id` (`"queue:uuid"`) — whatever `enqueue()` handed
-back. When it carries a queue prefix, that prefix is what gets queried, not `queue`'s
-default:
+**`RunSnapshot` fields:** `queue`/`task_id` (which task this run belongs to), `run_id`
+(this run's id — the same value appears twice for a re-armed `await_event` waiter),
+`task_name` (dotted task path), `args`/`kwargs` (decoded from the enqueued params),
+`attempt` (1-based attempt number), `state` (see below), `result` (the task's return
+value, once `completed`), `failure`
+(`{"message": str, "name"?: str, "traceback"?: str}`, once `failed`).
+
+**Observable `state` values:** `pending` (claimable, not yet run), `sleeping` (suspended
+— a durable [sleep](#sleep), an `await_event` wait, or a retry backoff,
+indistinguishable from a `RunSnapshot` alone), `completed` (finished successfully),
+`failed` (raised, and out of retries), `cancelled` (cancelled before or during
+execution).
+
+**`get_result()` honours a prefixed id's own queue.** Where `my_task.get_result(id)`
+([Retrieving results](#retrieving-results) above) reads Django's own
+`TaskResult.status`, `dj_absurd.get_result` reads Absurd's own states directly —
+including `sleeping`, a state `TaskResult.status` can't show — and skips the worker
+round-trip; like Django's own method, it raises on a miss (`TaskNotFoundError`).
+`task_id` accepts either a bare uuid or Django's own `TaskResult.id` (`"queue:uuid"`) —
+whatever `enqueue()` handed back. When it carries a queue prefix, that prefix is what
+gets queried, not `queue`'s default:
 
 ```python
 result = reports_task.enqueue()   # id is "reports:<uuid>"
@@ -841,6 +860,13 @@ bundled with django-absurd and not one of its extras (`pip install time-machine`
 `sync_queues`/`drain`/`emit`/`get_result`/`now` work without it; only `freeze_time`
 imports it, lazily, on first use, and raises `ImproperlyConfigured` naming the install
 command if it's missing.
+
+**`TaskSnapshot` fields:** `queue`/`task_id` (which task this is; no queue prefix on
+`task_id`), `task_name` (dotted task path), `args`/`kwargs` (decoded from the enqueued
+params), `state` (see the state vocabulary above), `attempts` (created, not completed —
+see caveats below), `enqueued_at` (when `enqueue()` ran), `result` (the task's return
+value, once `completed`), `failure` (`None` except on a terminal failure — see caveats
+below).
 
 **`TaskSnapshot` caveats — use `RunSnapshot` for an in-flight retry.** `get_result`
 returns a task-level view, which cannot express an in-flight
