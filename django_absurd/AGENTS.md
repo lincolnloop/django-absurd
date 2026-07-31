@@ -792,6 +792,10 @@ def test_a_task_sleeps_seven_days_then_completes(dj_absurd):
         assert snapshot.state == "completed"
 ```
 
+All six members work unchanged from an `async def` test — same names, nothing to `await`
+on the fixture, no separate API. Enqueue with Django's own `await task.aenqueue()`
+there, since `enqueue()` is synchronous.
+
 **`sync_queues()`** provisions every declared queue — the runtime counterpart of
 `manage.py absurd_sync_queues`. Rarely needed: `migrate` already provisions the declared
 catalog, so reach for this only when the test itself changed queue topology — a

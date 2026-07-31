@@ -38,6 +38,24 @@ def test_a_task_sleeps_seven_days_then_completes(dj_absurd):
         assert snapshot.state == "completed"
 ```
 
+### Works from `async def` tests
+
+Every member works unchanged from an `async def` test — same names, nothing to `await`
+on the fixture, no separate API. Enqueue with Django's own
+[`await task.aenqueue()`](https://docs.djangoproject.com/en/6.0/topics/tasks/), since
+`enqueue()` is synchronous.
+
+```python
+async def test_a_task_sleeps_seven_days_then_completes(dj_absurd):
+    with dj_absurd.freeze_time(dt.datetime(2026, 1, 1, tzinfo=dt.UTC)) as frozen_time:
+        result = await my_weekly_followup_task.aenqueue()
+        assert [run.state for run in dj_absurd.drain()] == ["sleeping"]
+
+        frozen_time.shift(dt.timedelta(days=7))
+        assert [run.state for run in dj_absurd.drain()] == ["completed"]
+        assert dj_absurd.get_result(result.id).state == "completed"
+```
+
 ### Requires `transaction=True`
 
 Absurd's own work runs on a connection separate from the test's; under a plain
