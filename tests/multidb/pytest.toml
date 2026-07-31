@@ -3,6 +3,10 @@ DJANGO_SETTINGS_MODULE = "tests.multidb.settings"
 addopts = [
   "--allow-hosts=db,localhost,127.0.0.1",
   "--confcutdir=..",
+  "--cov",
+  "--cov-append",
+  "--cov-report=term",
+  "--cov-report=xml",
   "--disable-socket",
   "--junitxml=junit-multidb.xml",
   "--reuse-db",

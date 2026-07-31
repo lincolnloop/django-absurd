@@ -92,9 +92,6 @@ skip_covered = true
 
 [tool.coverage.run]
 branch = true
-omit = [
-  "tests/multidb/*",
-]
 patch = ["subprocess"]
 plugins = [
   "django_coverage_plugin",
