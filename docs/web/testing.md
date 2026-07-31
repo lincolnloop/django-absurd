@@ -197,27 +197,14 @@ own fresh connection rather than computed in Python.
 
 ### Hazards
 
-**A `manage.py absurd_worker` subprocess is only half-frozen.** `ALTER DATABASE` reaches
-its Postgres session, but its own Python clock is real — frozen-ahead-of-real is the
-deadlock direction, since a durable sleep due at the frozen instant looks not-yet-due to
-that process's real clock. `drain` only ever runs the in-process burst worker; a real
-subprocess worker under a freeze is out of scope.
-
-**A savepoint rollback inside a `freeze_time` block can make a later `enqueue()` stamp
-stale time.** Django's own connection only ever sees the frozen instant via a
-session-level `SET` (a database-level default reaches only new sessions, not one Django
-already has open), and a savepoint rollback reverts that `SET`. `dj_absurd.now` still
-reports the frozen instant correctly — it reads through its own fresh connection, which
-sees the database-level default — so `now` cannot itself flag the mismatch. If your test
-rolls back a savepoint inside the block, avoid enqueuing across the rollback boundary.
-
-**Advancing cannot make a [pg_cron](cron-jobs.md#database-side-pg_cron) schedule fire.**
-Its launcher runs in the central `cron.database_name` database
-([Test databases](cron-jobs.md#test-databases)), on its own real clock, and interprets
-schedules in the [`cron.timezone`](cron-jobs.md#timezone) GUC — none of which a
-test-database GUC can reach. Testing a pg_cron schedule stays "reconcile it in, then
-inspect `cron.job`" — see
+**A freeze doesn't reach [pg_cron](cron-jobs.md#database-side-pg_cron).** Its launcher
+runs in another database on its own clock, so advancing durable time cannot make a
+schedule fire. Test one by reconciling it in and inspecting `cron.job` — see
 [Getting a `SCHEDULE` into pg_cron for a test](#getting-a-schedule-into-pg_cron-for-a-test).
+
+**A savepoint rollback inside the block reverts Django's session clock**, so a later
+`enqueue()` stamps real time and won't look claimable. Don't enqueue across a rollback
+boundary.
 
 ## Cleanup is automatic
 

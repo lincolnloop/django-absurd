@@ -886,22 +886,12 @@ one ambiguous final read.
 
 **Hazards:**
 
-- A `manage.py absurd_worker` subprocess is only half-frozen: `ALTER DATABASE` reaches
-  its Postgres session, but its own Python clock is real — frozen-ahead-of-real is the
-  deadlock direction. The `dj_absurd` fixture's `drain` only ever runs the in-process
-  burst worker; a real subprocess worker under a freeze is out of scope.
-- A savepoint rollback inside a `freeze_time` block can make a later `enqueue()` stamp
-  stale time: Django's own connection only ever sees the frozen instant via a
-  session-level `SET` (a database-level default reaches only new sessions), and a
-  savepoint rollback reverts that `SET`. `dj_absurd.now` still reports the frozen
-  instant correctly — it reads through its own fresh connection — so `now` cannot itself
-  flag the mismatch.
-- Moving durable time cannot make a [pg_cron](#pg_cron-backend) schedule fire: its
-  launcher runs in the central `cron.database_name` database (see
-  [Test databases](#pg_cron-backend) above), on its own real clock, and interprets
-  schedules in the [`cron.timezone`](https://github.com/citusdata/pg_cron#parameters)
-  GUC — none of which a test-database GUC can reach. Testing a pg_cron schedule stays
-  "reconcile it in, then inspect `cron.job`", exactly as `tests/pg_cron` already does.
+- A freeze doesn't reach [pg_cron](#pg_cron-backend): its launcher runs in another
+  database on its own clock, so moving durable time cannot make a schedule fire. Testing
+  one stays "reconcile it in, then inspect `cron.job`", as `tests/pg_cron` does.
+- A savepoint rollback inside the block reverts Django's session clock, so a later
+  `enqueue()` stamps real time and won't look claimable. Don't enqueue across a rollback
+  boundary.
 
 ### Getting a `SCHEDULE` into pg_cron for a test
 
