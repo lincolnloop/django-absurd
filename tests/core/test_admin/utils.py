@@ -35,7 +35,6 @@ def register_admin() -> None:
 
 
 def seed() -> None:
-    call_command("absurd_sync_queues")
     tasks.add.enqueue(2, 3)
     tasks.add.using(queue_name="other").enqueue(7, 8)
     tasks.boom.enqueue()
@@ -47,7 +46,6 @@ def seed_mixed() -> tuple[
     "TaskResult[t.Any, t.Any]", "TaskResult[t.Any, t.Any]", "TaskResult[t.Any, t.Any]"
 ]:
     """Three default-queue tasks in distinct terminal/queued states."""
-    call_command("absurd_sync_queues")
     completed = tasks.add.enqueue(2, 3)
     failed = absurd_params(max_attempts=1).bind(tasks.boom).enqueue()
     call_command("absurd_worker", queue="default", burst=True)

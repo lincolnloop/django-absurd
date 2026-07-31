@@ -650,6 +650,38 @@ send_report.get_result(result.id)              # fetch by id (sync)
 await send_report.aget_result(result.id)       # async variant
 ```
 
+## Exceptions
+
+django-absurd raises its own exception types for conditions specific to this package,
+all subclasses of `django_absurd.exceptions.DjangoAbsurdError`:
+
+- `QueueNotDeclaredError` — a queue name doesn't match any queue declared for the
+  backend. Raised by `emit_event` and the test fixture's `drain()`. `enqueue` raises it
+  too, but only when the backend's `QUEUES` option is empty/unset; with `QUEUES`
+  configured, a typo'd queue name at enqueue is instead rejected earlier as Django's own
+  `InvalidTask`.
+- `QueueNotProvisionedError` — a queue is declared but its Absurd table hasn't been
+  provisioned yet (run `manage.py absurd_sync_queues`). Raised by `emit_event` and
+  `drain()`.
+- `BackendNotConfiguredError` — no `AbsurdBackend`, or more than one, is configured in
+  `TASKS`. The `absurd_worker`/`absurd_beat`/`absurd_sync_crons` commands translate it
+  to a `CommandError`; `emit_event` and the test fixture's `drain()` propagate it
+  untranslated.
+- `QueueReadOnlyError` — an attempt to `.save()`/`.delete()` one of the read-only admin
+  models mapping Absurd's own tables (`Queue`, and the admin entity views over
+  tasks/runs/waits/etc.).
+- `ViewNotProvisionedError` — one of those admin entity views (a `UNION` over every
+  declared queue's own Absurd table) hits a missing relation because a queue was never
+  provisioned.
+- `TaskIdQueueMismatchError` — the test fixture's `get_result(task_id, queue=...)` was
+  given a `"queue:uuid"` id and an explicit `queue=` that name different queues.
+- `TaskNotFoundError` — the test fixture's `get_result(task_id, queue=...)` found no
+  task by that id on that queue.
+
+Catch `DjangoAbsurdError` to handle any of django-absurd's own typed errors generically;
+other failures (schema-not-installed, config validation, clock misuse) still raise plain
+`ImproperlyConfigured`/`RuntimeError`/`TypeError` outside the hierarchy.
+
 ## Testing
 
 Installing django-absurd registers a
@@ -714,28 +746,156 @@ class MyTestRunner(DiscoverRunner):
 Then point your project's `TEST_RUNNER` at it. `install_absurd_cleanup()` is idempotent
 — calling it again where pytest's plugin already installed it is a no-op.
 
-### `absurd_drain_queue`
+### The `dj_absurd` fixture: durable time, drain, and read
+
+Running a task, moving Absurd's own notion of "now", and inspecting what actually ran
+all go through one fixture, `dj_absurd` — whether the test is a one-line "my task
+completes" or a [durable sleep](#sleep), an [`await_event` timeout](#timeout), a retry
+backoff, or a chain of several sleeps. It returns an `AbsurdTestRuntime` with six
+members:
+
+| Member                                      | Does                                                                                         |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `freeze_time(instant=None)`                 | context manager pinning durable time (`None` = real now at entry)                            |
+| `now`                                       | virtual now, timezone-aware, as Postgres itself reports it                                   |
+| `sync_queues()`                             | provision every declared queue (rarely needed; see below)                                    |
+| `drain(queue="default")`                    | burst-drain a queue, returning `list[RunSnapshot]`                                           |
+| `emit(name, payload=None, queue="default")` | deliver an event, resolving a task suspended in `await_event`                                |
+| `get_result(task_id, queue=...)`            | look up one task, returning `TaskSnapshot` (raises `TaskNotFoundError` on a miss; see below) |
+
+`freeze_time` yields a `FrozenTime` handle. `FrozenTime`, `AbsurdTestRuntime` (what
+`dj_absurd` itself is typed as), `TaskSnapshot`, and `RunSnapshot` are all importable
+from `django_absurd.test`, for annotating helpers and fixture parameters.
+`move_to(datetime)` and `shift(timedelta)` are the only way durable time moves — `shift`
+by absolute elapsed time, `move_to` to an absolute aware instant. Leaving the block
+releases both halves of the clock, so windows can be sequential; opening one inside
+another raises, since two frozen instants cannot both be "now", and a mover used after
+its own block exited raises rather than silently re-freezing from real now.
 
 ```python
-@pytest.mark.django_db(transaction=True)
-def test_task_runs(absurd_drain_queue):
-    my_task.enqueue()
-    absurd_drain_queue()
-    ...
+import datetime as dt
+
+import pytest
+
+pytestmark = pytest.mark.django_db(transaction=True)
+
+
+def test_a_task_sleeps_seven_days_then_completes(dj_absurd):
+    with dj_absurd.freeze_time(dt.datetime(2026, 1, 1, tzinfo=dt.UTC)) as frozen_time:
+        result = my_weekly_followup_task.enqueue()  # enqueue INSIDE the block
+        assert [run.state for run in dj_absurd.drain()] == ["sleeping"]
+
+        frozen_time.shift(dt.timedelta(days=7))
+        assert [run.state for run in dj_absurd.drain()] == ["completed"]
+
+        snapshot = dj_absurd.get_result(result.id)
+        assert snapshot.state == "completed"
 ```
 
-Returns a callable `drain(queue: str = "default", *, concurrency: int = 1) -> None` that
-runs every currently-claimable task on `queue` to completion, in-process — no
-[worker](#workers) subprocess, no polling loop to manage. It's the fixture equivalent of
-`absurd_worker --burst`: drains the backlog present at call time, then returns.
+All six members work unchanged from an `async def` test — same names, nothing to `await`
+on the fixture, no separate API. Enqueue with Django's own `await task.aenqueue()`
+there, since `enqueue()` is synchronous.
 
-The worker opens its own database connection, separate from the test's — so a test using
-`absurd_drain_queue` needs `transaction=True` (not plain `db`): under an uncommitted
-`db` transaction the enqueue is invisible to that second connection and the task never
-gets claimed. In a multi-DB project, declare the Absurd alias in that same test's
+**`sync_queues()`** provisions every declared queue — the runtime counterpart of
+`manage.py absurd_sync_queues`. Rarely needed: `migrate` already provisions the declared
+catalog, so reach for this only when the test itself changed queue topology — a
+`settings` override declaring a queue the migration never saw, or a fixture that dropped
+the queues.
+
+**`drain()`** runs every currently-claimable task on `queue` to completion, in-process —
+no [worker](#workers) subprocess, no polling loop to manage. It's the fixture
+counterpart of `absurd_worker --burst`: it drains the backlog present at call time, then
+returns one `RunSnapshot` per run executed, in claim order. It provisions nothing
+(unlike the CLI, which provisions declared queues on start): `migrate` provisions every
+declared queue already, so a test database arrives ready, but a queue a single test
+declares by overriding `TASKS` needs `dj_absurd.sync_queues()` first or `drain()` raises
+`QueueNotProvisionedError` naming that command (a queue that isn't declared at all
+raises `QueueNotDeclaredError`) — see [Exceptions](#exceptions) above for the full
+typed-error taxonomy.
+
+**`RunSnapshot` fields:** `queue`/`task_id` (which task this run belongs to), `run_id`
+(this run's id — the same value appears twice for a re-armed `await_event` waiter),
+`task_name` (dotted task path), `args`/`kwargs` (decoded from the enqueued params),
+`attempt` (1-based attempt number), `state` (see below), `result` (the task's return
+value, once `completed`), `failure`
+(`{"message": str, "name"?: str, "traceback"?: str}`, once `failed`).
+
+**Observable `state` values:** `pending` (claimable, not yet run), `sleeping` (suspended
+— a durable [sleep](#sleep), an `await_event` wait, or a retry backoff,
+indistinguishable from a `RunSnapshot` alone), `completed` (finished successfully),
+`failed` (raised, and out of retries), `cancelled` (cancelled before or during
+execution).
+
+**`get_result()` honours a prefixed id's own queue.** Where `my_task.get_result(id)`
+([Retrieving results](#retrieving-results) above) reads Django's own
+`TaskResult.status`, `dj_absurd.get_result` reads Absurd's own states directly —
+including `sleeping`, a state `TaskResult.status` can't show — and skips the worker
+round-trip; like Django's own method, it raises on a miss (`TaskNotFoundError`).
+`task_id` accepts either a bare uuid or Django's own `TaskResult.id` (`"queue:uuid"`) —
+whatever `enqueue()` handed back. When it carries a queue prefix, that prefix is what
+gets queried, not `queue`'s default:
+
+```python
+result = reports_task.enqueue()   # id is "reports:<uuid>"
+dj_absurd.get_result(result.id)   # queries the "reports" queue
+```
+
+An explicit `queue=` — even `queue="default"` — that disagrees with a prefixed id's own
+queue raises `TaskIdQueueMismatchError` naming both. A bare uuid resolves an unpassed
+`queue` to `"default"`, same as always.
+
+**Requires `transaction=True`**: Absurd's own work runs on a connection separate from
+the test's; under a plain `db` test the enqueued row is invisible to it. `drain`,
+`emit`, and `get_result` detect the open transaction and raise rather than silently
+no-opping. In a multi-DB project, declare the Absurd alias in that same test's
 `databases` too — draining commits real state via the worker's own connection, and an
 undeclared alias means the cleanup guard above skips it, leaking that state into the
 next test.
+
+**Freeze BEFORE enqueueing.** `freeze_time` and its movers move both Python's clock (via
+[time-machine](https://github.com/adamchainz/time-machine)) and Postgres's
+`absurd.fake_now` GUC. Freezing to a PAST instant after rows already exist leaves those
+rows' deadlines in the database's future relative to the new frozen now, so nothing is
+claimable until a later `move_to`/`shift` passes them. A test that never opens a
+`freeze_time` block pays nothing: the other members never touch the clock.
+
+**Install time-machine yourself** — it is a dev/test dependency of _your_ project, not
+bundled with django-absurd and not one of its extras (`pip install time-machine`).
+`sync_queues`/`drain`/`emit`/`get_result`/`now` work without it; only `freeze_time`
+imports it, lazily, on first use, and raises `ImproperlyConfigured` naming the install
+command if it's missing.
+
+**`TaskSnapshot` fields:** `queue`/`task_id` (which task this is; no queue prefix on
+`task_id`), `task_name` (dotted task path), `args`/`kwargs` (decoded from the enqueued
+params), `state` (see the state vocabulary above), `attempts` (created, not completed —
+see caveats below), `enqueued_at` (when `enqueue()` ran), `result` (the task's return
+value, once `completed`), `failure` (`None` except on a terminal failure — see caveats
+below).
+
+**`TaskSnapshot` caveats — use `RunSnapshot` for an in-flight retry.** `get_result`
+returns a task-level view, which cannot express an in-flight
+[retry](https://github.com/lincolnloop/django-absurd/blob/main/docs/web/tasks.md#retries--spawn-options):
+
+- `attempts` counts attempts CREATED, not completed — a task with one failed attempt and
+  a pending backoff already reads `attempts=2`, before the second attempt has run.
+- `state="sleeping"` covers a retry backoff as well as a durable [sleep](#sleep) — a
+  test asserting "my workflow is asleep" would pass just as readily on a task that
+  crashed and is waiting to retry.
+- `failure` is `None` mid-backoff — `last_attempt_run` already points at the fresh
+  pending run by the time the backoff is showing.
+
+`drain()`'s `RunSnapshot` tells these apart: it reports each run's own state right after
+that run executes, so a retry sequence reads attempt-by-attempt instead of collapsing to
+one ambiguous final read.
+
+**Hazards:**
+
+- A freeze doesn't reach [pg_cron](#pg_cron-backend): its launcher runs in another
+  database on its own clock, so moving durable time cannot make a schedule fire. Testing
+  one stays "reconcile it in, then inspect `cron.job`", as `tests/pg_cron` does.
+- A savepoint rollback inside the block reverts Django's session clock, so a later
+  `enqueue()` stamps real time and won't look claimable. Don't enqueue across a rollback
+  boundary.
 
 ### Getting a `SCHEDULE` into pg_cron for a test
 
@@ -936,9 +1096,11 @@ freed) → the warehouse system POSTs the webhook → the view emits the event o
 queue → the task's next claim finds it → resumes with the payload.
 
 `queue` must match the queue the waiting task actually runs on — it targets the
-client-level `emit_event`'s `queue_name`, not a database alias. An unknown queue raises
-`ImproperlyConfigured` immediately (fail fast on a typo). `emit_event` is sync; from an
-async view, wrap it in `sync_to_async`.
+client-level `emit_event`'s `queue_name`, not a database alias. An undeclared queue
+raises `QueueNotDeclaredError` immediately (fail fast on a typo); a declared but
+unprovisioned queue raises `QueueNotProvisionedError` naming
+`manage.py absurd_sync_queues` (see [Exceptions](#exceptions) above). `emit_event` is
+sync; from an async view, wrap it in `sync_to_async`.
 
 #### Sync
 

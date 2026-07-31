@@ -159,9 +159,11 @@ def test_enqueuing_inert_params_off_backend_warns_once(
         bound.enqueue("off-backend-ran")
         bound.enqueue("off-backend-ran-again")
     assert caplog.messages == [
-        "absurd_params ignored: tests.core.test_absurd_params."
-        "make_group_on_immediate_backend ran on task backend 'immediate', "
-        "which is not an Absurd backend"
+        (
+            "absurd_params ignored: tests.core.test_absurd_params."
+            "make_group_on_immediate_backend ran on task backend 'immediate', "
+            "which is not an Absurd backend"
+        )
     ]
     # The immediate backend still ran the task; only the params were inert.
     assert Group.objects.filter(name="off-backend-ran").exists()
@@ -176,8 +178,10 @@ def test_enqueuing_params_routed_off_backend_warns(
     with caplog.at_level(logging.WARNING, logger="django_absurd"):
         bound.using(backend="immediate").enqueue("routed-out")
     assert caplog.messages == [
-        "absurd_params ignored: tests.tasks.echo ran on task backend 'immediate', "
-        "which is not an Absurd backend"
+        (
+            "absurd_params ignored: tests.tasks.echo ran on task backend 'immediate', "
+            "which is not an Absurd backend"
+        )
     ]
 
 
@@ -197,7 +201,9 @@ def test_aenqueuing_inert_params_off_backend_warns(
     with caplog.at_level(logging.WARNING, logger="django_absurd"):
         asyncio.run(bound.aenqueue(3, 4))
     assert caplog.messages == [
-        "absurd_params ignored: tests.core.test_absurd_params."
-        "multiply_on_immediate_backend ran on task backend 'immediate', "
-        "which is not an Absurd backend"
+        (
+            "absurd_params ignored: tests.core.test_absurd_params."
+            "multiply_on_immediate_backend ran on task backend 'immediate', "
+            "which is not an Absurd backend"
+        )
     ]

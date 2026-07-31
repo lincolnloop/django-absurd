@@ -4,7 +4,6 @@ import uuid
 import pytest
 from django.contrib.admin.utils import quote
 from django.contrib.auth.models import AbstractBaseUser, User
-from django.core.management import call_command
 from django.db import connections
 from django.test import Client
 from django.urls import reverse, reverse_lazy
@@ -26,7 +25,6 @@ def change_url(pk: str) -> str:
 def test_changelist_and_composite_detail(
     admin_user: AbstractBaseUser, client: Client
 ) -> None:
-    call_command("absurd_sync_queues")
     rid, tid = uuid.uuid4(), uuid.uuid4()
     with connections["default"].cursor() as cur:
         cur.execute(

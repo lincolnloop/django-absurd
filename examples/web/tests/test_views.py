@@ -1,12 +1,14 @@
 """High-level HTTP tests for the web demo — drive the real nanodjango views through
 the Django test client, asserting observable responses. The `add` task and the
-`fulfill_order` workflow are exercised end-to-end via `absurd_drain_queue`."""
+`fulfill_order` workflow are exercised end-to-end via the `dj_absurd` fixture's
+`drain()`."""
 
-import typing as t
 import uuid
 
 import pytest
 from django.test import Client
+
+from django_absurd.test import AbsurdTestRuntime
 
 
 def test_index_get_renders_the_add_form(client: Client) -> None:
@@ -24,12 +26,12 @@ def test_index_post_invalid_rerenders_the_form(client: Client) -> None:
 
 @pytest.mark.django_db(transaction=True)
 def test_add_succeeds_and_the_result_page_shows_the_value(
-    absurd_drain_queue: t.Callable[..., None], client: Client
+    client: Client, dj_absurd: AbsurdTestRuntime
 ) -> None:
     resp = client.post("/", {"a": "2", "b": "3"})
     assert resp.status_code == 302
     task_url = resp.headers["Location"]
-    absurd_drain_queue()
+    assert [run.state for run in dj_absurd.drain()] == ["completed"]
     body = client.get(task_url).content.decode()
     assert "SUCCESSFUL" in body
     assert "5.0" in body
@@ -37,11 +39,12 @@ def test_add_succeeds_and_the_result_page_shows_the_value(
 
 @pytest.mark.django_db(transaction=True)
 def test_add_fails_on_non_numeric_input(
-    absurd_drain_queue: t.Callable[..., None], client: Client
+    client: Client, dj_absurd: AbsurdTestRuntime
 ) -> None:
     resp = client.post("/", {"a": "x", "b": "3"})
     task_url = resp.headers["Location"]
-    absurd_drain_queue()
+    # Every attempt of the default retry burn is drained, and each one fails.
+    assert {run.state for run in dj_absurd.drain()} == {"failed"}
     body = client.get(task_url).content.decode()
     assert "FAILED" in body
     assert "Failed:" in body
@@ -76,13 +79,14 @@ def test_workflow_post_invalid_rerenders_the_form(client: Client) -> None:
 
 @pytest.mark.django_db(transaction=True)
 def test_workflow_suspends_on_event_then_completes_after_pack(
-    absurd_drain_queue: t.Callable[..., None], client: Client
+    client: Client, dj_absurd: AbsurdTestRuntime
 ) -> None:
     resp = client.post("/workflow/", {"order": "order-7"})
     assert resp.status_code == 302
     task_url = resp.headers["Location"]
 
-    absurd_drain_queue()  # charge + reserve, then suspends on await_event
+    # charge + reserve, then suspends on await_event
+    assert [run.state for run in dj_absurd.drain()] == ["sleeping"]
     waiting = client.get(task_url).content.decode()
     assert "Working" in waiting
     assert 'action="/workflow/order-7/pack/' in waiting  # pack button present
@@ -90,7 +94,8 @@ def test_workflow_suspends_on_event_then_completes_after_pack(
     pack = client.post("/workflow/order-7/pack/?next=/")
     assert pack.status_code == 302
 
-    absurd_drain_queue()  # event delivered → resumes, runs notify, completes
+    # event delivered → resumes, runs notify, completes
+    assert [run.state for run in dj_absurd.drain()] == ["completed"]
     done = client.get(task_url).content.decode()
     assert "SUCCESSFUL" in done
     assert "notified: order-7" in done
@@ -98,15 +103,21 @@ def test_workflow_suspends_on_event_then_completes_after_pack(
 
 @pytest.mark.django_db(transaction=True)
 def test_pack_view_get_does_not_emit_the_event(
-    absurd_drain_queue: t.Callable[..., None], client: Client
+    client: Client, dj_absurd: AbsurdTestRuntime
 ) -> None:
     task_url = client.post("/workflow/", {"order": "order-get"}).headers["Location"]
-    absurd_drain_queue()  # suspends on await_event
+    assert [run.state for run in dj_absurd.drain()] == ["sleeping"]
 
     resp = client.get("/workflow/order-get/pack/")  # GET must NOT emit
     assert resp.status_code == 302
     assert resp.headers["Location"] == "/"  # default next
 
-    absurd_drain_queue()
+    assert dj_absurd.drain() == []  # nothing claimable: no event woke the waiter
     body = client.get(task_url).content.decode()
     assert "Working" in body  # still suspended — the GET delivered no event
+
+
+def test_pack_view_rejects_an_off_site_next(client: Client) -> None:
+    resp = client.get("/workflow/order-x/pack/?next=https://evil.example/steal")
+    assert resp.status_code == 302
+    assert resp.headers["Location"] == "/"

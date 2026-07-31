@@ -3,12 +3,14 @@ import typing as t
 import pytest
 from django.core.management import call_command
 from django.db import connections
+from django.tasks import task
 
 if t.TYPE_CHECKING:
     import pytest_django.fixtures
 
 from django_absurd.models import Queue
 from django_absurd.routers import AbsurdRouter
+from django_absurd.test import AbsurdTestRuntime
 
 pytestmark = [
     pytest.mark.django_db(databases=["default", "absurd"]),
@@ -16,6 +18,11 @@ pytestmark = [
 ]
 
 ABSURD = "django_absurd.backends.AbsurdBackend"
+
+
+@task
+def sum_numbers(a: int, b: int) -> int:
+    return a + b
 
 
 def absurd_schema_present(alias: str) -> bool:
@@ -61,3 +68,16 @@ def test_sync_command_honors_alias(
     }
     call_command("absurd_sync_queues")
     assert Queue.objects.get(queue_name="routed").queue_name == "routed"
+
+
+@pytest.mark.django_db(databases=["absurd", "default"], transaction=True)
+def test_roundtrip_drains_on_the_non_default_alias(
+    dj_absurd: AbsurdTestRuntime,
+) -> None:
+    # the fixture resolves the Absurd alias itself (resolve_absurd_database), so a
+    # drain/get_result here must land on "absurd", never the router's "default"
+    assert dj_absurd.alias == "absurd"
+    result = sum_numbers.enqueue(1, 2)
+    assert [run.result for run in dj_absurd.drain()] == [3]
+    snapshot = dj_absurd.get_result(result.id)
+    assert snapshot.result == 3

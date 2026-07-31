@@ -112,7 +112,6 @@ def test_changelist_search_narrows_by_task_name(
 def test_changelist_shows_dates_ordered_by_recent_activity(
     admin_user: User, client: Client
 ) -> None:
-    call_command("absurd_sync_queues")  # index the default queue
     older = tasks.add.enqueue(1, 1)
     newer = tasks.add.enqueue(2, 2)  # enqueued later → more recent activity
     client.force_login(admin_user)
@@ -140,7 +139,6 @@ def test_changelist_warns_about_unindexed_queue(
     # build the views over the declared queues, then create a queue directly
     # (config drift): it lands in the catalog but no view arm references it →
     # unindexed.
-    call_command("absurd_sync_queues")
     get_absurd_client().create_queue("drift")
     client.force_login(admin_user)
     resp = client.get(CHANGELIST)
@@ -225,7 +223,6 @@ def test_detail_groups_fields_and_inlines_runs(
 def test_detail_inlines_checkpoints_and_run_available_at(
     admin_user: User, client: Client
 ) -> None:
-    call_command("absurd_sync_queues")
     atasks.DURABLE_STEP_CALLS["n"] = 0
     atasks.asleep_for_once.enqueue("admin-k")
     call_command("absurd_worker", queue="default", burst=True)  # suspends
@@ -256,7 +253,6 @@ def test_detail_inlines_checkpoints_and_run_available_at(
 def test_detail_inlines_waits_for_a_suspended_await_event(
     admin_user: User, client: Client
 ) -> None:
-    call_command("absurd_sync_queues")
     tasks.sawait_event_once.enqueue("wait-admin-demo")
     call_command("absurd_worker", queue="default", burst=True)  # suspends
     client.force_login(admin_user)
@@ -309,14 +305,12 @@ def test_admin_labels_app_as_absurd(admin_user: User, client: Client) -> None:
 def test_changelist_degrades_when_view_dropped(
     admin_user: User, client: Client
 ) -> None:
-    call_command("absurd_sync_queues")
     with connections["default"].cursor() as cur:
         cur.execute("DROP VIEW IF EXISTS absurd.tasks_view")
     client.force_login(admin_user)
     resp = client.get(CHANGELIST)
     assert resp.status_code == 200
     assert result_rows(parse_html(resp)) == []
-    call_command("absurd_sync_queues")
 
 
 def test_partitioned_queue_appears_in_changelist(

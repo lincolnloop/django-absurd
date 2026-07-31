@@ -12,12 +12,12 @@ from django.contrib.auth.models import Group
 from django.core.management import call_command
 from django.db import connection
 from django.utils import timezone
-from freezegun import freeze_time
 
 from django_absurd.backends import get_absurd_backends
 from django_absurd.cleanup import QueueCleanup, cleanup_queues
 from django_absurd.queues import get_absurd_client
 from django_absurd.scheduler import run_beat
+from django_absurd.test import AbsurdTestRuntime, FrozenTime
 from tests import tasks
 
 if t.TYPE_CHECKING:
@@ -33,6 +33,7 @@ pytestmark = [
 ]
 
 ABSURD = "django_absurd.backends.AbsurdBackend"
+BEAT_EPOCH = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
 
 
 def sync_queue(
@@ -259,34 +260,38 @@ def test_flush_non_interactive_eof_keeps_queues(
 
 
 def run_beat_until(
+    frozen_time: FrozenTime,
     backend: "django_absurd.backends.AbsurdBackend",
     cutoff: dt.datetime,
 ) -> None:
-    with freeze_time("2026-01-01 00:00:00") as frozen:
+    def fake_wait(timeout: float) -> bool:
+        frozen_time.shift(dt.timedelta(seconds=timeout))
+        return timezone.now() >= cutoff
 
-        def fake_wait(timeout: float) -> bool:
-            frozen.tick(dt.timedelta(seconds=timeout))
-            return timezone.now() >= cutoff
-
-        run_beat(backend, wait=fake_wait)
+    run_beat(backend, wait=fake_wait)
 
 
 def test_beat_fires_cleanup_on_cadence(
     cleanup: "CleanupCallable",
+    dj_absurd: AbsurdTestRuntime,
     settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     sync_queue(settings, cleanup={"schedule": "* * * * *"})
     backend = get_absurd_backends()["default"]
-    tasks.add.enqueue(2, 3)
-    drain()  # completed → aged-terminal (cleanup_ttl="0 seconds")
-    run_beat_until(backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC))
-    assert cleanup() == [
-        {"queue_name": "default", "tasks_deleted": 0, "events_deleted": 0}
-    ]
+    with dj_absurd.freeze_time(BEAT_EPOCH) as frozen_time:
+        tasks.add.enqueue(2, 3)
+        drain()  # completed → aged-terminal (cleanup_ttl="0 seconds")
+        run_beat_until(
+            frozen_time, backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC)
+        )
+        assert cleanup() == [
+            {"queue_name": "default", "tasks_deleted": 0, "events_deleted": 0}
+        ]
 
 
 def test_beat_isolates_failing_cleanup(
     caplog: pytest.LogCaptureFixture,
+    dj_absurd: AbsurdTestRuntime,
     settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     sync_queue(settings, cleanup={"schedule": "* * * * *"})
@@ -294,8 +299,13 @@ def test_beat_isolates_failing_cleanup(
     with connection.cursor() as cur:
         cur.execute("DROP SCHEMA IF EXISTS absurd CASCADE")
     try:
-        with caplog.at_level(logging.ERROR, logger="django_absurd"):
-            run_beat_until(backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC))
+        with (
+            dj_absurd.freeze_time(BEAT_EPOCH) as frozen_time,
+            caplog.at_level(logging.ERROR, logger="django_absurd"),
+        ):
+            run_beat_until(
+                frozen_time, backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC)
+            )
         errors = [r for r in caplog.records if r.levelno == logging.ERROR]
         assert [r.getMessage() for r in errors] == ["django-absurd cleanup failed"]
     finally:
@@ -304,6 +314,7 @@ def test_beat_isolates_failing_cleanup(
 
 
 def test_beat_fires_cleanup_and_task_same_slot(
+    dj_absurd: AbsurdTestRuntime,
     settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     # A scheduled task and CLEANUP sharing a cron slot both fire in the one tick:
@@ -325,14 +336,17 @@ def test_beat_fires_cleanup_and_task_same_slot(
         }
     }
     call_command("absurd_sync_queues")
-    tasks.add.enqueue(2, 3)
-    drain()  # completed → aged-terminal, cleanup-eligible
     backend = get_absurd_backends()["default"]
-    run_beat_until(backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC))
-    # cleanup fired this tick: the aged task is already gone (nothing left to delete)
-    assert cleanup_queues() == [
-        {"queue_name": "default", "tasks_deleted": 0, "events_deleted": 0}
-    ]
-    # the scheduled task fired the same tick: run it and assert its side effect
-    drain()
-    assert Group.objects.filter(name="fired").exists()
+    with dj_absurd.freeze_time(BEAT_EPOCH) as frozen_time:
+        tasks.add.enqueue(2, 3)
+        drain()  # completed → aged-terminal, cleanup-eligible
+        run_beat_until(
+            frozen_time, backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC)
+        )
+        # cleanup fired this tick: the aged task is already gone, nothing left to delete
+        assert cleanup_queues() == [
+            {"queue_name": "default", "tasks_deleted": 0, "events_deleted": 0}
+        ]
+        # the scheduled task fired the same tick: run it and assert its side effect
+        drain()
+        assert Group.objects.filter(name="fired").exists()

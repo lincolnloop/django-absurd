@@ -43,6 +43,20 @@ def test_sync_crons_command_malformed_schedule_raises_commanderror(
         call_command("absurd_sync_crons")
 
 
+def test_sync_crons_command_no_backend_errors(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
+    settings.TASKS = {
+        "default": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}
+    }
+    with pytest.raises(CommandError) as excinfo:
+        call_command("absurd_sync_crons")
+    assert str(excinfo.value) == (
+        "No Absurd backend configured. Add a django_absurd.backends.AbsurdBackend "
+        "entry to TASKS."
+    )
+
+
 def test_sync_crons_command_creates_cron_jobs(
     capsys: pytest.CaptureFixture[str],
     settings: pytest_django.fixtures.SettingsWrapper,

@@ -9,6 +9,7 @@ from django.db import connection
 
 from django_absurd.backends import get_absurd_backends
 from django_absurd.pg_cron.reconcile import sync_crons
+from django_absurd.test import AbsurdTestRuntime
 from tests.models import Payload
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -33,6 +34,7 @@ TASKS_PG_CRON = {
 
 
 def test_e2e_sync_fire_worker_assert_payload(
+    dj_absurd: AbsurdTestRuntime,
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     """Sync schedule into pg_cron, fire wrapper directly, drain queue, assert row."""
@@ -47,7 +49,7 @@ def test_e2e_sync_fire_worker_assert_payload(
             ["s", "e"],
         )
 
-    call_command("absurd_worker", queue="default", burst=True)
+    dj_absurd.drain()
 
     payload = Payload.objects.filter(data="e2e").first()
     assert payload is not None, "Payload row with data='e2e' was not created"

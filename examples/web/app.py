@@ -29,6 +29,7 @@ from django.shortcuts import redirect
 from django.tasks import TaskResultStatus, default_task_backend, task
 from django.tasks.exceptions import TaskResultDoesNotExist
 from django.urls import reverse
+from django.utils.http import url_has_allowed_host_and_scheme
 from nanodjango import Django
 
 from django_absurd import emit_event, get_absurd_context
@@ -172,6 +173,10 @@ def pack_view(request: HttpRequest, order: str) -> HttpResponse:
             queue="default",
         )
     next_url = request.GET.get("next", "/")
+    if not url_has_allowed_host_and_scheme(
+        next_url, allowed_hosts={request.get_host()}, require_https=request.is_secure()
+    ):
+        next_url = "/"
     return redirect(next_url)
 
 

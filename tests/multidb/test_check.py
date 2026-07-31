@@ -1,27 +1,10 @@
-import typing as t
-
 import pytest
 from django.core.management import call_command
-from django.core.management.base import SystemCheckError
 from pytest_django.fixtures import SettingsWrapper
 
 pytestmark = pytest.mark.django_db(databases=["default", "absurd"])
 
 ABSURD = "django_absurd.backends.AbsurdBackend"
-
-
-def run_absurd_check(
-    capsys: pytest.CaptureFixture[str],
-    *args: t.Any,
-    **kwargs: t.Any,
-) -> str:
-    try:
-        call_command("check", "django_absurd", *args, **kwargs)
-    except SystemCheckError as exc:
-        cap = capsys.readouterr()
-        return cap.out + cap.err + str(exc)
-    cap = capsys.readouterr()
-    return cap.out + cap.err
 
 
 def test_storage_mode_drift_detected_on_non_default_alias(
@@ -46,7 +29,9 @@ def test_storage_mode_drift_detected_on_non_default_alias(
             },
         }
     }
-    out = run_absurd_check(capsys, databases=["absurd"])
+    call_command("check", "django_absurd", databases=["absurd"])
+    captured = capsys.readouterr()
+    out = captured.out + captured.err
     assert "absurd.W002" in out
     assert (
         "django-absurd: a queue's declared storage_mode differs from the database"

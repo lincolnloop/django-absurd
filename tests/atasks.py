@@ -6,6 +6,7 @@ from absurd_sdk import JsonValue
 from django.tasks import TaskContext, task
 
 from django_absurd import aget_absurd_context
+from tests import tasks
 from tests.models import Payload
 
 DURABLE_STEP_CALLS: dict[str, int] = {"n": 0}
@@ -75,13 +76,13 @@ async def asleep_for_once(key: str) -> int:
         return DURABLE_STEP_CALLS["n"]
 
     n = await context.step("bump", bump)
-    await context.sleep_for("nap", 1.5)
+    await context.sleep_for("nap", tasks.WEEK_SECONDS)
     return n
 
 
 @task
 async def asleep_until_once(key: str) -> str:
-    await aget_absurd_context().sleep_until("nap", time.time() + 1.5)
+    await aget_absurd_context().sleep_until("nap", time.time() + tasks.WEEK_SECONDS)
     return "woke"
 
 

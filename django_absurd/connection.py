@@ -30,9 +30,8 @@ def validate_backend(using: str) -> None:
 def register_jsonb_loader(context: psycopg.abc.AdaptContext) -> None:
     # absurd-sdk returns jsonb columns as raw strings unless we register a loader;
     # psycopg3's built-in loader is jsonb-type-OID only and doesn't cover the
-    # un-typed bytea path the SDK's claim_tasks cursor uses.
-    # Accepts either a Connection (for the SDK path) or a Cursor (for get_result,
-    # where cursor-scope avoids poisoning Django's shared connection adapters).
+    # un-typed bytea path the SDK's claim_tasks cursor uses. Typed as an AdaptContext
+    # because that is what psycopg scopes a loader to.
     set_json_loads(json.loads, context)
 
 

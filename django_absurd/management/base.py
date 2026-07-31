@@ -1,6 +1,7 @@
-from django.core.management.base import BaseCommand, CommandError
+from django.core.management.base import BaseCommand
 
 from django_absurd.backends import AbsurdBackend, get_absurd_backends
+from django_absurd.exceptions import BackendNotConfiguredError
 from django_absurd.queues import SyncResult
 
 BEAT_DISABLED_UNDER_PG_CRON = (
@@ -15,14 +16,7 @@ def resolve_backend() -> AbsurdBackend:
     backends = get_absurd_backends()
     if len(backends) == 1:
         return next(iter(backends.values()))
-    if len(backends) == 0:
-        msg = "No Absurd backend configured."
-        raise CommandError(msg)
-    msg = (
-        "django-absurd supports one Absurd backend per project; "
-        "configure exactly one AbsurdBackend in TASKS."
-    )
-    raise CommandError(msg)
+    raise BackendNotConfiguredError(len(backends))
 
 
 class AbsurdReportCommand(BaseCommand):

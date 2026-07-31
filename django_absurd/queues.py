@@ -1,7 +1,9 @@
 import datetime as dt
+import re
 import typing as t
 from dataclasses import dataclass, field
 
+import psycopg.errors
 from absurd_sdk import Absurd, QueuePolicyOptions
 from django.core.exceptions import ImproperlyConfigured
 from django.db import connections
@@ -10,7 +12,14 @@ from django.db.utils import ProgrammingError
 from django_absurd import backends
 from django_absurd.admin_views import rebuild_views
 from django_absurd.connection import build_absurd_client, validate_backend
-from django_absurd.models import Queue
+
+if t.TYPE_CHECKING:
+    from django_absurd.models import Queue
+
+# Per-queue table prefixes, as absurd.create_queue names them: tasks, runs, checkpoints,
+# events, waiters. (``i_<queue>`` exists for a partitioned queue too, but only spawn and
+# cleanup touch it — nothing a drain runs can miss it.)
+QUEUE_TABLE_PREFIXES = ("t", "r", "c", "e", "w")
 
 MUTABLE_OPTION_KEYS = (
     "partition_lookahead",
@@ -56,7 +65,39 @@ def get_absurd_client(using: str | None = None) -> Absurd:
     return build_absurd_client(using or resolve_absurd_database())
 
 
+def names_a_queue_table(exc: psycopg.errors.UndefinedTable, queue: str) -> bool:
+    """Report whether ``exc`` is about one of ``queue``'s own Absurd tables.
+
+    Read off ``diag.message_primary`` (``relation "absurd.r_default" does not exist``),
+    not ``diag.table_name``: Postgres populates no table field for SQLSTATE 42P01 —
+    verified, it is always ``None`` — since a relation that does not exist has no OID to
+    name. The match is on the relation NAME, which Postgres never translates, so a
+    server running a localised ``lc_messages`` classifies the same way an English one
+    does.
+
+    Word-bounded, so an unrelated ``audit_default`` is not read as this queue's
+    ``t_default``. ``message_primary`` alone, never ``str(exc)``: the latter carries
+    the failing statement as CONTEXT, and the claim statement names every queue table,
+    so an unrelated failure inside it would look like a provisioning problem.
+    """
+    message = exc.diag.message_primary or ""
+    return any(
+        re.search(rf"\b{re.escape(prefix)}_{re.escape(queue)}\b", message)
+        for prefix in QUEUE_TABLE_PREFIXES
+    )
+
+
 def reconcile_queue(backend: backends.AbsurdBackend, queue_name: str) -> SyncResult:
+    # The ONE import that would make this module settings-dependent at load time:
+    # ``django_absurd.models`` defines model classes (``build_admin_model``), so
+    # importing it reads INSTALLED_APPS. Keeping it in here is what lets
+    # ``django_absurd.pytest_plugin``/``.test``/``.flush`` import this module at their
+    # own top level during pytest's bootstrap, in any venv, before Django is configured.
+    # Move it to the top of this module and every pytest run in a non-Django project
+    # dies with INTERNALERROR (see tests/core/test_pytest_plugin.py's
+    # test_a_pytest_run_with_no_django_settings_still_collects).
+    from django_absurd.models import Queue  # noqa: PLC0415
+
     db = backend.database
     validate_backend(db)
     opts = backends.get_declared_queues(backend)[queue_name]
@@ -116,7 +157,7 @@ def parse_interval(using: str, interval_str: str) -> dt.timedelta:
 
 
 def check_mutable_options_drifted(
-    using: str, opts: QueuePolicyOptions, existing: Queue
+    using: str, opts: QueuePolicyOptions, existing: "Queue"
 ) -> bool:
     for key, declared_value in opts.items():
         db_value = getattr(existing, key)

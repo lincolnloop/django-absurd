@@ -35,7 +35,9 @@ class PgCronConfig(AppConfig):
                 db_alias, str(db_config["NAME"])
             )
 
-        # Side-effect import: running the module registers its @register'd E007 checks.
+        # Side-effect import: registers the @register'd checks. In-function
+        # because checks imports models and ready() runs before models load
+        # (AppRegistryNotReady).
         import django_absurd.pg_cron.checks  # noqa: F401, PLC0415
 
         scheduled_task = apps.get_model("django_absurd_pg_cron", "ScheduledTask")
@@ -73,6 +75,9 @@ def reconcile_crons_after_migrate(
     stdout: t.TextIO | None = None,
     **kwargs: object,
 ) -> None:
+    # In-function for the same reason as the checks import in ready(): reconcile imports
+    # pg_cron.models, and this module is executed during app-registry population, so a
+    # module-level import raises AppRegistryNotReady.
     from django_absurd.pg_cron.reconcile import (  # noqa: PLC0415
         sync_admin_crons,
         sync_crons,

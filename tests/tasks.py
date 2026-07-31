@@ -10,6 +10,8 @@ from django_absurd import absurd_params, get_absurd_context
 from tests.models import Payload
 
 SYNC_STEP_CALLS: dict[str, int] = {"n": 0}
+RETRY_CALLS: dict[str, int] = {"n": 0}
+WEEK_SECONDS = 7 * 24 * 3600
 
 
 @task
@@ -78,8 +80,8 @@ def on_reports() -> str:
 @task
 @absurd_params(retry_strategy=RetryStrategy(kind="exponential", base_seconds=2))
 def retrying() -> t.Never:
-    msg = "path-resolved for its decorator; never run"
-    raise NotImplementedError(msg)
+    msg = "boom"
+    raise ValueError(msg)
 
 
 @task
@@ -135,13 +137,13 @@ def ssleep_for_once(key: str) -> int:
         return SYNC_STEP_CALLS["n"]
 
     n = context.step("bump", bump)
-    context.sleep_for("nap", 1.5)
+    context.sleep_for("nap", WEEK_SECONDS)
     return n
 
 
 @task
 def ssleep_until_once(key: str) -> str:
-    get_absurd_context().sleep_until("nap", time.time() + 1.5)
+    get_absurd_context().sleep_until("nap", time.time() + WEEK_SECONDS)
     return "woke"
 
 
@@ -162,3 +164,52 @@ def sawait_event_timeout(name: str, timeout: int) -> str:
     except absurd_sdk.TimeoutError:
         return "timed-out"
     return "no-timeout"
+
+
+@task
+def spawn_child_then_return(value: int) -> str:
+    run_child.enqueue(value)
+    return "spawned"
+
+
+@task
+def run_child(value: int) -> int:
+    return value * 2
+
+
+@task
+def sleep_a_week() -> str:
+    get_absurd_context().sleep_for("nap", WEEK_SECONDS)
+    return "woke"
+
+
+@task
+def sleep_twice() -> str:
+    context = get_absurd_context()
+    context.sleep_for("first", WEEK_SECONDS)
+    context.sleep_for("second", 3 * 24 * 3600)
+    return "woke-twice"
+
+
+@task
+@absurd_params(retry_strategy=RetryStrategy(kind="fixed", base_seconds=3600))
+def fail_with_long_backoff() -> t.Never:
+    msg = "boom"
+    raise ValueError(msg)
+
+
+@task
+@absurd_params(cancellation=CancellationPolicy(max_delay=60))
+def cancellable_after_a_minute() -> t.Never:
+    msg = "cancelled before it ever ran"
+    raise NotImplementedError(msg)
+
+
+@task
+@absurd_params(retry_strategy=RetryStrategy(kind="fixed", base_seconds=0))
+def fail_twice_then_succeed() -> str:
+    RETRY_CALLS["n"] += 1
+    if RETRY_CALLS["n"] < 3:
+        msg = f"attempt {RETRY_CALLS['n']} fails"
+        raise ValueError(msg)
+    return "third-time-lucky"

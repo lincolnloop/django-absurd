@@ -22,4 +22,13 @@ docker compose up
 - `http://localhost:8000/` — enqueue `add(a, b)`
 - `http://localhost:8000/admin/` — read-only queue tables (login: **admin** / **admin**)
 
+Running more than one example at once? Override the published port:
+`APP_PORT=8010 docker compose up`.
+
 Tear down: `docker compose down -v`
+
+## Test
+
+```
+uv run pytest
+```

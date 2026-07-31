@@ -9,17 +9,19 @@ dev = [
   "build==1.5.0",
   "django-coverage-plugin==3.2.2",
   "django-stubs==6.0.7",
-  "freezegun==1.5.5",
   "hatch-vcs==0.5.0",
   "hatchling==1.31.0",
   "mypy==2.3.0",
   "psycopg[binary]==3.3.4",
+  "pytest-asyncio==1.4.0",
   "pytest-cov==7.1.0",
   "pytest-django==4.12.0",
   "pytest-socket==0.8.0",
+  "pytest-timeout==2.4.0",
   "pytest-xdist==3.8.0",
   "pytest==9.1.1",
   "ruff==0.16.0",
+  "time-machine==3.2.0",
   "types-croniter==6.2.4.20260711",
   "zensical==0.0.51",
 ]
@@ -90,9 +92,6 @@ skip_covered = true
 
 [tool.coverage.run]
 branch = true
-omit = [
-  "tests/multidb/*",
-]
 patch = ["subprocess"]
 plugins = [
   "django_coverage_plugin",
@@ -140,6 +139,7 @@ ignore = [
   "ARG001",  # Unused function argument
   "ARG002",  # Unused method argument
   "COM812",  # Check absence of trailing commas. Made redundant by formatter.
+  "CPY001",  # Missing copyright notice. This project doesn't use file headers.
   "D",  # Missing or badly formatted docstrings
   "FBT",  # Flake Boolean Trap
   "PLR2004",  # Allow "magic values"

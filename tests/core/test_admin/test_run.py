@@ -35,7 +35,6 @@ def test_changelist_shows_dates_ordered_by_recent_activity(
     admin_user: User,
     client: Client,
 ) -> None:
-    call_command("absurd_sync_queues")
     older = tasks.add.enqueue(1, 1)
     call_command("absurd_worker", queue="default", burst=True)  # older run starts
     newer = tasks.add.enqueue(2, 2)
@@ -102,7 +101,6 @@ def test_changelist_and_detail_survive_indefinite_available_at(
     # psycopg cannot decode a literal infinity into a Python datetime, so an
     # un-guarded available_at column crashes both the changelist and the detail
     # page with a DataError before anything renders.
-    call_command("absurd_sync_queues")
     tasks.sawait_event_once.enqueue("admin-infinity-check")
     call_command("absurd_worker", queue="default", burst=True)  # suspends indefinitely
 

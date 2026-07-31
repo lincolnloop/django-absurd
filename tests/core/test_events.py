@@ -1,33 +1,44 @@
+import psycopg.errors
 import pytest
-from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command
+from django.db import connection
 from pytest_django.fixtures import SettingsWrapper
 
 from django_absurd import emit_event
-from tests import atasks, tasks, utils
+from django_absurd.exceptions import (
+    BackendNotConfiguredError,
+    QueueNotDeclaredError,
+    QueueNotProvisionedError,
+)
+from django_absurd.test import AbsurdTestRuntime
+from tests import atasks, tasks
 
-pytestmark = pytest.mark.django_db(transaction=True)
+pytestmark = [
+    pytest.mark.django_db(transaction=True),
+    pytest.mark.usefixtures("_isolate_queues"),
+]
 
 
 def test_top_level_emit_event_unknown_queue_raises() -> None:
-    with pytest.raises(
-        ImproperlyConfigured,
-        match=(
-            r"Queue 'ghost' is not declared in TASKS QUEUES\. Add it to the QUEUES "
-            r"list in your TASKS backend settings\."
-        ),
-    ):
+    with pytest.raises(QueueNotDeclaredError) as exc:
         emit_event("whatever", queue="ghost")
+    assert str(exc.value) == (
+        "Queue 'ghost' is not declared for backend 'default'. "
+        "Valid queues: default, other, reports. "
+        "Add it to the QUEUES list in your TASKS backend settings."
+    )
 
 
 def test_top_level_emit_event_no_backend_configured_raises(
     settings: SettingsWrapper,
 ) -> None:
     settings.TASKS = {"x": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}}
-    with pytest.raises(
-        ImproperlyConfigured, match=r"django-absurd: no Absurd backend configured\."
-    ):
+    with pytest.raises(BackendNotConfiguredError) as exc:
         emit_event("whatever")
+    assert str(exc.value) == (
+        "No Absurd backend configured. Add a django_absurd.backends.AbsurdBackend "
+        "entry to TASKS."
+    )
 
 
 def test_top_level_emit_event_unsynced_queue_raises(
@@ -40,7 +51,7 @@ def test_top_level_emit_event_unsynced_queue_raises(
         }
     }
     with pytest.raises(
-        ImproperlyConfigured,
+        QueueNotProvisionedError,
         match=(
             r"Queue 'unsynced' is declared but its Absurd table is not provisioned\. "
             r"Run: manage\.py absurd_sync_queues"
@@ -49,109 +60,130 @@ def test_top_level_emit_event_unsynced_queue_raises(
         emit_event("whatever", queue="unsynced")
 
 
-def test_sync_await_event_suspends_then_top_level_emit_resumes() -> None:
+def test_emit_event_does_not_relabel_an_unrelated_missing_relation() -> None:
+    """Mirrors test_drain_queue_does_not_relabel_an_unrelated_missing_relation
+    (tests/core/test_worker.py): a missing relation that is NOT one of this queue's
+    own Absurd tables surfaces as itself, chained, rather than as the curated
+    unprovisioned-queue error.
+    """
     call_command("absurd_sync_queues")
-    result = tasks.sawait_event_once.enqueue("order.packed:sync-1")
+    try:
+        with connection.cursor() as cur:
+            cur.execute(
+                "create or replace function absurd.record_audit_probe() "
+                "returns trigger language plpgsql as $$ begin "
+                "insert into absurd.audit_probe (run_id) values (new.run_id); "
+                "return new; end; $$"
+            )
+            cur.execute(
+                "create trigger audit_probe_after_emit after insert "
+                "on absurd.e_default for each row "
+                "execute function absurd.record_audit_probe()"
+            )
 
-    utils.run_absurd_worker()  # drain 1: no event yet -> suspend
-    suspended = utils.get_task_result(result.id)
-    assert suspended is not None
-    assert suspended.state == "sleeping"
+        with pytest.raises(psycopg.errors.UndefinedTable) as undefined:
+            emit_event("order.packed:audit-probe", queue="default")
+
+        assert (
+            undefined.value.diag.message_primary
+            == 'relation "absurd.audit_probe" does not exist'
+        )
+    finally:
+        with connection.cursor() as cur:
+            cur.execute("drop function if exists absurd.record_audit_probe() cascade")
+
+
+def test_sync_await_event_suspends_then_top_level_emit_resumes(
+    dj_absurd: AbsurdTestRuntime,
+) -> None:
+    dj_absurd.sync_queues()
+    tasks.sawait_event_once.enqueue("order.packed:sync-1")
+
+    assert [run.state for run in dj_absurd.drain()] == ["sleeping"]
 
     emit_event("order.packed:sync-1", {"tracking": "abc"}, queue="default")
 
-    utils.run_absurd_worker()  # drain 2: resumes with the payload
-    done = utils.get_task_result(result.id)
-    assert done is not None
-    assert done.state == "completed"
-    assert done.result == {"tracking": "abc"}
+    assert [(run.state, run.result) for run in dj_absurd.drain()] == [
+        ("completed", {"tracking": "abc"})
+    ]
 
 
-def test_async_await_event_suspends_then_top_level_emit_resumes() -> None:
-    call_command("absurd_sync_queues")
-    result = atasks.aawait_event_once.enqueue("order.packed:async-1")
+def test_async_await_event_suspends_then_top_level_emit_resumes(
+    dj_absurd: AbsurdTestRuntime,
+) -> None:
+    dj_absurd.sync_queues()
+    atasks.aawait_event_once.enqueue("order.packed:async-1")
 
-    utils.run_absurd_worker()
-    suspended = utils.get_task_result(result.id)
-    assert suspended is not None
-    assert suspended.state == "sleeping"
+    assert [run.state for run in dj_absurd.drain()] == ["sleeping"]
 
     emit_event("order.packed:async-1", {"tracking": "abc"}, queue="default")
 
-    utils.run_absurd_worker()
-    done = utils.get_task_result(result.id)
-    assert done is not None
-    assert done.state == "completed"
-    assert done.result == {"tracking": "abc"}
+    assert [(run.state, run.result) for run in dj_absurd.drain()] == [
+        ("completed", {"tracking": "abc"})
+    ]
 
 
-def test_emit_before_await_returns_immediately_no_suspend() -> None:
-    call_command("absurd_sync_queues")
+def test_emit_before_await_returns_immediately_no_suspend(
+    dj_absurd: AbsurdTestRuntime,
+) -> None:
+    dj_absurd.sync_queues()
     emit_event("order.packed:before-1", {"tracking": "xyz"}, queue="default")
 
-    result = tasks.sawait_event_once.enqueue("order.packed:before-1")
-    utils.run_absurd_worker()  # single drain: event already there, no suspend
-    done = utils.get_task_result(result.id)
-    assert done is not None
-    assert done.state == "completed"
-    assert done.result == {"tracking": "xyz"}
+    tasks.sawait_event_once.enqueue("order.packed:before-1")
+    assert [(run.state, run.result) for run in dj_absurd.drain()] == [
+        ("completed", {"tracking": "xyz"})
+    ]
 
 
-def test_first_emit_per_name_wins() -> None:
-    call_command("absurd_sync_queues")
+def test_first_emit_per_name_wins(dj_absurd: AbsurdTestRuntime) -> None:
+    dj_absurd.sync_queues()
     emit_event("order.packed:first-wins", {"tracking": "first"}, queue="default")
     emit_event("order.packed:first-wins", {"tracking": "second"}, queue="default")
 
-    result = tasks.sawait_event_once.enqueue("order.packed:first-wins")
-    utils.run_absurd_worker()
-    done = utils.get_task_result(result.id)
-    assert done is not None
-    assert done.result == {"tracking": "first"}
+    tasks.sawait_event_once.enqueue("order.packed:first-wins")
+    assert [run.result for run in dj_absurd.drain()] == [{"tracking": "first"}]
 
 
-def test_in_task_emit_event_wakes_a_separately_enqueued_waiter() -> None:
-    call_command("absurd_sync_queues")
+def test_in_task_emit_event_wakes_a_separately_enqueued_waiter(
+    dj_absurd: AbsurdTestRuntime,
+) -> None:
+    dj_absurd.sync_queues()
     tasks.semit_event_once.enqueue("order.packed:in-task", {"tracking": "in-task"})
-    utils.run_absurd_worker()
+    assert [run.state for run in dj_absurd.drain()] == ["completed"]
 
-    result = tasks.sawait_event_once.enqueue("order.packed:in-task")
-    utils.run_absurd_worker()
-    done = utils.get_task_result(result.id)
-    assert done is not None
-    assert done.result == {"tracking": "in-task"}
+    tasks.sawait_event_once.enqueue("order.packed:in-task")
+    assert [run.result for run in dj_absurd.drain()] == [{"tracking": "in-task"}]
 
 
-def test_async_in_task_emit_event_wakes_a_separately_enqueued_waiter() -> None:
-    call_command("absurd_sync_queues")
+def test_async_in_task_emit_event_wakes_a_separately_enqueued_waiter(
+    dj_absurd: AbsurdTestRuntime,
+) -> None:
+    dj_absurd.sync_queues()
     atasks.aemit_event_once.enqueue("order.packed:in-task-async", {"tracking": "async"})
-    utils.run_absurd_worker()
+    assert [run.state for run in dj_absurd.drain()] == ["completed"]
 
-    result = atasks.aawait_event_once.enqueue("order.packed:in-task-async")
-    utils.run_absurd_worker()
-    done = utils.get_task_result(result.id)
-    assert done is not None
-    assert done.result == {"tracking": "async"}
+    atasks.aawait_event_once.enqueue("order.packed:in-task-async")
+    assert [run.result for run in dj_absurd.drain()] == [{"tracking": "async"}]
 
 
-def test_uncaught_timeout_raises_absurd_sdk_timeout_error_and_is_catchable() -> None:
-    call_command("absurd_sync_queues")
-    result = tasks.sawait_event_timeout.enqueue("order.packed:never-arrives", timeout=0)
-    utils.run_absurd_worker()
-    done = utils.get_task_result(result.id)
-    assert done is not None
-    assert done.state == "completed"
-    assert done.result == "timed-out"
+def test_uncaught_timeout_raises_absurd_sdk_timeout_error_and_is_catchable(
+    dj_absurd: AbsurdTestRuntime,
+) -> None:
+    dj_absurd.sync_queues()
+    tasks.sawait_event_timeout.enqueue("order.packed:never-arrives", timeout=0)
+    assert [(run.state, run.result) for run in dj_absurd.drain()] == [
+        ("sleeping", None),
+        ("completed", "timed-out"),
+    ]
 
 
-def test_event_already_present_returns_no_timeout_before_deadline() -> None:
-    call_command("absurd_sync_queues")
+def test_event_already_present_returns_no_timeout_before_deadline(
+    dj_absurd: AbsurdTestRuntime,
+) -> None:
+    dj_absurd.sync_queues()
     emit_event("order.packed:before-timeout-1", {"tracking": "xyz"}, queue="default")
 
-    result = tasks.sawait_event_timeout.enqueue(
-        "order.packed:before-timeout-1", timeout=60
-    )
-    utils.run_absurd_worker()  # single drain: event already there, no suspend
-    done = utils.get_task_result(result.id)
-    assert done is not None
-    assert done.state == "completed"
-    assert done.result == "no-timeout"
+    tasks.sawait_event_timeout.enqueue("order.packed:before-timeout-1", timeout=60)
+    assert [(run.state, run.result) for run in dj_absurd.drain()] == [
+        ("completed", "no-timeout")
+    ]

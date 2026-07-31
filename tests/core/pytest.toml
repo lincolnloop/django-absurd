@@ -11,6 +11,12 @@ addopts = [
   "--reuse-db",
   "--strict-markers",
 ]
+# Explicit, not inherited: strict mode means an `async def test_` runs only with an
+# @pytest.mark.asyncio marker, so pytest-asyncio (installed venv-wide, hence loaded in
+# every suite) stays inert everywhere it isn't asked for. The loop scope is pinned
+# because leaving it unset is a pytest-asyncio deprecation warning.
+asyncio_default_fixture_loop_scope = "function"
+asyncio_mode = "strict"
 filterwarnings = [
   "error::bs4.GuessedAtParserWarning",
 ]
@@ -19,3 +25,6 @@ markers = [
 ]
 pythonpath = ["../.."]
 testpaths = ["."]
+# Durable waits are frozen-clock now (slowest test ~1.2s); this cap turns a
+# reintroduced wall-clock sleep or a half-moved-clock deadlock into a failure, not a hang.
+timeout = "10"

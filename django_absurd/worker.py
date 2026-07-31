@@ -5,6 +5,7 @@ import signal
 import threading
 import time
 import typing as t
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -15,22 +16,25 @@ from absurd_sdk import (
     AsyncAbsurd,
     AsyncTaskContext,
     CancelledTask,
+    ClaimedTask,
     FailedTask,
     JsonValue,
     SuspendTask,
 )
+from asgiref.sync import sync_to_async
 from django.core.exceptions import ImproperlyConfigured
-from django.core.management.base import CommandError
 from django.db import close_old_connections, connections
 from django.tasks import Task, TaskContext, TaskResult, TaskResultStatus
 from django.utils import timezone
 from django.utils.module_loading import import_string
 
-from django_absurd.backends import AbsurdBackend, TaskParams
+from django_absurd import admin_views
+from django_absurd.backends import AbsurdBackend, RunModel, TaskParams
 from django_absurd.connection import register_jsonb_loader, validate_backend
 from django_absurd.context import WORKER_LOOP
+from django_absurd.exceptions import QueueNotDeclaredError, QueueNotProvisionedError
 from django_absurd.management.base import resolve_backend
-from django_absurd.queues import SyncResult, provision_backend
+from django_absurd.queues import names_a_queue_table
 from django_absurd.scheduler import run_beat
 
 logger = logging.getLogger("django_absurd")
@@ -45,6 +49,29 @@ class WorkerOptions:
     poll_interval: float = 0.25
     batch_size: int | None = None
     worker_id: str | None = None
+
+
+@dataclass(frozen=True)
+class DrainedRun:
+    """One run executed during a burst drain, in claim order.
+
+    ``state``/``result``/``failure`` cost one read per run, taken immediately after
+    THAT run executes — never batched at drain end, so a run that re-arms itself (an
+    ``await_event`` waiter) keeps its earlier ``sleeping`` appearance honest instead
+    of it being overwritten by the same run's later ``completed`` one.
+
+    ``run_id``/``task_id`` are ``uuid.UUID`` at runtime even though the SDK's
+    ``ClaimedTask`` stub types them ``str`` — psycopg deserializes the uuid columns.
+    """
+
+    run_id: uuid.UUID
+    task_id: uuid.UUID
+    task_name: str
+    params: t.Any
+    attempt: int
+    state: str
+    result: t.Any | None
+    failure: t.Any | None
 
 
 class LazyTaskRegistry(dict[str, dict[str, t.Any]]):
@@ -87,28 +114,28 @@ class LazyTaskRegistry(dict[str, dict[str, t.Any]]):
         return super().get(name, default)
 
 
-def run_burst_worker(
-    queue: str = "default",
-    *,
-    options: WorkerOptions | None = None,
-) -> SyncResult:
-    options = options or WorkerOptions()
+def drain_queue(queue: str = "default") -> list[DrainedRun]:
+    """Burst-drain ``queue`` in-process, one ``DrainedRun`` per run, in claim order.
+
+    The entry point behind ``AbsurdTestRuntime.drain``: resolves the backend itself
+    and takes no ``WorkerOptions`` — worker knobs live on the ``absurd_worker`` CLI.
+    Provisions nothing: migrate already provisions every declared queue, so a queue
+    declared mid-test surfaces as the same ``QueueNotProvisionedError``
+    ``events.emit_event`` raises — not as schema DDL from a call tests read results
+    through. Only a relation of THIS queue's own earns that translation; any other
+    missing relation re-raises as itself (chained, so it stays visible), because
+    "run absurd_sync_queues" would send the reader to the wrong door.
+    """
     backend = resolve_backend()
     if queue not in backend.queues:
-        valid = ", ".join(sorted(backend.queues))
-        msg = (
-            f"Queue '{queue}' is not declared for backend '{backend.alias}'."
-            f" Valid queues: {valid}"
-        )
-        raise CommandError(msg)
+        raise QueueNotDeclaredError(queue, backend.alias, backend.queues)
 
     try:
-        result = provision_backend(backend)
-    except ImproperlyConfigured as exc:
-        raise CommandError(str(exc)) from exc
-
-    run_worker(backend, queue, burst=True, options=options)
-    return result
+        return run_worker(backend, queue, burst=True)
+    except psycopg.errors.UndefinedTable as exc:
+        if not names_a_queue_table(exc, queue):
+            raise
+        raise QueueNotProvisionedError(queue) from exc
 
 
 def run_worker(
@@ -118,10 +145,10 @@ def run_worker(
     burst: bool = False,
     run_beat: bool = False,
     options: WorkerOptions | None = None,
-) -> None:
+) -> list[DrainedRun]:
     options = options or WorkerOptions()
     validate_backend(backend.database)
-    asyncio.run(
+    return asyncio.run(
         arun_worker(backend, queue, burst=burst, run_beat=run_beat, options=options)
     )
 
@@ -133,7 +160,7 @@ async def arun_worker(
     burst: bool = False,
     run_beat: bool = False,
     options: WorkerOptions,
-) -> None:
+) -> list[DrainedRun]:
     with ThreadPoolExecutor(max_workers=options.concurrency) as executor:
         loop = asyncio.get_running_loop()
         loop.set_default_executor(executor)
@@ -148,17 +175,12 @@ async def arun_worker(
                 options.concurrency,
             )
             if burst:
-                await drain_queue(
-                    client,
-                    concurrency=options.concurrency,
-                    claim_timeout=options.claim_timeout,
-                    batch_size=options.batch_size,
-                    worker_id=options.worker_id,
-                )
-            elif run_beat:
+                return await adrain_queue(backend.database, client, queue, options)
+            if run_beat:
                 await run_worker_with_beat(client, options, backend)
             else:
                 await run_blocking_worker(client, options)
+            return []
 
 
 @asynccontextmanager
@@ -168,6 +190,8 @@ async def aworker_client(
     # DEDICATED async connection (built from Django's DB config, NOT Django's registered
     # connection). cursor_factory from Django's params is fatal for AsyncConnection
     # (sync cursor factory incompatible with async execute) — pop it before connecting.
+    # The connection stays private to the client built on it: every read django-absurd
+    # makes for itself goes through the ORM instead.
     params: dict[str, t.Any] = connections[backend.database].get_connection_params()
     params.pop("cursor_factory", None)
     conn: psycopg.AsyncConnection = await psycopg.AsyncConnection.connect(
@@ -193,28 +217,83 @@ async def aworker_client(
         yield client
     finally:
         await conn.close()
+        # fetch_run_outcome's ORM read runs on asgiref's thread-sensitive executor —
+        # one process-wide thread nothing else tears down — so its Django session
+        # would outlive the whole worker run, and one session fails DROP DATABASE
+        # (measured: a run without --reuse-db dies with "database ... is being
+        # accessed by other users"). Close once per run, here, in that same thread
+        # (both calls resolve the same executor). The blocking worker reads nothing.
+        await sync_to_async(close_old_connections)()
 
 
-async def drain_queue(
+async def adrain_queue(
+    database: str,
     client: AsyncAbsurd,
-    *,
-    concurrency: int = 1,
-    claim_timeout: int = 120,
-    batch_size: int | None = None,
-    worker_id: str | None = None,
-) -> int:
-    count = 0
+    queue: str,
+    options: WorkerOptions,
+) -> list[DrainedRun]:
+    drained: list[DrainedRun] = []
     while True:
         claimed = await client.claim_tasks(
-            batch_size or concurrency, claim_timeout, worker_id or "worker"
+            options.batch_size or options.concurrency,
+            options.claim_timeout,
+            options.worker_id or "worker",
         )
         if not claimed:
             break
-        await asyncio.gather(
-            *[client._execute_task(t_, claim_timeout) for t_ in claimed]  # noqa: SLF001 -- SDK exposes no public counted dispatch; mirrors work_batch
+        drained.extend(
+            await asyncio.gather(
+                *[
+                    execute_claimed_run(
+                        database, client, queue, claimed_task, options.claim_timeout
+                    )
+                    for claimed_task in claimed
+                ]
+            )
         )
-        count += len(claimed)
-    return count
+    return drained
+
+
+async def execute_claimed_run(
+    database: str,
+    client: AsyncAbsurd,
+    queue: str,
+    claimed: ClaimedTask,
+    claim_timeout: int,
+) -> DrainedRun:
+    await client._execute_task(claimed, claim_timeout)  # noqa: SLF001 -- SDK exposes no public counted dispatch; mirrors work_batch
+    state, result, failure = await fetch_run_outcome(database, queue, claimed["run_id"])
+    return DrainedRun(
+        run_id=t.cast("uuid.UUID", claimed["run_id"]),
+        task_id=t.cast("uuid.UUID", claimed["task_id"]),
+        task_name=claimed["task_name"],
+        params=claimed["params"],
+        attempt=claimed["attempt"],
+        state=state,
+        result=result,
+        failure=failure,
+    )
+
+
+async def fetch_run_outcome(
+    database: str, queue: str, run_id: str
+) -> tuple[str, t.Any, t.Any]:
+    """Read one run's current ``state``/``result``/``failure_reason``.
+
+    No public SDK accessor keys a read by ``run_id`` (only ``task_id``, which
+    collapses a retry's several runs), so read the run row through the same
+    per-queue dynamic model the other reads use — no SQL of its own. ORM means
+    Django's connection via a ``sync_to_async`` hop; only burst drains pay it, and
+    next to executing the task it is noise. The row is committed by the time
+    ``_execute_task`` returns (the SDK writes on autocommit). ``aget``, not
+    ``afirst``: a missing just-executed run is a broken invariant that should raise.
+    """
+    runs_spec = next(s for s in admin_views.ADMIN_ENTITY_SPECS if s.name == "runs")
+    run_model: type[t.Any] = admin_views.build_queue_table_model(runs_spec, queue)
+    run: RunModel = (
+        await run_model.objects.using(database).defer("available_at").aget(pk=run_id)
+    )
+    return run.state, run.result, run.failure_reason
 
 
 def build_task_context(

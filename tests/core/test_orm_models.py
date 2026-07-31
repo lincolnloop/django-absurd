@@ -65,7 +65,6 @@ def test_admin_uses_the_models_py_classes() -> None:
 
 
 def seed_two_queues() -> None:
-    call_command("absurd_sync_queues")
     tasks.add.enqueue(2, 3)
     tasks.add.using(queue_name="other").enqueue(7, 8)
     absurd_params(max_attempts=1).bind(tasks.boom).enqueue()
