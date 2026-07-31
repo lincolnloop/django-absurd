@@ -89,12 +89,25 @@ duplicate that material here.
   access — do NOT decorate tests with `@pytest.mark.django_db`. Only add
   `@pytest.mark.django_db(transaction=True)` (or markers for multi-DB / reset-sequences)
   when a test needs transactions/commits or DDL (`migrate`, `create_queue`).
-- **A durable test (sleep, `await_event` timeout, retry backoff, a chain of several
-  sleeps) uses the `dj_absurd` pytest fixture's clock** —
+- **Any test that EXECUTES anything — enqueue, drain, a worker, cleanup deleting rows —
+  freezes time through the `dj_absurd` fixture**, not through time-machine directly:
   `with dj_absurd.freeze_time() as frozen_time:`, then
   `frozen_time.shift(Δ)`/`move_to(instant)`, enqueueing INSIDE the block — **never
-  `time.sleep`**. See
+  `time.sleep`**. It moves Postgres and Python together, which is mandatory: Postgres
+  ahead of Python is an unkillable deadlock for a sync task. The fixture works unchanged
+  in an `async def` test. See
   [Testing — the `dj_absurd` fixture](docs/web/testing.md#the-dj_absurd-fixture).
+- **`time_machine.travel(..., tick=False)` directly is for pure-Python math only** —
+  cron arithmetic (`get_next_datetime`) and the like, where no row, worker, or Absurd
+  deadline is involved. Reaching for the fixture there would write a database GUC for
+  nothing; reaching for time-machine on an executing test leaves Postgres on real time
+  (that mistake shipped once — `test_cleanup.py` passed only because `cleanup_ttl` was
+  0). The one sanctioned ticking use is `tests/core/test_scheduler.py`'s live worker
+  crossing a `*/1` boundary, which needs real time to pass.
+- **freezegun is banned** — it patches `time.monotonic`, which IS asyncio's event-loop
+  clock, so a frozen freezegun deadlocks the burst drain unkillably. Do not reintroduce
+  it. `pytest-asyncio` is a dev dependency for writing `async def` tests; nothing in
+  `django_absurd/` may depend on it.
 - **No monkeypatching / `unittest.mock.patch`.** Test observable behavior, not
   internals. If a test needs to patch our own functions to reach a branch, restructure
   so a real input drives that branch instead.
