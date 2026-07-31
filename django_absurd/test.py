@@ -26,7 +26,7 @@ run in any venv with django-absurd installed, so its top level must stay setting
 import asyncio
 import datetime as dt
 import functools
-import importlib.util
+import importlib
 import typing as t
 import uuid
 from collections.abc import Mapping
@@ -505,12 +505,9 @@ class AbsurdTestRuntime:
     def _move_python_clock(self, instant: dt.datetime) -> None:
         """Hold Python's clock at ``instant`` via time-machine, ``tick=False``.
 
-        time-machine is a test-time dependency of the PROJECT UNDER TEST, never bundled
-        and never an extra, so the import is lazy: a ``drain``-only test must not need
-        the package, and Python caches the module so only the first move pays for it.
-        ``_apply_clock_move`` has already called ``require_time_machine()`` before
-        either clock moved, so this import is expected to succeed — the ``except``
-        below is a defence-in-depth translation, not the primary guard.
+        The import is lazy because time-machine is optional — a ``drain``-only test
+        must not need it. ``require_time_machine()`` has already run, so it can't fail
+        here.
 
         ``tick=False`` is a correctness requirement: ``absurd.fake_now`` is a static
         literal, so Postgres never ticks, and a ticking Python clock would drift out of
@@ -519,10 +516,7 @@ class AbsurdTestRuntime:
         Both fields are assigned only once ``start()`` has returned, so a failed start
         leaves nothing for the release to ``stop()``.
         """
-        try:
-            import time_machine  # noqa: PLC0415
-        except ImportError as err:
-            raise ImproperlyConfigured(TIME_MACHINE_MISSING_MESSAGE) from err
+        import time_machine  # noqa: PLC0415
 
         if self.traveller is None:
             time_travel = time_machine.travel(instant, tick=False)
@@ -739,19 +733,13 @@ def require_time_machine() -> None:
     """Raise ``ImproperlyConfigured`` before either clock moves, if time-machine is not
     installed.
 
-    Called from ``_apply_clock_move`` ahead of both the Postgres GUC write and the
-    Python clock move, so a project without the optional dependency fails atomically —
-    neither clock is touched. ``importlib.util.find_spec`` rather than a bare
-    ``import time_machine``: a probe-only import with no later use of the bound name is
-    exactly what a linter flags as unused, and ``_move_python_clock`` already performs
-    the real import once it has actual work for the module to do.
+    Runs ahead of both clock writes, so a project without it fails with neither clock
+    touched.
     """
     try:
-        installed = importlib.util.find_spec("time_machine") is not None
+        importlib.import_module("time_machine")
     except ImportError as err:
         raise ImproperlyConfigured(TIME_MACHINE_MISSING_MESSAGE) from err
-    if not installed:
-        raise ImproperlyConfigured(TIME_MACHINE_MISSING_MESSAGE)
 
 
 def run_off_event_loop[T](work: t.Callable[[], T]) -> T:

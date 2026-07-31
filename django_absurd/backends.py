@@ -236,31 +236,28 @@ def fetch_task_and_run(
         raise TaskResultDoesNotExist(result_id) from exc
     if task is None:
         raise TaskResultDoesNotExist(result_id)
+    # Only the task read above translates a missing relation: past it the queue's
+    # schema demonstrably exists, so a ProgrammingError here is a broken database, not
+    # an absent task, and must not be relabelled as one.
     run: RunModel | None = None
     if task.last_attempt_run is not None:
-        try:
-            with transaction.atomic(using=database, savepoint=True):
-                run = (
-                    run_model.objects.using(database)
-                    .filter(pk=task.last_attempt_run)
-                    # An indefinite await_event can leave available_at as Postgres's
-                    # 'infinity' sentinel, which psycopg can't decode — defer it since
-                    # build_task_result() below never reads it.
-                    .defer("available_at")
-                    .first()
-                )
-        except ProgrammingError as exc:
-            raise TaskResultDoesNotExist(result_id) from exc
-    try:
         with transaction.atomic(using=database, savepoint=True):
-            worker_ids = list(
+            run = (
                 run_model.objects.using(database)
-                .filter(task_id=task_id, claimed_by__isnull=False)
-                .order_by("attempt")
-                .values_list("claimed_by", flat=True)
+                .filter(pk=task.last_attempt_run)
+                # An indefinite await_event can leave available_at as Postgres's
+                # 'infinity' sentinel, which psycopg can't decode — defer it since
+                # build_task_result() below never reads it.
+                .defer("available_at")
+                .first()
             )
-    except ProgrammingError as exc:
-        raise TaskResultDoesNotExist(result_id) from exc
+    with transaction.atomic(using=database, savepoint=True):
+        worker_ids = list(
+            run_model.objects.using(database)
+            .filter(task_id=task_id, claimed_by__isnull=False)
+            .order_by("attempt")
+            .values_list("claimed_by", flat=True)
+        )
     return task, run, worker_ids
 
 
