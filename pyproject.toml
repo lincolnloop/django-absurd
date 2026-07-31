@@ -141,6 +141,7 @@ ignore = [
   "ARG001",  # Unused function argument
   "ARG002",  # Unused method argument
   "COM812",  # Check absence of trailing commas. Made redundant by formatter.
+  "CPY001",  # Missing copyright notice. This project doesn't use file headers.
   "D",  # Missing or badly formatted docstrings
   "FBT",  # Flake Boolean Trap
   "PLR2004",  # Allow "magic values"
