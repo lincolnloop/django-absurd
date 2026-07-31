@@ -23,17 +23,20 @@ run in any venv with django-absurd installed, so its top level must stay setting
 ``django_absurd.pytest_plugin``'s module docstring and ``queues.reconcile_queue``.
 """
 
+import asyncio
 import datetime as dt
 import functools
 import importlib.util
 import typing as t
 import uuid
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
 
 import psycopg
 import psycopg.sql
+from asgiref.sync import sync_to_async
 from django.core.exceptions import ImproperlyConfigured
 from django.db import connections
 from django.db.utils import ProgrammingError
@@ -212,7 +215,10 @@ class AbsurdTestRuntime:
     """Read/drain/clock facade returned by the ``dj_absurd`` pytest fixture.
 
     Public surface: ``freeze_time``, ``now``, ``sync_queues``, ``drain``, ``emit``,
-    ``get_result``. Holds the Absurd backend's database alias and, while a
+    ``get_result``. Every one of them works unchanged — same name, no ``await`` — from
+    an ``async def`` test: the blocking Django/Absurd work each one does goes through
+    ``run_off_event_loop``, which steps off a running event loop when there is one.
+    Holds the Absurd backend's database alias and, while a
     ``freeze_time`` block is open, the time-machine coordinate driving Python's half
     of the clock. ``time_travel``/``traveller`` stay ``None`` outside a freeze — a
     drain-only test pays nothing and cannot leak a frozen clock, and a live
@@ -252,7 +258,7 @@ class AbsurdTestRuntime:
         backend = queues.get_absurd_backend()
         if backend is None:
             raise BackendNotConfiguredError(0)
-        queues.provision_backend(backend)
+        run_off_event_loop(functools.partial(queues.provision_backend, backend))
 
     def get_result(
         self, task_id: str | uuid.UUID, queue: str | NotSet = NOT_SET
@@ -284,7 +290,11 @@ class AbsurdTestRuntime:
         else:
             resolved_queue = "default" if queue is NOT_SET else queue
         try:
-            task, run = read_task_and_last_run(self.alias, resolved_queue, raw_task_id)
+            task, run = run_off_event_loop(
+                functools.partial(
+                    read_task_and_last_run, self.alias, resolved_queue, raw_task_id
+                )
+            )
         except ProgrammingError as exc:
             cause = exc.__cause__
             if not isinstance(
@@ -323,7 +333,7 @@ class AbsurdTestRuntime:
         never wake — a silent no-op instead of a loud error.
         """
         guard_against_open_transaction(self.alias, "emit")
-        emit_event(name, payload, queue=queue)
+        run_off_event_loop(functools.partial(emit_event, name, payload, queue=queue))
 
     def drain(self, queue: str = "default") -> list[RunSnapshot]:
         """Burst-drain ``queue`` synchronously, one ``RunSnapshot`` per run, in claim
@@ -338,13 +348,13 @@ class AbsurdTestRuntime:
 
         The worker import is in-function for cost and containment, not import-safety
         (verified settings-free): only ``drain()`` needs the execution engine, so
-        pytest bootstrap in a non-draining project never loads the asyncio bridge,
-        thread pool, or ``django.tasks``.
+        pytest bootstrap in a non-draining project never loads the absurd SDK's async
+        client or ``django.tasks``.
         """
         guard_against_open_transaction(self.alias, "drain")
         from django_absurd import worker  # noqa: PLC0415
 
-        drained = worker.drain_queue(queue)
+        drained = run_off_event_loop(functools.partial(worker.drain_queue, queue))
         snapshots: list[RunSnapshot] = []
         for run in drained:
             args, kwargs = decode_params(run.params)
@@ -532,6 +542,14 @@ class AbsurdTestRuntime:
         the cast inside ``absurd.current_time()`` cannot depend on the reading
         session's ``TimeZone``. Name read at runtime for xdist's per-worker
         databases.
+
+        Both writes go through ``run_off_event_loop`` together, so under a running loop
+        they land on ONE off-loop connection rather than the session write landing on a
+        second one. Under a loop the session half reaches only that off-loop session
+        (closed on the way out) — an ``async def`` test cannot use Django's sync ORM on
+        its own connection anyway, and every session its work DOES use (``aenqueue``'s
+        ``sync_to_async`` thread, the SDK's own connection per drain) either opens after
+        this write or is opened fresh, inheriting the database-level default.
         """
         statement = psycopg.sql.SQL(
             "alter database {name} set absurd.fake_now = {instant}"
@@ -539,13 +557,17 @@ class AbsurdTestRuntime:
             name=psycopg.sql.Identifier(connections[self.alias].settings_dict["NAME"]),
             instant=psycopg.sql.Literal(instant.isoformat()),
         )
-        with open_test_connection(self.alias) as cursor:
-            cursor.execute(statement)
-        with connections[self.alias].cursor() as session_cursor:
-            session_cursor.execute(
-                "select set_config('absurd.fake_now', %s, false)",
-                [instant.isoformat()],
-            )
+
+        def write_both_clock_levels() -> None:
+            with open_test_connection(self.alias) as cursor:
+                cursor.execute(statement)
+            with connections[self.alias].cursor() as session_cursor:
+                session_cursor.execute(
+                    "select set_config('absurd.fake_now', %s, false)",
+                    [instant.isoformat()],
+                )
+
+        run_off_event_loop(write_both_clock_levels)
 
     def _release_clock(self) -> None:
         """Restore real time on both clocks; a runtime with no open freeze touches
@@ -568,10 +590,19 @@ class AbsurdTestRuntime:
         """Unset at database level via ``flush.reset_fake_now`` (the single
         implementation), then on Django's own live session, which a database-level
         default never reaches.
+
+        Paired with ``_write_fake_now``'s hop so the two halves release wherever they
+        were set: a ``freeze_time`` block exited inside an ``async def`` test releases
+        off the loop, while the fixture's own teardown runs after the loop has closed
+        and releases in place.
         """
-        flush.reset_fake_now(self.alias)
-        with connections[self.alias].cursor() as session_cursor:
-            session_cursor.execute("reset absurd.fake_now")
+
+        def reset_both_clock_levels() -> None:
+            flush.reset_fake_now(self.alias)
+            with connections[self.alias].cursor() as session_cursor:
+                session_cursor.execute("reset absurd.fake_now")
+
+        run_off_event_loop(reset_both_clock_levels)
 
 
 def read_task_and_last_run(
@@ -679,9 +710,23 @@ def guard_against_blocked_database(alias: str) -> None:
     the WHOLE session's markers, so an unmarked-elsewhere session leaves ``alias``
     unswapped. Reusing pytest-django's own per-test block instead catches every such
     session shape, not just the common one.
+
+    Off the loop when there is one, because ``ensure_connection`` is exactly what
+    Django's ``async_unsafe`` decorator refuses outright — so under a running loop the
+    guard could not run at all on the calling thread. It loses nothing by changing
+    threads: BOTH blocks it relies on are patched onto ``BaseDatabaseWrapper`` ITSELF
+    (pytest-django's ``_blocking_wrapper``, and Django's undeclared-alias
+    ``mock.patch.object``), so they fire for whichever thread's connection asks. The
+    alias is re-resolved INSIDE the hop rather than the calling thread's wrapper being
+    handed over: connecting stamps ``_thread_ident``, and a test connection first
+    opened by the hop thread would then refuse the test's own later cursors.
     """
-    try:
+
+    def ensure_the_test_can_reach_the_database() -> None:
         connections[alias].ensure_connection()
+
+    try:
+        run_off_event_loop(ensure_the_test_can_reach_the_database)
     except RuntimeError as exc:
         msg = (
             "django-absurd: freeze_time() needs real Django database access to pin "
@@ -708,3 +753,69 @@ def require_time_machine() -> None:
         raise ImproperlyConfigured(TIME_MACHINE_MISSING_MESSAGE) from err
     if not installed:
         raise ImproperlyConfigured(TIME_MACHINE_MISSING_MESSAGE)
+
+
+def run_off_event_loop[T](work: t.Callable[[], T]) -> T:
+    """Run ``work`` somewhere Django's synchronous API is legal, and block for its
+    result — which is what lets one facade serve both a plain ``def test_`` and an
+    ``async def`` one with no second API and no ``await``.
+
+    With no loop running in this thread, ``work`` is simply called: the sync path is
+    untouched, same thread, same connection, same traceback. Under a running loop it
+    goes to a worker thread, where there IS no running loop, so both Django's
+    ``async_unsafe`` guards and ``asyncio.run`` inside the burst worker are legal
+    again. Blocking the loop is safe here because a test is the only thing on it and
+    ``work`` never awaits it back — ``drain()``'s ``arun_worker`` builds a loop of its
+    own in the worker thread.
+
+    Callers keep their guards on THEIR OWN thread and call this for the DB work only:
+    ``in_atomic_block`` is per-connection and ``connections`` is thread-local, so a
+    transaction guard evaluated over here would inspect a connection the test never
+    used and pass every time.
+
+    Two sets of Django connections are closed on the way out, both of them sessions no
+    test-runner teardown reaches, and one stranded session is enough to fail teardown's
+    ``DROP DATABASE`` (the trap ``worker.aworker_client`` already closes for):
+
+    - the worker thread's own, opened by ``work`` — ``connections`` is thread-critical,
+      so these are objects the test itself never saw;
+    - asgiref's thread-sensitive session, where ``aenqueue`` and Django's own async ORM
+      (``aget``, ``acreate``, …) run their synchronous halves. That one is a
+      process-wide thread whose session inherits ``absurd.fake_now`` at CONNECT time,
+      and a session-level ``SET`` can only ever reach the thread it runs on — so a
+      connection opened before a freeze, or before the last clock move, keeps stamping
+      the wrong instant, and does so for every LATER test too. Measured, before this
+      close: one preceding ``await Model.objects.acount()`` was enough to make a frozen
+      week-long sleep enqueue at real time and never wake. Recycling costs one
+      reconnect and leaves the next session to inherit whatever the clock now says.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return work()
+
+    def run_then_close_connections() -> T:
+        try:
+            return work()
+        finally:
+            connections.close_all()
+            # A loop of this thread's own, so asgiref resolves thread-sensitive work to
+            # its process-wide thread rather than back here — the same dispatch
+            # ``worker.aworker_client``'s own closing hop already relies on.
+            asyncio.run(sync_to_async(connections.close_all)())
+
+    return get_off_loop_executor().submit(run_then_close_connections).result()
+
+
+@functools.cache
+def get_off_loop_executor() -> ThreadPoolExecutor:
+    """The one worker thread every ``run_off_event_loop`` hop shares, built on first
+    use.
+
+    Cached, not per call or per fixture: a fresh executor per call would leak a thread
+    per drain across a suite, and the runtime that owns the fixture is function-scoped,
+    so hanging it there would leak one per test instead. One worker is enough because
+    each hop blocks until it returns, and a nested call inside the worker thread finds
+    no running loop and never queues behind itself.
+    """
+    return ThreadPoolExecutor(max_workers=1, thread_name_prefix="dj-absurd-test")

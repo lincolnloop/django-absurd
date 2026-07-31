@@ -321,6 +321,11 @@ def test_freeze_time_refuses_a_test_with_no_db_marker(
     ``freeze_time()``'s raw connection — proven by pointing the LIVE ``NAME`` at a
     database that does not exist. A second, marked test keeps ``django_db_setup``
     and the session sweep working, isolating the assert to the unmarked test's guard.
+
+    Both an ``async def`` unmarked test and a plain one, because the guard's
+    ``ensure_connection`` probe is the one that has to step off a running event loop to
+    run at all: the async case is what proves the hop still reaches the block instead of
+    quietly passing on a connection the test never had.
     """
     monkeypatch.setenv("PYTHONPATH", str(REPO_ROOT))
     real_name = connections["default"].settings_dict["NAME"]
@@ -340,16 +345,23 @@ def test_freeze_time_refuses_a_test_with_no_db_marker(
             pass
 
 
+        NO_ACCESS = (
+            r"django-absurd: freeze_time\\(\\) needs real Django database "
+            r"access to pin Postgres's clock on 'default', and this test "
+            r"has none\\. Mark it "
+            r"@pytest\\.mark\\.django_db\\(transaction=True\\)\\."
+        )
+
+
         def test_no_marker(dj_absurd):
-            with pytest.raises(
-                RuntimeError,
-                match=(
-                    r"django-absurd: freeze_time\\(\\) needs real Django database "
-                    r"access to pin Postgres's clock on 'default', and this test "
-                    r"has none\\. Mark it "
-                    r"@pytest\\.mark\\.django_db\\(transaction=True\\)\\."
-                ),
-            ):
+            with pytest.raises(RuntimeError, match=NO_ACCESS):
+                with dj_absurd.freeze_time():
+                    pass
+
+
+        @pytest.mark.asyncio
+        async def test_no_marker_async(dj_absurd):
+            with pytest.raises(RuntimeError, match=NO_ACCESS):
                 with dj_absurd.freeze_time():
                     pass
         """,
@@ -357,7 +369,7 @@ def test_freeze_time_refuses_a_test_with_no_db_marker(
 
     outcome = pytester.runpytest_subprocess("--reuse-db", "--ds=inner_settings")
 
-    outcome.assert_outcomes(passed=2)
+    outcome.assert_outcomes(passed=3)
 
 
 def test_the_start_sweep_no_ops_in_a_project_without_an_absurd_backend(
