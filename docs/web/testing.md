@@ -22,14 +22,11 @@ retry backoff, or a chain of several sleeps.
 import datetime as dt
 
 import pytest
-from django.core.management import call_command
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
 def test_a_task_sleeps_seven_days_then_completes(dj_absurd):
-    call_command("absurd_sync_queues")
-
     with dj_absurd.freeze_time(dt.datetime(2026, 1, 1, tzinfo=dt.UTC)) as frozen_time:
         result = my_weekly_followup_task.enqueue()  # enqueue INSIDE the block
         assert [run.state for run in dj_absurd.drain()] == ["sleeping"]
@@ -86,10 +83,18 @@ pays nothing: the other members never touch the clock. `FrozenTime` is importabl
 
     [time-machine](https://github.com/adamchainz/time-machine) is a dev/test
     dependency of *your* project, not bundled with django-absurd and not one of its
-    extras. `pip install time-machine` in your test environment. `drain`/`emit`/
-    `get_result`/`now` work without it — only `freeze_time` imports it, lazily, on
-    first use, and raises `ImproperlyConfigured` naming the install command if it's
+    extras. `pip install time-machine` in your test environment. `sync_queues`/`drain`/
+    `emit`/`get_result`/`now` work without it — only `freeze_time` imports it, lazily,
+    on first use, and raises `ImproperlyConfigured` naming the install command if it's
     missing.
+
+### `sync_queues()`
+
+Provisions every declared queue — the runtime counterpart of
+`manage.py absurd_sync_queues`. Rarely needed: `migrate` already provisions the declared
+catalog, so reach for this only when the test itself changed queue topology — a
+`settings` override declaring a queue the migration never saw, or a fixture that dropped
+the queues.
 
 ### `drain(queue="default")`
 
@@ -101,10 +106,9 @@ time, then returns one `RunSnapshot` per run executed, in claim order.
 It provisions nothing, unlike the CLI, which provisions declared queues on start.
 `migrate` provisions every declared queue already, so a test database arrives ready. A
 queue a single test declares by overriding `TASKS` has no table yet — call
-`call_command("absurd_sync_queues")` first, or `drain()` raises
-`QueueNotProvisionedError` naming that command. Draining a queue that isn't declared at
-all raises `QueueNotDeclaredError` — see
-[Our own exceptions](workflows.md#our-own-exceptions).
+`dj_absurd.sync_queues()` first, or `drain()` raises `QueueNotProvisionedError` naming
+the `absurd_sync_queues` command. Draining a queue that isn't declared at all raises
+`QueueNotDeclaredError` — see [Our own exceptions](workflows.md#our-own-exceptions).
 
 ### `emit(name, payload=None, queue="default")`
 

@@ -749,13 +749,14 @@ Then point your project's `TEST_RUNNER` at it. `install_absurd_cleanup()` is ide
 Running a task, moving Absurd's own notion of "now", and inspecting what actually ran
 all go through one fixture, `dj_absurd` — whether the test is a one-line "my task
 completes" or a [durable sleep](#sleep), an [`await_event` timeout](#timeout), a retry
-backoff, or a chain of several sleeps. It returns an `AbsurdTestRuntime` with five
+backoff, or a chain of several sleeps. It returns an `AbsurdTestRuntime` with six
 members:
 
 | Member                                      | Does                                                              |
 | ------------------------------------------- | ----------------------------------------------------------------- |
 | `freeze_time(instant=None)`                 | context manager pinning durable time (`None` = real now at entry) |
 | `now`                                       | virtual now, timezone-aware, as Postgres itself reports it        |
+| `sync_queues()`                             | provision every declared queue (rarely needed; see below)         |
 | `drain(queue="default")`                    | burst-drain a queue, returning `list[RunSnapshot]`                |
 | `emit(name, payload=None, queue="default")` | deliver an event, resolving a task suspended in `await_event`     |
 | `get_result(task_id, queue=...)`            | look up one task, returning `TaskSnapshot \| None` (see below)    |
@@ -772,14 +773,11 @@ re-freezing from real now.
 import datetime as dt
 
 import pytest
-from django.core.management import call_command
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
 def test_a_task_sleeps_seven_days_then_completes(dj_absurd):
-    call_command("absurd_sync_queues")
-
     with dj_absurd.freeze_time(dt.datetime(2026, 1, 1, tzinfo=dt.UTC)) as frozen_time:
         result = my_weekly_followup_task.enqueue()  # enqueue INSIDE the block
         assert [run.state for run in dj_absurd.drain()] == ["sleeping"]
@@ -792,16 +790,22 @@ def test_a_task_sleeps_seven_days_then_completes(dj_absurd):
         assert snapshot.state == "completed"
 ```
 
+**`sync_queues()`** provisions every declared queue — the runtime counterpart of
+`manage.py absurd_sync_queues`. Rarely needed: `migrate` already provisions the declared
+catalog, so reach for this only when the test itself changed queue topology — a
+`settings` override declaring a queue the migration never saw, or a fixture that dropped
+the queues.
+
 **`drain()`** runs every currently-claimable task on `queue` to completion, in-process —
 no [worker](#workers) subprocess, no polling loop to manage. It's the fixture
 counterpart of `absurd_worker --burst`: it drains the backlog present at call time, then
 returns one `RunSnapshot` per run executed, in claim order. It provisions nothing
 (unlike the CLI, which provisions declared queues on start): `migrate` provisions every
 declared queue already, so a test database arrives ready, but a queue a single test
-declares by overriding `TASKS` needs `call_command("absurd_sync_queues")` first or
-`drain()` raises `QueueNotProvisionedError` naming that command (a queue that isn't
-declared at all raises `QueueNotDeclaredError`) — see [Exceptions](#exceptions) above
-for the full typed-error taxonomy.
+declares by overriding `TASKS` needs `dj_absurd.sync_queues()` first or `drain()` raises
+`QueueNotProvisionedError` naming that command (a queue that isn't declared at all
+raises `QueueNotDeclaredError`) — see [Exceptions](#exceptions) above for the full
+typed-error taxonomy.
 
 **`get_result()` honours a prefixed id's own queue.** `task_id` accepts either a bare
 uuid or Django's own `TaskResult.id` (`"queue:uuid"`) — whatever `enqueue()` handed
@@ -834,9 +838,9 @@ claimable until a later `move_to`/`shift` passes them. A test that never opens a
 
 **Install time-machine yourself** — it is a dev/test dependency of _your_ project, not
 bundled with django-absurd and not one of its extras (`pip install time-machine`).
-`drain`/`emit`/`get_result`/`now` work without it; only `freeze_time` imports it,
-lazily, on first use, and raises `ImproperlyConfigured` naming the install command if
-it's missing.
+`sync_queues`/`drain`/`emit`/`get_result`/`now` work without it; only `freeze_time`
+imports it, lazily, on first use, and raises `ImproperlyConfigured` naming the install
+command if it's missing.
 
 **`TaskSnapshot` caveats — use `RunSnapshot` for an in-flight retry.** `get_result`
 returns a task-level view, which cannot express an in-flight
