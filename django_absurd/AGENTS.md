@@ -213,8 +213,16 @@ convention. Field types come from `absurd_sdk` (`RetryStrategy`, `CancellationPo
 accepted by Absurd's own [task definition](https://earendil-works.github.io/absurd/)
 (`default_max_attempts`, `default_cancellation`), but not field-for-field: Absurd's
 `register_task` takes no `retry_strategy`, so that field is ours alone, applied at spawn
-time. Backend capabilities: result retrieval and async tasks are supported; deferred
-(run-later) enqueue and priority are not.
+time. Backend capabilities: result retrieval, async tasks, and deferred (run-later)
+enqueue are supported; priority is not.
+
+**Deferred enqueue.** `task.using(run_after=<aware datetime>).enqueue(...)` defers one
+enqueue. Absurd's spawn has no `available_at`, so a deferred enqueue spawns a second row
+named `<your task's dotted path>:run_after` that waits, then enqueues yours with the
+options you passed — both rows show up in the admin, filterable by that name. The id
+`enqueue` returned keeps working throughout: `READY` while the wrapper waits, then your
+task's own status and return value once it runs; a struggling wrapper leaves that id
+`READY` with no visible errors until it runs out of attempts, then `FAILED`.
 
 ## Workers
 

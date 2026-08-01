@@ -31,6 +31,25 @@ result = send_report.enqueue(42)   # returns a TaskResult; a worker runs it
 Enqueuing rides the surrounding database transaction — a task spawned inside `atomic()`
 is dropped if the block rolls back.
 
+### Run it later
+
+Django's
+[`run_after`](https://docs.djangoproject.com/en/6.0/ref/tasks/#django.tasks.Task.run_after)
+defers a single enqueue to a moment of your choosing:
+
+```python
+send_report.using(run_after=timezone.now() + dt.timedelta(hours=1)).enqueue(42)
+```
+
+It takes a timezone-aware `datetime`. A deferred enqueue creates a second row named
+`<your task's dotted path>:run_after` that waits, then enqueues yours with the options
+you passed — both rows are visible in the admin, and the name makes deferred work
+filterable by target. The id `enqueue` returned keeps working throughout: it reads
+`READY` while the wrapper waits, then your task's own status and return value once it
+runs. If the wrapper's own launch struggles, that id stays `READY` with no visible
+errors until it runs out of attempts, then reports `FAILED`. For a repeating schedule
+rather than a one-off, use [Scheduling](cron-jobs.md).
+
 ## Retries & spawn options
 
 Absurd's spawn options (retries, retry backoff, idempotency, …) attach through one
