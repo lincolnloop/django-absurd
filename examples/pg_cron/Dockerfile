@@ -1,7 +1,7 @@
-# django-absurd example image. Deps come from this example's pyproject.toml (NOT
-# pinned inline here) — installed with `uv sync`, following the lincolnloop
-# django-layout Dockerfile convention (ll:startproject). Build context = repo root.
-FROM python:3.14-slim
+# django-absurd example image. Deps come from this example's pyproject.toml and
+# uv.lock (NOT pinned inline here), following the lincolnloop django-layout
+# Dockerfile convention (ll:startproject). Build context = repo root.
+FROM python:3.14.6-slim
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /bin/
 
@@ -15,13 +15,14 @@ ENV SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0
 
 # The django-absurd package (this example's editable `../..` path dependency) plus
 # the example's pyproject, laid out so `[tool.uv.sources] path="../.."` resolves to
-# /src. `uv sync` reads deps from examples/pg_cron/pyproject.toml — no inline pins.
+# /src. `uv sync --locked` installs exactly examples/pg_cron/uv.lock, failing the
+# build if that lock has drifted from the pyproject beside it.
 WORKDIR /src
 COPY pyproject.toml README.md ./
 COPY django_absurd ./django_absurd
-COPY examples/pg_cron/pyproject.toml ./examples/pg_cron/pyproject.toml
+COPY examples/pg_cron/pyproject.toml examples/pg_cron/uv.lock ./examples/pg_cron/
 RUN --mount=type=cache,target=/root/.cache/uv \
-  uv sync --no-install-project --project /src/examples/pg_cron
+  uv sync --locked --no-install-project --project /src/examples/pg_cron
 
 # The single-file app; the bind mount in compose.yaml overlays it live at run time.
 WORKDIR /app

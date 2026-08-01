@@ -6,6 +6,7 @@
 .envrc
 .mypy_cache/
 .pytest_cache/
+.python-version
 .ruff_cache/
 .venv/
 /site/
@@ -13,5 +14,4 @@ __pycache__/
 build/
 coverage.xml
 dist/
-examples/**/uv.lock
 junit*.xml
