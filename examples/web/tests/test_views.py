@@ -3,6 +3,7 @@ the Django test client, asserting observable responses. The `add` task and the
 `fulfill_order` workflow are exercised end-to-end via the `dj_absurd` fixture's
 `drain()`."""
 
+import datetime as dt
 import uuid
 
 import pytest
@@ -121,3 +122,37 @@ def test_pack_view_rejects_an_off_site_next(client: Client) -> None:
     resp = client.get("/workflow/order-x/pack/?next=https://evil.example/steal")
     assert resp.status_code == 302
     assert resp.headers["Location"] == "/"
+
+
+def test_later_get_renders_the_defer_form(client: Client) -> None:
+    body = client.get("/later/").content.decode()
+    assert "Run a task later" in body
+    assert 'name="seconds"' in body
+
+
+def test_later_post_invalid_rerenders_the_form(client: Client) -> None:
+    resp = client.post("/later/", {"a": "1", "seconds": "10"})  # missing b
+    assert resp.status_code == 200
+    assert "This field is required." in resp.content.decode()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_deferred_add_reads_ready_until_it_comes_due(
+    client: Client, dj_absurd: AbsurdTestRuntime
+) -> None:
+    with dj_absurd.freeze_time() as frozen_time:
+        resp = client.post("/later/", {"a": "2", "b": "3", "seconds": "10"})
+        detail_url = resp.headers["Location"]
+
+        # The wrapper is claimed and sleeps; nothing of add() has run.
+        assert [run.state for run in dj_absurd.drain()] == ["sleeping"]
+        assert (
+            "Status: <strong>READY</strong>" in client.get(detail_url).content.decode()
+        )
+
+        frozen_time.shift(dt.timedelta(seconds=10))
+        dj_absurd.drain()
+
+        body = client.get(detail_url).content.decode()
+        assert "Status: <strong>SUCCESSFUL</strong>" in body
+        assert "Result: <strong>5.0</strong>" in body

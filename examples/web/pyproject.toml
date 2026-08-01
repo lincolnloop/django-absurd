@@ -3,6 +3,8 @@ dev = [
   "pytest",
   "pytest-cov",
   "pytest-django",
+  # Freezing durable time is opt-in: django-absurd never bundles it.
+  "time-machine",
 ]
 
 [project]
