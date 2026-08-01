@@ -6,6 +6,7 @@
 .envrc
 .mypy_cache/
 .pytest_cache/
+.python-version
 .ruff_cache/
 .venv/
 /site/
