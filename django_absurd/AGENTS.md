@@ -213,8 +213,31 @@ convention. Field types come from `absurd_sdk` (`RetryStrategy`, `CancellationPo
 accepted by Absurd's own [task definition](https://earendil-works.github.io/absurd/)
 (`default_max_attempts`, `default_cancellation`), but not field-for-field: Absurd's
 `register_task` takes no `retry_strategy`, so that field is ours alone, applied at spawn
-time. Backend capabilities: result retrieval and async tasks are supported; deferred
-(run-later) enqueue and priority are not.
+time. Backend capabilities: result retrieval, async tasks, and deferred (run-later)
+enqueue are supported; priority is not.
+
+**An idempotency key is scoped to its queue, not to your task.** A key reserves itself
+against one queue, with no task name and no arguments in the comparison. Whichever
+enqueue arrives first owns the key; every later enqueue is swallowed and handed the
+FIRST task's id — even a different task, even with different arguments, so
+`absurd_params(idempotency_key="nightly").bind(purge_cache).enqueue()` after the same
+key was used for `send_report` returns `send_report`'s id and never runs `purge_cache`.
+Namespace the key so it identifies the work (`f"send_report:{report_id}:{date}"`), as
+the beat scheduler does for its own spawns (see
+[Scheduling recurring tasks](#scheduling-recurring-tasks)). Two further properties:
+different queues never collide (the same key on `default` and on `reports` reserves
+independently and both run), and a key is held for as long as its task row exists —
+freed only once the task is terminal and cleanup deletes it, `cleanup_ttl` (default 30
+days) after it finished, with a pending/running/sleeping task holding its key
+indefinitely. A key is therefore not a time window; it is "once until the row is swept."
+
+**Deferred enqueue.** `task.using(run_after=<aware datetime>).enqueue(...)` defers one
+enqueue. Absurd's spawn has no `available_at`, so a deferred enqueue spawns a second row
+named `<your task's dotted path>:run_after` that waits, then enqueues yours with the
+options you passed — both rows show up in the admin, filterable by that name. The id
+`enqueue` returned keeps working throughout: `READY` while the wrapper waits, then your
+task's own status and return value once it runs; a struggling wrapper leaves that id
+`READY` with no visible errors until it runs out of attempts, then `FAILED`.
 
 ## Workers
 

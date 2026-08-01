@@ -31,6 +31,25 @@ result = send_report.enqueue(42)   # returns a TaskResult; a worker runs it
 Enqueuing rides the surrounding database transaction — a task spawned inside `atomic()`
 is dropped if the block rolls back.
 
+### Run it later
+
+Django's
+[`run_after`](https://docs.djangoproject.com/en/6.0/ref/tasks/#django.tasks.Task.run_after)
+defers a single enqueue to a moment of your choosing:
+
+```python
+send_report.using(run_after=timezone.now() + dt.timedelta(hours=1)).enqueue(42)
+```
+
+It takes a timezone-aware `datetime`. A deferred enqueue creates a second row named
+`<your task's dotted path>:run_after` that waits, then enqueues yours with the options
+you passed — both rows are visible in the admin, and the name makes deferred work
+filterable by target. The id `enqueue` returned keeps working throughout: it reads
+`READY` while the wrapper waits, then your task's own status and return value once it
+runs. If the wrapper's own launch struggles, that id stays `READY` with no visible
+errors until it runs out of attempts, then reports `FAILED`. For a repeating schedule
+rather than a one-off, use [Scheduling](cron-jobs.md).
+
 ## Retries & spawn options
 
 Absurd's spawn options (retries, retry backoff, idempotency, …) attach through one
@@ -99,7 +118,35 @@ The fields (types come from `absurd_sdk`); the "Where" column is enforced by
 | `retry_strategy`  | default + per-call | Backoff: `kind` (`fixed`/`exponential`/`none`), `base_seconds`, `factor`, `max_seconds`. |
 | `cancellation`    | default + per-call | `max_duration`, `max_delay` (seconds).                                                   |
 | `headers`         | per-call only      | Arbitrary JSON metadata carried with the task.                                           |
-| `idempotency_key` | per-call only      | Dedupe — a repeat enqueue with the same key is a no-op.                                  |
+| `idempotency_key` | per-call only      | Dedupe within a queue — see the warning below.                                           |
+
+!!! warning "An idempotency key is scoped to its queue, not to your task"
+
+    A key reserves itself against **one queue**, with no task name and no arguments in
+    the comparison. Whichever enqueue gets there first owns the key; every later
+    enqueue is swallowed and handed the **first** task's id — even a different task,
+    even with different arguments:
+
+    ```python
+    absurd_params(idempotency_key="nightly").bind(send_report).enqueue(42)
+    absurd_params(idempotency_key="nightly").bind(purge_cache).enqueue()
+    # -> same id, and purge_cache never runs
+    ```
+
+    Namespace the key yourself so it identifies the work: include the task and the
+    thing it acts on, e.g. `f"send_report:{report_id}:{date}"`. The
+    [beat scheduler](cron-jobs.md) does this for its own spawns — its keys are a
+    `cron:`-prefixed hash of the schedule name, cron expression, and slot.
+
+    Two more properties worth knowing:
+
+    - **Different queues never collide.** The same key on `default` and on `reports`
+      reserves independently, and both tasks run.
+    - **A key is held for as long as its task row exists** — freed only once the task
+      is terminal and [cleanup](cleanup.md) deletes it, `cleanup_ttl` (default 30
+      days) after it finished. A task still pending, running, or sleeping holds its
+      key indefinitely. So a key is not a "once per hour" window; it is "once until
+      the row is swept."
 
 The decorator's `max_attempts` and `cancellation` fields mirror the defaults accepted by
 Absurd's own [task definition](https://earendil-works.github.io/absurd/)

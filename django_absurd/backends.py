@@ -3,7 +3,7 @@ import typing as t
 import uuid
 
 import psycopg.errors
-from absurd_sdk import CreateQueueOptions, JsonValue
+from absurd_sdk import CreateQueueOptions, JsonObject, JsonValue
 from django.apps import apps
 from django.core.exceptions import ImproperlyConfigured
 from django.db import transaction
@@ -17,8 +17,9 @@ from django.utils.module_loading import import_string
 
 from django_absurd.admin_views import ADMIN_ENTITY_SPECS, build_queue_table_model
 from django_absurd.connection import build_absurd_client
+from django_absurd.deferred import DEFER_NAME_SUFFIX
 from django_absurd.exceptions import QueueNotDeclaredError
-from django_absurd.tasks import AbsurdTask, build_merged_spawn_options
+from django_absurd.tasks import AbsurdTask, SpawnKwargs, build_merged_spawn_options
 
 if t.TYPE_CHECKING:
     from django.tasks.base import Task
@@ -66,6 +67,7 @@ class TaskModel(t.Protocol):
     attempts: int
     completed_payload: JsonValue
     cancelled_at: dt.datetime | None
+    headers: JsonObject
     last_attempt_run: uuid.UUID | None
 
 
@@ -103,7 +105,7 @@ class AbsurdBackend(BaseTaskBackend):
     task_class = AbsurdTask
     supports_get_result = True
     supports_async_task = True
-    supports_defer = False
+    supports_defer = True
     supports_priority = False
 
     def __init__(self, alias: str, params: dict[str, t.Any]) -> None:
@@ -133,13 +135,43 @@ class AbsurdBackend(BaseTaskBackend):
         )
         merged = build_merged_spawn_options(params, None)
         merged.setdefault("max_attempts", self.default_max_attempts)
+        # Absurd's spawn takes no available_at, so a deferred enqueue spawns a WRAPPER
+        # row that sleeps until due and then enqueues the caller's task. The caller's
+        # task is therefore never claimed before its work exists, which is what both of
+        # Absurd's cancellation rules measure from. The caller's own options ride in the
+        # wrapper's params and are replayed on the inner enqueue; the wrapper gets only
+        # its own max_attempts.
+        if task.run_after is not None:
+            spawn_name = f"{task.module_path}{DEFER_NAME_SUFFIX}"
+            spawn_params: dict[str, t.Any] = {
+                "args": [],
+                "kwargs": {
+                    "args": list(args),
+                    "kwargs": dict(kwargs),
+                    "queue": task.queue_name,
+                    "options": dict(merged),
+                    "due": normalize_to_utc(task.run_after).isoformat(),
+                },
+            }
+            wrapper_options: SpawnKwargs = {"max_attempts": self.default_max_attempts}
+            # The caller's key stays on the inner enqueue, so the wrapper takes a
+            # derived one: verbatim, it would reserve the key against its own row and
+            # the enqueue it wakes to make would dedupe against itself.
+            if "idempotency_key" in merged:
+                wrapper_options["idempotency_key"] = (
+                    f"{merged['idempotency_key']}{DEFER_NAME_SUFFIX}"
+                )
+            merged = wrapper_options
+        else:
+            spawn_name = task.module_path
+            spawn_params = {"args": list(args), "kwargs": dict(kwargs)}
         try:
             # Savepoint so a misconfig DB error (below) rolls back only the spawn,
             # leaving an enclosing transaction.atomic() block usable.
             with transaction.atomic(using=self.database, savepoint=True):
                 spawn_result = client.spawn(
-                    task.module_path,
-                    {"args": list(args), "kwargs": dict(kwargs)},
+                    spawn_name,
+                    spawn_params,
                     queue=task.queue_name,
                     **merged,
                 )
@@ -166,8 +198,8 @@ class AbsurdBackend(BaseTaskBackend):
                 raise ImproperlyConfigured(msg) from exc
             with transaction.atomic(using=self.database, savepoint=True):
                 spawn_result = client.spawn(
-                    task.module_path,
-                    {"args": list(args), "kwargs": dict(kwargs)},
+                    spawn_name,
+                    spawn_params,
                     queue=task.queue_name,
                     **merged,
                 )
@@ -193,6 +225,10 @@ class AbsurdBackend(BaseTaskBackend):
         task, run, worker_ids = fetch_task_and_run(
             self.database, queue, task_id, result_id
         )
+        if task.task_name.endswith(DEFER_NAME_SUFFIX) and task.state == "completed":
+            # Its payload is the id of the task it enqueued, so the caller's id keeps
+            # describing their own task for the rest of its life.
+            return self.get_result(str(task.completed_payload))
         return build_task_result(self, result_id, task, run, worker_ids)
 
 
@@ -280,6 +316,16 @@ def build_task_result(
     completed_at = run.completed_at if run else None
     failed_at = run.failed_at if run else None
     failure_reason = run.failure_reason if run else None
+    is_deferred_wrapper = task_name.endswith(DEFER_NAME_SUFFIX)
+    if is_deferred_wrapper:
+        # The caller's id names the wrapper, but their TaskResult must describe THEIR
+        # task: its path is the name's suffix and its call is in the wrapper's kwargs.
+        task_name = task_name.removesuffix(DEFER_NAME_SUFFIX)
+        spec = params["kwargs"]
+        params = {"args": list(spec["args"]), "kwargs": dict(spec["kwargs"])}
+        # Claimed at t=0 only so it could sleep — nothing of the caller's has started.
+        first_started_at = None
+        run_started = None
     try:
         task_obj = import_string(task_name)
     except ImportError as exc:
@@ -288,6 +334,12 @@ def build_task_result(
     if task_obj.queue_name != queue:
         task_obj = task_obj.using(queue_name=queue)
     status = map_state_to_status(state)
+    if is_deferred_wrapper and state == "sleeping":
+        # No Django status means "the deferral is retrying", and READY is the honest
+        # answer to whether the caller's task has started — so a wrapper waiting for its
+        # due time and one in retry backoff both read READY. A launch that keeps failing
+        # ends FAILED once out of attempts, carrying its error.
+        status = TaskResultStatus.READY
     errors: list[TaskError] = []
     if state == "failed" and failure_reason:
         errors = [
@@ -316,6 +368,19 @@ def build_task_result(
     if state == "completed":
         object.__setattr__(result, "_return_value", completed_payload)
     return result
+
+
+def normalize_to_utc(moment: dt.datetime) -> dt.datetime:
+    """Aware UTC, whatever awareness the caller had.
+
+    Django only rejects a naive ``run_after`` when ``USE_TZ`` is true, so under
+    ``USE_TZ=False`` a naive one reaches here — and would reach the SDK, whose clock is
+    aware, raising a ``TypeError`` per attempt until the task ran out of them. A naive
+    value means local time, per Django's own convention.
+    """
+    if timezone.is_naive(moment):
+        moment = timezone.make_aware(moment)
+    return moment.astimezone(dt.UTC)
 
 
 def get_declared_queues(backend: "AbsurdBackend") -> dict[str, CreateQueueOptions]:

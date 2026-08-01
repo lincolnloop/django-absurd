@@ -32,6 +32,7 @@ from django_absurd import admin_views
 from django_absurd.backends import AbsurdBackend, RunModel, TaskParams
 from django_absurd.connection import register_jsonb_loader, validate_backend
 from django_absurd.context import WORKER_LOOP
+from django_absurd.deferred import DEFER_NAME_SUFFIX, build_deferred_handler
 from django_absurd.exceptions import QueueNotDeclaredError, QueueNotProvisionedError
 from django_absurd.management.base import resolve_backend
 from django_absurd.queues import names_a_queue_table
@@ -98,6 +99,17 @@ class LazyTaskRegistry(dict[str, dict[str, t.Any]]):
         self, name: str, default: dict[str, t.Any] | D | None = None
     ) -> dict[str, t.Any] | D | None:
         if name not in self:
+            if name.endswith(DEFER_NAME_SUFFIX):
+                self[name] = {
+                    "name": name,
+                    "queue": self.queue,
+                    "default_max_attempts": None,
+                    "default_cancellation": None,
+                    "handler": build_deferred_handler(
+                        name.removesuffix(DEFER_NAME_SUFFIX)
+                    ),
+                }
+                return super().get(name, default)
             try:
                 task = import_string(name)
             except ImportError:

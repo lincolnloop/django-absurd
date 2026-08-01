@@ -5,16 +5,18 @@ browse the read-only queue tables in the admin (auto-registered by django-absurd
 
 Also demonstrates Steps (checkpoints) + Events: an order-fulfillment
 workflow that checkpoints each step and suspends on await_event until a
-"mark packed" button emits the matching event.
+"mark packed" button emits the matching event; and run_after, which defers an
+enqueue until a chosen moment.
 
     docker compose up
-    http://localhost:8000/         enqueue add(a, b) or the order workflow
+    http://localhost:8000/         enqueue add(a, b), defer one, or the order workflow
     http://localhost:8000/admin/  Tasks / Runs / Checkpoints / Waits / … (admin / admin)
 
 psycopg (v3) backend required — DATABASES is overridden (nanodjango defaults to sqlite).
 """
 
 import dataclasses
+import datetime as dt
 import html
 import logging
 import os
@@ -29,6 +31,7 @@ from django.shortcuts import redirect
 from django.tasks import TaskResultStatus, default_task_backend, task
 from django.tasks.exceptions import TaskResultDoesNotExist
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from nanodjango import Django
 
@@ -103,6 +106,12 @@ class AddForm(forms.Form):
     b = forms.CharField(label="B")
 
 
+class LaterForm(forms.Form):
+    a = forms.CharField(label="A")
+    b = forms.CharField(label="B")
+    seconds = forms.IntegerField(label="Run in (seconds)", initial=10, min_value=1)
+
+
 class WorkflowForm(forms.Form):
     order = forms.CharField(label="Order", initial="order-42")
 
@@ -125,10 +134,47 @@ def index(request: HttpRequest) -> HttpResponse | str:
           <button type="submit">Add</button>
         </form>
         <p>
+          <a href="/later/">Run one later</a>
+          — the same task, deferred with <code>run_after</code>.
+        </p>
+        <p>
           <a href="/workflow/">Try the order-fulfillment workflow</a>
           — checkpointed steps with a wait between them.
         </p>
         <p><a href="/admin/">Browse the queues in the admin</a> (admin / admin)</p>
+    """
+
+
+@app.route("/later/")
+def later_view(request: HttpRequest) -> HttpResponse | str:
+    """Defer the SAME add task with run_after — nothing about the task changes.
+
+    The result page reports READY for the whole wait, then the task's own value.
+    Meanwhile the admin gains a second row, `app.add:run_after`, which
+    is what waits; it enqueues `add` when the time comes.
+    """
+    if request.method == "POST":
+        form = LaterForm(request.POST)
+        if form.is_valid():
+            seconds = form.cleaned_data.pop("seconds")
+            due = timezone.now() + dt.timedelta(seconds=seconds)
+            result = add.using(run_after=due).enqueue(**form.cleaned_data)
+            return redirect(f"/tasks/{result.id}/")
+    else:
+        form = LaterForm()
+    return f"""
+        <h1>Run a task later</h1>
+        <p>
+          Enqueues <code>add(a, b)</code> with
+          <code>run_after=now + seconds</code>. Watch the result page sit at
+          <strong>READY</strong> until it comes due — nothing has run yet.
+        </p>
+        <form method="post">
+          <input type="hidden" name="csrfmiddlewaretoken" value="{get_token(request)}">
+          {form.as_p()}
+          <button type="submit">Schedule it</button>
+        </form>
+        <p><a href="/">Back</a></p>
     """
 
 

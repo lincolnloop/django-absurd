@@ -208,6 +208,14 @@ A task-level view cannot express an in-flight [retry](tasks.md#retries-spawn-opt
 right after that run executes, so a retry sequence reads attempt-by-attempt instead of
 collapsing to one ambiguous final read.
 
+**A deferred task's id names its wrapper here.** A [`run_after`](tasks.md#run-it-later)
+enqueue creates a `<your task path>:run_after` row that waits and then enqueues yours,
+and this method reports the row the id names: a prefixed `task_name`, the wrapper's own
+`args`/`kwargs`, and your task's id as `result`. That is deliberate — the fixture is for
+inspecting the state that really exists. Django's own
+[`my_task.get_result(result.id)`](tasks.md#read-the-result) follows the wrapper through
+to your task instead, so use that when you want your task's status and return value.
+
 ### `now`
 
 Virtual now, timezone-aware, as Postgres itself reports it — read through the fixture's
