@@ -1,7 +1,7 @@
 # django-absurd example image. Deps come from this example's pyproject.toml and
 # uv.lock (NOT pinned inline here), following the lincolnloop django-layout
 # Dockerfile convention (ll:startproject). Build context = repo root.
-FROM python:3.14-slim
+FROM python:3.14.6-slim
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /bin/
 
