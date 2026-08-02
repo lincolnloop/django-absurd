@@ -74,6 +74,7 @@ requires-python = ">=3.12"
 django_absurd = "django_absurd.pytest_plugin"
 
 [project.urls]
+Documentation = "https://lincolnloop.github.io/django-absurd/"
 Homepage = "https://github.com/lincolnloop/django-absurd"
 Issues = "https://github.com/lincolnloop/django-absurd/issues"
 Repository = "https://github.com/lincolnloop/django-absurd"
