@@ -168,3 +168,22 @@ commit where it last lived — recoverable from git any time.
 - 2026-07-24 — pg-cron-cross-database-scheduling implementation plan (10-task TDD build
   of the inert cross-database `pg_cron` design) →
   [view @4dde493](https://github.com/lincolnloop/django-absurd/blob/4dde493f4a6981f5146ba5feaf5f973ce76103ab/docs/plans/2026-07-24-pg-cron-cross-database-scheduling.md)
+- 2026-07-27 — typed-absurd-params design spec (one `absurd_params` factory bound at
+  enqueue, replacing the untypeable `absurd_spawn_params=` kwarg; the overload pair
+  splitting definition-site from per-invocation fields, and the wrong-door error
+  taxonomy) →
+  [view @24c7b81](https://github.com/lincolnloop/django-absurd/blob/24c7b8192f42c07bb4d9c1f60fab6c71f72d5010/docs/specs/2026-07-27-typed-absurd-params.md)
+- 2026-07-28 — typed-absurd-params implementation plan (TDD build of the spec above) →
+  [view @24c7b81](https://github.com/lincolnloop/django-absurd/blob/24c7b8192f42c07bb4d9c1f60fab6c71f72d5010/docs/plans/2026-07-28-typed-absurd-params.md)
+- 2026-07-28 — durable-test-clock design spec (the two-clock freeze over Postgres's
+  `absurd.fake_now` and time-machine, the per-run and per-task snapshot records, and the
+  post-review redesign of the clock into a context manager) →
+  [view @24c7b81](https://github.com/lincolnloop/django-absurd/blob/24c7b8192f42c07bb4d9c1f60fab6c71f72d5010/docs/specs/2026-07-28-durable-test-clock-design.md)
+- 2026-07-29 — durable-test-clock implementation plan (TDD build of the `dj_absurd`
+  fixture, plus the suite-wide migration off freezegun) →
+  [view @24c7b81](https://github.com/lincolnloop/django-absurd/blob/24c7b8192f42c07bb4d9c1f60fab6c71f72d5010/docs/plans/2026-07-29-durable-test-clock.md)
+- 2026-07-31 — run-after-wrapper-task implementation plan (deferred enqueue via a
+  wrapper run, replacing the injected sleep that broke both cancellation rules;
+  specifies a `django_absurd:defer:` name _prefix_, where the shipped code uses a
+  `:run_after` suffix) →
+  [view @24c7b81](https://github.com/lincolnloop/django-absurd/blob/24c7b8192f42c07bb4d9c1f60fab6c71f72d5010/docs/plans/2026-07-31-run-after-wrapper-task.md)
