@@ -68,11 +68,8 @@ result = add.enqueue(2, 3)  # returns a TaskResult; the worker runs it
 
 ## Documentation
 
-- **[Documentation](docs/web/index.md)** — full configuration and `OPTIONS`, workers,
-  task parameters, retrieving results, admin introspection, querying queue state with
-  the ORM, deployment notes, and adopting an existing Absurd database. Includes
-  [scheduling recurring tasks](docs/web/cron-jobs.md) (beat and pg_cron schedulers) and
-  [durable workflows — steps, sleep, and events](docs/web/workflows.md).
+- **[Documentation](https://lincolnloop.github.io/django-absurd/)** — configuration,
+  tasks, workflows, scheduling, cleanup, testing, and how it works.
 - **[Runnable examples](examples/)** — three dockerized nanodjango demos (`web`
   enqueue+result, `beat`, and `pg_cron`), each with one `docker compose up`.
 

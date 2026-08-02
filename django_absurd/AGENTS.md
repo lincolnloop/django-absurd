@@ -151,10 +151,10 @@ System check IDs:
 - `absurd.E010` — invalid `CLEANUP` configuration (not a `{"schedule": …}` map, or
   unknown keys; cron grammar checked at `check` time for beat, at sync for pg_cron).
 - `absurd.E011` — `OPTIONS["SYNC_SCHEDULES_ON_TEST_DB"]` is `True` without
-  `OPTIONS["PG_CRON_ON_TEST_DB"]`. See [Test databases](#pg_cron-backend).
+  `OPTIONS["PG_CRON_ON_TEST_DB"]`. See [Test databases](#test-databases).
 - `absurd.E012` — the central `cron.database_name` database (auto-discovered) is
   unreachable or missing the `pg_cron` extension; a deploy-time check, see
-  [Validate](#validate_1).
+  [Validate schedules](#validate-schedules).
 - `absurd.W002` (Warning) — a queue's declared `storage_mode` differs from the database;
   `storage_mode` is immutable once the queue exists.
 - `absurd.W003` (Warning) — `"django_absurd.pg_cron"` is in `INSTALLED_APPS` but ordered
@@ -462,13 +462,15 @@ python manage.py absurd_sync_crons --teardown  # unschedule all jobs (prompts; -
 jobs automatically — a settings-only change needs no new migration file.
 `absurd_sync_crons` is the backstop for pipelines that skip `migrate`.
 
-**Test databases.** Any `cron.*` write for a backend is a hazard on a **test** database
-or during an active test run: a plain test database never carries the central `pg_cron`
-extension (see [pg_cron backend](#pg_cron-backend) above), so an unguarded write there
-would fail outright — and even where it wouldn't fail (e.g. `PG_CRON_ON_TEST_DB` routed
-it to a real central catalog), pg_cron's launcher runs independently of pytest/Django,
-so a schedule left behind fires for real, on cadence, against test data, for the rest of
-the session. So this scheduling seam is **inert by default under tests** — detected
+#### Test databases
+
+Any `cron.*` write for a backend is a hazard on a **test** database or during an active
+test run: a plain test database never carries the central `pg_cron` extension (it lives
+only on the `cron.database_name` database, above), so an unguarded write there would
+fail outright — and even where it wouldn't fail (e.g. `PG_CRON_ON_TEST_DB` routed it to
+a real central catalog), pg_cron's launcher runs independently of pytest/Django, so a
+schedule left behind fires for real, on cadence, against test data, for the rest of the
+session. So this scheduling seam is **inert by default under tests** — detected
 automatically (no settings changes needed) — and every `cron.*` write silently no-ops
 until you opt in.
 
@@ -571,7 +573,7 @@ namespaced by the Absurd database name and a one-letter source abbreviation — 
 settings, `a` for admin). Removing admin-authored jobs at teardown is a guarded action
 (see Reconcile).
 
-### Validate
+### Validate schedules
 
 `python manage.py check django_absurd` validates every schedule entry and reports
 `absurd.E007` for:
@@ -923,17 +925,14 @@ one ambiguous final read.
 ### Getting a `SCHEDULE` into pg_cron for a test
 
 Auto-cleanup only tears down — it has no say over whether a `SCHEDULE` entry lands in
-`pg_cron` in the first place. By default every `cron.*` write for a backend is **inert**
-under a test database / active test run (see [Test databases](#pg_cron-backend) above),
-precisely so a `SCHEDULE` doesn't start firing for real against test data. A test that
-genuinely needs a real job in `pg_cron` needs `OPTIONS["PG_CRON_ON_TEST_DB"] = True` for
-that backend (this project's own pg_cron suite sets it suite-wide, in
-`tests/pg_cron/settings.py`), then either lets `migrate`'s automatic reconcile run (also
-requires `OPTIONS["SYNC_SCHEDULES_ON_TEST_DB"] = True`;
-`tests/pg_cron/utils.py::build_pg_cron_tasks` sets both) or calls
-`call_command("absurd_sync_crons")` explicitly. Either way, cleanup clears whatever
-ended up in `cron.job`/`ScheduledTask` — settings-synced, admin-authored, or created
-directly by the test — it doesn't care how it got there, only what's present.
+`pg_cron` in the first place, and by default every `cron.*` write is inert under tests
+(see [Test databases](#test-databases)). Opt in with
+`OPTIONS["PG_CRON_ON_TEST_DB"] = True`, then either let `migrate`'s automatic reconcile
+run (also needs `OPTIONS["SYNC_SCHEDULES_ON_TEST_DB"] = True` —
+`tests/pg_cron/utils.py::build_pg_cron_tasks` sets both) or call
+`call_command("absurd_sync_crons")`. Cleanup then clears whatever ended up in
+`cron.job`/`ScheduledTask` — settings-synced, admin-authored, or created directly by the
+test — it doesn't care how it got there, only what's present.
 
 ## Deployment notes
 
@@ -1178,11 +1177,6 @@ def process_order(order_id: int) -> str:
         return "gave up waiting for the warehouse"
     return "shipped"
 ```
-
-!!! warning "Not the builtin `TimeoutError`"
-
-    `except TimeoutError:` (the builtin) does **not** catch this — you must
-    `import absurd_sdk` and catch `absurd_sdk.TimeoutError` explicitly.
 
 An **uncaught** `TimeoutError` fails the run, which then retries and re-waits the full
 `timeout` on each attempt until `max_attempts` — catch it if you want a one-shot
