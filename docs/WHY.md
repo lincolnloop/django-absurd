@@ -47,6 +47,73 @@ is at-least-once by design — there is no atomicity between a handler's own wri
 Absurd marking the run complete — so handlers must tolerate re-execution (idempotency
 keys exist for this).
 
+### Spawn params: one factory, two sites
+
+Absurd's per-spawn options (retry ceiling, retry strategy, cancellation policy, headers,
+dedup key) attach through a params factory whose result is _bound_ to a task, rather
+than riding an extra keyword on the enqueue call. The keyword form was tried and cannot
+work: the task framework types its enqueue signature against the task function's own
+parameters, so an outside keyword is unspellable to a type checker — and worse, it
+squats the task's own namespace, so a task with a parameter of that name silently loses
+its argument until a worker runs it.
+
+Binding yields a real task object rather than a delegating wrapper, so identity checks,
+the async enqueue, result retrieval, and routing all keep working through it. The params
+ride as a dataclass **field**, not a slot, because the framework's own routing call is a
+dataclass replace that rebuilds from fields only — a slot would be dropped silently,
+with neither a static nor a runtime error.
+
+Definition-time defaults and per-invocation values overlap but are not identical: a
+dedup key or per-call headers are meaningless as a task-wide default. One factory serves
+both sites, and the split is enforced by overload selection on the keyword set — then
+again at runtime, because type checking is optional for our users. The runtime layer is
+the contract; the static layer is a bonus.
+
+No value validation on this surface. Wrong _data_ fails loudly on its own, and restating
+the engine's types here is duplicated policy that drifts from the pinned SQL. Curated
+errors are reserved for a different mistake — the caller at the wrong door: a routing
+option that belongs on the framework's own routing call, or a per-invocation field used
+at a definition site. Python's own message cannot point at the right API; a wrong type
+already fails on its own.
+
+One floor is load-bearing rather than cosmetic. An omitted retry ceiling is stored as
+NULL, and the engine retries while it is NULL — that is, forever. So every path that
+builds spawn options fills it explicitly, and persisted schedule rows keep a concrete
+default for the same reason. This already caused an unbounded retry loop on a scheduled
+task once.
+
+Whether params will actually apply is only knowable at enqueue, never at bind: a task
+bound while on another backend and then routed onto Absurd applies them fine, so warning
+at bind time would cry wolf over a legal ordering while staying silent about the
+reverse.
+
+### Deferring one enqueue
+
+Absurd's spawn has no "available at" — nothing expresses "exist, but don't run until
+later." The first implementation claimed the caller's task immediately and slept inside
+it. That set the task's start timestamp before any of its work existed, which broke both
+cancellation rules at once: a maximum-duration policy measured the wait rather than the
+work, and a maximum-start-delay policy measured from the wrong instant. So a deferred
+enqueue instead spawns a separate wrapper run that sleeps and then enqueues the real
+task — nothing of the caller's is claimed until its work is about to happen.
+
+The wrapper is deliberately **not** a task the library declares. Declaring one resolves
+the default backend and validates its queue at _decoration_ time, so any project whose
+declared queues omit the default name would fail on import — surfacing at dispatch,
+where it takes the worker down. The wrapper is a synthetic name the worker's own
+resolver recognises instead, formed by suffixing the target's path: leading with the
+target sorts the row beside it in the admin and names the argument that caused it, and
+the separator cannot appear in a dotted path, so the name can never collide with a real
+task.
+
+Two details that look arbitrary and aren't. The wrapper carries a _derived_ dedup key
+rather than the caller's verbatim — with the caller's own key it would reserve that key
+against its own row and then dedupe the very enqueue it woke up to make. And the inner
+enqueue is a checkpointed step, so a wrapper retry replays the stored id instead of
+enqueueing a second task. While the wrapper waits, the caller's id reports "ready": the
+truthful answer to "has my task started", and the framework has no status meaning "the
+deferral is retrying."
+
 ## Durable execution: steps & sleep
 
 Absurd's durable primitives — checkpointed steps and durable sleep (a task suspends and
@@ -374,12 +441,93 @@ defers every Django-dependent import to call time. The non-pytest (`manage.py te
 path is not auto-wired yet; unittest users opt in by calling the same install hook from
 a test-runner subclass.
 
+### Testing durable time: both clocks or neither
+
+A suspended run is gated twice — by Postgres, whose claim predicate compares a deadline
+against the engine's own now-function, and by the Python SDK, which recomputes the wake
+time on replay and re-suspends if it hasn't arrived. Moving one without the other does
+not fail benignly. Move only the database clock and the run becomes claimable, the SDK
+re-suspends, and the loop re-arms the same wake time forever; with a synchronous task
+the drain then deadlocks inside a thread join — unkillable except by SIGKILL, with no
+test output at all. The kill strands the database-level override, so the _next_ run's
+first draining test hangs the same way before any per-test cleanup gets to run.
+
+Three consequences shape the design. There is no database-only knob. Advancing is one
+operation over both clocks. And recovery needs a sweep at session start, not only
+per-test teardown, because a randomised test order can schedule the poisoned test before
+any resetting code.
+
+An asymmetry fixes the apply order: Python ahead of Postgres is harmless (a run is
+merely not claimable yet), Postgres ahead of Python is the deadlock. So the Python clock
+moves first, and a failure between the two halves lands on the benign side. The same
+reasoning bans a naive or string instant — the engine's now-function casts the stored
+text using the _reading_ session's timezone, and the worker connects on its own
+connection, whose timezone is the server default rather than Django's. The same naive
+text is therefore a different instant per session, and on a server west of UTC it puts
+the database ahead of Python. Only an aware datetime is accepted, and it is always
+written with its offset.
+
+freezegun cannot be the Python half, structurally: it patches the monotonic clock, and
+that clock _is_ asyncio's event-loop clock, so a frozen freezegun deadlocks the drain.
+It works only while ticking — and ticking violates the requirement above, since the
+database override is a static literal that never ticks, so Python must not either. One
+clock library in the repo, and it is the one that leaves the monotonic clock alone.
+
+Reads go on a fresh connection pinned to UTC rather than Django's. Django's session
+never sees a database-level default applied after it opened, a savepoint rollback
+reverts a session-level one, and reporting what we _intended_ to apply could never
+reveal a Python/Postgres desync — the exact failure this design most needs to keep
+visible.
+
+Two record shapes, because one of them would lie. What a run did and where a task stands
+are separate views. A task-level view cannot express an in-flight retry: its attempt
+counter counts attempts _created_ rather than completed, its "sleeping" state covers
+both a durable sleep and a retry backoff, and mid-backoff the failure is invisible
+because the newest run is already pending. A test asserting "my workflow is asleep"
+would pass on a task that had crashed. Per-run records read attempt-by-attempt; the
+task-level one is for terminal state. The framework's own result type can serve neither,
+because its status vocabulary folds "sleeping" into running and "cancelled" into failed
+— precisely the distinctions a durable test exists to make.
+
+Freezing is lexically scoped rather than a pair of imperative calls, so the release
+point doesn't depend on fixture teardown, and nesting raises instead of stacking: two
+frozen instants cannot both be "now".
+
+Two things a freeze deliberately does not reach. The database-side scheduler's launcher
+runs in another database on its own clock, so advancing durable time cannot make a
+schedule fire — testing that stays "reconcile, then inspect the job catalog". And a
+subprocess worker is only half-frozen: the database override reaches it, its Python
+clock stays real, which is the deadlock direction — so it is out of scope rather than
+half-supported.
+
+## Our own exception types
+
+The package raises its own hierarchy for its own failure modes, under one base. Three
+reasons, in the order they mattered. First, **the exception owns its message**: the
+original shape had a message-builder function imported wherever a raise site needed
+text, including one lazy import that existed purely to reach it across a module cycle.
+Encapsulating the message in the class removed the helper and the lazy import together,
+because the raise site already holds the data. Second, a specific type names a specific
+condition, where a generic one only says someone passed something bad — and catching the
+base then means "this package rejected something". Third, the base is named for the
+distributing package rather than the upstream engine, because modules import from both
+and the SDK's own exceptions share no base that would anchor the shorter name.
+
+Honest limit: catching the base is not universal. Several configuration, connection, and
+test-guard paths still raise plain framework or stdlib errors, so the docs must not
+promise otherwise.
+
 ## Deliberately not doing (yet)
 
-Native async enqueue, one-shot deferred (scheduled-for-later) enqueue, and task priority
-are unsupported on purpose: Absurd has no notion of priority, and async/one-shot
-deferral aren't wired — we won't fake them behind a flag that implies otherwise.
-(Recurring scheduling is supported — see above.)
+Task **priority** is unsupported because Absurd has no notion of it — we won't fake it
+behind a flag that implies otherwise.
+
+A **natively** async enqueue is a deliberate non-goal, and that is narrower than it
+sounds: async task bodies run on the worker, and the async enqueue call exists and works
+— it wraps the synchronous path rather than issuing its own async round-trip. Every
+public surface gets an async twin by wrapping one implementation, not by growing a
+second one. (Async task bodies, one-shot deferred enqueue, result retrieval, and
+recurring scheduling are all supported — see above.)
 
 A surface to enable Absurd's native `enable_cron` partition + detach maintenance jobs is
 not built yet. That native scheduling is pg_cron-only, so until a project-facing surface
