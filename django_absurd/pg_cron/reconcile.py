@@ -17,15 +17,17 @@ from django_absurd.queues import resolve_absurd_database
 from django_absurd.scheduler import get_cleanup_schedule, get_settings_schedules
 from django_absurd.tasks import build_merged_spawn_options
 
-# Absurd's global queue-cleanup job. It rides the catalog seam like every other
+# The OPTIONS["CLEANUP"] job. It rides the catalog seam like every other
 # schedule, on its own db-namespaced lane (source="c" → jobname
-# _dj:<app db>:c:cleanup_all), so it's scoped to the app database and swept by the same
-# per-database flush. This deliberately breaks the old shared ``absurd_cleanup_all``
-# identity with
-# absurd.enable_cron / `absurdctl cron` — under central topology those same-DB functions
-# can't run in the app DB anyway. Drive cleanup ONE way — OPTIONS["CLEANUP"] OR
-# `absurdctl cron`, not both (deferred: multi-manager cleanup-job arbitration is out of
-# scope here).
+# _dj:<app db>:c:cleanup_all), so it's scoped to the app database and swept by
+# the same per-database flush.
+#
+# Deliberately NOT absurd.enable_cron / `absurdctl cron --enable <queue>`, which
+# schedule per-queue jobs (absurd_cleanup_<suffix>, absurd_partitions_<suffix>,
+# absurd_detach_plan_<suffix>) and need cron.schedule in the app database — which
+# the central cron.database_name topology never gives it. Nothing here can see or
+# unschedule those names, so drive cleanup ONE way — OPTIONS["CLEANUP"] OR
+# `absurdctl cron`, not both (deferred: multi-manager arbitration is out of scope).
 CLEANUP_SOURCE = "c"
 CLEANUP_NAME = "cleanup_all"
 CLEANUP_COMMAND = "select * from absurd.cleanup_all_queues(null::text);"

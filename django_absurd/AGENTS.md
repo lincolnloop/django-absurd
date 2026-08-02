@@ -636,16 +636,26 @@ TASKS = {
 ```
 
 This works under **either** scheduler: beat runs cleanup in-process on the declared
-cadence; pg_cron schedules Absurd's own native cleanup job (`absurd_cleanup_all`, the
-same identity `absurdctl cron` uses — compatible, not a parallel job). When
-`django_absurd.pg_cron` is installed, django-absurd is authoritative over that job: it
-schedules it from `OPTIONS["CLEANUP"]` and removes it otherwise — including at migrate
-teardown / scheduler-flip even when `CLEANUP` was never set — so a job created via
-`absurdctl cron` is reclaimed and removed. Drive cleanup one way only —
-`OPTIONS["CLEANUP"]` **or** `absurdctl cron`, not both. `manage.py check` reports
-`absurd.E010` for a malformed `CLEANUP` (the beat cron grammar is checked then too;
-pg_cron's is validated by the database at sync). Retention knobs (`cleanup_ttl`,
-`cleanup_limit`) remain per-queue policy — set them in `OPTIONS["QUEUES"]`.
+cadence; pg_cron calls Absurd's own native cleanup function (`absurd.cleanup_all_queues`
+— a SQL function in Absurd's schema, not something the Python SDK exposes) from a job on
+django-absurd's own database-namespaced lane, `_dj:<absurd database>:c:cleanup_all`.
+
+Absurd's built-in maintenance scheduler is a separate mechanism: `absurd.enable_cron`,
+which `absurdctl cron --enable <queue>` drives, creates **per-queue** jobs
+(`absurd_cleanup_<suffix>`, `absurd_partitions_<suffix>`, `absurd_detach_plan_<suffix>`)
+and needs `cron.schedule` in the Absurd database itself — which a central
+`cron.database_name` topology never provides. django-absurd does not use it.
+
+So django-absurd is authoritative over **its own** job only: it schedules that from
+`OPTIONS["CLEANUP"]` and removes it otherwise, including at migrate teardown or a
+scheduler flip even when `CLEANUP` was never set. It never sees or removes an
+`absurd_cleanup_<suffix>` job created by `absurdctl cron` — those names sit outside the
+namespace django-absurd manages, so they survive every teardown and would fire alongside
+it. **Drive cleanup one way only** — `OPTIONS["CLEANUP"]` **or** `absurdctl cron`, never
+both. `manage.py check` reports `absurd.E010` for a malformed `CLEANUP` (the beat cron
+grammar is checked then too; pg_cron's is validated by the database at sync). Retention
+knobs (`cleanup_ttl`, `cleanup_limit`) remain per-queue policy — set them in
+`OPTIONS["QUEUES"]`.
 
 **Reset (destructive):** `manage.py absurd_flush` **deletes all task history** — it
 removes every queue (its per-queue tables and registry entry) along with all tasks,
