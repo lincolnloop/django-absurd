@@ -59,13 +59,21 @@ TASKS = {
 This works under **either** scheduler:
 
 - **beat** — runs cleanup in-process on the declared cadence.
-- **pg_cron** — schedules Absurd's own native cleanup job (`absurd_cleanup_all`, the
-  same identity `absurdctl cron` uses) alongside your other cron jobs (see
+- **pg_cron** — calls Absurd's own native cleanup function (`absurd.cleanup_all_queues`)
+  from a job on django-absurd's own database-namespaced lane,
+  `_dj:<absurd database>:c:cleanup_all`, alongside your other cron jobs (see
   [Cron Jobs](cron-jobs.md)). When `django_absurd.pg_cron` is installed, django-absurd
-  is authoritative over this job: it schedules it from `OPTIONS["CLEANUP"]` and removes
-  it otherwise — including at migrate teardown / scheduler-flip even when `CLEANUP` was
-  never set — so a job created via `absurdctl cron` is reclaimed and removed. Drive
-  cleanup one way only — `OPTIONS["CLEANUP"]` **or** `absurdctl cron`, not both.
+  is authoritative over **that** job: it schedules it from `OPTIONS["CLEANUP"]` and
+  removes it otherwise — including at migrate teardown / scheduler-flip even when
+  `CLEANUP` was never set.
+
+!!! warning "Drive cleanup one way only"
+
+    `OPTIONS["CLEANUP"]` **or** `absurdctl cron` — never both. Absurd's own maintenance
+    scheduler (`absurd.enable_cron`, which `absurdctl cron --enable <queue>` drives) is a
+    separate mechanism creating **per-queue** jobs, and django-absurd neither uses nor
+    manages it. It cannot see or remove those jobs, so they survive every teardown and
+    would fire alongside its own.
 
 `manage.py check` reports `absurd.E010` for a malformed `CLEANUP` (not a
 `{"schedule": …}` map, or unknown keys); the cron grammar is checked at `check` time for
@@ -98,12 +106,12 @@ python manage.py absurd_flush --noinput  # drops without prompting
 
     Any existing scheduled jobs (pg_cron schedule jobs and beat schedules) survive the
     flush and will **error on each fire** until the queues exist again — re-provision
-    promptly. Exception: the `absurd_cleanup_all` job (set via `OPTIONS["CLEANUP"]`)
-    also survives and runs harmlessly — it finds no eligible rows until queues are
-    re-provisioned.
+    promptly. Exception: the cleanup job from `OPTIONS["CLEANUP"]`
+    (`_dj:<absurd database>:c:cleanup_all`) also survives and runs harmlessly — it finds
+    no eligible rows until queues are re-provisioned.
 
     `absurd_flush` (via per-queue `drop_queue` → `disable_cron`) also removes that
     queue's per-queue Absurd maintenance cron jobs (`absurd_partitions_<md5>` /
     `absurd_cleanup_<md5>` / `absurd_detach_plan_<md5>`) if any were created via
-    `absurdctl cron --enable <queue>`; the global `absurd_cleanup_all` job is
-    unaffected (it survives).
+    `absurdctl cron --enable <queue>`; the `OPTIONS["CLEANUP"]` job is not per-queue and
+    is unaffected (it survives).

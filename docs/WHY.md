@@ -343,12 +343,22 @@ overwrite a name already captured, only fill in one it hasn't seen yet.
 Retention — deleting aged task history — is enforced by a plain function
 (`cleanup_queues()`) plus an on-demand command (`absurd_cleanup`), and wired to a
 cadence via `OPTIONS["CLEANUP"] = {"schedule": "<cron>"}`. No user code required: the
-library drives cleanup in-process under beat, and schedules Absurd's own native cleanup
-job (`absurd_cleanup_all`, the same identity `absurdctl cron` uses — not a parallel job)
-under pg_cron — the same declarative config works for both schedulers. When
-`OPTIONS["CLEANUP"]` is set, django-absurd is authoritative over that job (schedules and
-unschedules it), so cleanup is driven one way only — via `OPTIONS["CLEANUP"]` or
-`absurdctl cron`, not both (multi-manager arbitration deferred).
+library drives cleanup in-process under beat, and under pg_cron schedules a job calling
+Absurd's own native cleanup function — the same declarative config works for both
+schedulers.
+
+That job rides the ordinary schedule seam, on its own source lane namespaced by the app
+database, rather than reusing the identity Absurd's built-in maintenance scheduler would
+have used. Two reasons, and only the second is about tidiness. Absurd's own maintenance
+scheduling needs `cron.schedule` in the Absurd database itself, which the cross-database
+topology above never provides — so that path is unavailable here, not merely declined.
+And riding the normal lane means the same per-database scoping, teardown, and flush that
+every other schedule gets, instead of a second bespoke reconcile path.
+
+The cost is that the two mechanisms are now invisible to each other: a maintenance job
+created by Absurd's own tooling is outside the namespace this package manages, so
+nothing here can see or remove it and both would fire. Hence cleanup must be driven one
+way only (multi-manager arbitration deferred) — a warning, not an implementation detail.
 
 The first iteration shipped the retention logic and asked each project to wrap it in its
 own `@task` and register that task in `SCHEDULE`. That was a reasonable first step, but
