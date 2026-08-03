@@ -88,6 +88,7 @@ def test_a_successful_run_logs_started_then_completed(
         rf" task_id={task_id} attempt=1 max_attempts=5 duration={DURATION}",
         completed[0],
     )
+    assert len(messages) == 2
 
 
 def test_a_suspended_run_logs_suspended_and_starts_again_on_wake(
@@ -244,6 +245,7 @@ def test_the_deferred_wrapper_is_visible_without_its_own_log_line(
         completed[0],
     )
     assert not [r for r in caplog.records if r.name == "django_absurd.deferred"]
+    assert len(messages) == 4
 
 
 def test_no_hook_log_record_contains_a_non_ascii_character(

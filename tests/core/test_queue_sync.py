@@ -116,7 +116,25 @@ def test_sync_reports_no_queues_when_all_in_sync(
     )
     capsys.readouterr()
     call_command("absurd_sync_queues")  # freshsync exists, no drift -> empty result
-    assert "No queues to sync." in capsys.readouterr().out
+    assert capsys.readouterr().out == "🗃️ No queues to sync.\n"
+
+
+def test_sync_prefixes_the_storage_mode_warning(
+    capsys: pytest.CaptureFixture[str], settings: SettingsWrapper
+) -> None:
+    settings.TASKS = build_tasks_setting({"driftglyph": {}})
+    call_command("absurd_sync_queues")  # create 'driftglyph' unpartitioned
+    settings.TASKS = build_tasks_setting(
+        {"driftglyph": {"storage_mode": "partitioned"}}
+    )
+    capsys.readouterr()
+    call_command("absurd_sync_queues")
+    cap = capsys.readouterr()
+    assert cap.out == "🗃️ No queues to sync.\n"
+    assert cap.err == (
+        "🗃️ Queue 'driftglyph': storage_mode cannot be changed "
+        "(existing: 'unpartitioned', declared: 'partitioned'); skipping.\n"
+    )
 
 
 def test_get_absurd_database_resolves_from_backend(settings: SettingsWrapper) -> None:

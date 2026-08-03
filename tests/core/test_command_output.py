@@ -5,13 +5,13 @@ from django.core.management import call_command
 from pytest_django.fixtures import SettingsWrapper
 
 from django_absurd.test import AbsurdTestRuntime
-from tests.utils import make_tasks_settings
+from tests import utils
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
 def test_sync_queues_decorates_its_console_output(settings: SettingsWrapper) -> None:
-    settings.TASKS = make_tasks_settings(queues={"freshemoji": {}})
+    settings.TASKS = utils.make_tasks_settings(queues={"freshemoji": {}})
     out = io.StringIO()
     call_command("absurd_sync_queues", stdout=out)
 
@@ -59,10 +59,31 @@ def test_worker_banner_drops_the_elephant_on_a_stream_that_cannot_encode_it(
 def test_sync_queues_drops_the_crate_on_a_stream_that_cannot_encode_it(
     settings: SettingsWrapper,
 ) -> None:
-    settings.TASKS = make_tasks_settings(queues={"freshemojicp1252": {}})
+    settings.TASKS = utils.make_tasks_settings(queues={"freshemojicp1252": {}})
     buffer = io.BytesIO()
     out = io.TextIOWrapper(buffer, encoding="cp1252")
     call_command("absurd_sync_queues", stdout=out)
     out.flush()
 
     assert buffer.getvalue().decode("cp1252") == "Created: freshemojicp1252\n"
+
+
+def test_sync_queues_prefixes_each_alias_when_multiple_backends_are_configured(
+    settings: SettingsWrapper,
+) -> None:
+    settings.TASKS = {
+        "one": {
+            "BACKEND": utils.ABSURD_BACKEND,
+            "OPTIONS": {"QUEUES": {"multi-one": {}}},
+        },
+        "two": {
+            "BACKEND": utils.ABSURD_BACKEND,
+            "OPTIONS": {"QUEUES": {"multi-two": {}}},
+        },
+    }
+    out = io.StringIO()
+    call_command("absurd_sync_queues", stdout=out)
+
+    assert out.getvalue() == (
+        "🗃️ [one] Created: multi-one\n🗃️ [two] Created: multi-two\n"
+    )
