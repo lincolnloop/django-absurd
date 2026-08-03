@@ -114,6 +114,79 @@ enqueueing a second task. While the wrapper waits, the caller's id reports "read
 truthful answer to "has my task started", and the framework has no status meaning "the
 deferral is retrying."
 
+### Lifecycle signals: sent for the framework's logging, not offered as a hook
+
+The framework logs a task's lifecycle by receiving its own three task signals, so a
+backend that sends none logs nothing. Sending them is therefore part of the backend
+contract, and not sending them was a plain defect rather than a missing feature. That —
+wiring Absurd tasks into the framework's built-in logging — is the whole reason they are
+sent. They are deliberately not promoted as an extension point: the stored result and
+the queue-state models answer the same questions without sitting inside a live run, so
+the docs point there instead.
+
+The package registers no receiver of its own either. An unfiltered receiver fires for
+every configured backend, so listening would mean reporting tasks that never touched the
+engine.
+
+**The sends must not be able to damage a task, and are contained in one place.**
+Uncontained, an exception from any receiver — including the framework's own — escapes
+into the engine's error handling, which reads it as the _task_ failing, so one buggy
+receiver would consume every attempt of every task until the queue was uniformly failed.
+Each seam has a worse variant: a raiser on the success send re-executes an
+already-succeeded body, one on the failure send persists the receiver's error as the
+task's failure reason, and one on the enqueue seam leaves a deferred wrapper's
+checkpoint uncommitted and duplicates the very enqueue it woke to make. One helper, so
+there is one rule and one branch.
+
+**Worker-side sends happen inline, on the loop.** The framework's built-in receivers
+only log, and nothing that only logs needs a database — so the sends stay where the
+handler already is. A receiver that does reach for the ORM meets the framework's
+async-safety guard and is contained and logged like any other broken receiver, which is
+the honest outcome once the signals are not an extension point. Two costs come with
+being inline and are accepted rather than mitigated: the sends sit inside the claim
+lease, because the run's completion is not persisted until the handler returns, and a
+receiver runs on the same loop as the task's own durable operations.
+
+**Only provable terminality is announced, and a start is per episode.** The framework's
+four result statuses have no member for "retrying", "cancelled" or "sleeping", so a
+failed non-final attempt has nowhere honest to go but "ready" — reporting a finish per
+attempt would make the framework log an error and a traceback for a task that later
+succeeds. Symmetrically, a suspended task re-enters its handler from the top on every
+wake, and the information freely available cannot distinguish a replay of this run from
+a retry of a task that had already completed a step — so a start is reported per
+episode, and the docs say so rather than pretending otherwise.
+
+**Endings the engine decides on its own are outside what these signals describe.** They
+report the lifecycle the framework knows: enqueued, started, and finished on success or
+on a failure the task's own code raised. The engine ends tasks on several paths of its
+own — a delay or duration budget expiring before or between claims, an expired claim,
+cancelling a task nothing has claimed — none of which reaches a handler or reports an
+outcome back, and two more (a cancel, or a run failed elsewhere) which a handler DOES
+observe, as an error out of the run's next durable write.
+
+Reporting those last two was tried and dropped, and that is what makes the rule one rule
+instead of two plus a list of exceptions. A handler sees them only when the deciding
+event happens to land while a worker is mid-run; the same cancel arriving a moment
+earlier is one of the unreported paths. Announcing a finish that depends on that race is
+worse than not announcing one, and it cost two exported exception types to dress the
+engine's internal classes up as ours for a payload field only a receiver reads.
+Predicting the unreported paths instead would mean replicating the engine's retry and
+duration arithmetic in Python, duplicating pinned-SQL policy, and still would not turn
+an engine decision into a framework lifecycle event. The handler's arm for those three
+exceptions therefore only logs and re-raises — but it must exist, because they are
+ordinary exception subclasses and the generic failure arm below would otherwise report
+them as the task failing. The stored result and the queue-state models are the record of
+what happened.
+
+**The worker is authoritative for a run's queue and backend, never the task object.** A
+re-imported task carries its _definition's_ queue and alias, so a task defined on one
+backend and enqueued onto Absurd would otherwise be reported under one backend at
+enqueue and another at execution, and its result id would name the wrong queue and fail
+to resolve. Both the worker and the result read therefore force queue and alias together
+— separately is not an option, because the framework's routing call re-validates the
+queue against whichever backend the definition named, an alias the project need not have
+configured at all.
+
 ## Durable execution: steps & sleep
 
 Absurd's durable primitives — checkpointed steps and durable sleep (a task suspends and

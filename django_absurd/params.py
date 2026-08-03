@@ -91,7 +91,7 @@ class PerCallParams(ParamsBase):
 @t.overload
 def absurd_params(
     *,
-    max_attempts: int = ...,
+    max_attempts: int | None = ...,
     retry_strategy: RetryStrategy = ...,
     cancellation: CancellationPolicy = ...,
 ) -> AbsurdParams: ...
@@ -100,7 +100,7 @@ def absurd_params(
 @t.overload
 def absurd_params(
     *,
-    max_attempts: int = ...,
+    max_attempts: int | None = ...,
     retry_strategy: RetryStrategy = ...,
     cancellation: CancellationPolicy = ...,
     headers: JsonObject = ...,
@@ -110,7 +110,7 @@ def absurd_params(
 
 def absurd_params(
     *,
-    max_attempts: int | NotSet = NOT_SET,
+    max_attempts: int | NotSet | None = NOT_SET,
     retry_strategy: RetryStrategy | NotSet = NOT_SET,
     cancellation: CancellationPolicy | NotSet = NOT_SET,
     headers: JsonObject | NotSet = NOT_SET,

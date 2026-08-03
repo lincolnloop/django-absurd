@@ -57,6 +57,12 @@ def test_unset_fields_never_enter_the_params() -> None:
     assert bound.absurd_params == {"max_attempts": 3}
 
 
+def test_max_attempts_accepts_none_for_unbounded_retries() -> None:
+    bound = absurd_params(max_attempts=None).bind(tasks.add)
+    assert isinstance(bound, AbsurdTask)
+    assert bound.absurd_params == {"max_attempts": None}
+
+
 def test_bound_task_aenqueues() -> None:
     call_command("absurd_sync_queues")
     asyncio.run(absurd_params(max_attempts=3).bind(tasks.add).aenqueue(1, 2))

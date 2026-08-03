@@ -1,3 +1,5 @@
+import contextlib
+import threading
 import typing as t
 import uuid
 
@@ -6,11 +8,14 @@ import psycopg.sql
 from absurd_sdk import Absurd, CreateQueueOptions
 from django.core.management import call_command
 from django.db import connections
+from django.dispatch import Signal
 
 from django_absurd.test import open_test_connection
 
 if t.TYPE_CHECKING:
     from collections.abc import Mapping
+
+    from django.tasks import TaskResult, TaskResultStatus
 
 ABSURD_BACKEND = "django_absurd.backends.AbsurdBackend"
 
@@ -70,8 +75,7 @@ def claim_one_run(queue: str = "default", *, claim_timeout: int) -> uuid.UUID:
     out, so advancing durable time past that lease lets the ``$ClaimTimeout`` sweep
     inside the next ``claim_task`` expire and re-arm it.
     """
-    params = connections["default"].get_connection_params()
-    conn = psycopg.connect(**params, autocommit=True)
+    conn = psycopg.connect(**get_absurd_connection_params(), autocommit=True)
     try:
         claimed = Absurd(conn, queue_name=queue).claim_tasks(
             claim_timeout=claim_timeout
@@ -91,8 +95,7 @@ def heartbeat_one_run(
     no live ``TaskContext`` to heartbeat through, so this calls the SQL function
     directly on a fresh connection instead.
     """
-    params = connections["default"].get_connection_params()
-    conn = psycopg.connect(**params, autocommit=True)
+    conn = psycopg.connect(**get_absurd_connection_params(), autocommit=True)
     try:
         with conn.cursor() as cursor:
             cursor.execute(
@@ -100,6 +103,17 @@ def heartbeat_one_run(
             )
     finally:
         conn.close()
+
+
+def get_absurd_connection_params() -> dict[str, t.Any]:
+    """Django's own connection params for the Absurd database, for a raw psycopg client.
+
+    Anything reaching Absurd outside Django's connection — a manual claim, a heartbeat
+    on a claimed run — needs the database THIS session provisioned, and only Django
+    knows which that is (pytest-django swaps ``NAME`` per run, per xdist worker).
+    """
+    params: dict[str, t.Any] = connections["default"].get_connection_params()
+    return params
 
 
 def set_database_fake_now(value: str) -> None:
@@ -154,3 +168,61 @@ def reset_database_fake_now() -> None:
     )
     with open_test_connection("default") as cursor:
         cursor.execute(statement)
+
+
+class RecordingReceiver:
+    """Collects TaskResults from a signal.
+
+    Thread-safe because the enqueue seam sends on whatever thread called it, so a sync
+    task body enqueueing at concurrency>1 reaches it from several pool threads at once
+    and a bare list would race. A class rather than a closure so a test can hold one
+    object and read it after the block.
+
+    ``statuses`` exists because one ``TaskResult`` is MUTATED through a task's whole
+    lifecycle and handed to every signal. That is Django's own semantics, not ours
+    (``ImmediateBackend._execute_task`` mutates one result in place from READY through
+    to its final status), so
+    ``results[0].status`` read after the block is the task's FINAL status, not the
+    status when that signal fired. Assert transient state through ``statuses``, which
+    snapshots it at receive time.
+    """
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.received: list[TaskResult[t.Any, t.Any]] = []
+        self.seen_statuses: list[TaskResultStatus] = []
+
+    def __call__(
+        self, sender: type, task_result: "TaskResult[t.Any, t.Any]", **kwargs: t.Any
+    ) -> None:
+        with self.lock:
+            self.received.append(task_result)
+            self.seen_statuses.append(task_result.status)
+
+    @property
+    def results(self) -> list["TaskResult[t.Any, t.Any]"]:
+        with self.lock:
+            return list(self.received)
+
+    @property
+    def statuses(self) -> list["TaskResultStatus"]:
+        with self.lock:
+            return list(self.seen_statuses)
+
+
+@contextlib.contextmanager
+def connect_receiver(
+    signal: Signal, receiver: t.Any, *, sender: type
+) -> t.Iterator[None]:
+    """Connect for the duration of the block, always disconnecting.
+
+    connect() sits inside the try so a failure anywhere after it still disconnects; a
+    receiver leaked here fires for every later test in the same process. weak=False
+    because Signal.connect otherwise holds a weak reference and a receiver the caller
+    does not keep alive can be collected mid-test, silently never firing.
+    """
+    try:
+        signal.connect(receiver, sender=sender, weak=False)
+        yield
+    finally:
+        signal.disconnect(receiver, sender=sender)

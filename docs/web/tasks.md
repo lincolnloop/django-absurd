@@ -108,13 +108,19 @@ are silently inert and you get one `WARNING` naming the task and the backend it 
 Precedence for `max_attempts`: per-invocation → decorator default →
 [`OPTIONS["DEFAULT_MAX_ATTEMPTS"]`](configuration.md#backend-options) (5).
 
+`max_attempts=None` is accepted at both sites and means **retry forever** — Absurd
+stores a NULL ceiling and keeps retrying while it is NULL. Such a task is never
+terminal, so Django's task logger never records a final line for it. Leaving
+`max_attempts` out is not the same thing: the backend fills in its own default on every
+enqueue, so only an explicit `None` is unbounded.
+
 The fields (types come from `absurd_sdk`); the "Where" column is enforced by
 `absurd_params`'s own overload pair, not just convention — passing `headers` or
 `idempotency_key` to the decorator form is a static and a runtime error:
 
 | Field             | Where              | What it does                                                                             |
 | ----------------- | ------------------ | ---------------------------------------------------------------------------------------- |
-| `max_attempts`    | default + per-call | Retry ceiling for the task.                                                              |
+| `max_attempts`    | default + per-call | Retry ceiling for the task; `None` means retry forever.                                  |
 | `retry_strategy`  | default + per-call | Backoff: `kind` (`fixed`/`exponential`/`none`), `base_seconds`, `factor`, `max_seconds`. |
 | `cancellation`    | default + per-call | `max_duration`, `max_delay` (seconds).                                                   |
 | `headers`         | per-call only      | Arbitrary JSON metadata carried with the task.                                           |
@@ -171,6 +177,10 @@ result.status         # READY | RUNNING | SUCCESSFUL | FAILED
 result.return_value   # available once SUCCESSFUL
 result.errors         # populated when FAILED
 ```
+
+The id `enqueue` returned is the `"<queue>:<uuid>"` form, and it is the same id
+`context.task_result.id` reports inside a `takes_context` task — so either can be handed
+straight back to `get_result`.
 
 A task may run **more than once** (at-least-once delivery), so keep handlers idempotent
 — use `idempotency_key` (above) where it helps. See

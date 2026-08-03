@@ -9,6 +9,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from traceback import format_exception
 
 import psycopg
 import psycopg.errors
@@ -25,10 +26,13 @@ from asgiref.sync import sync_to_async
 from django.core.exceptions import ImproperlyConfigured
 from django.db import close_old_connections, connections
 from django.tasks import Task, TaskContext, TaskResult, TaskResultStatus
+from django.tasks.base import TaskError
+from django.tasks.signals import task_finished, task_started
 from django.utils import timezone
+from django.utils.json import normalize_json
 from django.utils.module_loading import import_string
 
-from django_absurd import admin_views
+from django_absurd import admin_views, dispatch
 from django_absurd.backends import AbsurdBackend, RunModel, TaskParams
 from django_absurd.connection import register_jsonb_loader, validate_backend
 from django_absurd.context import WORKER_LOOP
@@ -85,9 +89,10 @@ class LazyTaskRegistry(dict[str, dict[str, t.Any]]):
     entry mixes str/None/Callable fields, so the inner ``Any`` is a genuine boundary.
     """
 
-    def __init__(self, queue: str) -> None:
+    def __init__(self, queue: str, backend: AbsurdBackend) -> None:
         super().__init__()
         self.queue = queue
+        self.backend = backend
 
     @t.overload
     def get(self, name: str, default: None = None, /) -> dict[str, t.Any] | None: ...
@@ -121,7 +126,7 @@ class LazyTaskRegistry(dict[str, dict[str, t.Any]]):
                 "queue": self.queue,
                 "default_max_attempts": None,
                 "default_cancellation": None,
-                "handler": build_handler(task),
+                "handler": build_handler(task, backend=self.backend, queue=self.queue),
             }
         return super().get(name, default)
 
@@ -212,7 +217,7 @@ async def aworker_client(
     try:
         register_jsonb_loader(conn)
         client = AsyncAbsurd(conn, queue_name=queue)
-        client._registry = LazyTaskRegistry(queue)  # noqa: SLF001 -- SDK has no public fallback-resolver hook; install lazy import_string resolution
+        client._registry = LazyTaskRegistry(queue, backend)  # noqa: SLF001 -- SDK has no public fallback-resolver hook; install lazy import_string resolution
         try:
             # Probes for the schema-absent guard; raises if Absurd is not migrated.
             await client.list_queues()
@@ -308,32 +313,49 @@ async def fetch_run_outcome(
     return run.state, run.result, run.failure_reason
 
 
-def build_task_context(
+def build_running_task_result(
     task: "Task[t.Any, t.Any]",
     ctx: AsyncTaskContext,
     args: t.Sequence[t.Any],
     kwargs: dict[str, t.Any],
-) -> "TaskContext[t.Any, t.Any]":
+    *,
+    backend: AbsurdBackend,
+    queue: str,
+) -> "TaskResult[t.Any, t.Any]":
+    # ClaimedTask carries no queue, and the re-imported task holds its
+    # definition-time one, so only the worker's own queue is authoritative here. The
+    # alias moves with it: rebinding re-runs Django's Task.__post_init__, which
+    # validates the queue against whatever backend the DEFINITION named — an alias a
+    # beat-scheduled task need not even have configured — and the TaskResult below
+    # reports this worker's alias anyway.
+    if (task.queue_name, task.backend) != (queue, backend.alias):
+        task = task.using(queue_name=queue, backend=backend.alias)
     attempt = read_sdk_attempt(ctx)
+    # One instant for both fields, as Django's own backend does: this handler entry IS
+    # the attempt, so "when it started" and "when it was last attempted" cannot differ.
+    started_at = timezone.now()
     task_result: TaskResult[t.Any, t.Any] = TaskResult(
         task=task,
-        id=ctx.task_id,
+        id=f"{queue}:{ctx.task_id}",
         status=TaskResultStatus.RUNNING,
         enqueued_at=None,
-        started_at=timezone.now(),
+        started_at=started_at,
         finished_at=None,
-        last_attempted_at=None,
+        last_attempted_at=started_at,
         args=list(args),
         kwargs=dict(kwargs),
-        backend=task.backend,
+        backend=backend.alias,
         errors=[],
         worker_ids=["absurd"] * attempt,
     )
-    return TaskContext(task_result=task_result)
+    return task_result
 
 
 def build_handler(
     task: "Task[t.Any, t.Any]",
+    *,
+    backend: AbsurdBackend,
+    queue: str,
 ) -> t.Callable[[TaskParams, AsyncTaskContext], t.Awaitable[JsonValue]]:
     async def handler(params: TaskParams, ctx: AsyncTaskContext) -> JsonValue:
         WORKER_LOOP.set(asyncio.get_running_loop())
@@ -347,9 +369,13 @@ def build_handler(
             ctx.task_id,
             attempt,
         )
+        task_result = build_running_task_result(
+            task, ctx, args, kwargs, backend=backend, queue=queue
+        )
+        dispatch.send_task_signal(task_started, type(backend), task_result)
         try:
             if task.takes_context:
-                ctx_ = build_task_context(task, ctx, args, kwargs)
+                ctx_: TaskContext[t.Any, t.Any] = TaskContext(task_result=task_result)
             if inspect.iscoroutinefunction(task.func):
                 if task.takes_context:
                     result = t.cast("JsonValue", await task.func(ctx_, *args, **kwargs))
@@ -368,6 +394,9 @@ def build_handler(
 
                 result = await asyncio.to_thread(call_sync)
         except (SuspendTask, CancelledTask, FailedTask) as exc:
+            # Absurd decided this run's fate itself, so no task_finished is sent: these
+            # are not endings Django's task signals describe. The arm exists to keep
+            # them out of the ``except Exception`` arm below, which WOULD report one.
             logger.info(
                 "django-absurd task received %s: name=%s task_id=%s attempt=%d",
                 type(exc).__name__,
@@ -376,7 +405,7 @@ def build_handler(
                 attempt,
             )
             raise
-        except Exception:
+        except Exception as exc:
             duration = time.monotonic() - start
             logger.exception(
                 "django-absurd task failed: name=%s task_id=%s attempt=%d "
@@ -386,6 +415,7 @@ def build_handler(
                 attempt,
                 duration,
             )
+            send_finished_if_terminal(ctx, attempt, exc, task_result, backend=backend)
             raise
         else:
             duration = time.monotonic() - start
@@ -397,14 +427,75 @@ def build_handler(
                 attempt,
                 duration,
             )
+            object.__setattr__(task_result, "status", TaskResultStatus.SUCCESSFUL)
+            object.__setattr__(task_result, "finished_at", timezone.now())
+            # normalize_json, as Django's own backend applies to a raw return value
+            # before storing it — otherwise a receiver sees the tuple a task returned
+            # while ``get_result().return_value`` reads back the list Postgres holds.
+            # The value handed BACK to the SDK stays raw; only the payload normalizes.
+            object.__setattr__(task_result, "_return_value", normalize_json(result))
+            dispatch.send_task_signal(task_finished, type(backend), task_result)
             return result
 
     return handler
 
 
+def send_finished_if_terminal(
+    ctx: AsyncTaskContext,
+    attempt: int,
+    exc: Exception,
+    task_result: "TaskResult[t.Any, t.Any]",
+    *,
+    backend: AbsurdBackend,
+) -> None:
+    """Send ``task_finished`` for a failed run, but only once it is provably terminal.
+
+    A failed non-final attempt is READY again, not FAILED — Absurd itself will retry
+    it, so sending here would be a false completion signal.
+
+    Sent from inside the handler's ``except`` arm, so ``sys.exc_info()`` already holds
+    ``exc`` — the traceback Django's ``log_task_finished`` attaches to its ERROR line is
+    the task's own, matching the ``TaskError`` payload with nothing to arrange.
+    """
+    if not is_terminal_attempt(attempt, read_sdk_max_attempts(ctx)):
+        return
+    mark_task_result_failed(task_result, exc)
+    dispatch.send_task_signal(task_finished, type(backend), task_result)
+
+
+def is_terminal_attempt(attempt: int, max_attempts: int | None) -> bool:
+    """Whether this attempt is the last one Absurd will make.
+
+    ``fail_run`` retries when ``v_max_attempts is null or v_next_attempt <=
+    v_max_attempts``, so a NULL ``max_attempts`` means retry forever: no attempt is
+    ever terminal, and ``task_finished`` must stay unsent.
+    """
+    return max_attempts is not None and attempt >= max_attempts
+
+
+def mark_task_result_failed(
+    task_result: "TaskResult[t.Any, t.Any]", exc: Exception
+) -> None:
+    """Mutate ``task_result`` into its terminal FAILED shape, exactly as
+    ``ImmediateBackend._execute_task`` does for its own failure branch."""
+    object.__setattr__(task_result, "status", TaskResultStatus.FAILED)
+    object.__setattr__(task_result, "finished_at", timezone.now())
+    task_result.errors.append(
+        TaskError(
+            exception_class_path=f"{type(exc).__module__}.{type(exc).__qualname__}",
+            traceback="".join(format_exception(exc)),
+        )
+    )
+
+
 def read_sdk_attempt(ctx: AsyncTaskContext) -> int:
     attempt: int = ctx._task["attempt"]  # noqa: SLF001 -- SDK TaskContext has no public attempt property
     return attempt
+
+
+def read_sdk_max_attempts(ctx: AsyncTaskContext) -> int | None:
+    max_attempts: int | None = ctx._task["max_attempts"]  # noqa: SLF001 -- SDK TaskContext has no public max_attempts property
+    return max_attempts
 
 
 async def run_blocking_worker(client: AsyncAbsurd, options: WorkerOptions) -> None:

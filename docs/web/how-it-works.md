@@ -58,6 +58,19 @@ One worker runs both sync and `async def` [tasks](tasks.md) (async on an event l
 sync in a thread pool). On start it does a full sync — provisioning every declared queue
 and rebuilding the admin views — then polls for work.
 
+## Django Task lifecycle logging
+
+Django logs a task's lifecycle on the `django.tasks` logger — `DEBUG` when it's
+enqueued, `INFO` at `state=RUNNING` and `state=SUCCESSFUL`, `ERROR` with a traceback at
+`state=FAILED`. `AbsurdBackend` emits the signals Django's logging listens for, so those
+lines appear for Absurd tasks too.
+
+Django's logs are not a complete record. Postgres is: a retried attempt's failure logs
+nothing, and neither does an ending Absurd decided itself — a
+[`max_delay`/`max_duration` cancellation](tasks.md#retries-spawn-options), an expired
+claim, or a cancellation. The [stored result](tasks.md#read-the-result) and the
+queue-state models below are the record.
+
 ## Admin & ORM introspection
 
 When `django.contrib.admin` is installed, django-absurd registers **read-only** admin

@@ -216,6 +216,11 @@ accepted by Absurd's own [task definition](https://earendil-works.github.io/absu
 time. Backend capabilities: result retrieval, async tasks, and deferred (run-later)
 enqueue are supported; priority is not.
 
+`max_attempts=None` is accepted (and typed) at both sites, and means **retry forever** —
+Absurd stores a NULL ceiling and retries while it is NULL. Omitting `max_attempts` is
+not the same thing: the backend fills in its own `OPTIONS["DEFAULT_MAX_ATTEMPTS"]` (5)
+on every enqueue, so only an explicit `None` reaches the unbounded behaviour.
+
 **An idempotency key is scoped to its queue, not to your task.** A key reserves itself
 against one queue, with no task name and no arguments in the comparison. Whichever
 enqueue arrives first owns the key; every later enqueue is swallowed and handed the
@@ -685,6 +690,9 @@ send_report.get_result(result.id)              # fetch by id (sync)
 await send_report.aget_result(result.id)       # async variant
 ```
 
+Every id has the same `"<queue>:<uuid>"` shape — including `context.task_result.id`
+inside a `takes_context` task, so that can be handed straight back to `get_result`.
+
 ## Exceptions
 
 django-absurd raises its own exception types for conditions specific to this package,
@@ -945,6 +953,17 @@ run (also needs `OPTIONS["SYNC_SCHEDULES_ON_TEST_DB"] = True` —
 test — it doesn't care how it got there, only what's present.
 
 ## Deployment notes
+
+### Django Task lifecycle logging
+
+Django's own `django.tasks` logger reports each task's lifecycle on this backend —
+`DEBUG` on enqueue, `INFO` on start and on success, `ERROR` with a traceback when a
+task's last attempt raises — because `AbsurdBackend` emits Django's task signals.
+
+Django's logs are not a complete record. Postgres is: a retried attempt's failure logs
+nothing, and neither does an ending Absurd decides on its own.
+[Queue state](#querying-queue-state-orm) and the [stored result](#retrieving-results)
+are the record.
 
 - **Database privileges.** `migrate` runs `CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`
   and `CREATE SCHEMA IF NOT EXISTS absurd`, so the migrating role needs rights to create
