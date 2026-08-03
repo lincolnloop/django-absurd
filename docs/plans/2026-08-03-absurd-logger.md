@@ -257,6 +257,11 @@ git commit -m "feat: log Absurd spawns through the SDK's before_spawn hook"
 - Modify: `django_absurd/worker.py` (`build_handler` — remove its logging at lines ~366,
   400, 410, 422)
 - Modify: `django_absurd/deferred.py:53` (delete the "waiting" line)
+- Modify: `tests/core/test_logging_names.py` — its `names == {"django_absurd.worker"}`
+  assertion breaks here: moving the per-task lines to `django_absurd.hooks` at INFO
+  makes a plain drain emit both. Widen it to the set you actually observe, deliberately
+  — that equality is a noise canary, so name every logger you expect rather than
+  loosening it to a subset check.
 - Create: `tests/core/test_logging_lifecycle.py`
 
 **Interfaces:**
@@ -408,7 +413,7 @@ that. Check with an explicit-path sweep that no message text now has no emitter.
 - [ ] **Step 5: Run to verify pass**
 
 Run:
-`uv run pytest tests/core/test_logging_lifecycle.py tests/core/test_worker.py tests/core/test_durable.py tests/core/test_run_after.py -v`
+`uv run pytest tests/core/test_logging_lifecycle.py tests/core/test_logging_names.py tests/core/test_worker.py tests/core/test_durable.py tests/core/test_run_after.py -v`
 Expected: PASS. The three existing files are included because they assert worker
 behaviour around the code you just edited.
 
@@ -423,15 +428,32 @@ git commit -m "feat: log the run lifecycle through wrap_task_execution"
 
 ---
 
-### Task 4: Provisioning and cleanup lines
+### Task 4: The three missing log lines, and pg_cron's rename
 
 **Files:**
 
 - Modify: `django_absurd/queues.py` (`provision_backend`, `sync_queues` — add a logger)
 - Modify: `django_absurd/cleanup.py` (`cleanup_queues` — add a logger)
+- Modify: `django_absurd/worker.py` (`arun_worker` — add a stopped line; only `started`
+  exists today, at `worker.py:185`)
+- Modify: `django_absurd/pg_cron/signals.py`, `django_absurd/pg_cron/apps.py`,
+  `tests/pg_cron/test_schedule_emission.py` (Step 0 — the rename Task 1 did not reach)
 - Create: `tests/core/test_logging_maintenance.py`
 
 **Interfaces:** none new.
+
+- [ ] **Step 0: Finish the rename in pg_cron**
+
+Task 1 renamed the five core modules; `django_absurd/pg_cron/` was never in this plan
+and still has two flat loggers whose messages carry a `"django-absurd: "` prefix —
+`pg_cron/signals.py:42` (message at `:102`) and `pg_cron/apps.py:23` (message at
+`:125`). Once Task 5 attaches a handler to the parent `django_absurd` logger, those
+lines print the package name twice.
+
+Give both `logging.getLogger(__name__)` and strip the prefix, exactly as Task 1 did for
+the core modules — same wording otherwise, same level, same args, ASCII only.
+`tests/pg_cron/test_schedule_emission.py:62` asserts the prefixed text and must be
+updated. That suite runs separately: `uv run pytest tests/pg_cron -v`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -477,26 +499,51 @@ rather than forcing 1.
 Run: `uv run pytest tests/core/test_logging_maintenance.py -v` Expected: FAIL — neither
 module has a logger today.
 
-- [ ] **Step 3: Add the two lines**
+- [ ] **Step 3: Add a worker-stopped test**
+
+`arun_worker` logs `started` inside `aworker_client`'s context but logs nothing when the
+run ends, so a reader cannot tell a finished worker from a hung one. Add to the same
+file:
+
+```python
+def test_the_worker_logs_when_it_stops(
+    caplog: pytest.LogCaptureFixture, dj_absurd: AbsurdTestRuntime
+) -> None:
+    with caplog.at_level(logging.INFO, logger="django_absurd"):
+        with dj_absurd.freeze_time():
+            dj_absurd.drain()
+
+    messages = [
+        r.getMessage() for r in caplog.records if r.name == "django_absurd.worker"
+    ]
+    assert [m for m in messages if "started" in m]
+    assert [m for m in messages if "stopped" in m]
+```
+
+Import `AbsurdTestRuntime` from `django_absurd.test`. Run it, watch the stopped
+assertion fail, then log it past tense as the worker run ends — including on the burst
+path, which is what `drain()` uses.
+
+- [ ] **Step 4: Add the two maintenance lines**
 
 `logging.getLogger(__name__)` in each module. Log after the work, past tense, reporting
 what the return value says: which queues were created or reconciled; how many rows
 cleanup removed from which queues. INFO. If nothing happened, say that rather than
 logging an empty list.
 
-- [ ] **Step 4: Run to verify pass**
+- [ ] **Step 5: Run to verify pass**
 
 Run:
-`uv run pytest tests/core/test_logging_maintenance.py tests/core/test_queue_sync.py tests/core/test_cleanup.py -v`
-Expected: PASS.
+`uv run pytest tests/core/test_logging_maintenance.py tests/core/test_queue_sync.py tests/core/test_cleanup.py tests/core/test_worker.py -v`
+then `uv run pytest tests/pg_cron -v` for Step 0. Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 uvx --with tox-uv tox -e dev
 uv run pre-commit run --all-files
-git add django_absurd/queues.py django_absurd/cleanup.py tests/core/test_logging_maintenance.py
-git commit -m "feat: log queue provisioning and cleanup"
+git add django_absurd/ tests/
+git commit -m "feat: log worker shutdown, queue provisioning and cleanup"
 ```
 
 ---
