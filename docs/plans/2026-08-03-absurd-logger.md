@@ -49,6 +49,13 @@ execution rather than logging when got wrong.
 - Tests: pytest, function-based only. Read [`tests/CLAUDE.md`](../../tests/CLAUDE.md)
   first. Type the fixture `dj_absurd: AbsurdTestRuntime`; alphabetize fixture params;
   add `@pytest.mark.django_db(transaction=True)` to anything that drains.
+- **Assert the FULL rendered log message, never a substring and never a count alone.**
+  Compare `record.getMessage()` (not `record.msg`, which still has `%s` in it) against
+  the whole expected line, built from values the test holds. `len(records) == 1` plus a
+  level says nothing about what the line says, so a garbled message ships green. Where a
+  message contains something the test cannot predict exactly, interpolate what it
+  observed or restructure the message so the varying part is its own field — do not fall
+  back to `in` for the whole line.
 - 100% statement + branch coverage on added lines.
 - Gates: `uv run pytest tests/core/<file> -v` while iterating, then
   `uvx --with tox-uv tox -e dev` and `uv run pre-commit run --all-files` before each
@@ -722,7 +729,18 @@ whole unit is shaped around.
 Run: `uv run pytest tests/core/test_command_output.py tests/core/test_queue_sync.py -v`
 Expected: PASS.
 
-- [ ] **Step 5: Assert the constraint holds**
+- [ ] **Step 5: Tighten the lifecycle tests to full-text assertions**
+
+`tests/core/test_logging_lifecycle.py` (Task 3) matches on substrings —
+`[m for m in messages if "started" in m]` and similar. Per the full-text constraint
+above, rewrite each to compare the whole rendered message. The lifecycle lines carry a
+duration, so interpolate what the test observed or assert the fields around it; if one
+line genuinely cannot be pinned exactly, name it in your report rather than leaving
+`in`.
+
+Run: `uv run pytest tests/core/test_logging_lifecycle.py -v`
+
+- [ ] **Step 6: Assert the constraint holds**
 
 Add one test, in the same file, that drains a task and asserts no `django_absurd` log
 record contains a non-ASCII character. This is the guard that keeps decoration out of
