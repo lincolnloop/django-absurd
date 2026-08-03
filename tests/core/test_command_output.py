@@ -26,3 +26,43 @@ def test_the_worker_banner_carries_the_elephant(dj_absurd: AbsurdTestRuntime) ->
     assert out.getvalue() == (
         "🐘 Started worker on queue 'default'.\n🐘 Stopped worker on queue 'default'.\n"
     )
+
+
+def test_worker_banner_keeps_the_elephant_on_a_utf8_stream(
+    dj_absurd: AbsurdTestRuntime,
+) -> None:
+    dj_absurd.sync_queues()
+    buffer = io.BytesIO()
+    out = io.TextIOWrapper(buffer, encoding="utf-8")
+    call_command("absurd_worker", queue="default", burst=True, stdout=out)
+    out.flush()
+
+    assert buffer.getvalue().decode("utf-8") == (
+        "🐘 Started worker on queue 'default'.\n🐘 Stopped worker on queue 'default'.\n"
+    )
+
+
+def test_worker_banner_drops_the_elephant_on_a_stream_that_cannot_encode_it(
+    dj_absurd: AbsurdTestRuntime,
+) -> None:
+    dj_absurd.sync_queues()
+    buffer = io.BytesIO()
+    out = io.TextIOWrapper(buffer, encoding="cp1252")
+    call_command("absurd_worker", queue="default", burst=True, stdout=out)
+    out.flush()
+
+    assert buffer.getvalue().decode("cp1252") == (
+        "Started worker on queue 'default'.\nStopped worker on queue 'default'.\n"
+    )
+
+
+def test_sync_queues_drops_the_crate_on_a_stream_that_cannot_encode_it(
+    settings: SettingsWrapper,
+) -> None:
+    settings.TASKS = make_tasks_settings(queues={"freshemojicp1252": {}})
+    buffer = io.BytesIO()
+    out = io.TextIOWrapper(buffer, encoding="cp1252")
+    call_command("absurd_sync_queues", stdout=out)
+    out.flush()
+
+    assert buffer.getvalue().decode("cp1252") == "Created: freshemojicp1252\n"
