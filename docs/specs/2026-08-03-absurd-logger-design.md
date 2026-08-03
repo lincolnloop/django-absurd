@@ -34,25 +34,30 @@ public return type; that is that unit's decision.
 
 ## Events
 
-| Source                    | Event                                               | Level   |
-| ------------------------- | --------------------------------------------------- | ------- |
-| `before_spawn`            | task spawned — name, queue, max_attempts, dedup key | DEBUG   |
-| `wrap_task_execution`     | task started — name, attempt/max                    | INFO    |
-| `wrap_task_execution`     | task completed — + duration                         | INFO    |
-| `wrap_task_execution`     | task suspended — a durable wait; the run re-enters  | INFO    |
-| `wrap_task_execution`     | task cancelled                                      | WARNING |
-| `wrap_task_execution`     | run already failed elsewhere                        | WARNING |
-| `wrap_task_execution`     | task failed — + attempt/max, with traceback         | ERROR   |
-| `worker.py` (existing)    | worker started                                      | INFO    |
-| `worker.py` (NEW)         | worker stopped                                      | INFO    |
-| `scheduler.py` (existing) | beat fired                                          | INFO    |
-| `queues.py` (NEW)         | queues provisioned                                  | INFO    |
-| `cleanup.py` (NEW)        | cleanup ran                                         | INFO    |
+The message text below is what the code emits, verbatim.
 
-`queues.py` and `cleanup.py` log nothing today, and there is no worker-stopped line
-either, so those three are additions rather than retitles. The 16 existing statements
-live in `worker.py` (5), `scheduler.py` (6), `deferred.py`, `dispatch.py`, `tasks.py`
-and the two `pg_cron` modules.
+| Source                | Event                                                      | Level   |
+| --------------------- | ---------------------------------------------------------- | ------- |
+| `before_spawn`        | `spawn requested: …` — name, queue, max_attempts, dedup    | DEBUG   |
+| `wrap_task_execution` | `task started` — name, attempt/max                         | INFO    |
+| `wrap_task_execution` | `task completed` — + duration                              | INFO    |
+| `wrap_task_execution` | `task suspended` — a durable wait; the run re-enters       | INFO    |
+| `wrap_task_execution` | `task cancelled`                                           | WARNING |
+| `wrap_task_execution` | `run already failed elsewhere`                             | WARNING |
+| `wrap_task_execution` | `task failed` — + attempt/max, with traceback              | ERROR   |
+| `worker.py`           | `worker started: …` / `worker stopped: …`                  | INFO    |
+| `scheduler.py`        | `beat started: …` / `beat: no schedules declared`          | INFO    |
+| `scheduler.py`        | `schedule enqueued: …`, and `cleanup ran: slot=…`          | INFO    |
+| `scheduler.py`        | `schedule failed: …`, with traceback                       | ERROR   |
+| `queues.py`           | `queues provisioned: …` / `queues provisioned: no changes` | INFO    |
+| `cleanup.py`          | `cleanup removed rows: …` / `cleanup removed nothing`      | INFO    |
+
+The two cleanup lines are deliberately split by what each source actually knows:
+`scheduler.py` reports only the slot it fired on, and `cleanup.py` owns what was
+removed. Neither repeats the other, and no line interpolates a raw container repr.
+
+The dedup key is rendered ASCII-safe (`backslashreplace`), because it is user-supplied
+and a raw glyph in a record is exactly what this design forbids.
 
 DEBUG for the high-frequency one, INFO for lifecycle transitions, WARNING where Absurd
 ended a run without the task's code failing, ERROR with a traceback for a real failure.
@@ -105,14 +110,21 @@ Every existing message drops its hand-written `"django-absurd "` prefix — it d
 `absurd_beat` make the `django_absurd` logger's INFO lines visible. That is **two
 independent decisions**, and conflating them ships one bug or the other:
 
-- **The handler** — a plain `StreamHandler`, attached only when nothing on the logger's
-  ancestor chain would already catch these records (`Logger.hasHandlers()`, not the
-  logger's own `.handlers`). Records propagate, so a project that configured only the
-  root logger would otherwise see every line twice.
+- **The handler** — a plain `StreamHandler`, attached only when nothing already catches
+  these records, checked in **both directions**: `Logger.hasHandlers()` for the ancestor
+  chain, plus a walk of `django_absurd`'s existing descendants for a handler on one of
+  them. Records propagate upward, so a project that configured only the root logger
+  would see every line twice if we attached beneath it; and a project that configured
+  only `django_absurd.hooks` would see that child's lines twice if we attached above it.
+  A descendant with `propagate = False` does not count — its records never reach a
+  parent handler, so it must not veto one for every other child.
 - **The level** — raised to INFO only when `django_absurd` has no explicit level of its
-  own (`NOTSET`), whether or not a handler was attached. A project that configures a
-  root handler but leaves the level alone would otherwise be filtered at the
-  effective-level check before reaching that handler: a completely silent worker,
+  own (`NOTSET`) **and** its effective level is currently coarser than INFO. The
+  `NOTSET` half preserves the opt-out below. The effective-level half exists because
+  raising unconditionally would _lower_ the verbosity of a project already running at
+  DEBUG — starting a worker would delete lines its own configuration was showing.
+  Without either check, a project with a root handler at the default WARNING is filtered
+  at the effective-level check before reaching that handler: a completely silent worker,
   despite having "a handler".
 
 This is not decoration — it is the difference between the feature working and being
