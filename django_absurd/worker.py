@@ -38,6 +38,7 @@ from django_absurd.connection import register_jsonb_loader, validate_backend
 from django_absurd.context import WORKER_LOOP
 from django_absurd.deferred import DEFER_NAME_SUFFIX, build_deferred_handler
 from django_absurd.exceptions import QueueNotDeclaredError, QueueNotProvisionedError
+from django_absurd.hooks import build_absurd_hooks
 from django_absurd.management.base import resolve_backend
 from django_absurd.queues import names_a_queue_table
 from django_absurd.scheduler import run_beat
@@ -215,7 +216,7 @@ async def aworker_client(
     )
     try:
         register_jsonb_loader(conn)
-        client = AsyncAbsurd(conn, queue_name=queue)
+        client = AsyncAbsurd(conn, queue_name=queue, hooks=build_absurd_hooks())
         client._registry = LazyTaskRegistry(queue, backend)  # noqa: SLF001 -- SDK has no public fallback-resolver hook; install lazy import_string resolution
         try:
             # Probes for the schema-absent guard; raises if Absurd is not migrated.

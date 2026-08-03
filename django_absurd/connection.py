@@ -9,6 +9,8 @@ from django.core.exceptions import ImproperlyConfigured
 from django.db import connections
 from psycopg.types.json import set_json_loads
 
+from django_absurd.hooks import build_absurd_hooks
+
 BACKEND_ERROR_MESSAGE = (
     "django-absurd requires the psycopg (v3) PostgreSQL backend. "
     "See https://www.psycopg.org/psycopg3/docs/"
@@ -37,7 +39,7 @@ def register_jsonb_loader(context: psycopg.abc.AdaptContext) -> None:
 
 def build_absurd_client(using: str) -> Absurd:
     validate_backend(using)
-    return Absurd(connections[using].connection)
+    return Absurd(connections[using].connection, hooks=build_absurd_hooks())
 
 
 def resolve_cron_database(alias: str) -> str:
