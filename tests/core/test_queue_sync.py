@@ -1,4 +1,5 @@
 import datetime as dt
+import logging
 import typing as t
 
 import psycopg
@@ -98,13 +99,23 @@ def test_non_destructive(settings: SettingsWrapper) -> None:
 
 
 def test_sync_reports_no_queues_when_all_in_sync(
+    caplog: pytest.LogCaptureFixture,
     capsys: pytest.CaptureFixture[str],
     settings: SettingsWrapper,
 ) -> None:
-    settings.TASKS = build_tasks_setting({"q": {}})
-    call_command("absurd_sync_queues")  # creates q
+    # A name unused elsewhere in this file: the log assertion below needs this
+    # call to genuinely create the queue, regardless of what earlier tests in
+    # this file already declared and left behind on the shared reused database.
+    settings.TASKS = build_tasks_setting({"freshsync": {}})
+    with caplog.at_level(logging.INFO, logger="django_absurd"):
+        call_command("absurd_sync_queues")  # creates freshsync
+    records = [r for r in caplog.records if r.name == "django_absurd.queues"]
+    assert len(records) == 1
+    assert (
+        records[0].getMessage() == "queues provisioned: created=freshsync reconciled="
+    )
     capsys.readouterr()
-    call_command("absurd_sync_queues")  # q exists, no drift -> empty result
+    call_command("absurd_sync_queues")  # freshsync exists, no drift -> empty result
     assert "No queues to sync." in capsys.readouterr().out
 
 

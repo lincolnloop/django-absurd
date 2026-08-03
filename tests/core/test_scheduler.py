@@ -1,4 +1,5 @@
 import datetime as dt
+import logging
 import os
 import signal
 import threading
@@ -759,6 +760,7 @@ def test_beat_skips_not_yet_due_schedule(
 
 
 def test_plain_worker_runs_blocking_worker(
+    caplog: pytest.LogCaptureFixture,
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     # Covers worker.py line 114: else branch of arun_worker (no burst, no beat).
@@ -773,6 +775,7 @@ def test_plain_worker_runs_blocking_worker(
     )
     call_command("absurd_sync_queues")
     tasks.make_group.enqueue("plain-worker")
+    backend = get_absurd_backends()["default"]
 
     def watch() -> None:
         deadline = time.monotonic() + 15
@@ -784,7 +787,19 @@ def test_plain_worker_runs_blocking_worker(
 
     watcher = threading.Thread(target=watch, daemon=True)
     watcher.start()
-    call_command("absurd_worker", queue="default", poll_interval=0.05)
+    with caplog.at_level(logging.INFO, logger="django_absurd"):
+        call_command("absurd_worker", queue="default", poll_interval=0.05)
     watcher.join(timeout=5)
 
     assert Group.objects.filter(name="plain-worker").exists()
+    stopped = [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == "django_absurd.worker"
+        and r.getMessage().startswith("worker stopped")
+    ]
+    expected = (
+        f"worker stopped: alias={backend.alias} queue=default"
+        f" database={backend.database}"
+    )
+    assert stopped == [expected]

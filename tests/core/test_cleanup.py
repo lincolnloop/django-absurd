@@ -102,15 +102,21 @@ def answer(text: str) -> collections.abc.Iterator[None]:
 
 
 def test_cleanup_deletes_aged_terminal_tasks(
+    caplog: pytest.LogCaptureFixture,
     cleanup: "CleanupCallable",
     settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     sync_queue(settings)
     tasks.add.enqueue(2, 3)
     drain()
-    assert cleanup() == [
+    with caplog.at_level(logging.INFO, logger="django_absurd"):
+        result = cleanup()
+    assert result == [
         {"queue_name": "default", "tasks_deleted": 1, "events_deleted": 0}
     ]
+    records = [r for r in caplog.records if r.name == "django_absurd.cleanup"]
+    assert len(records) == 1
+    assert records[0].getMessage() == "cleanup removed rows: default: tasks=1 events=0"
 
 
 def test_cleanup_skips_non_terminal_tasks(
