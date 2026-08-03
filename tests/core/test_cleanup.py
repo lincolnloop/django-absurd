@@ -307,7 +307,7 @@ def test_beat_isolates_failing_cleanup(
                 frozen_time, backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC)
             )
         errors = [r for r in caplog.records if r.levelno == logging.ERROR]
-        assert [r.getMessage() for r in errors] == ["django-absurd cleanup failed"]
+        assert [r.getMessage() for r in errors] == ["cleanup failed"]
     finally:
         call_command("migrate", "django_absurd", "zero", verbosity=0)
         call_command("migrate", verbosity=0)  # restore absurd schema

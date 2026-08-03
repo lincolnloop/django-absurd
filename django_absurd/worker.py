@@ -42,7 +42,7 @@ from django_absurd.management.base import resolve_backend
 from django_absurd.queues import names_a_queue_table
 from django_absurd.scheduler import run_beat
 
-logger = logging.getLogger("django_absurd")
+logger = logging.getLogger(__name__)
 
 D = t.TypeVar("D")
 
@@ -183,8 +183,7 @@ async def arun_worker(
         loop.set_default_executor(executor)
         async with aworker_client(backend, queue) as client:
             logger.info(
-                "django-absurd worker started: alias=%s queue=%s database=%s "
-                "burst=%s concurrency=%d",
+                "worker started: alias=%s queue=%s database=%s burst=%s concurrency=%d",
                 backend.alias,
                 queue,
                 backend.database,
@@ -364,7 +363,7 @@ def build_handler(
         attempt = read_sdk_attempt(ctx)
         start = time.monotonic()
         logger.info(
-            "django-absurd task started: name=%s task_id=%s attempt=%d",
+            "task started: name=%s task_id=%s attempt=%d",
             task.module_path,
             ctx.task_id,
             attempt,
@@ -398,7 +397,7 @@ def build_handler(
             # are not endings Django's task signals describe. The arm exists to keep
             # them out of the ``except Exception`` arm below, which WOULD report one.
             logger.info(
-                "django-absurd task received %s: name=%s task_id=%s attempt=%d",
+                "task received %s: name=%s task_id=%s attempt=%d",
                 type(exc).__name__,
                 task.module_path,
                 ctx.task_id,
@@ -408,8 +407,7 @@ def build_handler(
         except Exception as exc:
             duration = time.monotonic() - start
             logger.exception(
-                "django-absurd task failed: name=%s task_id=%s attempt=%d "
-                "duration=%.3fs",
+                "task failed: name=%s task_id=%s attempt=%d duration=%.3fs",
                 task.module_path,
                 ctx.task_id,
                 attempt,
@@ -420,8 +418,7 @@ def build_handler(
         else:
             duration = time.monotonic() - start
             logger.info(
-                "django-absurd task completed: name=%s task_id=%s attempt=%d "
-                "duration=%.3fs",
+                "task completed: name=%s task_id=%s attempt=%d duration=%.3fs",
                 task.module_path,
                 ctx.task_id,
                 attempt,

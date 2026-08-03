@@ -26,7 +26,7 @@ if t.TYPE_CHECKING:
     # backends imports DEFER_NAME_SUFFIX from here, so this one stays type-only.
     from django_absurd.backends import TaskParams
 
-logger = logging.getLogger("django_absurd")
+logger = logging.getLogger(__name__)
 
 # A deferred enqueue spawns `<target dotted path>:run_after` rather than the caller's
 # task. Leading with the target sorts the row beside it in the admin and names the kwarg
@@ -51,7 +51,7 @@ def build_deferred_handler(
     async def handler(params: "TaskParams", ctx: AsyncTaskContext) -> JsonValue:
         spec = params["kwargs"]
         logger.info(
-            "django-absurd deferred task waiting: target=%s due=%s task_id=%s",
+            "deferred task waiting: target=%s due=%s task_id=%s",
             target,
             spec["due"],
             ctx.task_id,

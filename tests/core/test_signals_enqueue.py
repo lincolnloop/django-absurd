@@ -58,11 +58,11 @@ def test_enqueue_survives_a_receiver_that_raises(
         result = tasks.add.enqueue(1, 2)
 
     assert result.status == TaskResultStatus.READY
-    errors = [r for r in caplog.records if r.name == "django_absurd"]
+    errors = [r for r in caplog.records if r.name == "django_absurd.dispatch"]
     assert len(errors) == 1
     assert errors[0].exc_info is not None
     assert errors[0].getMessage() == (
-        f"django-absurd task_enqueued receiver failed for task result id={result.id}"
+        f"task_enqueued receiver failed for task result id={result.id}"
     )
 
 

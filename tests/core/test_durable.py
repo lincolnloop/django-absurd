@@ -149,8 +149,5 @@ def test_suspend_logged_as_lifecycle_not_failure(
     atasks.asleep_for_once.enqueue("k")
     with caplog.at_level(logging.INFO, logger="django_absurd"):
         assert [run.state for run in dj_absurd.drain()] == ["sleeping"]
-    assert (
-        "django-absurd task received SuspendTask: name=tests.atasks.asleep_for_once"
-        in caplog.text
-    )
+    assert "task received SuspendTask: name=tests.atasks.asleep_for_once" in caplog.text
     assert "task failed" not in caplog.text
