@@ -102,15 +102,31 @@ Every existing message drops its hand-written `"django-absurd "` prefix — it d
 ## Who attaches a handler
 
 **One handler, in one place, with no formatter of ours.** `absurd_worker` and
-`absurd_beat` attach a plain `StreamHandler` at INFO for the `django_absurd` logger, and
-only when the project has configured nothing that would already catch those records.
+`absurd_beat` make the `django_absurd` logger's INFO lines visible. That is **two
+independent decisions**, and conflating them ships one bug or the other:
+
+- **The handler** — a plain `StreamHandler`, attached only when nothing on the logger's
+  ancestor chain would already catch these records (`Logger.hasHandlers()`, not the
+  logger's own `.handlers`). Records propagate, so a project that configured only the
+  root logger would otherwise see every line twice.
+- **The level** — raised to INFO only when `django_absurd` has no explicit level of its
+  own (`NOTSET`), whether or not a handler was attached. A project that configures a
+  root handler but leaves the level alone would otherwise be filtered at the
+  effective-level check before reaching that handler: a completely silent worker,
+  despite having "a handler".
 
 This is not decoration — it is the difference between the feature working and being
 invisible. Django's `DEFAULT_LOGGING` configures the `django` logger only;
-`django_absurd` is not under it and the root logger is unconfigured, so
-`logging.lastResort` applies and only WARNING and above reach stderr. Without this
-handler, `absurd_worker` shows no task lines at all until the developer writes a
-`LOGGING` dict.
+`django_absurd` is not under it, and **root's default level is WARNING**, so
+`logging.lastResort` applies and only WARNING and above reach stderr. Without this,
+`absurd_worker` shows no task lines at all until the developer writes a `LOGGING` dict.
+
+The `NOTSET` gate is the opt-out, and it is narrow on purpose: silence us by setting a
+**level** on `django_absurd`, not merely by configuring the logger. A project that gives
+it handlers but no `level` key stays `NOTSET`, so the worker command still raises it to
+INFO. Deliberate — a foreground command whose whole job is to report task lifecycle
+should not be silent — but it does mean a globally-quiet project gets INFO from this
+package while a command runs.
 
 Nothing else attaches anything, ever — not at import, not in `AppConfig.ready`. A web
 process enqueuing a task, a test, or a task under someone else's runner gets whatever
