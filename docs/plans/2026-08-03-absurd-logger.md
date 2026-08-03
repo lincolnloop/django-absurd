@@ -39,7 +39,12 @@ execution rather than logging when got wrong.
 - Re-raise inside an `except` always chains `from exc`. Never `from None`.
 - No new `noqa`, `type: ignore`, or ruff ignore. If you think you need one, STOP and
   ask.
-- No `unittest.mock.patch`. No comments narrating prior state.
+- No `unittest.mock.patch`, with ONE authorised exception: the logging-containment
+  branch in `django_absurd/hooks.py` may be reached with `monkeypatch`, because no
+  natural input reaches it — every message interpolates only `str`/`int` values the
+  package controls. This is explicitly authorised for that branch and nothing else;
+  reaching any other branch still requires a real input, per `tests/CLAUDE.md`.
+- No comments narrating prior state.
 - Log messages are past tense, after the action.
 - Tests: pytest, function-based only. Read [`tests/CLAUDE.md`](../../tests/CLAUDE.md)
   first. Type the fixture `dj_absurd: AbsurdTestRuntime`; alphabetize fixture params;
