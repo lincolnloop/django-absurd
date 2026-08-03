@@ -98,20 +98,21 @@ Every existing message drops its hand-written `"django-absurd "` prefix — it d
 Pretty is emoji + the sentence + a `key=value` tail. Plain is the same line without the
 emoji.
 
-`absurd_worker` and `absurd_beat` attach the pretty handler at startup when **all**
-hold:
+`absurd_worker` and `absurd_beat` attach the handler at startup. Two independent
+predicates decide what it renders, because the signals involved mean different things:
 
-- `sys.stderr.isatty()`
-- the stream's encoding can represent the emoji
-- `NO_COLOR` is unset
-- `TERM` is not `dumb`
+**Emoji** is on when stderr is a tty AND its encoding can represent the glyph. The
+encoding half is a correctness gate, not cosmetics: an emoji a stream cannot encode
+raises `UnicodeEncodeError` **inside** logging and the record is dropped — the line is
+lost entirely rather than degrading. The tty half keeps decoration out of files and
+aggregators, which is the plain form the issue asks for in production.
 
-Deliberately **not** keyed on `DEBUG`: people run `DEBUG=True` with output piped to a
-file.
+**Colour** is on when stderr is a tty AND `NO_COLOR` is unset AND `TERM` is not `dumb`.
+Those last two are colour preferences and say nothing about emoji, so they do not strip
+it: a developer with `NO_COLOR` set still gets 🚀 and 💥 in their terminal, without ANSI
+escapes.
 
-The encoding test is a correctness gate, not cosmetics. An emoji a stream cannot encode
-raises `UnicodeEncodeError` **inside** logging, and the record is dropped — so an
-un-encodable glyph loses the line entirely rather than degrading it.
+Neither is keyed on `DEBUG` — people run `DEBUG=True` with output piped to a file.
 
 Nothing else attaches a handler, ever — not at import, not in `AppConfig.ready`. A web
 process enqueuing a task, a test, or a task running under someone else's runner gets
@@ -132,10 +133,11 @@ scannable.
   still completes and the fault is logged.
 - Each hook event fires with the right level and text: `caplog` on the specific
   `django_absurd.*` logger, asserting the full message, not a substring.
-- The support gate: pretty when the stream is a tty with a capable encoding, plain when
-  redirected, plain under `NO_COLOR`, plain under `TERM=dumb`, plain when the encoding
-  cannot represent the emoji. Drive the gate with real stream objects rather than
-  patching.
+- Emoji and colour are decided independently, and the cases that distinguish them are
+  the point: a tty with a capable encoding gets both; redirected output gets neither;
+  `NO_COLOR` and `TERM=dumb` in a tty get emoji WITHOUT colour; an encoding that cannot
+  represent the glyph gets colour WITHOUT emoji. Drive both predicates with real stream
+  objects rather than patching.
 - Emoji is decoration: the plain rendering of a record equals the pretty rendering with
   the glyph stripped.
 - No handler is attached by importing the package, by `AppConfig.ready`, or by enqueuing
