@@ -59,7 +59,10 @@ def test_central_failure_after_commit_is_swallowed_and_logged(
         )
         is None
     )
-    assert "django-absurd: pg_cron schedule emission failed after commit" in caplog.text
+    records = [r for r in caplog.records if r.name == "django_absurd.pg_cron.signals"]
+    assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
+    assert records[0].getMessage() == "pg_cron schedule emission failed after commit"
 
 
 def test_saving_admin_schedule_schedules_the_job(

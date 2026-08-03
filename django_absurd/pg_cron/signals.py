@@ -39,7 +39,7 @@ from django_absurd.queues import resolve_absurd_database
 if t.TYPE_CHECKING:
     from django_absurd.pg_cron.models import ScheduledTask
 
-logger = logging.getLogger("django_absurd")
+logger = logging.getLogger(__name__)
 
 
 def reject_cross_database_save(
@@ -99,7 +99,7 @@ def emit_schedule_change(catalog_op: t.Callable[[], None]) -> None:
     # .save(), so this must be swallowed too, never a 500 on an already-committed row.
     except (DatabaseError, ImproperlyConfigured, psycopg.Error):
         logger.warning(
-            "django-absurd: pg_cron schedule emission failed after commit",
+            "pg_cron schedule emission failed after commit",
             exc_info=True,
         )
 

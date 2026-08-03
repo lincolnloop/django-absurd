@@ -195,11 +195,25 @@ async def arun_worker(
                 options.concurrency,
             )
             if burst:
-                return await adrain_queue(backend.database, client, queue, options)
+                drained = await adrain_queue(backend.database, client, queue, options)
+                logger.info(
+                    "worker stopped: alias=%s queue=%s database=%s runs=%d",
+                    backend.alias,
+                    queue,
+                    backend.database,
+                    len(drained),
+                )
+                return drained
             if run_beat:
                 await run_worker_with_beat(client, options, backend)
             else:
                 await run_blocking_worker(client, options)
+            logger.info(
+                "worker stopped: alias=%s queue=%s database=%s",
+                backend.alias,
+                queue,
+                backend.database,
+            )
             return []
 
 
