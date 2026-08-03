@@ -595,7 +595,7 @@ def test_absurd_beat_startup_reports_cleanup(
 
     assert (
         capsys.readouterr().out
-        == "Started beat with 0 schedule(s). + cleanup: 17 * * * *\n"
+        == "🥁 Started beat with 0 schedule(s). + cleanup: 17 * * * *\n"
     )
 
 

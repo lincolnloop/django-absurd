@@ -34,7 +34,7 @@ class Command(BaseCommand):
 
         schedules = get_settings_schedules(backend)
         cleanup = backend.options.get("CLEANUP")
-        message = f"Started beat with {len(schedules)} schedule(s)."
+        message = f"🥁 Started beat with {len(schedules)} schedule(s)."
         if cleanup:
             message += f" + cleanup: {cleanup['schedule']}"
         self.stdout.write(message)

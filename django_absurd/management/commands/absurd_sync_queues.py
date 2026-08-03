@@ -12,7 +12,7 @@ class Command(AbsurdReportCommand):
             self.stdout.write("No Absurd task backends configured.")
             return
         for alias, backend in backends.items():
-            prefix = f"[{alias}] " if len(backends) > 1 else ""
+            prefix = f"🗃️ [{alias}] " if len(backends) > 1 else "🗃️ "
             self.report_sync_result(
                 provision_backend(backend), prefix, empty_message="No queues to sync."
             )

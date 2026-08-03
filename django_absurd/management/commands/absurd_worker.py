@@ -108,7 +108,7 @@ class Command(AbsurdReportCommand):
             raise CommandError(str(exc)) from exc
         self.report_sync_result(result)
 
-        self.stdout.write(f"Started worker on queue '{queue}'.")
+        self.stdout.write(f"🐘 Started worker on queue '{queue}'.")
         run_worker(
             backend,
             queue,
@@ -116,3 +116,4 @@ class Command(AbsurdReportCommand):
             run_beat=options["beat"],
             options=worker_options,
         )
+        self.stdout.write(f"🐘 Stopped worker on queue '{queue}'.")

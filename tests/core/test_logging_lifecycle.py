@@ -1,5 +1,6 @@
 import datetime as dt
 import logging
+import re
 import typing as t
 
 import psycopg
@@ -55,6 +56,9 @@ def read_hook_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
     return [r.getMessage() for r in caplog.records if r.name == "django_absurd.hooks"]
 
 
+DURATION = r"\d+\.\d{3}s"
+
+
 def test_a_successful_run_logs_started_then_completed(
     caplog: pytest.LogCaptureFixture, dj_absurd: AbsurdTestRuntime
 ) -> None:
@@ -62,15 +66,28 @@ def test_a_successful_run_logs_started_then_completed(
         caplog.at_level(logging.INFO, logger="django_absurd"),
         dj_absurd.freeze_time(),
     ):
-        tasks.add.enqueue(1, 2)
+        result = tasks.add.enqueue(1, 2)
         dj_absurd.drain()
 
+    task_id = result.id.rsplit(":", 1)[-1]
     messages = read_hook_messages(caplog)
-    assert len([m for m in messages if "started" in m]) == 1
-    completed = [m for m in messages if "completed" in m]
+    started = [
+        m
+        for m in messages
+        if m
+        == (
+            f"task started: name={tasks.add.module_path} task_id={task_id}"
+            " attempt=1 max_attempts=5"
+        )
+    ]
+    assert len(started) == 1
+    completed = [m for m in messages if m.startswith("task completed: ")]
     assert len(completed) == 1
-    assert tasks.add.module_path in completed[0]
-    assert "attempt=1 max_attempts=5 duration=" in completed[0]
+    assert re.fullmatch(
+        rf"task completed: name={re.escape(tasks.add.module_path)}"
+        rf" task_id={task_id} attempt=1 max_attempts=5 duration={DURATION}",
+        completed[0],
+    )
 
 
 def test_a_suspended_run_logs_suspended_and_starts_again_on_wake(
@@ -80,15 +97,33 @@ def test_a_suspended_run_logs_suspended_and_starts_again_on_wake(
         caplog.at_level(logging.INFO, logger="django_absurd"),
         dj_absurd.freeze_time() as frozen_time,
     ):
-        tasks.sleep_a_week.enqueue()
+        result = tasks.sleep_a_week.enqueue()
         dj_absurd.drain()
         frozen_time.shift(dt.timedelta(days=8))
         dj_absurd.drain()
 
+    task_id = result.id.rsplit(":", 1)[-1]
     messages = read_hook_messages(caplog)
-    assert len([m for m in messages if "suspended" in m]) == 1
-    assert len([m for m in messages if "started" in m]) == 2
-    assert len([m for m in messages if "completed" in m]) == 1
+    started_line = (
+        f"task started: name={tasks.sleep_a_week.module_path} task_id={task_id}"
+        " attempt=1 max_attempts=5"
+    )
+    assert messages.count(started_line) == 2
+    suspended = [m for m in messages if m.startswith("task suspended: ")]
+    assert len(suspended) == 1
+    assert re.fullmatch(
+        rf"task suspended: name={re.escape(tasks.sleep_a_week.module_path)}"
+        rf" task_id={task_id} attempt=1 max_attempts=5 duration={DURATION}",
+        suspended[0],
+    )
+    completed = [m for m in messages if m.startswith("task completed: ")]
+    assert len(completed) == 1
+    assert re.fullmatch(
+        rf"task completed: name={re.escape(tasks.sleep_a_week.module_path)}"
+        rf" task_id={task_id} attempt=1 max_attempts=5 duration={DURATION}",
+        completed[0],
+    )
+    assert len(messages) == 4
 
 
 def test_a_retryable_failure_logs_error_with_the_attempt_count(
@@ -99,9 +134,10 @@ def test_a_retryable_failure_logs_error_with_the_attempt_count(
         caplog.at_level(logging.INFO, logger="django_absurd"),
         dj_absurd.freeze_time(),
     ):
-        two_attempts.enqueue()
+        result = two_attempts.enqueue()
         dj_absurd.drain()
 
+    task_id = result.id.rsplit(":", 1)[-1]
     failures = [
         r
         for r in caplog.records
@@ -109,9 +145,17 @@ def test_a_retryable_failure_logs_error_with_the_attempt_count(
     ]
     assert len(failures) == 2
     assert failures[0].exc_info is not None
-    assert "attempt=1" in failures[0].getMessage()
-    assert "max_attempts=2" in failures[0].getMessage()
-    assert "attempt=2" in failures[1].getMessage()
+    assert re.fullmatch(
+        rf"task failed: name={re.escape(tasks.boom.module_path)}"
+        rf" task_id={task_id} attempt=1 max_attempts=2 duration={DURATION}",
+        failures[0].getMessage(),
+    )
+    assert failures[1].exc_info is not None
+    assert re.fullmatch(
+        rf"task failed: name={re.escape(tasks.boom.module_path)}"
+        rf" task_id={task_id} attempt=2 max_attempts=2 duration={DURATION}",
+        failures[1].getMessage(),
+    )
 
 
 def test_a_cancelled_run_logs_a_warning_not_a_failure(
@@ -121,17 +165,22 @@ def test_a_cancelled_run_logs_a_warning_not_a_failure(
         caplog.at_level(logging.INFO, logger="django_absurd"),
         dj_absurd.freeze_time(),
     ):
-        cancel_itself_then_heartbeat.enqueue()
+        result = cancel_itself_then_heartbeat.enqueue()
         dj_absurd.drain()
 
+    task_id = result.id.rsplit(":", 1)[-1]
     warnings = [
         r
         for r in caplog.records
         if r.name == "django_absurd.hooks" and r.levelno == logging.WARNING
     ]
     assert len(warnings) == 1
-    assert warnings[0].getMessage().startswith("task cancelled: ")
-    assert not [m for m in read_hook_messages(caplog) if "failed" in m]
+    assert re.fullmatch(
+        rf"task cancelled: name={re.escape(cancel_itself_then_heartbeat.module_path)}"
+        rf" task_id={task_id} attempt=1 max_attempts=5 duration={DURATION}",
+        warnings[0].getMessage(),
+    )
+    assert not [m for m in read_hook_messages(caplog) if m.startswith("task failed: ")]
 
 
 def test_a_run_already_failed_elsewhere_logs_a_warning(
@@ -141,16 +190,22 @@ def test_a_run_already_failed_elsewhere_logs_a_warning(
         caplog.at_level(logging.INFO, logger="django_absurd"),
         dj_absurd.freeze_time(),
     ):
-        fail_its_own_run_then_heartbeat.enqueue()
+        result = fail_its_own_run_then_heartbeat.enqueue()
         dj_absurd.drain()
 
+    task_id = result.id.rsplit(":", 1)[-1]
     warnings = [
         r
         for r in caplog.records
         if r.name == "django_absurd.hooks" and r.levelno == logging.WARNING
     ]
     assert len(warnings) == 1
-    assert warnings[0].getMessage().startswith("run already failed elsewhere: ")
+    assert re.fullmatch(
+        "run already failed elsewhere: "
+        rf"name={re.escape(fail_its_own_run_then_heartbeat.module_path)}"
+        rf" task_id={task_id} attempt=1 max_attempts=5 duration={DURATION}",
+        warnings[0].getMessage(),
+    )
 
 
 def test_the_deferred_wrapper_is_visible_without_its_own_log_line(
@@ -162,13 +217,51 @@ def test_the_deferred_wrapper_is_visible_without_its_own_log_line(
         dj_absurd.freeze_time() as frozen_time,
     ):
         due = dj_absurd.now + dt.timedelta(hours=1)
-        tasks.add.using(run_after=due).enqueue(1, 2)
+        result = tasks.add.using(run_after=due).enqueue(1, 2)
         frozen_time.shift(dt.timedelta(hours=2))
         dj_absurd.drain()
 
+    wrapper_name = f"{tasks.add.module_path}:run_after"
+    wrapper_task_id = result.id.rsplit(":", 1)[-1]
     messages = read_hook_messages(caplog)
-    assert [m for m in messages if ":run_after" in m]
+    started = [
+        m
+        for m in messages
+        if m
+        == (
+            f"task started: name={wrapper_name} task_id={wrapper_task_id}"
+            " attempt=1 max_attempts=5"
+        )
+    ]
+    assert len(started) == 1
+    completed = [
+        m for m in messages if m.startswith(f"task completed: name={wrapper_name} ")
+    ]
+    assert len(completed) == 1
+    assert re.fullmatch(
+        rf"task completed: name={re.escape(wrapper_name)}"
+        rf" task_id={wrapper_task_id} attempt=1 max_attempts=5 duration={DURATION}",
+        completed[0],
+    )
     assert not [r for r in caplog.records if r.name == "django_absurd.deferred"]
+
+
+def test_no_hook_log_record_contains_a_non_ascii_character(
+    caplog: pytest.LogCaptureFixture, dj_absurd: AbsurdTestRuntime
+) -> None:
+    """The guard the whole unit exists for: decoration never reaches a log record."""
+    with (
+        caplog.at_level(logging.DEBUG, logger="django_absurd"),
+        dj_absurd.freeze_time(),
+    ):
+        tasks.add.enqueue(1, 2)
+        dj_absurd.drain()
+
+    absurd_records = [r for r in caplog.records if r.name.startswith("django_absurd")]
+    assert absurd_records
+    for record in absurd_records:
+        message = record.getMessage()
+        assert message.isascii(), f"non-ASCII log record: {message!r}"
 
 
 def test_a_logging_fault_in_the_hook_does_not_fail_the_task(
