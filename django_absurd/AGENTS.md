@@ -995,7 +995,9 @@ setting like any other library's. The children that emit:
 - `django_absurd.scheduler` — the [beat scheduler](#beat-scheduler).
 - `django_absurd.queues` — queue provisioning.
 - `django_absurd.cleanup` — [cleanup](#cleanup--retention) runs.
-- `django_absurd.dispatch`, `django_absurd.tasks`, `django_absurd.pg_cron.apps`, and
+- `django_absurd.dispatch` — a failing task-signal receiver, logged with its traceback
+  at `ERROR`.
+- `django_absurd.tasks`, `django_absurd.pg_cron.apps`, and
   `django_absurd.pg_cron.signals` — warnings only.
 
 Configure the parent to cover everything, or target one child — silencing just the beat
