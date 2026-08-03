@@ -161,14 +161,13 @@ def build_beat_entries(
 def fire_cleanup(backend: AbsurdBackend, slot: dt.datetime) -> None:
     close_old_connections()
     try:
-        counts = cleanup_queues()
+        cleanup_queues()
     except Exception:
         logger.exception("cleanup failed")
     else:
         logger.info(
-            "cleanup ran: slot=%s counts=%s",
+            "cleanup ran: slot=%s",
             slot.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            counts,
         )
     finally:
         close_old_connections()

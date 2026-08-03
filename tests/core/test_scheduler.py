@@ -223,14 +223,39 @@ def test_beat_fires_multiple_schedules_due_same_slot(
 
 
 def test_beat_no_schedules_returns(
+    caplog: pytest.LogCaptureFixture,
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     settings.TASKS = make_tasks_setting({})
     backend = get_absurd_backends()["default"]
-    run_beat(backend, stop=threading.Event())  # returns immediately, no hang
+    with caplog.at_level(logging.INFO, logger="django_absurd"):
+        run_beat(backend, stop=threading.Event())  # returns immediately, no hang
+    records = [r for r in caplog.records if r.name == "django_absurd.scheduler"]
+    assert len(records) == 1
+    assert records[0].getMessage() == "beat: no schedules declared"
+
+
+def test_beat_started_logs_schedule_count_and_cleanup(
+    caplog: pytest.LogCaptureFixture,
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
+    settings.TASKS = make_tasks_setting(
+        {"nightly": {"task": "tests.tasks.add", "cron": "0 2 * * *"}},
+        cleanup={"schedule": "17 * * * *"},
+    )
+    backend = get_absurd_backends()["default"]
+    stop = threading.Event()
+    stop.set()
+    with caplog.at_level(logging.INFO, logger="django_absurd"):
+        run_beat(backend, stop=stop)
+    records = [r for r in caplog.records if r.name == "django_absurd.scheduler"]
+    started = [r for r in records if r.getMessage().startswith("beat started")]
+    assert len(started) == 1
+    assert started[0].getMessage() == "beat started: schedules=1 cleanup=17 * * * *"
 
 
 def test_beat_isolates_failing_schedule(
+    caplog: pytest.LogCaptureFixture,
     dj_absurd: AbsurdTestRuntime,
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
@@ -246,13 +271,27 @@ def test_beat_isolates_failing_schedule(
     )
     backend = get_absurd_backends()["default"]
     call_command("absurd_sync_queues")
-    with dj_absurd.freeze_time(BEAT_EPOCH) as frozen_time:
+    with (
+        dj_absurd.freeze_time(BEAT_EPOCH) as frozen_time,
+        caplog.at_level(logging.INFO, logger="django_absurd"),
+    ):
         run_beat_until(
             frozen_time, backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC)
         )
         call_command("absurd_worker", queue="default", burst=True)
         expected_good = 1  # "bad" raised in spawn (unimportable, logged); "good" ran
         assert Payload.objects.count() == expected_good
+
+    records = [r for r in caplog.records if r.name == "django_absurd.scheduler"]
+    failed = [r for r in records if r.getMessage().startswith("schedule failed")]
+    enqueued = [r for r in records if r.getMessage().startswith("schedule enqueued")]
+    assert len(failed) == 1
+    assert failed[0].getMessage() == "schedule failed: name=bad"
+    assert len(enqueued) == 1
+    assert (
+        enqueued[0].getMessage()
+        == "schedule enqueued: name=good slot=2026-01-01T00:01:00Z"
+    )
 
 
 def test_beat_spawns_task_with_args(
