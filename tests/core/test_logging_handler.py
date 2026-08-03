@@ -6,7 +6,9 @@ import typing as t
 import pytest
 from django.core.management import call_command
 
+from django_absurd import hooks
 from django_absurd import logging as absurd_logging
+from django_absurd.queues import get_absurd_client
 from django_absurd.test import AbsurdTestRuntime
 from tests import tasks
 
@@ -134,6 +136,103 @@ def test_attaching_respects_an_explicit_level_already_set() -> None:
         absurd_logging.attach_console_handler()
     assert len(logger.handlers) == 1
     assert logger.level == logging.ERROR
+
+
+def test_attaching_does_not_raise_a_debug_projects_effective_level() -> None:
+    """The ``NOTSET`` check alone is not enough: a root at DEBUG with
+    ``django_absurd`` left unset must keep DEBUG lines visible, not have them raised
+    away to INFO.
+    """
+    root = logging.getLogger()
+    root_level = root.level
+    logger = logging.getLogger("django_absurd")
+    hooks_logger = logging.getLogger("django_absurd.hooks")
+    with clear_root_handlers():
+        root.setLevel(logging.DEBUG)
+        try:
+            assert hooks_logger.isEnabledFor(logging.DEBUG)
+            absurd_logging.attach_console_handler()
+            assert hooks_logger.isEnabledFor(logging.DEBUG)
+        finally:
+            root.setLevel(root_level)
+    assert logger.level == logging.NOTSET
+
+
+def test_attaching_defers_to_a_handler_configured_on_a_child_logger() -> None:
+    """Records propagate the other direction too: a project that configured only
+    ``django_absurd.hooks``, never ``django_absurd`` itself, must not get a handler
+    added above it — that would print every one of ``hooks``'s lines twice.
+    """
+    logger = logging.getLogger("django_absurd")
+    hooks_logger = logging.getLogger("django_absurd.hooks")
+    configured = logging.NullHandler()
+    hooks_logger.addHandler(configured)
+    try:
+        with clear_root_handlers():
+            absurd_logging.attach_console_handler()
+        assert logger.handlers == []
+    finally:
+        hooks_logger.removeHandler(configured)
+
+
+def test_attaching_does_not_duplicate_a_line_printed_via_a_child_handler() -> None:
+    hooks_logger = logging.getLogger("django_absurd.hooks")
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    hooks_logger.addHandler(handler)
+    try:
+        with clear_root_handlers():
+            absurd_logging.attach_console_handler()
+            hooks_logger.info("hook line")
+        assert logging.getLogger("django_absurd").handlers == []
+        assert stream.getvalue() == "hook line\n"
+    finally:
+        hooks_logger.removeHandler(handler)
+
+
+def test_attaching_ignores_a_child_handler_that_does_not_propagate() -> None:
+    """A child's handler with ``propagate = False`` never reaches a handler placed
+    on the parent regardless of what we do, so it must not block us from still
+    covering everything else under ``django_absurd``.
+    """
+    logger = logging.getLogger("django_absurd")
+    hooks_logger = logging.getLogger("django_absurd.hooks")
+    hooks_logger.addHandler(logging.NullHandler())
+    hooks_logger.propagate = False
+    try:
+        with clear_root_handlers():
+            absurd_logging.attach_console_handler()
+        assert len(logger.handlers) == 1
+    finally:
+        hooks_logger.handlers = []
+        hooks_logger.propagate = True
+
+
+def test_attaching_ignores_a_placeholder_left_by_an_ungotten_ancestor() -> None:
+    """Requesting a descendant name without ever requesting its own parent leaves a
+    ``logging.PlaceHolder`` in ``loggerDict``, not a ``Logger`` — iterating it must
+    not raise.
+    """
+    logging.getLogger("django_absurd.made_up_child.deeper")
+    logger = logging.getLogger("django_absurd")
+    with clear_root_handlers():
+        absurd_logging.attach_console_handler()
+    assert len(logger.handlers) == 1
+
+
+@pytest.mark.django_db(transaction=True)
+def test_the_sync_client_gets_only_the_hook_it_can_run() -> None:
+    """The sync ``Absurd`` client's own ``_execute_task`` never awaits a hook's
+    return value (unlike the async path, which checks ``inspect.isawaitable``), so
+    handing it ``wrap_task_execution`` — an ``async def`` — would hand back an
+    un-awaited coroutine as the run's own result. The async client, built separately
+    in ``worker.py``, still gets ``build_absurd_hooks()``'s full, unmodified recipe.
+    """
+    client = get_absurd_client()
+    assert set(client._hooks) == {"before_spawn"}
+    assert client._hooks["before_spawn"] is hooks.log_before_spawn
+    assert set(hooks.build_absurd_hooks()) == {"before_spawn", "wrap_task_execution"}
 
 
 @contextlib.contextmanager

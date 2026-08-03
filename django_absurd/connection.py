@@ -4,7 +4,7 @@ from contextlib import contextmanager
 
 import psycopg
 import psycopg.abc
-from absurd_sdk import Absurd
+from absurd_sdk import Absurd, AbsurdHooks
 from django.core.exceptions import ImproperlyConfigured
 from django.db import connections
 from psycopg.types.json import set_json_loads
@@ -39,7 +39,13 @@ def register_jsonb_loader(context: psycopg.abc.AdaptContext) -> None:
 
 def build_absurd_client(using: str) -> Absurd:
     validate_backend(using)
-    return Absurd(connections[using].connection, hooks=build_absurd_hooks())
+    # The sync client's own _execute_task never awaits a hook's return value
+    # (unlike the async path, which checks inspect.isawaitable), so handing it
+    # wrap_task_execution — an async def — would hand back an un-awaited
+    # coroutine as the run's own result. Only before_spawn is sync-safe; the
+    # async client (built separately, in worker.py) still gets the full recipe.
+    sync_hooks: AbsurdHooks = {"before_spawn": build_absurd_hooks()["before_spawn"]}
+    return Absurd(connections[using].connection, hooks=sync_hooks)
 
 
 def resolve_cron_database(alias: str) -> str:

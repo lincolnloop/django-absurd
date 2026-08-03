@@ -1008,20 +1008,28 @@ logging configuration covers the `django` logger only, and the root logger's def
 level is `WARNING`, so without help these commands would run completely silent. On
 startup, each makes two independent adjustments:
 
-- it attaches one plain `StreamHandler` to `django_absurd`, but only when nothing on the
-  logger's ancestor chain would already catch its records — a project that configured
-  just the root logger keeps a single copy of each line;
+- it attaches one plain `StreamHandler` to `django_absurd`, but only when nothing on its
+  ancestor chain **or** on any of its own descendant loggers (e.g.
+  `django_absurd.hooks`) already has one — a project that configured just the root
+  logger, or just one child logger, keeps a single copy of each line either way.
+  Configuring only one child covers that child alone: the other children get no handler
+  of ours either, once a descendant handler is detected, so route or level everything
+  through the parent for full coverage;
 - it raises the logger's level to `INFO`, but only when your `LOGGING` gives
-  `django_absurd` no explicit level of its own — and this happens whether or not a
-  handler was attached, because a root handler at the default `WARNING` level would
-  otherwise filter every `INFO` line before it reached that handler.
+  `django_absurd` no explicit level of its own **and** its current effective level is
+  coarser than `INFO` — a project already logging at `DEBUG` (or `INFO`) keeps that
+  verbosity, while a root handler left at the default `WARNING` still gets raised so its
+  `INFO` lines aren't filtered before they reach that handler.
 
 The opt-out is the level: quiet this package by setting a **level** on `django_absurd`
 in your `LOGGING`. Merely configuring the logger is not enough — handlers with no
-`level` key leave it at `NOTSET`, and the command still raises it to `INFO`. A globally
-quiet project therefore gets `INFO` from this package while one of these commands runs.
-That is deliberate: a foreground command whose whole job is reporting task lifecycle
-should not be silent.
+`level` key leave it at `NOTSET`, and the command still raises it to `INFO` whenever
+your ambient level is coarser than that. A project logging at the default `WARNING`
+therefore gets `INFO` from this package while one of these commands runs; a project
+already at `DEBUG` keeps its own, more verbose level instead of being pulled up to
+`INFO`. That is deliberate: a foreground command whose whole job is reporting task
+lifecycle should not be silent, and should not get quieter than the project already made
+itself.
 
 Log records are plain text. The emoji in the commands' console output is written by the
 commands themselves, never into a log record — a glyph the log stream cannot encode
