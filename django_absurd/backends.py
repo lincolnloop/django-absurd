@@ -12,9 +12,11 @@ from django.tasks import TaskResult, TaskResultStatus, task_backends
 from django.tasks.backends.base import BaseTaskBackend
 from django.tasks.base import TaskError
 from django.tasks.exceptions import TaskResultDoesNotExist
+from django.tasks.signals import task_enqueued
 from django.utils import timezone
 from django.utils.module_loading import import_string
 
+from django_absurd import dispatch
 from django_absurd.admin_views import ADMIN_ENTITY_SPECS, build_queue_table_model
 from django_absurd.connection import build_absurd_client
 from django_absurd.deferred import DEFER_NAME_SUFFIX
@@ -203,7 +205,7 @@ class AbsurdBackend(BaseTaskBackend):
                     queue=task.queue_name,
                     **merged,
                 )
-        return TaskResult(
+        result: TaskResult[t.Any, t.Any] = TaskResult(
             task=task,
             id=f"{task.queue_name}:{spawn_result['task_id']}",
             status=TaskResultStatus.READY,
@@ -217,6 +219,8 @@ class AbsurdBackend(BaseTaskBackend):
             errors=[],
             worker_ids=[],
         )
+        dispatch.send_task_signal(task_enqueued, type(self), result)
+        return result
 
     def get_result(self, result_id: str) -> "TaskResult[t.Any, t.Any]":
         queue, task_id = decode_result_id(result_id)
@@ -331,8 +335,11 @@ def build_task_result(
     except ImportError as exc:
         msg = f"task '{task_name}' is no longer importable"
         raise ImproperlyConfigured(msg) from exc
-    if task_obj.queue_name != queue:
-        task_obj = task_obj.using(queue_name=queue)
+    # Rebinding re-runs Task.__post_init__, which validates the queue against the
+    # DEFINITION's backend alias — one this read need not have configured. So the alias
+    # moves with the queue.
+    if (task_obj.queue_name, task_obj.backend) != (queue, backend.alias):
+        task_obj = task_obj.using(queue_name=queue, backend=backend.alias)
     status = map_state_to_status(state)
     if is_deferred_wrapper and state == "sleeping":
         # No Django status means "the deferral is retrying", and READY is the honest

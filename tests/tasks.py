@@ -43,6 +43,15 @@ def report_args(
     return context.task_result.args
 
 
+@task(takes_context=True)
+def report_context(context: "TaskContext[t.Any, t.Any]") -> dict[str, JsonValue]:
+    return {
+        "id": context.task_result.id,
+        "backend": context.task_result.backend,
+        "attempts": context.task_result.attempts,
+    }
+
+
 @task(queue_name="other")
 def routed() -> str:
     Group.objects.create(name="routed")

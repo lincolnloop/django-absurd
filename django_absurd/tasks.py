@@ -23,7 +23,7 @@ class SpawnKwargs(t.TypedDict, total=False):
     accept — mirrors their signatures field-for-field so ``**merged`` calls into them
     type-check per field instead of collapsing to a union."""
 
-    max_attempts: int
+    max_attempts: int | None
     # Two known gaps we deliberately do not guard. An unrecognised ``kind`` is
     # validated NOWHERE: absurd.fail_run does coalesce(v_retry_strategy->>'kind',
     # 'none') and falls through to v_delay_seconds := 0, so a typo retries with no

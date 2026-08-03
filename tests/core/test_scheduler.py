@@ -12,6 +12,7 @@ import time_machine
 from django.contrib.auth.models import Group
 from django.core.management import call_command
 from django.core.management.base import CommandError
+from django.tasks import TaskResultStatus
 from django.utils import timezone
 
 from django_absurd.backends import AbsurdBackend, get_absurd_backends
@@ -381,6 +382,30 @@ def test_beat_routes_task_to_queue_non_default_alias(
         assert not Group.objects.filter(name="beat-non-default").exists()
         call_command("absurd_worker", queue="other", burst=True)
         assert Group.objects.filter(name="beat-non-default").exists()
+
+
+def test_get_result_rebinds_queue_and_backend_together(
+    dj_absurd: AbsurdTestRuntime,
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
+    # tasks.make_group's own decorator names the "default" alias, and these settings
+    # deliberately omit it: only "second" is configured, so a queue-only rebind of the
+    # re-imported definition raises InvalidTaskBackend on the read path, exactly as it
+    # does on the worker path (build_running_task_result).
+    settings.TASKS = {
+        "second": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {"QUEUES": {"default": {}, "other": {}}},
+        }
+    }
+    backend = get_absurd_backends()["second"]
+    call_command("absurd_sync_queues")
+    r = tasks.make_group.using(queue_name="other", backend="second").enqueue(
+        "get-result-second-alias"
+    )
+    dj_absurd.drain(queue="other")
+    got = backend.get_result(r.id)
+    assert got.status == TaskResultStatus.SUCCESSFUL
 
 
 def test_derive_idempotency_key_stable_same_inputs() -> None:
