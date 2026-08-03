@@ -6,6 +6,7 @@ from django.core.management.base import CommandError
 if t.TYPE_CHECKING:
     from django.core.management.base import CommandParser
 
+from django_absurd import logging as absurd_logging
 from django_absurd.exceptions import BackendNotConfiguredError, QueueNotDeclaredError
 from django_absurd.management.base import (
     BEAT_DISABLED_UNDER_PG_CRON,
@@ -72,6 +73,7 @@ class Command(AbsurdReportCommand):
         )
 
     def handle(self, *args: t.Any, **options: t.Any) -> None:
+        absurd_logging.attach_console_handler()
         try:
             backend = resolve_backend()
         except BackendNotConfiguredError as exc:
