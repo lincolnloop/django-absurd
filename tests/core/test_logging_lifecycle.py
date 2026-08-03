@@ -1,15 +1,19 @@
 import datetime as dt
 import logging
+import typing as t
 
 import psycopg
 import pytest
 from django.tasks import task
 
-from django_absurd import get_absurd_context
+from django_absurd import get_absurd_context, hooks
 from django_absurd import params as params_module
 from django_absurd.queues import get_absurd_client
 from django_absurd.test import AbsurdTestRuntime
 from tests import tasks, utils
+
+if t.TYPE_CHECKING:
+    from absurd_sdk import AsyncTaskContext, TaskContext
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -45,17 +49,6 @@ def fail_its_own_run_then_heartbeat() -> None:
     finally:
         conn.close()
     context.heartbeat()
-
-
-@task
-def drop_the_context_attribute_the_hook_logs() -> str:
-    """Delete the context value the lifecycle line renders, from inside the run.
-
-    Absurd completes a run from the row it claimed, never from ``ctx.task_id``, so the
-    only thing this can break is the hook's own logging.
-    """
-    del get_absurd_context().absurd_ctx.task_id
-    return "ran anyway"
 
 
 def read_hook_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
@@ -179,14 +172,29 @@ def test_the_deferred_wrapper_is_visible_without_its_own_log_line(
 
 
 def test_a_logging_fault_in_the_hook_does_not_fail_the_task(
-    caplog: pytest.LogCaptureFixture, dj_absurd: AbsurdTestRuntime
+    caplog: pytest.LogCaptureFixture,
+    dj_absurd: AbsurdTestRuntime,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The SDK reads an exception from a hook as the TASK failing."""
+    """describe_run is the message-building step; breaking it reaches the hook's own
+    try/except, not the SDK's. Only the ``started=`` calls (every event after the run
+    starts) render a duration, so patching in that branch alone still lets the
+    ``task started`` line through, the same asymmetry the SDK itself gives us."""
+    render_run = hooks.describe_run
+
+    def explode(ctx: "TaskContext | AsyncTaskContext", started: float | None) -> str:
+        if started is None:
+            return render_run(ctx, started)
+        msg = "cannot describe run"
+        raise ValueError(msg)
+
+    monkeypatch.setattr(hooks, "describe_run", explode)
+
     with (
         caplog.at_level(logging.INFO, logger="django_absurd"),
         dj_absurd.freeze_time(),
     ):
-        result = drop_the_context_attribute_the_hook_logs.enqueue()
+        result = tasks.add.enqueue(1, 2)
         dj_absurd.drain()
 
     assert dj_absurd.get_result(result.id).state == "completed"

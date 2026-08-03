@@ -3,7 +3,7 @@ import typing as t
 
 import pytest
 
-from django_absurd.hooks import log_before_spawn
+from django_absurd import hooks
 from django_absurd.test import AbsurdTestRuntime
 from tests import tasks
 
@@ -40,19 +40,20 @@ def test_a_spawn_still_works_with_the_hook_attached(
 
 
 def test_a_hook_that_fails_to_log_still_returns_the_options(
-    caplog: pytest.LogCaptureFixture,
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """describe_spawn interpolates the queue directly; a queue value that raises on
-    ``str()`` reaches the hook's own try/except, not the SDK's."""
+    """describe_spawn is the message-building step; breaking it reaches the hook's own
+    try/except, not the SDK's."""
 
-    class Unstringable:
-        def __str__(self) -> t.Never:
-            msg = "cannot stringify"
-            raise ValueError(msg)
+    def explode(task_name: str, options: "SpawnOptions") -> str:
+        msg = "cannot describe spawn"
+        raise ValueError(msg)
 
-    options = t.cast("SpawnOptions", {"queue": Unstringable()})
+    monkeypatch.setattr(hooks, "describe_spawn", explode)
+
+    options = t.cast("SpawnOptions", {"queue": "default"})
     with caplog.at_level(logging.DEBUG, logger="django_absurd"):
-        result = log_before_spawn("tests.tasks.add", None, options)
+        result = hooks.log_before_spawn("tests.tasks.add", None, options)
 
     assert result is options
     failures = [r for r in caplog.records if r.name == "django_absurd.hooks"]
