@@ -1,6 +1,7 @@
 import asyncio
 import datetime as dt
 import logging
+import re
 
 import pytest
 
@@ -146,8 +147,18 @@ def test_suspend_logged_as_lifecycle_not_failure(
     caplog: pytest.LogCaptureFixture, dj_absurd: AbsurdTestRuntime
 ) -> None:
     atasks.DURABLE_STEP_CALLS["n"] = 0
-    atasks.asleep_for_once.enqueue("k")
+    result = atasks.asleep_for_once.enqueue("k")
     with caplog.at_level(logging.INFO, logger="django_absurd"):
         assert [run.state for run in dj_absurd.drain()] == ["sleeping"]
-    assert "task suspended: name=tests.atasks.asleep_for_once" in caplog.text
-    assert "task failed" not in caplog.text
+    task_id = result.id.rsplit(":", 1)[-1]
+    messages = [
+        r.getMessage() for r in caplog.records if r.name == "django_absurd.hooks"
+    ]
+    suspended = [m for m in messages if m.startswith("task suspended: ")]
+    assert len(suspended) == 1
+    assert re.fullmatch(
+        rf"task suspended: name={re.escape(atasks.asleep_for_once.module_path)}"
+        rf" task_id={task_id} attempt=1 max_attempts=5 duration=\d+\.\d{{3}}s",
+        suspended[0],
+    )
+    assert not [m for m in messages if m.startswith("task failed")]

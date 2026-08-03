@@ -256,7 +256,9 @@ def test_no_hook_log_record_contains_a_non_ascii_character(
         caplog.at_level(logging.DEBUG, logger="django_absurd"),
         dj_absurd.freeze_time(),
     ):
-        tasks.add.enqueue(1, 2)
+        params_module.absurd_params(idempotency_key="café-42").bind(tasks.add).enqueue(
+            1, 2
+        )
         dj_absurd.drain()
 
     absurd_records = [r for r in caplog.records if r.name.startswith("django_absurd")]
