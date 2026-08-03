@@ -50,7 +50,7 @@ def test_a_hook_that_fails_to_log_still_returns_the_options(
             msg = "cannot stringify"
             raise ValueError(msg)
 
-    options: SpawnOptions = {"queue": Unstringable()}  # type: ignore[typeddict-item]
+    options = t.cast("SpawnOptions", {"queue": Unstringable()})
     with caplog.at_level(logging.DEBUG, logger="django_absurd"):
         result = log_before_spawn("tests.tasks.add", None, options)
 
