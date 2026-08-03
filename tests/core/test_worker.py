@@ -388,9 +388,16 @@ def test_worker_command_warns_on_storage_mode_drift(
     assert cap.out == (
         "🐘 Started worker on queue 'default'.\n🐘 Stopped worker on queue 'default'.\n"
     )
+    # The command's own warning shares stderr with the console handler the worker
+    # attaches, whose StreamHandler defaults to stderr as Django's own console
+    # handler does.
     assert cap.err == (
+        "queues provisioned: no changes\n"
         "Queue 'default': storage_mode cannot be changed "
         "(existing: 'unpartitioned', declared: 'partitioned'); skipping.\n"
+        "worker started: alias=default queue=default database=default"
+        " burst=True concurrency=1\n"
+        "worker stopped: alias=default queue=default database=default runs=0\n"
     )
 
 

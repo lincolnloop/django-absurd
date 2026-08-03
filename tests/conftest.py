@@ -13,21 +13,13 @@ def _enable_db(db: None) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _restore_absurd_logger_state() -> t.Iterator[None]:
-    """Undo whatever a real ``absurd_worker``/``absurd_beat`` invocation, or a
-    logging-handler test that deliberately hides pytest's own ambient handler, left on
-    the actual ``django_absurd`` logger.
+def _restore_absurd_logger() -> t.Iterator[None]:
+    """Undo what a real ``absurd_worker``/``absurd_beat`` run leaves on the
+    ``django_absurd`` logger.
 
-    ``attach_console_handler`` mutates that logger for real, process-wide, with no
-    test-scoped isolation of its own — that permanence is the point in production. In
-    an ordinary test, though, its handler branch never actually fires: pytest attaches
-    its own log-capture handler to root fresh for every call phase, which already
-    satisfies ``hasHandlers()``, so a real command invoked through ``call_command``
-    only ever moves the level (gated on ``NOTSET`` alone) to INFO — permanently, for
-    the rest of the session, changing what a later, unrelated test observes through
-    ``caplog`` at the module's normally-unconfigured level. Handlers are restored too
-    because ``tests/core/test_logging_handler.py`` deliberately hides that ambient
-    handler to exercise the real attach path, and does leave a real one behind.
+    ``attach_console_handler`` mutates it process-wide, which is the point in
+    production — a command owns its process. Under a test runner it outlives the test,
+    changing what a later, unrelated test sees through ``caplog``.
     """
     logger = logging.getLogger("django_absurd")
     handlers = logger.handlers[:]

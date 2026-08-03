@@ -107,42 +107,28 @@ Every existing message drops its hand-written `"django-absurd "` prefix — it d
 ## Who attaches a handler
 
 **One handler, in one place, with no formatter of ours.** `absurd_worker` and
-`absurd_beat` make the `django_absurd` logger's INFO lines visible. That is **two
-independent decisions**, and conflating them ships one bug or the other:
+`absurd_beat` attach a plain `StreamHandler` at INFO to `django_absurd` on startup,
+unless the project's own `LOGGING` declares `django_absurd` or one of its children — in
+which case that configuration is the whole story and nothing is touched.
 
-- **The handler** — a plain `StreamHandler`, attached only when nothing already catches
-  these records, checked in **both directions**: `Logger.hasHandlers()` for the ancestor
-  chain, plus a walk of `django_absurd`'s existing descendants for a handler on one of
-  them. Records propagate upward, so a project that configured only the root logger
-  would see every line twice if we attached beneath it; and a project that configured
-  only `django_absurd.hooks` would see that child's lines twice if we attached above it.
-  A descendant with `propagate = False` does not count — its records never reach a
-  parent handler, so it must not veto one for every other child.
-- **The level** — raised to INFO only when `django_absurd` has no explicit level of its
-  own (`NOTSET`) **and** its effective level is currently coarser than INFO. The
-  `NOTSET` half preserves the opt-out below. The effective-level half exists because
-  raising unconditionally would _lower_ the verbosity of a project already running at
-  DEBUG — starting a worker would delete lines its own configuration was showing.
-  Without either check, a project with a root handler at the default WARNING is filtered
-  at the effective-level check before reaching that handler: a completely silent worker,
-  despite having "a handler".
+The check reads `settings.LOGGING`, which is **declared intent**, and deliberately not
+the live logger hierarchy. An earlier revision of this design inspected the tree instead
+— `hasHandlers()` for ancestors, a walk of `Logger.manager.loggerDict` for descendants
+with `PlaceHolder` and `propagate` handling, plus an effective-level comparison — and
+each addition was a correct fix for a real defect found in review. The accumulation was
+the defect: that is re-implementing what `LOGGING` already expresses, inside a library.
 
-This is not decoration — it is the difference between the feature working and being
-invisible. Django's `DEFAULT_LOGGING` configures the `django` logger only;
-`django_absurd` is not under it, and **root's default level is WARNING**, so
-`logging.lastResort` applies and only WARNING and above reach stderr. Without this,
-`absurd_worker` shows no task lines at all until the developer writes a `LOGGING` dict.
+What Django and its ecosystem actually do settles it. Django never attaches a handler in
+a management command (its only `addHandler` is in `test/runner.py`); everything flows
+through `DEFAULT_LOGGING`, which configures `django` and `django.server` alone. Library
+packages only ever call `getLogger` — the packages that attach handlers are test
+harnesses and CLI programs. Celery configures logging, and even hijacks the root logger,
+because `celery worker` is its own program; the Django-side `django-celery-*` packages
+do not.
 
-The `NOTSET` gate is the opt-out, and it is narrow on purpose: silence us by setting a
-**level** on `django_absurd`, not merely by configuring the logger. A project that gives
-it handlers but no `level` key stays `NOTSET`, so the worker command still raises it to
-INFO. Deliberate — a foreground command whose whole job is to report task lifecycle
-should not be silent — but it does mean a globally-quiet project gets INFO from this
-package while a command runs.
-
-Nothing else attaches anything, ever — not at import, not in `AppConfig.ready`. A web
-process enqueuing a task, a test, or a task under someone else's runner gets whatever
-the project's `LOGGING` says. A library must not fight that.
+So: a sane default for a foreground command whose whole job is reporting lifecycle, one
+question asked of settings, and the project's own configuration always wins. Nothing
+else attaches anything, ever — not at import, not in `AppConfig.ready`.
 
 ## Emoji: command output only
 

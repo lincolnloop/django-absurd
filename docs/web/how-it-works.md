@@ -91,33 +91,34 @@ setting like any other library's. The children that emit:
 Configure the parent to cover everything, or target one child — silencing just the beat
 means setting `django_absurd.scheduler` to `WARNING`.
 
-**`absurd_worker` and `absurd_beat` make their own lines visible.** Django's default
-logging configuration covers the `django` logger only, and the root logger's default
-level is `WARNING`, so without help these commands would run completely silent. On
-startup, each makes two independent adjustments:
+**The default: `absurd_worker` and `absurd_beat` show their own lines.** Each attaches
+one plain `StreamHandler` at `INFO` to `django_absurd` on startup, so a fresh project
+sees task activity without configuring anything. Django's default configuration covers
+the `django` logger only, and the root logger's default level is `WARNING`, so without
+this they would run silent.
 
-- it attaches one plain `StreamHandler` to `django_absurd`, but only when nothing on its
-  ancestor chain **or** on any of its own descendant loggers (e.g.
-  `django_absurd.hooks`) already has one — a project that configured just the root
-  logger, or just one child logger, keeps a single copy of each line either way.
-  Configuring only one child covers that child alone: the other children get no handler
-  of ours either, once a descendant handler is detected, so route or level everything
-  through the parent for full coverage;
-- it raises the logger's level to `INFO`, but only when your `LOGGING` gives
-  `django_absurd` no explicit level of its own **and** its current effective level is
-  coarser than `INFO` — a project already logging at `DEBUG` (or `INFO`) keeps that
-  verbosity, while a root handler left at the default `WARNING` still gets raised so its
-  `INFO` lines aren't filtered before they reach that handler.
+**To take control, declare the logger** — if your
+[`LOGGING`](https://docs.djangoproject.com/en/6.0/topics/logging/#configuring-logging)
+names `django_absurd` or any of its children, that is the whole story and the commands
+touch nothing:
 
-The opt-out is the level: quiet this package by setting a **level** on `django_absurd`
-in your `LOGGING`. Merely configuring the logger is not enough — handlers with no
-`level` key leave it at `NOTSET`, and the command still raises it to `INFO` whenever
-your ambient level is coarser than that. A project logging at the default `WARNING`
-therefore gets `INFO` from this package while one of these commands runs; a project
-already at `DEBUG` keeps its own, more verbose level instead of being pulled up to
-`INFO`. That is deliberate: a foreground command whose whole job is reporting task
-lifecycle should not be silent, and should not get quieter than the project already made
-itself.
+```python
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {"console": {"class": "logging.StreamHandler"}},
+    "loggers": {
+        # route everything from this package...
+        "django_absurd": {"handlers": ["console"], "level": "INFO"},
+        # ...or quiet one part of it
+        "django_absurd.scheduler": {"handlers": ["console"], "level": "WARNING"},
+    },
+}
+```
+
+Nothing else attaches anything, ever — not at import, not in `AppConfig.ready`. A web
+process enqueuing a task, a test, or a task under someone else's runner gets exactly
+what your `LOGGING` says.
 
 Log records are plain text. The emoji in the commands' console output is written by the
 commands themselves, never into a log record — a glyph the log stream cannot encode
