@@ -749,13 +749,22 @@ Run the `sync-docs` skill.
 Two, both small:
 
 - The logger names — `django_absurd` and its per-module children — so a project can
-  route or level them in its own `LOGGING`, including silencing just the beat.
+  route or level them in its own `LOGGING`, including silencing just the beat. Check
+  which children actually emit before listing them: Task 3 removed
+  `django_absurd.deferred`'s only line as redundant once the hook covered the
+  `:run_after` wrapper, so that logger now logs nothing. Do not advertise a logger that
+  never fires.
 - `absurd_worker` and `absurd_beat` attach a plain INFO handler when the project has
   configured none, so their lines are visible out of the box.
 
 Say that log records are plain text and the emoji lives in command output. Do NOT tour
 the event vocabulary — the log speaks for itself — and do not promise the next unit's
-durable- primitive logging.
+durable-primitive logging.
+
+One correction to make while here: `docs/UPSTREAM.md:116` says `read_sdk_attempt`
+reaches into `ctx._task`. Task 3 consolidated that reach behind a single reader, so the
+claim is now true only transitively. Reword it to describe what the code actually does —
+read the code, do not trust that sentence.
 
 - [ ] **Step 3: Commit**
 
