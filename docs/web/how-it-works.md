@@ -71,6 +71,48 @@ nothing, and neither does an ending Absurd decided itself — a
 claim, or a cancellation. The [stored result](tasks.md#read-the-result) and the
 queue-state models below are the record.
 
+## django-absurd's own logging
+
+django-absurd reports what Absurd itself is doing on its own loggers — one per module,
+all children of `django_absurd` — so you can route or level them through Django's
+[`LOGGING`](https://docs.djangoproject.com/en/6.0/topics/logging/#configuring-logging)
+setting like any other library's. The children that emit:
+
+- `django_absurd.hooks` — each run's lifecycle.
+- `django_absurd.worker` — [worker](#workers) start and stop.
+- `django_absurd.scheduler` — the [beat scheduler](cron-jobs.md#run-the-beat).
+- `django_absurd.queues` — [queue](#queues) provisioning.
+- `django_absurd.cleanup` — [cleanup](cleanup.md) runs.
+- `django_absurd.dispatch`, `django_absurd.tasks`, `django_absurd.pg_cron.apps`, and
+  `django_absurd.pg_cron.signals` — warnings only.
+
+Configure the parent to cover everything, or target one child — silencing just the beat
+means setting `django_absurd.scheduler` to `WARNING`.
+
+**`absurd_worker` and `absurd_beat` make their own lines visible.** Django's default
+logging configuration covers the `django` logger only, and the root logger's default
+level is `WARNING`, so without help these commands would run completely silent. On
+startup, each makes two independent adjustments:
+
+- it attaches one plain `StreamHandler` to `django_absurd`, but only when nothing on the
+  logger's ancestor chain would already catch its records — a project that configured
+  just the root logger keeps a single copy of each line;
+- it raises the logger's level to `INFO`, but only when your `LOGGING` gives
+  `django_absurd` no explicit level of its own — and this happens whether or not a
+  handler was attached, because a root handler at the default `WARNING` level would
+  otherwise filter every `INFO` line before it reached that handler.
+
+The opt-out is the level: quiet this package by setting a **level** on `django_absurd`
+in your `LOGGING`. Merely configuring the logger is not enough — handlers with no
+`level` key leave it at `NOTSET`, and the command still raises it to `INFO`. A globally
+quiet project therefore gets `INFO` from this package while one of these commands runs.
+That is deliberate: a foreground command whose whole job is reporting task lifecycle
+should not be silent.
+
+Log records are plain text. The emoji in the commands' console output is written by the
+commands themselves, never into a log record — a glyph the log stream cannot encode
+would cost the whole log line.
+
 ## Admin & ORM introspection
 
 When `django.contrib.admin` is installed, django-absurd registers **read-only** admin
