@@ -1,25 +1,11 @@
+import io
 import logging
-import typing as t
 
 import pytest
 
 from django_absurd import logging as absurd_logging
 from django_absurd.test import AbsurdTestRuntime
 from tests import tasks
-
-
-@pytest.fixture(autouse=True)
-def _restore_package_logger() -> t.Iterator[None]:
-    """Every test here mutates the ``django_absurd`` logger's handlers or level to
-    probe ``attach_console_handler``; a leaked handler would fire for every later
-    test in the session, so both are restored.
-    """
-    logger = logging.getLogger("django_absurd")
-    handlers = logger.handlers[:]
-    level = logger.level
-    yield
-    logger.handlers = handlers
-    logger.setLevel(level)
 
 
 def test_importing_the_package_attaches_nothing() -> None:
@@ -88,3 +74,62 @@ def test_attaching_defers_to_a_handler_configured_on_root() -> None:
         assert logger.handlers == []
     finally:
         root.removeHandler(configured)
+
+
+def test_attaching_lets_an_info_line_reach_a_root_handler_left_at_warning() -> None:
+    """A handler on root is not enough by itself: root's default level of WARNING
+    would filter every INFO line at the effective-level check on the logger the
+    record started from, before it ever reaches that handler.
+    """
+    root = logging.getLogger()
+    root_handlers = root.handlers[:]
+    root_level = root.level
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    root.handlers = [handler]
+    root.setLevel(logging.WARNING)
+    try:
+        absurd_logging.attach_console_handler()
+        logging.getLogger("django_absurd.worker").info("worker reached root's handler")
+    finally:
+        root.handlers = root_handlers
+        root.setLevel(root_level)
+    assert logging.getLogger("django_absurd").handlers == []
+    assert stream.getvalue() == "worker reached root's handler\n"
+
+
+def test_attaching_does_not_duplicate_a_line_when_root_is_already_at_info() -> None:
+    root = logging.getLogger()
+    root_handlers = root.handlers[:]
+    root_level = root.level
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    root.handlers = [handler]
+    root.setLevel(logging.INFO)
+    try:
+        absurd_logging.attach_console_handler()
+        logging.getLogger("django_absurd.worker").info("worker reached root's handler")
+    finally:
+        root.handlers = root_handlers
+        root.setLevel(root_level)
+    assert logging.getLogger("django_absurd").handlers == []
+    assert stream.getvalue() == "worker reached root's handler\n"
+
+
+def test_attaching_respects_an_explicit_level_already_set() -> None:
+    """The level guard applies on the attaching path too, not only when deferring —
+    a project's explicit ``django_absurd`` level must survive either way.
+    """
+    logger = logging.getLogger("django_absurd")
+    logger.setLevel(logging.ERROR)
+    root = logging.getLogger()
+    root_handlers = root.handlers[:]
+    root.handlers = []
+    try:
+        absurd_logging.attach_console_handler()
+    finally:
+        root.handlers = root_handlers
+    assert len(logger.handlers) == 1
+    assert logger.level == logging.ERROR

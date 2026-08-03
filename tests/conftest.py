@@ -1,3 +1,4 @@
+import logging
 import typing as t
 
 import pytest
@@ -9,6 +10,26 @@ from django_absurd.flush import flush_absurd_state
 @pytest.fixture(autouse=True)
 def _enable_db(db: None) -> None:
     pass
+
+
+@pytest.fixture(autouse=True)
+def _restore_absurd_logger_state() -> t.Iterator[None]:
+    """Undo whatever a real ``absurd_worker``/``absurd_beat`` invocation left on the
+    actual ``django_absurd`` logger.
+
+    ``attach_console_handler`` mutates that logger for real, process-wide, with no
+    test-scoped isolation of its own — that permanence is the point in production.
+    Any test in any of the three suites that runs the real command through
+    ``call_command`` leaves a handler and/or an explicit INFO level sitting on the
+    logger for the rest of the session, changing what a later, unrelated test observes
+    through ``caplog`` at the module's normally-unconfigured level.
+    """
+    logger = logging.getLogger("django_absurd")
+    handlers = logger.handlers[:]
+    level = logger.level
+    yield
+    logger.handlers = handlers
+    logger.setLevel(level)
 
 
 @pytest.fixture
