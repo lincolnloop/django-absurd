@@ -43,14 +43,16 @@ public return type; that is that unit's decision.
 | `wrap_task_execution`     | task cancelled                                      | WARNING |
 | `wrap_task_execution`     | run already failed elsewhere                        | WARNING |
 | `wrap_task_execution`     | task failed — + attempt/max, with traceback         | ERROR   |
-| `worker.py` (existing)    | worker started / stopped                            | INFO    |
+| `worker.py` (existing)    | worker started                                      | INFO    |
+| `worker.py` (NEW)         | worker stopped                                      | INFO    |
 | `scheduler.py` (existing) | beat fired                                          | INFO    |
 | `queues.py` (NEW)         | queues provisioned                                  | INFO    |
 | `cleanup.py` (NEW)        | cleanup ran                                         | INFO    |
 
-`queues.py` and `cleanup.py` log nothing today, so those two are additions rather than
-retitles. The 16 existing statements live in `worker.py` (5), `scheduler.py` (6),
-`deferred.py`, `dispatch.py`, `tasks.py` and the two `pg_cron` modules.
+`queues.py` and `cleanup.py` log nothing today, and there is no worker-stopped line
+either, so those three are additions rather than retitles. The 16 existing statements
+live in `worker.py` (5), `scheduler.py` (6), `deferred.py`, `dispatch.py`, `tasks.py`
+and the two `pg_cron` modules.
 
 DEBUG for the high-frequency one, INFO for lifecycle transitions, WARNING where Absurd
 ended a run without the task's code failing, ERROR with a traceback for a real failure.
