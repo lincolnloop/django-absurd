@@ -142,6 +142,12 @@ Through real tasks with the `dj_absurd` fixture, asserting full rendered message
   Only calls user code makes are logged.
 - A task reaching `absurd_sdk.get_current_context()` directly bypasses the wrapper.
   Documented, not defended.
+- **The `:run_after` deferral wrapper's own primitives.** `build_deferred_handler`
+  (`django_absurd/deferred.py`) receives the raw SDK context, so a deferred task's
+  wait-until-due sleep and its `enqueue:<target>` step emit no lines. Deliberate: the
+  run-level `task suspended` line already makes the deferral visible, and this unit logs
+  the calls USER code makes. Wrapping that ctx in `AsyncAbsurdTaskContext` is a one-line
+  change if per-step visibility is ever wanted.
 
 ## Probed, not assumed
 
