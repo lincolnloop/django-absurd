@@ -69,13 +69,7 @@ def describe_spawn(task_name: str, options: SpawnOptions) -> str:
     if "max_attempts" in options:
         detail += f" max_attempts={options['max_attempts']}"
     if "idempotency_key" in options:
-        # A caller-chosen key, potentially non-ASCII (and potentially an identifier) —
-        # escape it rather than interpolate it verbatim, the one route decoration could
-        # otherwise take into a log record this unit keeps plain-ASCII.
-        safe_key = (
-            options["idempotency_key"].encode("ascii", "backslashreplace").decode()
-        )
-        detail += f" idempotency_key={safe_key}"
+        detail += f" idempotency_key={options['idempotency_key']}"
     return detail
 
 

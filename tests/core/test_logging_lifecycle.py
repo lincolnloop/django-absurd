@@ -251,12 +251,15 @@ def test_the_deferred_wrapper_is_visible_without_its_own_log_line(
 def test_no_hook_log_record_contains_a_non_ascii_character(
     caplog: pytest.LogCaptureFixture, dj_absurd: AbsurdTestRuntime
 ) -> None:
-    """The guard the whole unit exists for: decoration never reaches a log record."""
+    """The guard the whole unit exists for: our own decoration never reaches a log
+    record. Scoped to text WE author — a caller's own strings (dedup key, queue and
+    schedule names, task paths) travel verbatim, so the key here is ASCII on purpose.
+    """
     with (
         caplog.at_level(logging.DEBUG, logger="django_absurd"),
         dj_absurd.freeze_time(),
     ):
-        params_module.absurd_params(idempotency_key="café-42").bind(tasks.add).enqueue(
+        params_module.absurd_params(idempotency_key="dedup-42").bind(tasks.add).enqueue(
             1, 2
         )
         dj_absurd.drain()

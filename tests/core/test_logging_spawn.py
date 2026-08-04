@@ -28,12 +28,12 @@ def test_enqueue_logs_the_spawn_with_absurd_side_detail(
 
 
 @pytest.mark.django_db(transaction=True)
-def test_enqueue_logs_a_non_ascii_dedup_key_escaped(
+def test_enqueue_logs_a_dedup_key_as_the_caller_wrote_it(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A caller-chosen idempotency_key can be non-ASCII (and can double as an
-    identifier), so it is escaped rather than interpolated verbatim — the one
-    remaining route decoration could take into a log record."""
+    """The key is the caller's own string, logged verbatim. Escaping it to ASCII would
+    mangle an ordinary accented key to defend a stream encoding you can only get by
+    deliberately breaking your own environment."""
     with caplog.at_level(logging.DEBUG, logger="django_absurd"):
         params_module.absurd_params(idempotency_key="café-42").bind(tasks.add).enqueue(
             1, 2
@@ -43,7 +43,7 @@ def test_enqueue_logs_a_non_ascii_dedup_key_escaped(
     assert len(spawns) == 1
     assert spawns[0].getMessage() == (
         f"spawn requested: name={tasks.add.module_path} queue=default"
-        r" max_attempts=5 idempotency_key=caf\xe9-42"
+        " max_attempts=5 idempotency_key=café-42"
     )
 
 
