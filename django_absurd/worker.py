@@ -41,8 +41,7 @@ from django_absurd.exceptions import QueueNotDeclaredError, QueueNotProvisionedE
 from django_absurd.hooks import (
     log_before_spawn,
     log_task_execution,
-    read_sdk_attempt,
-    read_sdk_max_attempts,
+    read_sdk_claimed_task,
 )
 from django_absurd.management.base import resolve_backend
 from django_absurd.queues import names_a_queue_table
@@ -356,7 +355,7 @@ def build_running_task_result(
     # reports this worker's alias anyway.
     if (task.queue_name, task.backend) != (queue, backend.alias):
         task = task.using(queue_name=queue, backend=backend.alias)
-    attempt = read_sdk_attempt(ctx)
+    attempt = read_sdk_claimed_task(ctx)["attempt"]
     # One instant for both fields, as Django's own backend does: this handler entry IS
     # the attempt, so "when it started" and "when it was last attempted" cannot differ.
     started_at = timezone.now()
@@ -387,7 +386,7 @@ def build_handler(
         WORKER_LOOP.set(asyncio.get_running_loop())
         args = params.get("args", [])
         kwargs = params.get("kwargs", {})
-        attempt = read_sdk_attempt(ctx)
+        attempt = read_sdk_claimed_task(ctx)["attempt"]
         task_result = build_running_task_result(
             task, ctx, args, kwargs, backend=backend, queue=queue
         )
@@ -451,7 +450,7 @@ def send_finished_if_terminal(
     ``exc`` — the traceback Django's ``log_task_finished`` attaches to its ERROR line is
     the task's own, matching the ``TaskError`` payload with nothing to arrange.
     """
-    if not is_terminal_attempt(attempt, read_sdk_max_attempts(ctx)):
+    if not is_terminal_attempt(attempt, read_sdk_claimed_task(ctx)["max_attempts"]):
         return
     mark_task_result_failed(task_result, exc)
     dispatch.send_task_signal(task_finished, type(backend), task_result)

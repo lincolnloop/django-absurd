@@ -39,8 +39,6 @@ def register_jsonb_loader(context: psycopg.abc.AdaptContext) -> None:
 
 def build_absurd_client(using: str) -> Absurd:
     validate_backend(using)
-    # No wrap_task_execution: it is an async def, and the sync client never awaits a
-    # hook's return value.
     return Absurd(
         connections[using].connection,
         hooks=AbsurdHooks(before_spawn=log_before_spawn),

@@ -58,49 +58,33 @@ One worker runs both sync and `async def` [tasks](tasks.md) (async on an event l
 sync in a thread pool). On start it does a full sync — provisioning every declared queue
 and rebuilding the admin views — then polls for work.
 
-## Django Task lifecycle logging
+## Logging
 
-Django logs a task's lifecycle on the `django.tasks` logger — `DEBUG` when it's
-enqueued, `INFO` at `state=RUNNING` and `state=SUCCESSFUL`, `ERROR` with a traceback at
-`state=FAILED`. `AbsurdBackend` emits the signals Django's logging listens for, so those
-lines appear for Absurd tasks too.
+Two loggers report a task's life, and they answer different questions.
 
-Django's logs are not a complete record. Postgres is: a retried attempt's failure logs
-nothing, and neither does an ending Absurd decided itself — a
-[`max_delay`/`max_duration` cancellation](tasks.md#retries-spawn-options), an expired
-claim, or a cancellation. The [stored result](tasks.md#read-the-result) and the
-queue-state models below are the record.
+- **`django.tasks`** — Django's own, because `AbsurdBackend` emits Django's task
+  signals: `DEBUG` on enqueue, `INFO` on start and success, `ERROR` with a traceback
+  when a task's last attempt raises. Portable across task backends, and lossy by design
+  — a retried attempt's failure logs nothing, and neither does an ending Absurd decides
+  on its own (a
+  [`max_delay`/`max_duration` cancellation](tasks.md#retries-spawn-options), an expired
+  claim).
+- **`django_absurd`** — this package's own, in Absurd's vocabulary: attempt counts,
+  durations, queue provisioning, [worker](#workers) and
+  [beat](cron-jobs.md#run-the-beat) lifecycle. One child logger per module, so
+  `django_absurd` routes everything and `django_absurd.scheduler` targets just the beat.
 
-## django-absurd's own logging
+Neither is the complete record. Postgres is: the
+[stored result](tasks.md#read-the-result) and the queue-state models below.
 
-django-absurd reports what Absurd itself is doing on its own loggers — one per module,
-all children of `django_absurd` — so you can route or level them through Django's
+**By default `absurd_worker` and `absurd_beat` show their own lines** — each attaches a
+plain `StreamHandler` at `INFO` to `django_absurd` on startup, so a fresh project sees
+task activity without configuring anything. Nothing else ever attaches a handler: not at
+import, not in `AppConfig.ready`, not on enqueue.
+
+**Declare the logger and that stops.** If your
 [`LOGGING`](https://docs.djangoproject.com/en/6.0/topics/logging/#configuring-logging)
-setting like any other library's. The children that emit:
-
-- `django_absurd.hooks` — each run's lifecycle.
-- `django_absurd.worker` — [worker](#workers) start and stop.
-- `django_absurd.scheduler` — the [beat scheduler](cron-jobs.md#run-the-beat).
-- `django_absurd.queues` — [queue](#queues) provisioning.
-- `django_absurd.cleanup` — [cleanup](cleanup.md) runs.
-- `django_absurd.dispatch` — a failing task-signal receiver, logged with its traceback
-  at `ERROR`.
-- `django_absurd.tasks`, `django_absurd.pg_cron.apps`, and
-  `django_absurd.pg_cron.signals` — warnings only.
-
-Configure the parent to cover everything, or target one child — silencing just the beat
-means setting `django_absurd.scheduler` to `WARNING`.
-
-**The default: `absurd_worker` and `absurd_beat` show their own lines.** Each attaches
-one plain `StreamHandler` at `INFO` to `django_absurd` on startup, so a fresh project
-sees task activity without configuring anything. Django's default configuration covers
-the `django` logger only, and the root logger's default level is `WARNING`, so without
-this they would run silent.
-
-**To take control, declare the logger** — if your
-[`LOGGING`](https://docs.djangoproject.com/en/6.0/topics/logging/#configuring-logging)
-names `django_absurd` or any of its children, that is the whole story and the commands
-touch nothing:
+names `django_absurd` or a child, your configuration is the whole story:
 
 ```python
 LOGGING = {
@@ -108,7 +92,7 @@ LOGGING = {
     "disable_existing_loggers": False,
     "handlers": {"console": {"class": "logging.StreamHandler"}},
     "loggers": {
-        # route everything from this package...
+        # everything from this package...
         "django_absurd": {"handlers": ["console"], "level": "INFO"},
         # ...or quiet one part of it
         "django_absurd.scheduler": {
@@ -120,13 +104,8 @@ LOGGING = {
 }
 ```
 
-Nothing else attaches anything, ever — not at import, not in `AppConfig.ready`. A web
-process enqueuing a task, a test, or a task under someone else's runner gets exactly
-what your `LOGGING` says.
-
 Log records are plain text. The emoji in the commands' console output is written by the
-commands themselves, never into a log record — a glyph the log stream cannot encode
-would cost the whole log line.
+commands themselves and never reaches a record.
 
 ## Admin & ORM introspection
 

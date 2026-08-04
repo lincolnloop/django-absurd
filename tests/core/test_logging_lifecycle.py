@@ -1,20 +1,16 @@
 import datetime as dt
 import logging
 import re
-import typing as t
 
 import psycopg
 import pytest
 from django.tasks import task
 
-from django_absurd import get_absurd_context, hooks
+from django_absurd import get_absurd_context
 from django_absurd import params as params_module
 from django_absurd.queues import get_absurd_client
 from django_absurd.test import AbsurdTestRuntime
 from tests import tasks, utils
-
-if t.TYPE_CHECKING:
-    from absurd_sdk import AsyncTaskContext, TaskContext
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -272,33 +268,23 @@ def test_no_hook_log_record_contains_a_non_ascii_character(
 
 
 def test_a_logging_fault_in_the_hook_does_not_fail_the_task(
-    caplog: pytest.LogCaptureFixture,
-    dj_absurd: AbsurdTestRuntime,
-    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture, dj_absurd: AbsurdTestRuntime
 ) -> None:
-    """describe_run is the message-building step; breaking it reaches the hook's own
-    try/except, not the SDK's. Only the ``started=`` calls (every event after the run
-    starts) render a duration, so patching in that branch alone still lets the
-    ``task started`` line through, the same asymmetry the SDK itself gives us."""
-    render_run = hooks.describe_run
-
-    def explode(ctx: "TaskContext | AsyncTaskContext", started: float | None) -> str:
-        if started is None:
-            return render_run(ctx, started)
-        msg = "cannot describe run"
-        raise ValueError(msg)
-
-    # Sanctioned exception to tests/CLAUDE.md's no-monkeypatching rule: the branch under
-    # test is the hook's own containment, which by definition no real input can reach —
-    # a fault has to be injected. The maintainer authorised it for these two tests only.
-    monkeypatch.setattr(hooks, "describe_run", explode)
-
-    with (
-        caplog.at_level(logging.INFO, logger="django_absurd"),
-        dj_absurd.freeze_time(),
-    ):
-        result = tasks.add.enqueue(1, 2)
-        dj_absurd.drain()
+    """A raising log call reaches the hook's own try/except, not the SDK's, so the task
+    still completes. Scoped to the ``task completed`` event so the earlier lines and the
+    fallback still come through — the same asymmetry the SDK itself gives us.
+    """
+    hooks_logger = logging.getLogger("django_absurd.hooks")
+    hooks_logger.addFilter(fail_to_emit_the_completed_line)
+    try:
+        with (
+            caplog.at_level(logging.INFO, logger="django_absurd"),
+            dj_absurd.freeze_time(),
+        ):
+            result = tasks.add.enqueue(1, 2)
+            dj_absurd.drain()
+    finally:
+        hooks_logger.removeFilter(fail_to_emit_the_completed_line)
 
     assert dj_absurd.get_result(result.id).state == "completed"
     faults = [
@@ -311,3 +297,20 @@ def test_a_logging_fault_in_the_hook_does_not_fail_the_task(
         faults[0].getMessage()
         == "failed to log a run lifecycle event: event=task completed"
     )
+
+
+def fail_to_emit_the_completed_line(record: logging.LogRecord) -> bool:
+    """Raise from inside ``Logger.handle`` for the ``task completed`` line only.
+
+    Matched on the lifecycle template, not on the event name alone: the containment
+    fallback carries that same name as its own argument, so keying on the name would
+    raise a second time from inside the ``except`` and escape into the SDK.
+    """
+    if (
+        record.msg == "%s: %s"
+        and isinstance(record.args, tuple)
+        and record.args[:1] == ("task completed",)
+    ):
+        msg = "cannot emit the lifecycle line"
+        raise ValueError(msg)
+    return True

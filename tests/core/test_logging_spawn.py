@@ -1,15 +1,10 @@
 import logging
-import typing as t
 
 import pytest
 
-from django_absurd import hooks
 from django_absurd import params as params_module
 from django_absurd.test import AbsurdTestRuntime
 from tests import tasks
-
-if t.TYPE_CHECKING:
-    from absurd_sdk import SpawnOptions
 
 
 @pytest.mark.django_db(transaction=True)
@@ -64,27 +59,23 @@ def test_a_spawn_still_works_with_the_hook_attached(
 def test_a_hook_that_fails_to_log_still_returns_the_options(
     caplog: pytest.LogCaptureFixture,
     dj_absurd: AbsurdTestRuntime,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """describe_spawn is the message-building step; breaking it reaches the hook's own
-    try/except, not the SDK's — a real enqueue still spawns the task, proving
-    ``options`` came back unchanged even on the failing path."""
-
-    def explode(task_name: str, options: "SpawnOptions") -> str:
-        msg = "cannot describe spawn"
-        raise ValueError(msg)
-
-    # Sanctioned exception to tests/CLAUDE.md's no-monkeypatching rule: the branch under
-    # test is the hook's own containment, which by definition no real input can reach —
-    # a fault has to be injected. The maintainer authorised it for these two tests only.
-    monkeypatch.setattr(hooks, "describe_spawn", explode)
-
-    with (
-        caplog.at_level(logging.DEBUG, logger="django_absurd"),
-        dj_absurd.freeze_time(),
-    ):
-        result = tasks.add.enqueue(1, 2)
-        dj_absurd.drain()
+    """A raising log call reaches the hook's own try/except, not the SDK's — a real
+    enqueue still spawns the task, proving ``options`` came back unchanged even on the
+    failing path. The fault is injected with a logging ``Filter``, which raises from
+    inside ``Logger.handle``; it spares the fallback line so containment can report.
+    """
+    hooks_logger = logging.getLogger("django_absurd.hooks")
+    hooks_logger.addFilter(fail_to_emit_the_spawn_line)
+    try:
+        with (
+            caplog.at_level(logging.DEBUG, logger="django_absurd"),
+            dj_absurd.freeze_time(),
+        ):
+            result = tasks.add.enqueue(1, 2)
+            dj_absurd.drain()
+    finally:
+        hooks_logger.removeFilter(fail_to_emit_the_spawn_line)
 
     assert dj_absurd.get_result(result.id).state == "completed"
     failures = [
@@ -96,3 +87,16 @@ def test_a_hook_that_fails_to_log_still_returns_the_options(
     assert failures[0].getMessage() == (
         f"failed to log spawn: name={tasks.add.module_path}"
     )
+
+
+def fail_to_emit_the_spawn_line(record: logging.LogRecord) -> bool:
+    """Raise from inside ``Logger.handle`` for the spawn line only.
+
+    A filter is the public seam for this: it runs before handlers, so raising here is
+    what a broken formatter or a hostile ``__str__`` would do to the log call. Letting
+    every other record through keeps the hook's fallback line reportable.
+    """
+    if str(record.msg).startswith("spawn requested"):
+        msg = "cannot emit the spawn line"
+        raise ValueError(msg)
+    return True
