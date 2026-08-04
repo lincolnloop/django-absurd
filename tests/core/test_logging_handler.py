@@ -53,21 +53,27 @@ def test_the_worker_defers_to_a_project_that_configured_this_package(
     assert logging.getLogger("django_absurd").handlers == []
 
 
-def test_a_configured_child_logger_also_counts() -> None:
+def test_a_configured_child_logger_is_left_alone(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
     """Configuring django_absurd.worker says what you want from the worker; a handler
     on the parent would print those lines twice.
     """
-    assert absurd_logging.declares_absurd_logger(
-        {"loggers": {"django_absurd.worker": {"level": "DEBUG"}}}
-    )
+    settings.LOGGING = {"loggers": {"django_absurd.worker": {"level": "DEBUG"}}}
+    absurd_logging.attach_console_handler()
+    assert logging.getLogger("django_absurd").handlers == []
 
 
 @pytest.mark.parametrize(
     "config",
-    [None, {}, {"loggers": {}}, {"loggers": None}, {"loggers": {"django": {}}}],
+    [None, {}, {"loggers": None}, {"loggers": {}}, {"loggers": {"django": {}}}],
 )
-def test_an_unrelated_logging_config_does_not_count(config: object) -> None:
-    assert not absurd_logging.declares_absurd_logger(config)
+def test_a_logging_config_that_names_someone_else_still_gets_the_default(
+    config: object, settings: pytest_django.fixtures.SettingsWrapper
+) -> None:
+    settings.LOGGING = config
+    absurd_logging.attach_console_handler()
+    assert len(logging.getLogger("django_absurd").handlers) == 1
 
 
 @pytest.mark.django_db(transaction=True)
