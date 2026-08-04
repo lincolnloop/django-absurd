@@ -4,7 +4,7 @@ Two concrete-typed accessors return the live Absurd runtime context, orthogonal 
 Django's ``TaskContext``. ``aget_absurd_context()`` (async tasks) returns an
 ``AsyncAbsurdTaskContext`` wrapper around the SDK's own ``AsyncTaskContext``, mirroring
 its signatures and logging durable-primitive events (step replay, step completion,
-sleep suspended, sleep resumed);
+sleep suspended, sleep resumed, event awaiting/received, event emitted);
 ``get_absurd_context()`` (sync tasks) returns an ``AbsurdTaskContext`` bridge that
 mirrors the SDK sync signatures and hops each op onto the worker loop.
 """
@@ -170,9 +170,10 @@ class AsyncAbsurdTaskContext:
     so the user's ``fn`` is skipped) and a completion (``fn`` ran and its result was
     persisted). Sleeps log a suspension (caught via the SDK's ``SuspendTask``, then
     re-raised untouched) and a resumption on the attempt that returns past the
-    checkpoint. Events are plain delegations for now; they gain their own log lines
-    separately. ``await_task_result`` is deliberately absent — see ``AGENTS.md``'s
-    "await_task_result is not provided".
+    checkpoint. Events follow the same shape: awaiting one logs on suspension and
+    received on the attempt that returns the payload; emitting one logs once it has
+    been recorded, past tense. ``await_task_result`` is deliberately absent — see
+    ``AGENTS.md``'s "await_task_result is not provided".
     """
 
     absurd_ctx: AsyncTaskContext
@@ -240,12 +241,19 @@ class AsyncAbsurdTaskContext:
         step_name: str | None = None,
         timeout: int | None = None,  # noqa: ASYNC109 -- mirrors the SDK signature
     ) -> "JsonValue":
-        return await self.absurd_ctx.await_event(event_name, step_name, timeout)
+        try:
+            payload = await self.absurd_ctx.await_event(event_name, step_name, timeout)
+        except absurd_sdk.SuspendTask:
+            logger.info(describe_event_awaiting(event_name, self.task_id, timeout))
+            raise
+        logger.info(describe_event_received(event_name, self.task_id))
+        return payload
 
     async def emit_event(
         self, event_name: str, payload: "JsonValue | None" = None
     ) -> None:
         await self.absurd_ctx.emit_event(event_name, payload)
+        logger.info(describe_event_emitted(event_name, self.task_id))
 
 
 def describe_step(checkpoint_name: str, task_id: str) -> str:
@@ -271,3 +279,15 @@ def describe_sleep_until_suspended(
 
 def describe_sleep_resumed(step_name: str, task_id: str) -> str:
     return f"sleep resumed: step={step_name} task_id={task_id}"
+
+
+def describe_event_awaiting(event_name: str, task_id: str, timeout: int | None) -> str:
+    return f"event awaiting: name={event_name} task_id={task_id} timeout={timeout}"
+
+
+def describe_event_received(event_name: str, task_id: str) -> str:
+    return f"event received: name={event_name} task_id={task_id}"
+
+
+def describe_event_emitted(event_name: str, task_id: str) -> str:
+    return f"event emitted: name={event_name} task_id={task_id}"

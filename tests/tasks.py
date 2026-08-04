@@ -177,6 +177,16 @@ def sawait_event_timeout(name: str, timeout: int) -> str:
 
 
 @task
+def await_the_probe_event() -> t.Any:
+    return get_absurd_context().await_event("probe.go", timeout=3600)
+
+
+@task
+def emit_the_probe_event() -> None:
+    get_absurd_context().emit_event("probe.go", {"go": True})
+
+
+@task
 def spawn_child_then_return(value: int) -> str:
     run_child.enqueue(value)
     return "spawned"

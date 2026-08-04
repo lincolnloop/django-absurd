@@ -165,3 +165,48 @@ def test_a_sleep_until_reports_its_wake_time(
     assert re.fullmatch(
         rf"sleep suspended: step=nap task_id={task_id} until=\S+", suspended[0]
     )
+
+
+def test_an_async_event_wait_logs_awaiting_then_received(
+    caplog: pytest.LogCaptureFixture, dj_absurd: AbsurdTestRuntime
+) -> None:
+    with (
+        caplog.at_level(logging.INFO, logger="django_absurd"),
+        dj_absurd.freeze_time(),
+    ):
+        result = atasks.await_the_probe_event.enqueue()
+        dj_absurd.drain()
+        atasks.emit_the_probe_event.enqueue()
+        dj_absurd.drain()
+        dj_absurd.drain()
+
+    task_id = result.id.rsplit(":", 1)[-1]
+    messages = read_context_messages(caplog)
+    assert (
+        messages.count(f"event awaiting: name=probe.go task_id={task_id} timeout=3600")
+        == 1
+    )
+    assert messages.count(f"event received: name=probe.go task_id={task_id}") == 1
+    assert len([m for m in messages if m.startswith("event emitted: ")]) == 1
+
+
+def test_a_sync_event_wait_logs_awaiting_then_received(
+    caplog: pytest.LogCaptureFixture, dj_absurd: AbsurdTestRuntime
+) -> None:
+    with (
+        caplog.at_level(logging.INFO, logger="django_absurd"),
+        dj_absurd.freeze_time(),
+    ):
+        result = tasks.await_the_probe_event.enqueue()
+        dj_absurd.drain()
+        tasks.emit_the_probe_event.enqueue()
+        dj_absurd.drain()
+        dj_absurd.drain()
+
+    task_id = result.id.rsplit(":", 1)[-1]
+    messages = read_context_messages(caplog)
+    assert (
+        messages.count(f"event awaiting: name=probe.go task_id={task_id} timeout=3600")
+        == 1
+    )
+    assert messages.count(f"event received: name=probe.go task_id={task_id}") == 1
