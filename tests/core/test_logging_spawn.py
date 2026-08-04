@@ -92,9 +92,10 @@ def test_a_hook_that_fails_to_log_still_returns_the_options(
 def fail_to_emit_the_spawn_line(record: logging.LogRecord) -> bool:
     """Raise from inside ``Logger.handle`` for the spawn line only.
 
-    A filter is the public seam for this: it runs before handlers, so raising here is
-    what a broken formatter or a hostile ``__str__`` would do to the log call. Letting
-    every other record through keeps the hook's fallback line reportable.
+    A filter is the public seam for this: it runs inside ``Logger.handle``, before any
+    handler, so raising here is what a project's own raising ``Filter`` would do to the
+    log call. (A broken *formatter* would not — ``Handler.emit`` routes that to
+    ``handleError``.) Letting every other record through keeps the fallback reportable.
     """
     if str(record.msg).startswith("spawn requested"):
         msg = "cannot emit the spawn line"

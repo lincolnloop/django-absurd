@@ -73,7 +73,9 @@ Two loggers, two questions:
 `django_absurd` on startup, so a fresh project is not silent. Name `django_absurd` or a
 child in your
 [`LOGGING`](https://docs.djangoproject.com/en/6.0/topics/logging/#configuring-logging)
-and that stops — your configuration wins:
+and that stops — your configuration wins. Configure only `root` and they add no handler
+either, since yours already catches these records; they still raise the level to `INFO`,
+so a root handler left at `WARNING` does not swallow them:
 
 ```python
 LOGGING = {

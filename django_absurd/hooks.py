@@ -3,11 +3,17 @@
 The async client takes both; the sync client takes only ``log_before_spawn``, because
 its ``_execute_task`` never awaits a hook's return value.
 
-The SDK runs hooks inside the same try/except that wraps a task's own handler, so an
-exception escaping one of ours consumes an attempt and lands in ``failure_reason`` as
-though the task failed, with nothing reaching stderr. Every hook body is contained.
+Every hook body is contained, for a different reason each:
+
+- ``wrap_task_execution`` runs inside the same try/except that wraps a task's own
+  handler, so an exception escaping ours consumes an attempt and lands in
+  ``failure_reason`` as though the task failed, with nothing reaching stderr.
+- ``log_before_spawn`` runs inside ``spawn()``, outside any try, so an exception
+  escaping it surfaces loudly at the caller's ``enqueue()`` — breaking every enqueue in
+  the project rather than one run.
 """
 
+import contextlib
 import logging
 import time
 import typing as t
@@ -99,7 +105,10 @@ def report_run_event(
 
     The message is built INSIDE the try: it renders values the SDK supplied, and a value
     that raises while rendering must not leave this hook. The fallback interpolates
-    ``event`` alone — a literal from the call site — so the same fault cannot repeat.
+    ``event`` alone — a literal from the call site — so no *rendering* fault can repeat
+    in it. A fault in the logging machinery itself can: a filter or handler that raises
+    on record content sees the fallback's record too, and that second exception would
+    escape into the SDK. Hence the inner guard, where there is nowhere left to report.
     """
     try:
         # attempt and max_attempts together, because "attempt 2 of 5 failed" and "the
@@ -114,7 +123,10 @@ def report_run_event(
             detail += f" duration={time.monotonic() - started:.3f}s"
         logger.log(level, "%s: %s", event, detail, exc_info=exc_info)
     except Exception:
-        logger.exception("failed to log a run lifecycle event: event=%s", event)
+        # Last resort: reporting the fault is itself what failed, and raising from here
+        # would reach the SDK and consume the attempt.
+        with contextlib.suppress(Exception):
+            logger.exception("failed to log a run lifecycle event: event=%s", event)
 
 
 def read_sdk_claimed_task(ctx: "TaskContext | AsyncTaskContext") -> "ClaimedTask":

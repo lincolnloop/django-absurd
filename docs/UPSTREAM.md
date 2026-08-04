@@ -113,8 +113,8 @@ Retires: `LazyTaskRegistry`.
 ## Expose `attempt`, `run_id` and `enqueue_at` on the task context
 
 `ClaimedTask` carries `attempt` and `run_id`; `TaskContext` exposes neither, so
-`read_sdk_claimed_task` pulls the claimed row out of `ctx._task` and `read_sdk_attempt`
-reads `attempt` through it. Every attempt-aware behaviour depends on that reach —
+`read_sdk_claimed_task` pulls the claimed row out of `ctx._task`, and every caller
+indexes it from there. Every attempt-aware behaviour depends on that reach —
 retry-terminal predicates, `TaskResult.worker_ids`, `TaskContext.attempt`.
 
 Nothing exposes the task's enqueue time either, so a `TaskResult` a worker builds
@@ -122,4 +122,4 @@ carries `enqueued_at=None` — correct at enqueue, unknown at execution.
 
 Ask: public properties for all three.
 
-Retires: `read_sdk_attempt`, and the `enqueued_at=None` compromise.
+Retires: `read_sdk_claimed_task`, and the `enqueued_at=None` compromise.
