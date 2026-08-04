@@ -56,7 +56,10 @@ def get_absurd_context() -> "AbsurdTaskContext":
         msg = "get_absurd_context() must be called inside a running Absurd task"
         raise RuntimeError(msg)
     return AbsurdTaskContext(
-        absurd_ctx=t.cast("AsyncTaskContext", absurd_ctx), loop=WORKER_LOOP.get()
+        async_ctx=AsyncAbsurdTaskContext(
+            absurd_ctx=t.cast("AsyncTaskContext", absurd_ctx)
+        ),
+        loop=WORKER_LOOP.get(),
     )
 
 
@@ -85,20 +88,32 @@ class AbsurdTaskContext:
     ``begin_step``/``complete_step`` bridges), never on the loop.
     """
 
-    absurd_ctx: AsyncTaskContext
+    async_ctx: "AsyncAbsurdTaskContext"
     loop: asyncio.AbstractEventLoop
 
     @property
+    def absurd_ctx(self) -> AsyncTaskContext:
+        return self.async_ctx.absurd_ctx
+
+    @property
     def headers(self) -> "Mapping[str, absurd_sdk.JsonValue]":
-        headers: Mapping[str, absurd_sdk.JsonValue] = self.absurd_ctx.headers
-        return headers
+        return self.async_ctx.headers
 
     def step(self, name: str, fn: "Callable[[], R]") -> R:
-        handle = self.run_on_loop(self.absurd_ctx.begin_step(name))
+        started = time.monotonic()
+        handle = self.run_on_loop(self.async_ctx.begin_step(name))
         if handle.done:
             return t.cast("R", handle.state)
         rv = fn()
-        return self.run_on_loop(self.absurd_ctx.complete_step(handle, rv))
+        result = self.run_on_loop(self.async_ctx.complete_step(handle, rv))
+        logger.info(
+            describe_step_completed(
+                handle.checkpoint_name,
+                self.async_ctx.task_id,
+                time.monotonic() - started,
+            )
+        )
+        return result
 
     @t.overload
     def run_step(
@@ -122,23 +137,23 @@ class AbsurdTaskContext:
         return decorator
 
     def heartbeat(self, seconds: int | None = None) -> None:
-        self.run_on_loop(self.absurd_ctx.heartbeat(seconds))
+        self.run_on_loop(self.async_ctx.heartbeat(seconds))
 
     def sleep_for(self, step_name: str, duration: float) -> None:
-        self.run_on_loop(self.absurd_ctx.sleep_for(step_name, duration))
+        self.run_on_loop(self.async_ctx.sleep_for(step_name, duration))
 
     def sleep_until(self, step_name: str, wake_at: "dt.datetime | int | float") -> None:
-        self.run_on_loop(self.absurd_ctx.sleep_until(step_name, wake_at))
+        self.run_on_loop(self.async_ctx.sleep_until(step_name, wake_at))
 
     def await_event(
         self, event_name: str, step_name: str | None = None, timeout: int | None = None
     ) -> "JsonValue":
         return self.run_on_loop(
-            self.absurd_ctx.await_event(event_name, step_name, timeout)
+            self.async_ctx.await_event(event_name, step_name, timeout)
         )
 
     def emit_event(self, event_name: str, payload: "JsonValue | None" = None) -> None:
-        self.run_on_loop(self.absurd_ctx.emit_event(event_name, payload))
+        self.run_on_loop(self.async_ctx.emit_event(event_name, payload))
 
     def run_on_loop(self, coro: "Coroutine[t.Any, t.Any, R]") -> R:
         future = asyncio.run_coroutine_threadsafe(coro, self.loop)

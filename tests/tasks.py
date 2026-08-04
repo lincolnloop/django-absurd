@@ -10,6 +10,7 @@ from django_absurd import absurd_params, get_absurd_context
 from tests.models import Payload
 
 SYNC_STEP_CALLS: dict[str, int] = {"n": 0}
+SYNC_CHARGE_ATTEMPTS: dict[str, int] = {"n": 0}
 RETRY_CALLS: dict[str, int] = {"n": 0}
 WEEK_SECONDS = 7 * 24 * 3600
 
@@ -184,6 +185,21 @@ def spawn_child_then_return(value: int) -> str:
 @task
 def run_child(value: int) -> int:
     return value * 2
+
+
+@task
+def scharge_then_fail_once() -> str:
+    context = get_absurd_context()
+
+    def charge() -> str:
+        return "charged"
+
+    result = context.step("charge", charge)
+    SYNC_CHARGE_ATTEMPTS["n"] += 1
+    if SYNC_CHARGE_ATTEMPTS["n"] == 1:
+        msg = "scharge_then_fail_once"
+        raise ValueError(msg)
+    return result
 
 
 @task
