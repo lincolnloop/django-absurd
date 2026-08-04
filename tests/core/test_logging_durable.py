@@ -1,3 +1,4 @@
+import datetime as dt
 import logging
 import re
 
@@ -98,3 +99,69 @@ def test_a_sync_replayed_step_logs_replayed_not_completed(
     assert messages.count(f"step replayed: name=charge task_id={task_id}") == 1
     assert len([m for m in messages if m.startswith("step completed: ")]) == 1
     assert len(messages) == 2
+
+
+def test_an_async_sleep_logs_suspended_then_resumed(
+    caplog: pytest.LogCaptureFixture, dj_absurd: AbsurdTestRuntime
+) -> None:
+    with (
+        caplog.at_level(logging.INFO, logger="django_absurd"),
+        dj_absurd.freeze_time() as frozen_time,
+    ):
+        result = atasks.asleep_for_once.enqueue("k")
+        dj_absurd.drain()
+        frozen_time.shift(dt.timedelta(days=8))
+        dj_absurd.drain()
+
+    task_id = result.id.rsplit(":", 1)[-1]
+    messages = read_context_messages(caplog)
+    assert (
+        messages.count(
+            f"sleep suspended: step=nap task_id={task_id} for={tasks.WEEK_SECONDS}s"
+        )
+        == 1
+    )
+    assert messages.count(f"sleep resumed: step=nap task_id={task_id}") == 1
+
+
+def test_a_sync_sleep_logs_suspended_then_resumed(
+    caplog: pytest.LogCaptureFixture, dj_absurd: AbsurdTestRuntime
+) -> None:
+    with (
+        caplog.at_level(logging.INFO, logger="django_absurd"),
+        dj_absurd.freeze_time() as frozen_time,
+    ):
+        result = tasks.ssleep_for_once.enqueue("k")
+        dj_absurd.drain()
+        frozen_time.shift(dt.timedelta(days=8))
+        dj_absurd.drain()
+
+    task_id = result.id.rsplit(":", 1)[-1]
+    messages = read_context_messages(caplog)
+    assert (
+        messages.count(
+            f"sleep suspended: step=nap task_id={task_id} for={tasks.WEEK_SECONDS}s"
+        )
+        == 1
+    )
+    assert messages.count(f"sleep resumed: step=nap task_id={task_id}") == 1
+
+
+def test_a_sleep_until_reports_its_wake_time(
+    caplog: pytest.LogCaptureFixture, dj_absurd: AbsurdTestRuntime
+) -> None:
+    with (
+        caplog.at_level(logging.INFO, logger="django_absurd"),
+        dj_absurd.freeze_time(),
+    ):
+        result = tasks.ssleep_until_once.enqueue("k")
+        dj_absurd.drain()
+
+    task_id = result.id.rsplit(":", 1)[-1]
+    suspended = [
+        m for m in read_context_messages(caplog) if m.startswith("sleep suspended: ")
+    ]
+    assert len(suspended) == 1
+    assert re.fullmatch(
+        rf"sleep suspended: step=nap task_id={task_id} until=\S+", suspended[0]
+    )

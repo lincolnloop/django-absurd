@@ -3,7 +3,8 @@
 Two concrete-typed accessors return the live Absurd runtime context, orthogonal to
 Django's ``TaskContext``. ``aget_absurd_context()`` (async tasks) returns an
 ``AsyncAbsurdTaskContext`` wrapper around the SDK's own ``AsyncTaskContext``, mirroring
-its signatures and logging durable-primitive events (step replay, step completion);
+its signatures and logging durable-primitive events (step replay, step completion,
+sleep suspended, sleep resumed);
 ``get_absurd_context()`` (sync tasks) returns an ``AbsurdTaskContext`` bridge that
 mirrors the SDK sync signatures and hops each op onto the worker loop.
 """
@@ -167,9 +168,11 @@ class AsyncAbsurdTaskContext:
     Mirrors the SDK's ``AsyncTaskContext`` surface so it substitutes transparently for
     it, adding INFO logs around durable steps: a replay (the checkpoint already exists,
     so the user's ``fn`` is skipped) and a completion (``fn`` ran and its result was
-    persisted). Sleeps and events are plain delegations for now; they gain their own log
-    lines separately. ``await_task_result`` is deliberately absent — see
-    ``AGENTS.md``'s "await_task_result is not provided".
+    persisted). Sleeps log a suspension (caught via the SDK's ``SuspendTask``, then
+    re-raised untouched) and a resumption on the attempt that returns past the
+    checkpoint. Events are plain delegations for now; they gain their own log lines
+    separately. ``await_task_result`` is deliberately absent — see ``AGENTS.md``'s
+    "await_task_result is not provided".
     """
 
     absurd_ctx: AsyncTaskContext
@@ -212,12 +215,24 @@ class AsyncAbsurdTaskContext:
         await self.absurd_ctx.heartbeat(seconds)
 
     async def sleep_for(self, step_name: str, duration: float) -> None:
-        await self.absurd_ctx.sleep_for(step_name, duration)
+        try:
+            await self.absurd_ctx.sleep_for(step_name, duration)
+        except absurd_sdk.SuspendTask:
+            logger.info(describe_sleep_for_suspended(step_name, self.task_id, duration))
+            raise
+        logger.info(describe_sleep_resumed(step_name, self.task_id))
 
     async def sleep_until(
         self, step_name: str, wake_at: "dt.datetime | int | float"
     ) -> None:
-        await self.absurd_ctx.sleep_until(step_name, wake_at)
+        try:
+            await self.absurd_ctx.sleep_until(step_name, wake_at)
+        except absurd_sdk.SuspendTask:
+            logger.info(
+                describe_sleep_until_suspended(step_name, self.task_id, wake_at)
+            )
+            raise
+        logger.info(describe_sleep_resumed(step_name, self.task_id))
 
     async def await_event(
         self,
@@ -242,3 +257,17 @@ def describe_step_completed(checkpoint_name: str, task_id: str, duration: float)
         f"step completed: name={checkpoint_name} task_id={task_id}"
         f" duration={duration:.3f}s"
     )
+
+
+def describe_sleep_for_suspended(step_name: str, task_id: str, duration: float) -> str:
+    return f"sleep suspended: step={step_name} task_id={task_id} for={duration}s"
+
+
+def describe_sleep_until_suspended(
+    step_name: str, task_id: str, wake_at: "dt.datetime | int | float"
+) -> str:
+    return f"sleep suspended: step={step_name} task_id={task_id} until={wake_at}"
+
+
+def describe_sleep_resumed(step_name: str, task_id: str) -> str:
+    return f"sleep resumed: step={step_name} task_id={task_id}"
