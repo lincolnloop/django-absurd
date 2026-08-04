@@ -574,85 +574,16 @@ git commit -m "feat: log event waits and emissions"
 
 ---
 
-### Task 5: `await_task_result` — mirrored onto sync, and logged
+### Task 5: WITHDRAWN
 
-**Files:**
+`django_absurd/AGENTS.md:1244` already documents that `await_task_result` **is not
+provided**, deliberately: the SDK's version polls and heartbeats inside a step rather
+than suspending, so it holds the worker slot, and it is cross-queue-only. Users are
+pointed at Django's `get_result()` / `aget_result()`.
 
-- Modify: `django_absurd/context.py`
-- Modify: `tests/core/test_logging_durable.py`
-- Modify: `tests/tasks.py`, `tests/atasks.py` (a parent that waits on a child)
-
-**Interfaces:**
-
-- Consumes: the wrapper and bridge from Tasks 1-2.
-- Produces: `AbsurdTaskContext.await_task_result(...)`, mirroring the SDK sync signature
-  — new surface on the sync bridge, which lacked it (probe-confirmed).
-
-Mirror the SDK signature exactly, parameter names included:
-
-```python
-await_task_result(task_id: str, queue_name: str | None = None,
-                  timeout: float | None = None, step_name: str | None = None)
-```
-
-The child must be spawned into a **different queue**: the SDK refuses to wait on a task
-in the same queue, to avoid deadlocking workers. `tests/utils.py`'s `DECLARED_QUEUES`
-already declares `other`.
-
-- [ ] **Step 1: Add parent/child fixture tasks**
-
-A sync parent that spawns a child onto queue `other` and awaits its result, plus the
-async twin. `tests/tasks.py` already has a `run_child` shape to reuse as the child.
-
-- [ ] **Step 2: Write the failing test**
-
-```python
-def test_awaiting_a_child_result_is_logged_in_both_flavours(
-    caplog: pytest.LogCaptureFixture, dj_absurd: AbsurdTestRuntime
-) -> None:
-    with (
-        caplog.at_level(logging.INFO, logger="django_absurd"),
-        dj_absurd.freeze_time(),
-    ):
-        tasks.await_a_child_result.enqueue()
-        dj_absurd.drain()
-        dj_absurd.drain("other")
-        dj_absurd.drain()
-
-    awaited = [
-        m for m in read_context_messages(caplog) if m.startswith("awaiting result: ")
-    ]
-    assert len(awaited) == 1
-    assert re.fullmatch(r"awaiting result: child=\S+ task_id=\S+", awaited[0])
-```
-
-`dj_absurd.drain(queue)` takes the queue name — `drain("other")` runs the child's queue.
-
-- [ ] **Step 3: Run to verify it fails**
-
-Run: `uv run pytest tests/core/test_logging_durable.py -v` Expected: FAIL —
-`AbsurdTaskContext` has no `await_task_result`, so the sync fixture task raises
-`AttributeError`. That is the gap this task closes.
-
-- [ ] **Step 4: Implement**
-
-In prose: add `await_task_result` to the wrapper as a logged delegation (line after the
-call returns), and add the sync twin to `AbsurdTaskContext`, bridging through
-`run_on_loop` exactly as its siblings do.
-
-- [ ] **Step 5: Run to verify**
-
-Run: `uv run pytest tests/core/test_logging_durable.py tests/core/test_durable.py -v`
-Expected: PASS.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add django_absurd/context.py tests/core/test_logging_durable.py tests/tasks.py tests/atasks.py
-uv run pre-commit run --all-files
-uvx --with tox-uv tox -e dev
-git commit -m "feat: mirror await_task_result onto the sync bridge and log it"
-```
+The spec read its absence from the sync bridge as a gap on our side. It is a decision,
+and the probe that "confirmed the gap" only confirmed the deliberate omission. Neither
+wrapper exposes it, and no line logs it.
 
 ---
 
