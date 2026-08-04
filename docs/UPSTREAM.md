@@ -116,7 +116,9 @@ The SDK's sync `TaskContext` has `run_step` — a decorator convenience over `st
 deriving a name from `fn` when none is given. `AsyncTaskContext` has only `step`; no
 async equivalent exists.
 
-Our sync `AbsurdTaskContext.run_step` bridges the SDK's real sync method.
+Our sync `AbsurdTaskContext.run_step` mirrors the SDK's sync signature — the live
+context is always `AsyncTaskContext` (our worker never instantiates the SDK's sync one),
+so it is a local decorator over our own `step`, not a bridge to the SDK's method.
 `AsyncAbsurdTaskContext` cannot offer one without inventing surface the SDK itself
 lacks, so it doesn't — documented in `AGENTS.md`'s API reference table as a sync-only
 row.
