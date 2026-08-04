@@ -152,8 +152,9 @@ class AsyncAbsurdTaskContext:
     Mirrors the SDK's ``AsyncTaskContext`` surface so it substitutes transparently for
     it, adding INFO logs around durable steps: a replay (the checkpoint already exists,
     so the user's ``fn`` is skipped) and a completion (``fn`` ran and its result was
-    persisted). Sleeps, events, and ``await_task_result`` are plain delegations for now;
-    they gain their own log lines separately.
+    persisted). Sleeps and events are plain delegations for now; they gain their own log
+    lines separately. ``await_task_result`` is deliberately absent — see
+    ``AGENTS.md``'s "await_task_result is not provided".
     """
 
     absurd_ctx: AsyncTaskContext
@@ -207,25 +208,14 @@ class AsyncAbsurdTaskContext:
         self,
         event_name: str,
         step_name: str | None = None,
-        timeout_seconds: int | None = None,
+        timeout: int | None = None,  # noqa: ASYNC109 -- mirrors the SDK signature
     ) -> "JsonValue":
-        return await self.absurd_ctx.await_event(event_name, step_name, timeout_seconds)
+        return await self.absurd_ctx.await_event(event_name, step_name, timeout)
 
     async def emit_event(
         self, event_name: str, payload: "JsonValue | None" = None
     ) -> None:
         await self.absurd_ctx.emit_event(event_name, payload)
-
-    async def await_task_result(
-        self,
-        task_id: str,
-        queue_name: str | None = None,
-        timeout_seconds: float | None = None,
-        step_name: str | None = None,
-    ) -> "absurd_sdk.TaskResultSnapshot":
-        return await self.absurd_ctx.await_task_result(
-            task_id, queue_name, timeout_seconds, step_name
-        )
 
 
 def describe_step(checkpoint_name: str, task_id: str) -> str:
