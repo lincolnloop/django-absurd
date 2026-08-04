@@ -74,10 +74,15 @@ the lines in `begin_step` and `complete_step`:
 Both flavours' `step()` call those, so neither carries logging of its own. A caller
 driving `begin_step`/`complete_step` manually gets the same lines free.
 
-Consequence, accepted: `step completed` carries **no duration**. `complete_step` does
-not know when the step began, and `StepHandle` is the SDK's object to mutate. The
-run-level line already carries the run's duration. Reintroducing a per-step duration
-would mean two `step()` implementations again — worse trade.
+`step completed` still carries a duration. `StepHandle` exposes `checkpoint_name`, a
+unique slot id (the SDK numbers repeated step names itself), so `begin_step` stashes a
+monotonic start under that key and `complete_step` pops it. A dict field on the wrapper
+holds them; the wrapper is a frozen slots dataclass, which blocks rebinding the
+attribute but not mutating the dict.
+
+Edge, degraded not defended: `get_absurd_context()` builds a fresh wrapper per call, so
+a caller driving `begin_step` and `complete_step` from two separate accessor calls has
+no stashed start. That logs the line without a duration.
 
 ## Events
 
@@ -88,7 +93,7 @@ one child logger without losing worker or run lines.
 | Event                | Where                | When                                    |
 | -------------------- | -------------------- | --------------------------------------- |
 | `step replayed: …`   | `begin_step`         | `handle.done` — work skipped            |
-| `step completed: …`  | `complete_step`      | step finished                           |
+| `step completed: …`  | `complete_step`      | step finished — with duration           |
 | `sleep suspended: …` | `sleep_for`/`_until` | BEFORE the await — it will not return   |
 | `sleep resumed: …`   | `sleep_for`/`_until` | the call returned; checkpoint satisfied |
 | `event awaiting: …`  | `await_event`        | BEFORE the await                        |
@@ -126,4 +131,3 @@ Through real tasks with the `dj_absurd` fixture, asserting full rendered message
   Only calls user code makes are logged.
 - A task reaching `absurd_sdk.get_current_context()` directly bypasses the wrapper.
   Documented, not defended.
-- Per-step durations, per the trade above.
