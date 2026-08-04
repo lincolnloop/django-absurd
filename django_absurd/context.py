@@ -24,7 +24,7 @@ from absurd_sdk import AsyncTaskContext
 
 if t.TYPE_CHECKING:
     import datetime as dt
-    from collections.abc import Callable, Coroutine, Mapping
+    from collections.abc import Awaitable, Callable, Coroutine, Mapping
 
     from absurd_sdk import JsonValue
 
@@ -193,9 +193,7 @@ class AsyncAbsurdTaskContext:
         headers: Mapping[str, absurd_sdk.JsonValue] = self.absurd_ctx.headers
         return headers
 
-    async def step(
-        self, name: str, fn: "Callable[[], Coroutine[t.Any, t.Any, R]]"
-    ) -> R:
+    async def step(self, name: str, fn: "Callable[[], Awaitable[R]]") -> R:
         started = time.monotonic()
         handle = await self.begin_step(name)
         if handle.done:
@@ -212,7 +210,7 @@ class AsyncAbsurdTaskContext:
     async def begin_step(self, name: str) -> "absurd_sdk.StepHandle":
         handle = await self.absurd_ctx.begin_step(name)
         if handle.done:
-            logger.info(describe_step(handle.checkpoint_name, self.task_id))
+            logger.info(describe_step_replayed(handle.checkpoint_name, self.task_id))
         return handle
 
     async def complete_step(self, handle: "absurd_sdk.StepHandle", value: R) -> R:
@@ -262,7 +260,7 @@ class AsyncAbsurdTaskContext:
         logger.info(describe_event_emitted(event_name, self.task_id))
 
 
-def describe_step(checkpoint_name: str, task_id: str) -> str:
+def describe_step_replayed(checkpoint_name: str, task_id: str) -> str:
     return f"step replayed: name={checkpoint_name} task_id={task_id}"
 
 

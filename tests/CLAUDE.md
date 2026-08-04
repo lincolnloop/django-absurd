@@ -152,5 +152,5 @@ The full `tox -e dev` exceeds a subagent's foreground command limit, so the harn
 backgrounds it and the subagent ends its turn reporting "waiting for the run" — a dead
 cycle that costs more than the run. Have implementers run only the targeted tests and
 `pre-commit`, and let the coordinator own the `tox` gate after the commit. Measured on
-this branch: the same task shape took ~160s under that split versus 500-900s when the
-implementer owned `tox`.
+this repo, 2026-08-04: the same task shape took ~160s under that split versus 500-900s
+when the implementer owned `tox`.
