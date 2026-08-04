@@ -9,7 +9,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.db import connections
 from psycopg.types.json import set_json_loads
 
-from django_absurd.hooks import build_absurd_hooks
+from django_absurd.hooks import log_before_spawn
 
 BACKEND_ERROR_MESSAGE = (
     "django-absurd requires the psycopg (v3) PostgreSQL backend. "
@@ -44,8 +44,10 @@ def build_absurd_client(using: str) -> Absurd:
     # wrap_task_execution — an async def — would hand back an un-awaited
     # coroutine as the run's own result. Only before_spawn is sync-safe; the
     # async client (built separately, in worker.py) still gets the full recipe.
-    sync_hooks: AbsurdHooks = {"before_spawn": build_absurd_hooks()["before_spawn"]}
-    return Absurd(connections[using].connection, hooks=sync_hooks)
+    return Absurd(
+        connections[using].connection,
+        hooks=AbsurdHooks(before_spawn=log_before_spawn),
+    )
 
 
 def resolve_cron_database(alias: str) -> str:

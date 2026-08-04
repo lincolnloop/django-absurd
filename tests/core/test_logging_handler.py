@@ -4,7 +4,9 @@ import pytest
 import pytest_django.fixtures
 from django.core.management import call_command
 
+from django_absurd import hooks
 from django_absurd import logging as absurd_logging
+from django_absurd.queues import get_absurd_client
 from django_absurd.test import AbsurdTestRuntime
 from tests import tasks, utils
 
@@ -75,3 +77,16 @@ def test_attaching_twice_does_not_duplicate_the_handler(
     absurd_logging.attach_console_handler()
     absurd_logging.attach_console_handler()
     assert len(logging.getLogger("django_absurd").handlers) == 1
+
+
+def test_the_sync_client_gets_only_the_hook_it_can_run() -> None:
+    """The sync ``Absurd`` client's own ``_execute_task`` never awaits a hook's return
+    value (unlike the async path, which checks ``inspect.isawaitable``), so handing it
+    ``wrap_task_execution`` — an ``async def`` — would hand back an un-awaited coroutine
+    as the run's own result. The async client, built separately in ``worker.py``, still
+    gets the full recipe.
+    """
+    client = get_absurd_client()
+    assert set(client._hooks) == {"before_spawn"}
+    assert client._hooks["before_spawn"] is hooks.log_before_spawn
+    assert set(hooks.build_absurd_hooks()) == {"before_spawn", "wrap_task_execution"}

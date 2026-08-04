@@ -1,4 +1,7 @@
-"""Hooks passed to both Absurd clients, where Absurd's own lifecycle becomes visible.
+"""Hooks handed to the Absurd clients, where Absurd's own lifecycle becomes visible.
+
+The async client takes both; the sync client takes only ``log_before_spawn``, because
+its ``_execute_task`` never awaits a hook's return value.
 
 Every hook body here is contained: the SDK runs hooks inside the same try/except that
 wraps a task's own handler, so an exception escaping one of ours is indistinguishable
@@ -30,11 +33,14 @@ logger = logging.getLogger(__name__)
 
 
 def build_absurd_hooks() -> AbsurdHooks:
-    """Build the hooks dict passed to both the sync and async Absurd clients."""
-    return {
-        "before_spawn": log_before_spawn,
-        "wrap_task_execution": log_task_execution,
-    }
+    """Build the full recipe, for the async client.
+
+    The sync client takes ``log_before_spawn`` alone — see ``build_absurd_client``.
+    """
+    return AbsurdHooks(
+        before_spawn=log_before_spawn,
+        wrap_task_execution=log_task_execution,
+    )
 
 
 def log_before_spawn(
