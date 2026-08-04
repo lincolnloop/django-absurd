@@ -74,6 +74,9 @@ def test_a_hook_that_fails_to_log_still_returns_the_options(
         msg = "cannot describe spawn"
         raise ValueError(msg)
 
+    # Sanctioned exception to tests/CLAUDE.md's no-monkeypatching rule: the branch under
+    # test is the hook's own containment, which by definition no real input can reach —
+    # a fault has to be injected. The maintainer authorised it for these two tests only.
     monkeypatch.setattr(hooks, "describe_spawn", explode)
 
     with (

@@ -285,6 +285,9 @@ def test_a_logging_fault_in_the_hook_does_not_fail_the_task(
         msg = "cannot describe run"
         raise ValueError(msg)
 
+    # Sanctioned exception to tests/CLAUDE.md's no-monkeypatching rule: the branch under
+    # test is the hook's own containment, which by definition no real input can reach —
+    # a fault has to be injected. The maintainer authorised it for these two tests only.
     monkeypatch.setattr(hooks, "describe_run", explode)
 
     with (
