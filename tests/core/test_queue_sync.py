@@ -98,6 +98,7 @@ def test_non_destructive(settings: SettingsWrapper) -> None:
     assert Queue.objects.filter(queue_name="keep").exists()
 
 
+@pytest.mark.usefixtures("_isolate_queues")
 def test_sync_reports_no_queues_when_all_in_sync(
     caplog: pytest.LogCaptureFixture,
     capsys: pytest.CaptureFixture[str],

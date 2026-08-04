@@ -1023,7 +1023,11 @@ LOGGING = {
         # route everything from this package...
         "django_absurd": {"handlers": ["console"], "level": "INFO"},
         # ...or quiet one part of it
-        "django_absurd.scheduler": {"handlers": ["console"], "level": "WARNING"},
+        "django_absurd.scheduler": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
     },
 }
 ```

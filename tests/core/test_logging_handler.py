@@ -90,3 +90,52 @@ def test_the_sync_client_gets_only_the_hook_it_can_run() -> None:
     assert set(client._hooks) == {"before_spawn"}
     assert client._hooks["before_spawn"] is hooks.log_before_spawn
     assert set(hooks.build_absurd_hooks()) == {"before_spawn", "wrap_task_execution"}
+
+
+def test_the_worker_defers_the_handler_to_a_root_only_logging_config(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
+    """Root catches our records by propagation, so attaching underneath it would
+    print every line twice — once bare, once through the project's handler.
+    """
+    settings.LOGGING = {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "handlers": {"console": {"class": "logging.StreamHandler"}},
+        "root": {"handlers": ["console"], "level": "WARNING"},
+    }
+    absurd_logging.attach_console_handler()
+    logger = logging.getLogger("django_absurd")
+    assert logger.handlers == []
+    # Still raised: root's WARNING would otherwise filter our INFO lines out before
+    # its own handler ever saw them.
+    assert logger.level == logging.INFO
+
+
+def test_a_root_entry_spelled_under_loggers_counts_too(
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
+    settings.LOGGING = {
+        "version": 1,
+        "handlers": {"console": {"class": "logging.StreamHandler"}},
+        "loggers": {"": {"handlers": ["console"]}},
+    }
+    absurd_logging.attach_console_handler()
+    assert logging.getLogger("django_absurd").handlers == []
+
+
+def test_a_level_set_in_code_is_not_overwritten() -> None:
+    """A project that silenced us without a LOGGING entry stays silenced."""
+    logger = logging.getLogger("django_absurd")
+    logger.setLevel(logging.ERROR)
+    absurd_logging.attach_console_handler()
+    assert logger.handlers == []
+    assert logger.level == logging.ERROR
+
+
+def test_a_handler_attached_in_code_is_left_alone() -> None:
+    logger = logging.getLogger("django_absurd")
+    installed = logging.NullHandler()
+    logger.addHandler(installed)
+    absurd_logging.attach_console_handler()
+    assert logger.handlers == [installed]

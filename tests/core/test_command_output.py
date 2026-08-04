@@ -7,7 +7,10 @@ from pytest_django.fixtures import SettingsWrapper
 from django_absurd.test import AbsurdTestRuntime
 from tests import utils
 
-pytestmark = pytest.mark.django_db(transaction=True)
+pytestmark = [
+    pytest.mark.django_db(transaction=True),
+    pytest.mark.usefixtures("_isolate_queues"),
+]
 
 
 def test_sync_queues_decorates_its_console_output(settings: SettingsWrapper) -> None:
