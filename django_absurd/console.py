@@ -1,12 +1,3 @@
-"""Command-output decoration: the emoji layer, never logging.
-
-The three commands that decorate their banners (``absurd_worker``, ``absurd_beat``,
-``absurd_sync_queues``) probe the destination stream before writing a glyph, so a
-console whose encoding cannot represent it gets the identical line without the glyph
-instead of a ``UnicodeEncodeError`` out of ``OutputWrapper.write``. Log records never
-reach here — they stay plain text, always.
-"""
-
 from django.core.management.base import OutputWrapper
 
 

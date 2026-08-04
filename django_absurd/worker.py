@@ -13,6 +13,7 @@ from traceback import format_exception
 import psycopg
 import psycopg.errors
 from absurd_sdk import (
+    AbsurdHooks,
     AsyncAbsurd,
     AsyncTaskContext,
     CancelledTask,
@@ -38,7 +39,8 @@ from django_absurd.context import WORKER_LOOP
 from django_absurd.deferred import DEFER_NAME_SUFFIX, build_deferred_handler
 from django_absurd.exceptions import QueueNotDeclaredError, QueueNotProvisionedError
 from django_absurd.hooks import (
-    build_absurd_hooks,
+    log_before_spawn,
+    log_task_execution,
     read_sdk_attempt,
     read_sdk_max_attempts,
 )
@@ -233,7 +235,14 @@ async def aworker_client(
     )
     try:
         register_jsonb_loader(conn)
-        client = AsyncAbsurd(conn, queue_name=queue, hooks=build_absurd_hooks())
+        client = AsyncAbsurd(
+            conn,
+            queue_name=queue,
+            hooks=AbsurdHooks(
+                before_spawn=log_before_spawn,
+                wrap_task_execution=log_task_execution,
+            ),
+        )
         client._registry = LazyTaskRegistry(queue, backend)  # noqa: SLF001 -- SDK has no public fallback-resolver hook; install lazy import_string resolution
         try:
             # Probes for the schema-absent guard; raises if Absurd is not migrated.

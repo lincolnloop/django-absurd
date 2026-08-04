@@ -1,3 +1,4 @@
+import inspect
 import logging
 
 import pytest
@@ -83,13 +84,12 @@ def test_the_sync_client_gets_only_the_hook_it_can_run() -> None:
     """The sync ``Absurd`` client's own ``_execute_task`` never awaits a hook's return
     value (unlike the async path, which checks ``inspect.isawaitable``), so handing it
     ``wrap_task_execution`` — an ``async def`` — would hand back an un-awaited coroutine
-    as the run's own result. The async client, built separately in ``worker.py``, still
-    gets the full recipe.
+    as the run's own result. The async client, built in ``worker.py``, takes both.
     """
     client = get_absurd_client()
     assert set(client._hooks) == {"before_spawn"}
     assert client._hooks["before_spawn"] is hooks.log_before_spawn
-    assert set(hooks.build_absurd_hooks()) == {"before_spawn", "wrap_task_execution"}
+    assert inspect.iscoroutinefunction(hooks.log_task_execution)
 
 
 def test_the_worker_defers_the_handler_to_a_root_only_logging_config(
