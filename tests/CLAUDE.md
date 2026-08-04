@@ -122,3 +122,35 @@ pre-commit gates), see [`../CLAUDE.md`](../CLAUDE.md).
   `def test_x(admin_user: User, client: Client)`, not `client` then `admin_user`) — no
   ruff/flake8-pytest-style rule enforces this (checked; no `PT0xx` rule covers parameter
   order), so it's a manual convention only.
+
+## Fast iteration
+
+Measured on this repo; the point is to spend the slow gate once, not per edit.
+
+- **Iterate with a targeted, coverage-free run:** `uv run pytest <path> -q --no-cov`.
+  Coverage instrumentation dominates a single-file run, and `-q` keeps the output
+  scannable.
+- **Run `tox -e dev` once, before the commit** — not after every edit. It is ~2.5
+  minutes because it builds three suites; nothing about a one-file change needs that
+  loop.
+- **`-n4` for a whole-suite run**, which every suite tolerates including
+  `tests/pg_cron`. Skip it for a single file, where the worker spin-up costs more than
+  it saves.
+- **Reach for `--create-db` when failures stop making sense.** A killed frozen test can
+  leave a database-level `absurd.fake_now` behind, which makes later durable tests
+  unclaimable for reasons invisible in their own code. Rebuild before diagnosing.
+- **A test asserting `Created: <queue>` needs `_isolate_queues`** or a queue name unique
+  to its file. The catalog row outlives the per-test flush, so the second `--reuse-db`
+  run of that file reports nothing created. Passes alone, fails on repeat.
+- **A deadlock/duplicate-key storm across unrelated tests means a concurrent run**, not
+  a code defect — suites from a worktree reach this checkout's Postgres on 5432. Confirm
+  nothing else is running before bisecting.
+
+### When an agent runs the gates
+
+The full `tox -e dev` exceeds a subagent's foreground command limit, so the harness
+backgrounds it and the subagent ends its turn reporting "waiting for the run" — a dead
+cycle that costs more than the run. Have implementers run only the targeted tests and
+`pre-commit`, and let the coordinator own the `tox` gate after the commit. Measured on
+this branch: the same task shape took ~160s under that split versus 500-900s when the
+implementer owned `tox`.
