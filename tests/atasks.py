@@ -98,12 +98,12 @@ async def aemit_event_once(name: str, payload: t.Any) -> None:
 
 
 @task
-async def await_the_probe_event() -> t.Any:
+async def aawait_the_probe_event() -> t.Any:
     return await aget_absurd_context().await_event("probe.go", timeout=3600)
 
 
 @task
-async def emit_the_probe_event() -> None:
+async def aemit_the_probe_event() -> None:
     await aget_absurd_context().emit_event("probe.go", {"go": True})
 
 

@@ -961,8 +961,12 @@ Two loggers, two questions:
 - **`django.tasks`** — Django's own view of a task's life, because `AbsurdBackend` emits
   Django's task signals. Portable across task backends.
 - **`django_absurd`** — the Absurd-specific detail Django's view has no field for:
-  attempt counts, durations, worker and beat lifecycle. One child logger per module, so
-  `django_absurd` routes everything and `django_absurd.scheduler` targets just the beat.
+  attempt counts, durations, worker and beat lifecycle, and durable-primitive detail —
+  steps (replayed or completed), sleeps (suspended or resumed), and event waits
+  (waiting, received, emitted). One child logger per module, so `django_absurd` routes
+  everything, `django_absurd.scheduler` targets just the beat, and
+  `django_absurd.context` targets just the durable-primitive lines — level it down if
+  steps get chatty.
 
 `absurd_worker` and `absurd_beat` attach a plain `StreamHandler` at `INFO` to
 `django_absurd` on startup, so a fresh project is not silent. Name `django_absurd` or a

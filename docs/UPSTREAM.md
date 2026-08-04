@@ -110,6 +110,20 @@ executes. Cheap workaround, bad failure mode.
 
 Retires: `LazyTaskRegistry`.
 
+## Expose `run_step` on `AsyncTaskContext`
+
+The SDK's sync `TaskContext` has `run_step` — a decorator convenience over `step`,
+deriving a name from `fn` when none is given. `AsyncTaskContext` has only `step`; no
+async equivalent exists.
+
+Our sync `AbsurdTaskContext.run_step` bridges the SDK's real sync method.
+`AsyncAbsurdTaskContext` cannot offer one without inventing surface the SDK itself
+lacks, so it doesn't — documented in `AGENTS.md`'s API reference table as a sync-only
+row.
+
+Retires: nothing. No workaround exists; the async wrapper's surface stays one method
+short of the sync one until the SDK adds it.
+
 ## Expose `attempt`, `run_id` and `enqueue_at` on the task context
 
 `ClaimedTask` carries `attempt` and `run_id`; `TaskContext` exposes neither, so

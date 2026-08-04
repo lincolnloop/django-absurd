@@ -3,10 +3,13 @@
 Two concrete-typed accessors return the live Absurd runtime context, orthogonal to
 Django's ``TaskContext``. ``aget_absurd_context()`` (async tasks) returns an
 ``AsyncAbsurdTaskContext`` wrapper around the SDK's own ``AsyncTaskContext``, mirroring
-its signatures and logging durable-primitive events (step replay, step completion,
-sleep suspended, sleep resumed, event awaiting/received, event emitted);
+its signatures and logging every durable-primitive event (step replay, step completion,
+sleep suspended, sleep resumed, event awaiting/received, event emitted).
 ``get_absurd_context()`` (sync tasks) returns an ``AbsurdTaskContext`` bridge that
-mirrors the SDK sync signatures and hops each op onto the worker loop.
+mirrors the SDK sync signatures and hops each op onto the worker loop; it logs step
+completion itself, driving ``begin_step``/``complete_step`` directly rather than handing
+a coroutine to ``async_ctx.step``, and picks up every other event — replay, sleep,
+event — from the ``AsyncAbsurdTaskContext`` calls it delegates to.
 """
 
 import asyncio
@@ -86,7 +89,10 @@ class AbsurdTaskContext:
     Sync ``def`` tasks run in the worker's threadpool executor, so each durable op
     hands its coroutine to the loop via ``run_coroutine_threadsafe`` and blocks on
     the result. The user's step ``fn`` runs in this executor thread (between the
-    ``begin_step``/``complete_step`` bridges), never on the loop.
+    ``begin_step``/``complete_step`` bridges), never on the loop. ``step()`` drives
+    those bridges itself and logs its own "step completed"; a replayed step, both sleep
+    primitives, and both event primitives log through the delegated ``async_ctx`` calls
+    instead.
     """
 
     async_ctx: "AsyncAbsurdTaskContext"
