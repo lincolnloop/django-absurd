@@ -16,7 +16,7 @@ from django_absurd.cleanup import cleanup_queues
 from django_absurd.connection import validate_backend
 from django_absurd.params import absurd_params
 
-logger = logging.getLogger("django_absurd")
+logger = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -97,11 +97,11 @@ def run_beat(
     cleanup_cron = get_cleanup_schedule(backend)
     entries = build_beat_entries(backend, schedules, cleanup_cron, now())
     if not entries:
-        logger.info("django-absurd beat: no schedules declared")
+        logger.info("beat: no schedules declared")
         return
 
     logger.info(
-        "django-absurd beat started: schedules=%d cleanup=%s",
+        "beat started: schedules=%d cleanup=%s",
         len(schedules),
         cleanup_cron or "off",
     )
@@ -161,14 +161,13 @@ def build_beat_entries(
 def fire_cleanup(backend: AbsurdBackend, slot: dt.datetime) -> None:
     close_old_connections()
     try:
-        counts = cleanup_queues()
+        cleanup_queues()
     except Exception:
-        logger.exception("django-absurd cleanup failed")
+        logger.exception("cleanup failed")
     else:
         logger.info(
-            "django-absurd cleanup ran: slot=%s counts=%s",
+            "cleanup ran: slot=%s",
             slot.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            counts,
         )
     finally:
         close_old_connections()
@@ -178,10 +177,10 @@ def fire_schedule(schedule: Schedule, slot: dt.datetime) -> None:
     try:
         spawn_scheduled(schedule, slot)
     except Exception:
-        logger.exception("django-absurd schedule failed: name=%s", schedule.name)
+        logger.exception("schedule failed: name=%s", schedule.name)
     else:
         logger.info(
-            "django-absurd schedule enqueued: name=%s slot=%s",
+            "schedule enqueued: name=%s slot=%s",
             schedule.name,
             slot.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         )

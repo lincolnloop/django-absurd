@@ -954,16 +954,46 @@ test — it doesn't care how it got there, only what's present.
 
 ## Deployment notes
 
-### Django Task lifecycle logging
+### Logging
 
-Django's own `django.tasks` logger reports each task's lifecycle on this backend —
-`DEBUG` on enqueue, `INFO` on start and on success, `ERROR` with a traceback when a
-task's last attempt raises — because `AbsurdBackend` emits Django's task signals.
+Two loggers, two questions:
 
-Django's logs are not a complete record. Postgres is: a retried attempt's failure logs
-nothing, and neither does an ending Absurd decides on its own.
-[Queue state](#querying-queue-state-orm) and the [stored result](#retrieving-results)
-are the record.
+- **`django.tasks`** — Django's own view of a task's life, because `AbsurdBackend` emits
+  Django's task signals. Portable across task backends.
+- **`django_absurd`** — the Absurd-specific detail Django's view has no field for:
+  attempt counts, durations, worker and beat lifecycle. One child logger per module, so
+  `django_absurd` routes everything and `django_absurd.scheduler` targets just the beat.
+
+`absurd_worker` and `absurd_beat` attach a plain `StreamHandler` at `INFO` to
+`django_absurd` on startup, so a fresh project is not silent. Name `django_absurd` or a
+child in your
+[`LOGGING`](https://docs.djangoproject.com/en/6.0/topics/logging/#configuring-logging)
+and that stops — your configuration wins. Configure only `root` and they add no handler
+either, since yours already catches these records; they still raise the level to `INFO`,
+so a root handler left at `WARNING` does not swallow them:
+
+```python
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {"console": {"class": "logging.StreamHandler"}},
+    "loggers": {
+        # everything from this package...
+        "django_absurd": {"handlers": ["console"], "level": "INFO"},
+        # ...or quiet one part of it
+        "django_absurd.scheduler": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+    },
+}
+```
+
+Neither logger is the complete record. Postgres is:
+[queue state](#querying-queue-state-orm) and the [stored result](#retrieving-results).
+
+### Operational notes
 
 - **Database privileges.** `migrate` runs `CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`
   and `CREATE SCHEMA IF NOT EXISTS absurd`, so the migrating role needs rights to create

@@ -13,7 +13,7 @@ from django.tasks.signals import task_enqueued, task_finished, task_started
 if t.TYPE_CHECKING:
     from django.tasks import TaskResult
 
-logger = logging.getLogger("django_absurd")
+logger = logging.getLogger(__name__)
 
 # A Signal's repr carries nothing identifying, and a caught exception's traceback holds
 # no frame above the raise, so neither says WHICH send a receiver broke.
@@ -38,7 +38,7 @@ def send_task_signal(
         # A missing name degrades to the generic word: a KeyError raised here would
         # escape the containment and reach the task.
         logger.exception(
-            "django-absurd %s receiver failed for task result id=%s",
+            "%s receiver failed for task result id=%s",
             SIGNAL_NAMES.get(signal, "signal"),
             task_result.id,
         )

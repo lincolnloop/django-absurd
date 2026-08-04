@@ -177,7 +177,9 @@ def test_queue_defaults_to_default(
     tasks.make_group.enqueue("dflt")  # auto-creates the default queue
     call_command("absurd_worker", burst=True)  # no --queue -> "default"
     out = capsys.readouterr().out
-    assert out == "Started worker on queue 'default'.\n"
+    assert out == (
+        "🐘 Started worker on queue 'default'.\n🐘 Stopped worker on queue 'default'.\n"
+    )
     assert Group.objects.filter(name="dflt").exists()
 
 
@@ -270,13 +272,14 @@ def test_worker_start_provisions_all_declared_queues(
 ) -> None:
     # full provision on start: every declared queue, not just the served one
     call_command("absurd_worker", queue="default", burst=True)
-    created_line, started_line = capsys.readouterr().out.splitlines()
+    created_line, started_line, stopped_line = capsys.readouterr().out.splitlines()
     assert set(created_line.removeprefix("Created: ").split(", ")) == {
         "default",
         "other",
         "reports",
     }
-    assert started_line == "Started worker on queue 'default'."
+    assert started_line == "🐘 Started worker on queue 'default'."
+    assert stopped_line == "🐘 Stopped worker on queue 'default'."
     assert Queue.objects.filter(queue_name="default").exists()
     assert Queue.objects.filter(queue_name="other").exists()
 
@@ -300,7 +303,11 @@ def test_worker_command_reconciles_changed_mutable_option(
     capsys.readouterr()  # drop sync output
     call_command("absurd_worker", queue="default", burst=True)
     out = capsys.readouterr().out
-    assert out == "Reconciled: default\nStarted worker on queue 'default'.\n"
+    assert out == (
+        "Reconciled: default\n"
+        "🐘 Started worker on queue 'default'.\n"
+        "🐘 Stopped worker on queue 'default'.\n"
+    )
     assert Queue.objects.get(queue_name="default").cleanup_limit == 250  # DB proof
 
 
@@ -329,7 +336,11 @@ def test_worker_command_reconciles_changed_interval_option(
     capsys.readouterr()
     call_command("absurd_worker", queue="default", burst=True)
     out = capsys.readouterr().out
-    assert out == "Reconciled: default\nStarted worker on queue 'default'.\n"
+    assert out == (
+        "Reconciled: default\n"
+        "🐘 Started worker on queue 'default'.\n"
+        "🐘 Stopped worker on queue 'default'.\n"
+    )
     assert Queue.objects.get(queue_name="default").cleanup_ttl == dt.timedelta(days=60)
 
 
@@ -348,8 +359,10 @@ def test_worker_command_no_reconcile_when_unchanged(
     call_command("absurd_worker", queue="default", burst=True)
     out = capsys.readouterr().out
     # Drift-gated no-op: no Created/Reconciled, no "No queues to sync.", just
-    # the start line.
-    assert out == "Started worker on queue 'default'.\n"
+    # the start and stop lines.
+    assert out == (
+        "🐘 Started worker on queue 'default'.\n🐘 Stopped worker on queue 'default'.\n"
+    )
     assert Queue.objects.get(queue_name="default").cleanup_ttl == before
 
 
@@ -372,10 +385,19 @@ def test_worker_command_warns_on_storage_mode_drift(
     capsys.readouterr()
     call_command("absurd_worker", queue="default", burst=True)
     cap = capsys.readouterr()
-    assert cap.out == "Started worker on queue 'default'.\n"
+    assert cap.out == (
+        "🐘 Started worker on queue 'default'.\n🐘 Stopped worker on queue 'default'.\n"
+    )
+    # The command's own warning shares stderr with the console handler the worker
+    # attaches, whose StreamHandler defaults to stderr as Django's own console
+    # handler does.
     assert cap.err == (
+        "queues provisioned: no changes\n"
         "Queue 'default': storage_mode cannot be changed "
         "(existing: 'unpartitioned', declared: 'partitioned'); skipping.\n"
+        "worker started: alias=default queue=default database=default"
+        " burst=True concurrency=1\n"
+        "worker stopped: alias=default queue=default database=default runs=0\n"
     )
 
 

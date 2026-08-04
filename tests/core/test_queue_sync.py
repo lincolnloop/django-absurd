@@ -1,4 +1,5 @@
 import datetime as dt
+import logging
 import typing as t
 
 import psycopg
@@ -97,15 +98,44 @@ def test_non_destructive(settings: SettingsWrapper) -> None:
     assert Queue.objects.filter(queue_name="keep").exists()
 
 
+@pytest.mark.usefixtures("_isolate_queues")
 def test_sync_reports_no_queues_when_all_in_sync(
+    caplog: pytest.LogCaptureFixture,
     capsys: pytest.CaptureFixture[str],
     settings: SettingsWrapper,
 ) -> None:
-    settings.TASKS = build_tasks_setting({"q": {}})
-    call_command("absurd_sync_queues")  # creates q
+    # A name unused elsewhere in this file: the log assertion below needs this
+    # call to genuinely create the queue, regardless of what earlier tests in
+    # this file already declared and left behind on the shared reused database.
+    settings.TASKS = build_tasks_setting({"freshsync": {}})
+    with caplog.at_level(logging.INFO, logger="django_absurd"):
+        call_command("absurd_sync_queues")  # creates freshsync
+    records = [r for r in caplog.records if r.name == "django_absurd.queues"]
+    assert len(records) == 1
+    assert (
+        records[0].getMessage() == "queues provisioned: created=freshsync reconciled="
+    )
     capsys.readouterr()
-    call_command("absurd_sync_queues")  # q exists, no drift -> empty result
-    assert "No queues to sync." in capsys.readouterr().out
+    call_command("absurd_sync_queues")  # freshsync exists, no drift -> empty result
+    assert capsys.readouterr().out == "🗃️ No queues to sync.\n"
+
+
+def test_sync_prefixes_the_storage_mode_warning(
+    capsys: pytest.CaptureFixture[str], settings: SettingsWrapper
+) -> None:
+    settings.TASKS = build_tasks_setting({"driftglyph": {}})
+    call_command("absurd_sync_queues")  # create 'driftglyph' unpartitioned
+    settings.TASKS = build_tasks_setting(
+        {"driftglyph": {"storage_mode": "partitioned"}}
+    )
+    capsys.readouterr()
+    call_command("absurd_sync_queues")
+    cap = capsys.readouterr()
+    assert cap.out == "🗃️ No queues to sync.\n"
+    assert cap.err == (
+        "🗃️ Queue 'driftglyph': storage_mode cannot be changed "
+        "(existing: 'unpartitioned', declared: 'partitioned'); skipping.\n"
+    )
 
 
 def test_get_absurd_database_resolves_from_backend(settings: SettingsWrapper) -> None:

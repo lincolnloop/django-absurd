@@ -20,7 +20,7 @@ from django_absurd.pg_cron import detection, signals
 if t.TYPE_CHECKING:
     from django_absurd.backends import AbsurdBackend
 
-logger = logging.getLogger("django_absurd")
+logger = logging.getLogger(__name__)
 
 
 class PgCronConfig(AppConfig):
@@ -122,7 +122,7 @@ def reconcile_crons_after_migrate(
         # post_migrate before the Absurd DB is migrated), a bad dotted path in a
         # schedule, a malformed SCHEDULE spec, or an unserializable arg.
         logger.warning(
-            "django-absurd: skipped cron reconcile for backend %r",
+            "skipped cron reconcile for backend %r",
             alias,
             exc_info=True,
         )

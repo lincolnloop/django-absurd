@@ -6,6 +6,8 @@ from django.core.management.base import CommandError
 if t.TYPE_CHECKING:
     from django.core.management.base import CommandParser
 
+from django_absurd import console
+from django_absurd import logging as absurd_logging
 from django_absurd.exceptions import BackendNotConfiguredError, QueueNotDeclaredError
 from django_absurd.management.base import (
     BEAT_DISABLED_UNDER_PG_CRON,
@@ -72,6 +74,7 @@ class Command(AbsurdReportCommand):
         )
 
     def handle(self, *args: t.Any, **options: t.Any) -> None:
+        absurd_logging.attach_console_handler()
         try:
             backend = resolve_backend()
         except BackendNotConfiguredError as exc:
@@ -106,7 +109,8 @@ class Command(AbsurdReportCommand):
             raise CommandError(str(exc)) from exc
         self.report_sync_result(result)
 
-        self.stdout.write(f"Started worker on queue '{queue}'.")
+        elephant = console.build_glyph_prefix(self.stdout, "🐘")
+        self.stdout.write(f"{elephant}Started worker on queue '{queue}'.")
         run_worker(
             backend,
             queue,
@@ -114,3 +118,4 @@ class Command(AbsurdReportCommand):
             run_beat=options["beat"],
             options=worker_options,
         )
+        self.stdout.write(f"{elephant}Stopped worker on queue '{queue}'.")

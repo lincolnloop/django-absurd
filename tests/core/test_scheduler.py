@@ -1,4 +1,5 @@
 import datetime as dt
+import logging
 import os
 import signal
 import threading
@@ -222,14 +223,39 @@ def test_beat_fires_multiple_schedules_due_same_slot(
 
 
 def test_beat_no_schedules_returns(
+    caplog: pytest.LogCaptureFixture,
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     settings.TASKS = make_tasks_setting({})
     backend = get_absurd_backends()["default"]
-    run_beat(backend, stop=threading.Event())  # returns immediately, no hang
+    with caplog.at_level(logging.INFO, logger="django_absurd"):
+        run_beat(backend, stop=threading.Event())  # returns immediately, no hang
+    records = [r for r in caplog.records if r.name == "django_absurd.scheduler"]
+    assert len(records) == 1
+    assert records[0].getMessage() == "beat: no schedules declared"
+
+
+def test_beat_started_logs_schedule_count_and_cleanup(
+    caplog: pytest.LogCaptureFixture,
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
+    settings.TASKS = make_tasks_setting(
+        {"nightly": {"task": "tests.tasks.add", "cron": "0 2 * * *"}},
+        cleanup={"schedule": "17 * * * *"},
+    )
+    backend = get_absurd_backends()["default"]
+    stop = threading.Event()
+    stop.set()
+    with caplog.at_level(logging.INFO, logger="django_absurd"):
+        run_beat(backend, stop=stop)
+    records = [r for r in caplog.records if r.name == "django_absurd.scheduler"]
+    started = [r for r in records if r.getMessage().startswith("beat started")]
+    assert len(started) == 1
+    assert started[0].getMessage() == "beat started: schedules=1 cleanup=17 * * * *"
 
 
 def test_beat_isolates_failing_schedule(
+    caplog: pytest.LogCaptureFixture,
     dj_absurd: AbsurdTestRuntime,
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
@@ -245,13 +271,27 @@ def test_beat_isolates_failing_schedule(
     )
     backend = get_absurd_backends()["default"]
     call_command("absurd_sync_queues")
-    with dj_absurd.freeze_time(BEAT_EPOCH) as frozen_time:
+    with (
+        dj_absurd.freeze_time(BEAT_EPOCH) as frozen_time,
+        caplog.at_level(logging.INFO, logger="django_absurd"),
+    ):
         run_beat_until(
             frozen_time, backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC)
         )
         call_command("absurd_worker", queue="default", burst=True)
         expected_good = 1  # "bad" raised in spawn (unimportable, logged); "good" ran
         assert Payload.objects.count() == expected_good
+
+    records = [r for r in caplog.records if r.name == "django_absurd.scheduler"]
+    failed = [r for r in records if r.getMessage().startswith("schedule failed")]
+    enqueued = [r for r in records if r.getMessage().startswith("schedule enqueued")]
+    assert len(failed) == 1
+    assert failed[0].getMessage() == "schedule failed: name=bad"
+    assert len(enqueued) == 1
+    assert (
+        enqueued[0].getMessage()
+        == "schedule enqueued: name=good slot=2026-01-01T00:01:00Z"
+    )
 
 
 def test_beat_spawns_task_with_args(
@@ -594,7 +634,7 @@ def test_absurd_beat_startup_reports_cleanup(
 
     assert (
         capsys.readouterr().out
-        == "Started beat with 0 schedule(s). + cleanup: 17 * * * *\n"
+        == "🥁 Started beat with 0 schedule(s). + cleanup: 17 * * * *\n"
     )
 
 
@@ -759,6 +799,7 @@ def test_beat_skips_not_yet_due_schedule(
 
 
 def test_plain_worker_runs_blocking_worker(
+    caplog: pytest.LogCaptureFixture,
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     # Covers worker.py line 114: else branch of arun_worker (no burst, no beat).
@@ -773,6 +814,7 @@ def test_plain_worker_runs_blocking_worker(
     )
     call_command("absurd_sync_queues")
     tasks.make_group.enqueue("plain-worker")
+    backend = get_absurd_backends()["default"]
 
     def watch() -> None:
         deadline = time.monotonic() + 15
@@ -784,7 +826,19 @@ def test_plain_worker_runs_blocking_worker(
 
     watcher = threading.Thread(target=watch, daemon=True)
     watcher.start()
-    call_command("absurd_worker", queue="default", poll_interval=0.05)
+    with caplog.at_level(logging.INFO, logger="django_absurd"):
+        call_command("absurd_worker", queue="default", poll_interval=0.05)
     watcher.join(timeout=5)
 
     assert Group.objects.filter(name="plain-worker").exists()
+    stopped = [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == "django_absurd.worker"
+        and r.getMessage().startswith("worker stopped")
+    ]
+    expected = (
+        f"worker stopped: alias={backend.alias} queue=default"
+        f" database={backend.database}"
+    )
+    assert stopped == [expected]

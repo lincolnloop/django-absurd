@@ -1,3 +1,4 @@
+import logging
 import typing as t
 
 import pytest
@@ -9,6 +10,23 @@ from django_absurd.flush import flush_absurd_state
 @pytest.fixture(autouse=True)
 def _enable_db(db: None) -> None:
     pass
+
+
+@pytest.fixture(autouse=True)
+def _restore_absurd_logger() -> t.Iterator[None]:
+    """Undo what a real ``absurd_worker``/``absurd_beat`` run leaves on the
+    ``django_absurd`` logger.
+
+    ``attach_console_handler`` mutates it process-wide, which is the point in
+    production — a command owns its process. Under a test runner it outlives the test,
+    changing what a later, unrelated test sees through ``caplog``.
+    """
+    logger = logging.getLogger("django_absurd")
+    handlers = logger.handlers[:]
+    level = logger.level
+    yield
+    logger.handlers = handlers
+    logger.setLevel(level)
 
 
 @pytest.fixture

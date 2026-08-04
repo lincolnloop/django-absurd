@@ -1,4 +1,5 @@
 import datetime as dt
+import logging
 import re
 import typing as t
 from dataclasses import dataclass, field
@@ -15,6 +16,8 @@ from django_absurd.connection import build_absurd_client, validate_backend
 
 if t.TYPE_CHECKING:
     from django_absurd.models import Queue
+
+logger = logging.getLogger(__name__)
 
 # Per-queue table prefixes, as absurd.create_queue names them: tasks, runs, checkpoints,
 # events, waiters. (``i_<queue>`` exists for a partitioned queue too, but only spawn and
@@ -137,7 +140,19 @@ def sync_queues(backend: backends.AbsurdBackend) -> SyncResult:
         result.created.extend(r.created)
         result.reconciled.extend(r.reconciled)
         result.storage_warnings.extend(r.storage_warnings)
+    log_sync_result(result)
     return result
+
+
+def log_sync_result(result: SyncResult) -> None:
+    if not result.created and not result.reconciled:
+        logger.info("queues provisioned: no changes")
+        return
+    logger.info(
+        "queues provisioned: created=%s reconciled=%s",
+        ", ".join(result.created),
+        ", ".join(result.reconciled),
+    )
 
 
 def provision_backend(backend: backends.AbsurdBackend) -> SyncResult:

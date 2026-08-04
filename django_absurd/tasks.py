@@ -13,7 +13,7 @@ import typing as t
 from absurd_sdk import CancellationPolicy, JsonObject, RetryStrategy
 from django.tasks.base import Task, TaskResult
 
-logger = logging.getLogger("django_absurd")
+logger = logging.getLogger(__name__)
 
 WARNED_TASK_PATHS: set[str] = set()
 

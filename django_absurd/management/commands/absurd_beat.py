@@ -5,6 +5,8 @@ from types import FrameType
 
 from django.core.management.base import BaseCommand, CommandError
 
+from django_absurd import console
+from django_absurd import logging as absurd_logging
 from django_absurd.exceptions import BackendNotConfiguredError
 from django_absurd.management.base import BEAT_DISABLED_UNDER_PG_CRON, resolve_backend
 from django_absurd.scheduler import get_settings_schedules, run_beat
@@ -14,6 +16,7 @@ class Command(BaseCommand):
     help = "Start the Absurd beat scheduler."
 
     def handle(self, *args: t.Any, **options: t.Any) -> None:
+        absurd_logging.attach_console_handler()
         try:
             backend = resolve_backend()
         except BackendNotConfiguredError as exc:
@@ -32,7 +35,8 @@ class Command(BaseCommand):
 
         schedules = get_settings_schedules(backend)
         cleanup = backend.options.get("CLEANUP")
-        message = f"Started beat with {len(schedules)} schedule(s)."
+        drum = console.build_glyph_prefix(self.stdout, "🥁")
+        message = f"{drum}Started beat with {len(schedules)} schedule(s)."
         if cleanup:
             message += f" + cleanup: {cleanup['schedule']}"
         self.stdout.write(message)

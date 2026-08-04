@@ -87,9 +87,9 @@ def test_a_raising_receiver_does_not_fail_the_task(
     contained = [
         r
         for r in caplog.records
-        if r.name == "django_absurd" and r.levelno >= logging.ERROR
+        if r.name == "django_absurd.dispatch" and r.levelno >= logging.ERROR
     ]
     assert len(contained) == 1
     assert contained[0].getMessage() == (
-        f"django-absurd task_started receiver failed for task result id={result.id}"
+        f"task_started receiver failed for task result id={result.id}"
     )

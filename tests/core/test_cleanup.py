@@ -102,15 +102,21 @@ def answer(text: str) -> collections.abc.Iterator[None]:
 
 
 def test_cleanup_deletes_aged_terminal_tasks(
+    caplog: pytest.LogCaptureFixture,
     cleanup: "CleanupCallable",
     settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     sync_queue(settings)
     tasks.add.enqueue(2, 3)
     drain()
-    assert cleanup() == [
+    with caplog.at_level(logging.INFO, logger="django_absurd"):
+        result = cleanup()
+    assert result == [
         {"queue_name": "default", "tasks_deleted": 1, "events_deleted": 0}
     ]
+    records = [r for r in caplog.records if r.name == "django_absurd.cleanup"]
+    assert len(records) == 1
+    assert records[0].getMessage() == "cleanup removed rows: default: tasks=1 events=0"
 
 
 def test_cleanup_skips_non_terminal_tasks(
@@ -272,13 +278,17 @@ def run_beat_until(
 
 
 def test_beat_fires_cleanup_on_cadence(
+    caplog: pytest.LogCaptureFixture,
     cleanup: "CleanupCallable",
     dj_absurd: AbsurdTestRuntime,
     settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     sync_queue(settings, cleanup={"schedule": "* * * * *"})
     backend = get_absurd_backends()["default"]
-    with dj_absurd.freeze_time(BEAT_EPOCH) as frozen_time:
+    with (
+        dj_absurd.freeze_time(BEAT_EPOCH) as frozen_time,
+        caplog.at_level(logging.INFO, logger="django_absurd"),
+    ):
         tasks.add.enqueue(2, 3)
         drain()  # completed → aged-terminal (cleanup_ttl="0 seconds")
         run_beat_until(
@@ -287,6 +297,13 @@ def test_beat_fires_cleanup_on_cadence(
         assert cleanup() == [
             {"queue_name": "default", "tasks_deleted": 0, "events_deleted": 0}
         ]
+
+    ran = [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == "django_absurd.scheduler" and r.getMessage().startswith("cleanup")
+    ]
+    assert ran == ["cleanup ran: slot=2026-01-01T00:01:00Z"]
 
 
 def test_beat_isolates_failing_cleanup(
@@ -307,7 +324,7 @@ def test_beat_isolates_failing_cleanup(
                 frozen_time, backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC)
             )
         errors = [r for r in caplog.records if r.levelno == logging.ERROR]
-        assert [r.getMessage() for r in errors] == ["django-absurd cleanup failed"]
+        assert [r.getMessage() for r in errors] == ["cleanup failed"]
     finally:
         call_command("migrate", "django_absurd", "zero", verbosity=0)
         call_command("migrate", verbosity=0)  # restore absurd schema

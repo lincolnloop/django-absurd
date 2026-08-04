@@ -3,7 +3,6 @@ import inspect
 import logging
 import signal
 import threading
-import time
 import typing as t
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -14,6 +13,7 @@ from traceback import format_exception
 import psycopg
 import psycopg.errors
 from absurd_sdk import (
+    AbsurdHooks,
     AsyncAbsurd,
     AsyncTaskContext,
     CancelledTask,
@@ -38,11 +38,16 @@ from django_absurd.connection import register_jsonb_loader, validate_backend
 from django_absurd.context import WORKER_LOOP
 from django_absurd.deferred import DEFER_NAME_SUFFIX, build_deferred_handler
 from django_absurd.exceptions import QueueNotDeclaredError, QueueNotProvisionedError
+from django_absurd.hooks import (
+    log_before_spawn,
+    log_task_execution,
+    read_sdk_claimed_task,
+)
 from django_absurd.management.base import resolve_backend
 from django_absurd.queues import names_a_queue_table
 from django_absurd.scheduler import run_beat
 
-logger = logging.getLogger("django_absurd")
+logger = logging.getLogger(__name__)
 
 D = t.TypeVar("D")
 
@@ -183,8 +188,7 @@ async def arun_worker(
         loop.set_default_executor(executor)
         async with aworker_client(backend, queue) as client:
             logger.info(
-                "django-absurd worker started: alias=%s queue=%s database=%s "
-                "burst=%s concurrency=%d",
+                "worker started: alias=%s queue=%s database=%s burst=%s concurrency=%d",
                 backend.alias,
                 queue,
                 backend.database,
@@ -192,11 +196,25 @@ async def arun_worker(
                 options.concurrency,
             )
             if burst:
-                return await adrain_queue(backend.database, client, queue, options)
+                drained = await adrain_queue(backend.database, client, queue, options)
+                logger.info(
+                    "worker stopped: alias=%s queue=%s database=%s runs=%d",
+                    backend.alias,
+                    queue,
+                    backend.database,
+                    len(drained),
+                )
+                return drained
             if run_beat:
                 await run_worker_with_beat(client, options, backend)
             else:
                 await run_blocking_worker(client, options)
+            logger.info(
+                "worker stopped: alias=%s queue=%s database=%s",
+                backend.alias,
+                queue,
+                backend.database,
+            )
             return []
 
 
@@ -216,7 +234,14 @@ async def aworker_client(
     )
     try:
         register_jsonb_loader(conn)
-        client = AsyncAbsurd(conn, queue_name=queue)
+        client = AsyncAbsurd(
+            conn,
+            queue_name=queue,
+            hooks=AbsurdHooks(
+                before_spawn=log_before_spawn,
+                wrap_task_execution=log_task_execution,
+            ),
+        )
         client._registry = LazyTaskRegistry(queue, backend)  # noqa: SLF001 -- SDK has no public fallback-resolver hook; install lazy import_string resolution
         try:
             # Probes for the schema-absent guard; raises if Absurd is not migrated.
@@ -330,7 +355,7 @@ def build_running_task_result(
     # reports this worker's alias anyway.
     if (task.queue_name, task.backend) != (queue, backend.alias):
         task = task.using(queue_name=queue, backend=backend.alias)
-    attempt = read_sdk_attempt(ctx)
+    attempt = read_sdk_claimed_task(ctx)["attempt"]
     # One instant for both fields, as Django's own backend does: this handler entry IS
     # the attempt, so "when it started" and "when it was last attempted" cannot differ.
     started_at = timezone.now()
@@ -361,14 +386,7 @@ def build_handler(
         WORKER_LOOP.set(asyncio.get_running_loop())
         args = params.get("args", [])
         kwargs = params.get("kwargs", {})
-        attempt = read_sdk_attempt(ctx)
-        start = time.monotonic()
-        logger.info(
-            "django-absurd task started: name=%s task_id=%s attempt=%d",
-            task.module_path,
-            ctx.task_id,
-            attempt,
-        )
+        attempt = read_sdk_claimed_task(ctx)["attempt"]
         task_result = build_running_task_result(
             task, ctx, args, kwargs, backend=backend, queue=queue
         )
@@ -393,40 +411,15 @@ def build_handler(
                         close_old_connections()
 
                 result = await asyncio.to_thread(call_sync)
-        except (SuspendTask, CancelledTask, FailedTask) as exc:
+        except (SuspendTask, CancelledTask, FailedTask):
             # Absurd decided this run's fate itself, so no task_finished is sent: these
             # are not endings Django's task signals describe. The arm exists to keep
             # them out of the ``except Exception`` arm below, which WOULD report one.
-            logger.info(
-                "django-absurd task received %s: name=%s task_id=%s attempt=%d",
-                type(exc).__name__,
-                task.module_path,
-                ctx.task_id,
-                attempt,
-            )
             raise
         except Exception as exc:
-            duration = time.monotonic() - start
-            logger.exception(
-                "django-absurd task failed: name=%s task_id=%s attempt=%d "
-                "duration=%.3fs",
-                task.module_path,
-                ctx.task_id,
-                attempt,
-                duration,
-            )
             send_finished_if_terminal(ctx, attempt, exc, task_result, backend=backend)
             raise
         else:
-            duration = time.monotonic() - start
-            logger.info(
-                "django-absurd task completed: name=%s task_id=%s attempt=%d "
-                "duration=%.3fs",
-                task.module_path,
-                ctx.task_id,
-                attempt,
-                duration,
-            )
             object.__setattr__(task_result, "status", TaskResultStatus.SUCCESSFUL)
             object.__setattr__(task_result, "finished_at", timezone.now())
             # normalize_json, as Django's own backend applies to a raw return value
@@ -457,7 +450,7 @@ def send_finished_if_terminal(
     ``exc`` — the traceback Django's ``log_task_finished`` attaches to its ERROR line is
     the task's own, matching the ``TaskError`` payload with nothing to arrange.
     """
-    if not is_terminal_attempt(attempt, read_sdk_max_attempts(ctx)):
+    if not is_terminal_attempt(attempt, read_sdk_claimed_task(ctx)["max_attempts"]):
         return
     mark_task_result_failed(task_result, exc)
     dispatch.send_task_signal(task_finished, type(backend), task_result)
@@ -486,16 +479,6 @@ def mark_task_result_failed(
             traceback="".join(format_exception(exc)),
         )
     )
-
-
-def read_sdk_attempt(ctx: AsyncTaskContext) -> int:
-    attempt: int = ctx._task["attempt"]  # noqa: SLF001 -- SDK TaskContext has no public attempt property
-    return attempt
-
-
-def read_sdk_max_attempts(ctx: AsyncTaskContext) -> int | None:
-    max_attempts: int | None = ctx._task["max_attempts"]  # noqa: SLF001 -- SDK TaskContext has no public max_attempts property
-    return max_attempts
 
 
 async def run_blocking_worker(client: AsyncAbsurd, options: WorkerOptions) -> None:

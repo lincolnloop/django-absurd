@@ -250,7 +250,10 @@ def test_reconcile_survives_missing_scheduledtask_table(
         with connection.schema_editor() as editor:
             editor.create_model(ScheduledTask)
 
-    assert "skipped cron reconcile for backend 'default'" in caplog.text
+    records = [r for r in caplog.records if r.name == "django_absurd.pg_cron.apps"]
+    assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
+    assert records[0].getMessage() == "skipped cron reconcile for backend 'default'"
 
 
 def test_reconcile_skips_on_malformed_schedule_spec(
@@ -366,7 +369,7 @@ def test_reconcile_warns_on_none_task_path(
         )
     warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
     assert len(warnings) == 1
-    assert "skipped cron reconcile" in warnings[0].message
+    assert warnings[0].getMessage() == "skipped cron reconcile for backend 'default'"
 
 
 def test_reconcile_warns_on_string_kwargs(
@@ -382,4 +385,4 @@ def test_reconcile_warns_on_string_kwargs(
         )
     warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
     assert len(warnings) == 1
-    assert "skipped cron reconcile" in warnings[0].message
+    assert warnings[0].getMessage() == "skipped cron reconcile for backend 'default'"

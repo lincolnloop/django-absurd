@@ -58,18 +58,45 @@ One worker runs both sync and `async def` [tasks](tasks.md) (async on an event l
 sync in a thread pool). On start it does a full sync — provisioning every declared queue
 and rebuilding the admin views — then polls for work.
 
-## Django Task lifecycle logging
+## Logging
 
-Django logs a task's lifecycle on the `django.tasks` logger — `DEBUG` when it's
-enqueued, `INFO` at `state=RUNNING` and `state=SUCCESSFUL`, `ERROR` with a traceback at
-`state=FAILED`. `AbsurdBackend` emits the signals Django's logging listens for, so those
-lines appear for Absurd tasks too.
+Two loggers, two questions:
 
-Django's logs are not a complete record. Postgres is: a retried attempt's failure logs
-nothing, and neither does an ending Absurd decided itself — a
-[`max_delay`/`max_duration` cancellation](tasks.md#retries-spawn-options), an expired
-claim, or a cancellation. The [stored result](tasks.md#read-the-result) and the
-queue-state models below are the record.
+- **`django.tasks`** — Django's own view of a task's life, because `AbsurdBackend` emits
+  Django's task signals. Portable across task backends.
+- **`django_absurd`** — the Absurd-specific detail Django's view has no field for:
+  attempt counts, durations, [worker](#workers) and [beat](cron-jobs.md#run-the-beat)
+  lifecycle. One child logger per module, so `django_absurd` routes everything and
+  `django_absurd.scheduler` targets just the beat.
+
+`absurd_worker` and `absurd_beat` attach a plain `StreamHandler` at `INFO` to
+`django_absurd` on startup, so a fresh project is not silent. Name `django_absurd` or a
+child in your
+[`LOGGING`](https://docs.djangoproject.com/en/6.0/topics/logging/#configuring-logging)
+and that stops — your configuration wins. Configure only `root` and they add no handler
+either, since yours already catches these records; they still raise the level to `INFO`,
+so a root handler left at `WARNING` does not swallow them:
+
+```python
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {"console": {"class": "logging.StreamHandler"}},
+    "loggers": {
+        # everything from this package...
+        "django_absurd": {"handlers": ["console"], "level": "INFO"},
+        # ...or quiet one part of it
+        "django_absurd.scheduler": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+    },
+}
+```
+
+Neither logger is the complete record. Postgres is: the
+[stored result](tasks.md#read-the-result) and the queue-state models below.
 
 ## Admin & ORM introspection
 
