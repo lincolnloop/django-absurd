@@ -42,8 +42,8 @@ asymmetry is recorded rather than papered over:
   `docs/UPSTREAM.md` as an ask.
 - `await_task_result` is on **both** SDK contexts, and our sync bridge lacks it. Gap on
   our side: add it. Alpha, so no compatibility constraint.
-- `begin_step` / `complete_step` are mirrored too — see below, they become the single
-  home for step logging.
+- `begin_step` / `complete_step` are mirrored too; `begin_step` is where the replay line
+  lives, since `handle.done` is the signal.
 
 `.absurd_ctx` stays the escape hatch on both, for anything unmirrored.
 
@@ -63,26 +63,21 @@ self.run_on_loop(self.async_ctx.sleep_for(step_name, duration))
 
 Every delegating primitive then has exactly one implementation and one log line.
 
-`step` is the interesting case. It cannot be shared as a method — the sync flavour must
-run the user's `fn` in the executor thread between `begin_step` and `complete_step`, so
-one is a coroutine function and one is not. But its _logging_ can be shared, by putting
-the lines in `begin_step` and `complete_step`:
+`step` is the one exception. It cannot be shared as a method — the sync flavour must run
+the user's `fn` in the executor thread between `begin_step` and `complete_step`, so one
+is a coroutine function and one is not. Its logging splits by what each place knows:
 
-- `begin_step` knows `handle.done`, which IS the replay signal.
-- `complete_step` is where a step finished.
+- **`begin_step` logs `step replayed`.** It knows `handle.done`, needs no timing, and
+  lives in one place — so a caller driving the primitives manually gets the replay line
+  too.
+- **`step()` logs `step completed`.** It has the start and the end as locals, so the
+  duration needs no plumbing. Two call sites, sync and async, sharing one message
+  builder.
 
-Both flavours' `step()` call those, so neither carries logging of its own. A caller
-driving `begin_step`/`complete_step` manually gets the same lines free.
-
-`step completed` still carries a duration. `StepHandle` exposes `checkpoint_name`, a
-unique slot id (the SDK numbers repeated step names itself), so `begin_step` stashes a
-monotonic start under that key and `complete_step` pops it. A dict field on the wrapper
-holds them; the wrapper is a frozen slots dataclass, which blocks rebinding the
-attribute but not mutating the dict.
-
-Edge, degraded not defended: `get_absurd_context()` builds a fresh wrapper per call, so
-a caller driving `begin_step` and `complete_step` from two separate accessor calls has
-no stashed start. That logs the line without a duration.
+That leaves one duplicated call rather than a timing channel between two methods.
+Passing the start time along — a dict on the wrapper, or a `StepHandle` subclass
+carrying it — was machinery for a case that does not arise, since `step()` always begins
+and completes on the same instance.
 
 ## Events
 
@@ -93,7 +88,7 @@ one child logger without losing worker or run lines.
 | Event                | Where                | When                                    |
 | -------------------- | -------------------- | --------------------------------------- |
 | `step replayed: …`   | `begin_step`         | `handle.done` — work skipped            |
-| `step completed: …`  | `complete_step`      | step finished — with duration           |
+| `step completed: …`  | `step`               | step finished — with duration           |
 | `sleep suspended: …` | `sleep_for`/`_until` | BEFORE the await — it will not return   |
 | `sleep resumed: …`   | `sleep_for`/`_until` | the call returned; checkpoint satisfied |
 | `event awaiting: …`  | `await_event`        | BEFORE the await                        |
