@@ -956,29 +956,19 @@ test — it doesn't care how it got there, only what's present.
 
 ### Logging
 
-Two loggers report a task's life, and they answer different questions.
+Two loggers, two questions:
 
-- **`django.tasks`** — Django's own, because `AbsurdBackend` emits Django's task
-  signals: `DEBUG` on enqueue, `INFO` on start and success, `ERROR` with a traceback
-  when a task's last attempt raises. Portable across task backends, and lossy by design
-  — a retried attempt's failure logs nothing, and neither does an ending Absurd decides
-  on its own.
-- **`django_absurd`** — this package's own, in Absurd's vocabulary: attempt counts,
-  durations, queue provisioning, worker and beat lifecycle. One child logger per module,
-  so `django_absurd` routes everything and `django_absurd.scheduler` targets just the
-  beat.
+- **`django.tasks`** — Django's own view of a task's life, because `AbsurdBackend` emits
+  Django's task signals. Portable across task backends.
+- **`django_absurd`** — the Absurd-specific detail Django's view has no field for:
+  attempt counts, durations, worker and beat lifecycle. One child logger per module, so
+  `django_absurd` routes everything and `django_absurd.scheduler` targets just the beat.
 
-Neither is the complete record. Postgres is: [queue state](#querying-queue-state-orm)
-and the [stored result](#retrieving-results).
-
-**By default `absurd_worker` and `absurd_beat` show their own lines** — each attaches a
-plain `StreamHandler` at `INFO` to `django_absurd` on startup, so a fresh project sees
-task activity without configuring anything. Nothing else ever attaches a handler: not at
-import, not in `AppConfig.ready`, not on enqueue.
-
-**Declare the logger and that stops.** If your
+`absurd_worker` and `absurd_beat` attach a plain `StreamHandler` at `INFO` to
+`django_absurd` on startup, so a fresh project is not silent. Name `django_absurd` or a
+child in your
 [`LOGGING`](https://docs.djangoproject.com/en/6.0/topics/logging/#configuring-logging)
-names `django_absurd` or a child, your configuration is the whole story:
+and that stops — your configuration wins:
 
 ```python
 LOGGING = {
@@ -998,8 +988,8 @@ LOGGING = {
 }
 ```
 
-Log records are plain text. The emoji in the commands' console output is written by the
-commands themselves and never reaches a record.
+Neither logger is the complete record. Postgres is:
+[queue state](#querying-queue-state-orm) and the [stored result](#retrieving-results).
 
 - **Database privileges.** `migrate` runs `CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`
   and `CREATE SCHEMA IF NOT EXISTS absurd`, so the migrating role needs rights to create
