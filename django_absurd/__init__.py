@@ -14,6 +14,7 @@ exported ``absurd_params``), and durable steps & sleep (``get_absurd_context`` /
 
 from django_absurd.context import (
     AbsurdTaskContext,
+    AsyncAbsurdTaskContext,
     aget_absurd_context,
     get_absurd_context,
 )
@@ -25,6 +26,7 @@ ABSURD_SCHEMA_VERSION = "0.4.0"
 __all__ = [
     "ABSURD_SCHEMA_VERSION",
     "AbsurdTaskContext",
+    "AsyncAbsurdTaskContext",
     "absurd_params",
     "aget_absurd_context",
     "emit_event",
