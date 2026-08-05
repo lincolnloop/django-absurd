@@ -200,11 +200,12 @@ def test_an_async_event_wait_logs_awaiting_then_received(
     ):
         result = atasks.aawait_the_probe_event.enqueue()
         dj_absurd.drain()
-        atasks.aemit_the_probe_event.enqueue()
+        emitter_result = atasks.aemit_the_probe_event.enqueue()
         dj_absurd.drain()
         dj_absurd.drain()
 
     task_id = result.id.rsplit(":", 1)[-1]
+    emitter_task_id = emitter_result.id.rsplit(":", 1)[-1]
     messages = read_context_messages(caplog)
     assert (
         messages.count(f"event awaiting: name=probe.go task_id={task_id} timeout=3600")
@@ -213,7 +214,7 @@ def test_an_async_event_wait_logs_awaiting_then_received(
     assert messages.count(f"event received: name=probe.go task_id={task_id}") == 1
     emitted = [m for m in messages if m.startswith("event emitted: ")]
     assert len(emitted) == 1
-    assert re.fullmatch(r"event emitted: name=probe\.go task_id=\S+", emitted[0])
+    assert emitted[0] == f"event emitted: name=probe.go task_id={emitter_task_id}"
 
 
 def test_a_sync_event_wait_logs_awaiting_then_received(
@@ -225,11 +226,12 @@ def test_a_sync_event_wait_logs_awaiting_then_received(
     ):
         result = tasks.await_the_probe_event.enqueue()
         dj_absurd.drain()
-        tasks.emit_the_probe_event.enqueue()
+        emitter_result = tasks.emit_the_probe_event.enqueue()
         dj_absurd.drain()
         dj_absurd.drain()
 
     task_id = result.id.rsplit(":", 1)[-1]
+    emitter_task_id = emitter_result.id.rsplit(":", 1)[-1]
     messages = read_context_messages(caplog)
     assert (
         messages.count(f"event awaiting: name=probe.go task_id={task_id} timeout=3600")
@@ -238,7 +240,7 @@ def test_a_sync_event_wait_logs_awaiting_then_received(
     assert messages.count(f"event received: name=probe.go task_id={task_id}") == 1
     emitted = [m for m in messages if m.startswith("event emitted: ")]
     assert len(emitted) == 1
-    assert re.fullmatch(r"event emitted: name=probe\.go task_id=\S+", emitted[0])
+    assert emitted[0] == f"event emitted: name=probe.go task_id={emitter_task_id}"
 
 
 def test_no_durable_primitive_log_record_contains_a_non_ascii_character(

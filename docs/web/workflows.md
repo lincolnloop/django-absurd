@@ -27,9 +27,10 @@ there is no cast and no union to narrow:
 - **Sync task → `get_absurd_context()`** returns `django_absurd.AbsurdTaskContext`, a
   thin bridge mirroring the SDK's sync signatures (no `await`); it also carries
   `run_step` (sync only).
-- **Async task → `aget_absurd_context()`** returns the SDK's own
-  `absurd_sdk.AsyncTaskContext` (a py.typed object) — pure passthrough, you `await` its
-  methods.
+- **Async task → `aget_absurd_context()`** returns
+  `django_absurd.AsyncAbsurdTaskContext`, a wrapper mirroring the SDK's
+  `absurd_sdk.AsyncTaskContext` async surface (`await` its methods); `.absurd_ctx`
+  reaches the raw SDK context for anything unmirrored.
 
 Called outside a running Absurd task, either accessor raises `RuntimeError`.
 

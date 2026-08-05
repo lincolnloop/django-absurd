@@ -244,6 +244,12 @@ options you passed — both rows show up in the admin, filterable by that name. 
 task's own status and return value once it runs; a struggling wrapper leaves that id
 `READY` with no visible errors until it runs out of attempts, then `FAILED`.
 
+The wrapper's own primitives are unlogged: `build_deferred_handler(target)` builds a
+handler that receives the raw SDK context, so a deferred task's wait-until-due sleep and
+its `enqueue:<target>` step emit no durable-primitive lines. The run-level
+`task suspended` line already makes the deferral visible; wrapping that context in
+`AsyncAbsurdTaskContext` is a one-line change if per-step visibility is ever wanted.
+
 ## Workers
 
 ```bash
@@ -1051,9 +1057,10 @@ there is no cast and no union to narrow:
 - **Sync task → `get_absurd_context()`** returns `django_absurd.AbsurdTaskContext`, a
   thin bridge mirroring the SDK's sync signatures (no `await`); it also carries
   `run_step` (sync only).
-- **Async task → `aget_absurd_context()`** returns the SDK's own
-  `absurd_sdk.AsyncTaskContext` (a py.typed object) — pure passthrough, you `await` its
-  methods.
+- **Async task → `aget_absurd_context()`** returns
+  `django_absurd.AsyncAbsurdTaskContext`, a wrapper mirroring the SDK's
+  `absurd_sdk.AsyncTaskContext` async surface (`await` its methods); `.absurd_ctx`
+  reaches the raw SDK context for anything unmirrored.
 
 Called outside a running Absurd task, either accessor raises `RuntimeError`.
 
