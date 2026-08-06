@@ -40,6 +40,12 @@ Read it before Task 1 — it records why each decision is what it is.
 - Iteration gate per task: `uv run pytest <path> -q --no-cov`, then
   `uv run pre-commit run --all-files` (owns ruff + mypy + prettier — never invoke them
   directly). `git add` new files first: `--all-files` skips untracked.
+- **Run only the test modules your task touched.** Never `pytest tests/core` for a
+  single edit — coverage instrumentation dominates and the whole-suite run belongs to
+  the coordinator gate at the end. Each task below names its exact target modules; run
+  those. `tests/multidb` and `tests/pg_cron` touch none of this work (neither imports
+  `run_absurd_worker`; pg_cron's only worker call asserts the `--beat` refusal, which
+  raises before the loop) — leave them to the coordinator.
 - The full `uvx --with tox-uv tox -e dev` gate belongs to the coordinator after the
   commit, NOT to the task implementer — it exceeds a subagent's foreground limit.
 - Postgres must be up before any suite: `docker compose up -d db db_pg_cron`.
@@ -488,10 +494,10 @@ it call `django_absurd.worker.drain_queue(queue)` and drop the `concurrency` par
 after Step 1 nothing passes it. Keep the function name; 34 call sites read
 `run_absurd_worker()` today.
 
-Then:
+Then run only what reaches the helper:
 
 ```bash
-uv run pytest tests/core -q --no-cov -n4
+uv run pytest tests/core/test_absurd_fixture.py tests/core/test_async_worker.py tests/core/test_worker.py -q --no-cov
 ```
 
 Expected: all pass.
@@ -516,15 +522,18 @@ blind.
 no fixture in scope. Those call `worker.drain_queue(<queue>)` directly — the same
 entrypoint `dj_absurd.drain` wraps.
 
-- [ ] **Step 5: Run every suite**
+- [ ] **Step 5: Run the modules this task touched**
 
 ```bash
-uv run pytest tests/core -q --no-cov -n4
-uv run pytest tests/multidb -q --no-cov
-uv run pytest tests/pg_cron -q --no-cov -n4
+uv run pytest tests/core/test_admin tests/core/test_admin_views.py \
+  tests/core/test_cleanup.py tests/core/test_enqueue.py \
+  tests/core/test_orm_models.py tests/core/test_scheduler.py \
+  tests/core/test_absurd_fixture.py tests/core/test_async_worker.py \
+  tests/core/test_worker.py -q --no-cov
 ```
 
-Expected: all pass.
+Expected: all pass. Nothing else in the repo calls the worker command, so no whole-suite
+run here.
 
 - [ ] **Step 6: Commit**
 
@@ -649,13 +658,14 @@ additionally asserts the `worker started: … burst=True concurrency=1` log line
 `test_worker.py:399`; leave that assertion untouched here, Task 5 changes the line
 itself.
 
-- [ ] **Step 6: Run the full core suite**
+- [ ] **Step 6: Run the modules this task touched**
 
 ```bash
-uv run pytest tests/core -q --no-cov -n4
+uv run pytest tests/core/test_command_output.py tests/core/test_logging \
+  tests/core/test_orm_views.py tests/core/test_worker.py -q --no-cov
 ```
 
-Expected: all pass.
+Expected: all pass, none of them near the helper's 15s timeout.
 
 - [ ] **Step 7: Commit**
 
@@ -730,12 +740,15 @@ before the worker loop, so they keep passing unchanged otherwise.
 - [ ] **Step 4: Prove the flag is gone**
 
 ```bash
-uv run pytest tests/core tests/multidb -q --no-cov -n4
+uv run pytest tests/core/test_worker.py tests/core/test_worker_slot_refill.py \
+  tests/core/test_async_worker.py tests/core/test_scheduler.py \
+  tests/core/test_logging tests/core/test_command_output.py -q --no-cov
 grep -rn "burst" django_absurd/ tests/
 ```
 
-Expected: suites pass; `grep` returns nothing outside `docs/` (specs and plans keep
-their historical references). A hit in `django_absurd/AGENTS.md` is Task 6's job.
+Expected: those modules pass; `grep` returns nothing outside `docs/` (specs and plans
+keep their historical references). A hit in `django_absurd/AGENTS.md` is Task 6's job.
+The whole-suite check for this signature change is the coordinator's gate, not yours.
 
 - [ ] **Step 5: Commit**
 
