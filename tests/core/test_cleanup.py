@@ -13,6 +13,7 @@ from django.core.management import call_command
 from django.db import connection
 from django.utils import timezone
 
+from django_absurd import worker
 from django_absurd.backends import get_absurd_backends
 from django_absurd.cleanup import QueueCleanup, cleanup_queues
 from django_absurd.queues import get_absurd_client
@@ -56,7 +57,7 @@ def sync_queue(
 
 
 def drain(queue: str = "default") -> None:
-    call_command("absurd_worker", queue=queue, burst=True)
+    worker.drain_queue(queue)
 
 
 @pytest.fixture(params=["command", "direct"])

@@ -9,6 +9,7 @@ from django.tasks import TaskResultStatus
 from django_absurd import absurd_params
 from django_absurd.backends import get_absurd_backends
 from django_absurd.test import AbsurdTestRuntime
+from django_absurd.worker import WorkerOptions, aworker_client, run_blocking_worker
 from tests import atasks, tasks
 from tests.models import Payload
 from tests.utils import run_absurd_worker
@@ -120,9 +121,27 @@ def test_worker_does_not_poison_jsonfield_reads() -> None:
 
 
 def test_async_concurrency_is_not_serial() -> None:
-    for _ in range(4):
-        atasks.asleeper.enqueue(0.5)
+    results = [atasks.asleeper.enqueue(0.5) for _ in range(4)]
     start = time.monotonic()
-    run_absurd_worker(concurrency=4)  # burst now drains CONCURRENTLY (gather)
+
+    async def drive() -> None:
+        stop = asyncio.Event()
+        backend = get_absurd_backends()["default"]
+        async with aworker_client(backend, "default") as client:
+
+            async def stop_once_all_are_terminal() -> None:
+                while True:
+                    outcomes = [await backend.aget_result(r.id) for r in results]
+                    if all(outcome.is_finished for outcome in outcomes):
+                        break
+                    await asyncio.sleep(0.05)
+                stop.set()
+
+            await asyncio.gather(
+                run_blocking_worker(client, WorkerOptions(concurrency=4), stop=stop),
+                stop_once_all_are_terminal(),
+            )
+
+    asyncio.run(drive())
     elapsed = time.monotonic() - start
     assert elapsed < 1.5  # 4 * 0.5s serial == 2.0s; concurrent ~0.5s (well under)

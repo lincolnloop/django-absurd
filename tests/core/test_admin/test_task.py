@@ -12,6 +12,7 @@ from pytest_django.fixtures import SettingsWrapper
 
 from django_absurd.admin_views import ADMIN_ENTITY_SPECS, build_admin_model
 from django_absurd.queues import get_absurd_client
+from django_absurd.test import AbsurdTestRuntime
 from tests import atasks, tasks
 from tests.core.test_admin.utils import (
     BACKEND,
@@ -221,11 +222,11 @@ def test_detail_groups_fields_and_inlines_runs(
 
 
 def test_detail_inlines_checkpoints_and_run_available_at(
-    admin_user: User, client: Client
+    admin_user: User, client: Client, dj_absurd: AbsurdTestRuntime
 ) -> None:
     atasks.DURABLE_STEP_CALLS["n"] = 0
     atasks.asleep_for_once.enqueue("admin-k")
-    call_command("absurd_worker", queue="default", burst=True)  # suspends
+    dj_absurd.drain()  # suspends
     client.force_login(admin_user)
 
     task = find_task("default", "tests.atasks.asleep_for_once")
@@ -251,10 +252,10 @@ def test_detail_inlines_checkpoints_and_run_available_at(
 
 
 def test_detail_inlines_waits_for_a_suspended_await_event(
-    admin_user: User, client: Client
+    admin_user: User, client: Client, dj_absurd: AbsurdTestRuntime
 ) -> None:
     tasks.sawait_event_once.enqueue("wait-admin-demo")
-    call_command("absurd_worker", queue="default", burst=True)  # suspends
+    dj_absurd.drain()  # suspends
     client.force_login(admin_user)
 
     task = find_task("default", "tests.tasks.sawait_event_once")
@@ -314,7 +315,10 @@ def test_changelist_degrades_when_view_dropped(
 
 
 def test_partitioned_queue_appears_in_changelist(
-    admin_user: User, client: Client, settings: SettingsWrapper
+    admin_user: User,
+    client: Client,
+    dj_absurd: AbsurdTestRuntime,
+    settings: SettingsWrapper,
 ) -> None:
     settings.TASKS = {
         "default": {
@@ -329,7 +333,7 @@ def test_partitioned_queue_appears_in_changelist(
     }
     call_command("absurd_sync_queues")
     tasks.add.using(queue_name="part").enqueue(1, 1)
-    call_command("absurd_worker", queue="part", burst=True)
+    dj_absurd.drain("part")
     client.force_login(admin_user)
     resp = client.get(CHANGELIST)
     soup = parse_html(resp)

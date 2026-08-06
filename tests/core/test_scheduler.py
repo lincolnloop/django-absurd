@@ -188,7 +188,7 @@ def test_beat_fires_each_due_slot(
         run_beat_until(
             frozen_time, backend, dt.datetime(2026, 1, 1, 0, 2, 30, tzinfo=dt.UTC)
         )
-        call_command("absurd_worker", queue="default", burst=True)
+        dj_absurd.drain()
         expected_fires = 2  # slots 00:01 and 00:02
         assert Payload.objects.count() == expected_fires
 
@@ -218,7 +218,7 @@ def test_beat_fires_multiple_schedules_due_same_slot(
         run_beat_until(
             frozen_time, backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC)
         )
-        call_command("absurd_worker", queue="default", burst=True)
+        dj_absurd.drain()
         assert set(Group.objects.values_list("name", flat=True)) == {"a", "b"}
 
 
@@ -278,7 +278,7 @@ def test_beat_isolates_failing_schedule(
         run_beat_until(
             frozen_time, backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC)
         )
-        call_command("absurd_worker", queue="default", burst=True)
+        dj_absurd.drain()
         expected_good = 1  # "bad" raised in spawn (unimportable, logged); "good" ran
         assert Payload.objects.count() == expected_good
 
@@ -313,7 +313,7 @@ def test_beat_spawns_task_with_args(
         run_beat_until(
             frozen_time, backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC)
         )
-        call_command("absurd_worker", queue="default", burst=True)
+        dj_absurd.drain()
         assert Group.objects.filter(name="beat-args").exists()
 
 
@@ -336,7 +336,7 @@ def test_beat_spawns_task_with_kwargs(
         run_beat_until(
             frozen_time, backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC)
         )
-        call_command("absurd_worker", queue="default", burst=True)
+        dj_absurd.drain()
         assert Group.objects.filter(name="beat-kw").exists()
 
 
@@ -362,7 +362,7 @@ def test_beat_empty_queue_string_falls_back_to_task_queue(
         run_beat_until(
             frozen_time, backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC)
         )
-        call_command("absurd_worker", queue="default", burst=True)
+        dj_absurd.drain()
         assert Group.objects.filter(name="beat-empty-q").exists()
 
 
@@ -386,9 +386,9 @@ def test_beat_routes_task_to_queue(
         run_beat_until(
             frozen_time, backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC)
         )
-        call_command("absurd_worker", queue="default", burst=True)
+        dj_absurd.drain()
         assert not Group.objects.filter(name="beat-routed").exists()
-        call_command("absurd_worker", queue="other", burst=True)
+        dj_absurd.drain(queue="other")
         assert Group.objects.filter(name="beat-routed").exists()
 
 
@@ -418,9 +418,9 @@ def test_beat_routes_task_to_queue_non_default_alias(
         run_beat_until(
             frozen_time, backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC)
         )
-        call_command("absurd_worker", queue="default", burst=True)
+        dj_absurd.drain()
         assert not Group.objects.filter(name="beat-non-default").exists()
-        call_command("absurd_worker", queue="other", burst=True)
+        dj_absurd.drain(queue="other")
         assert Group.objects.filter(name="beat-non-default").exists()
 
 
@@ -520,6 +520,7 @@ def test_settings_provider_sets_backend_alias(
 
 
 def test_idempotency_key_dedups_same_slot(
+    dj_absurd: AbsurdTestRuntime,
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     # The command/loop never re-fires a single slot; this tests spawn_scheduled
@@ -541,7 +542,7 @@ def test_idempotency_key_dedups_same_slot(
     slot = dt.datetime(2026, 1, 1, 0, 1, tzinfo=dt.UTC)
     spawn_scheduled(schedule, slot)
     spawn_scheduled(schedule, slot)
-    call_command("absurd_worker", queue="default", burst=True)
+    dj_absurd.drain()
     assert Payload.objects.count() == 1
 
 
@@ -792,7 +793,7 @@ def test_beat_skips_not_yet_due_schedule(
             backend,
             dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC),
         )
-        call_command("absurd_worker", queue="default", burst=True)
+        dj_absurd.drain()
         assert Payload.objects.count() == 1
         assert Payload.objects.filter(data="due").exists()
         assert not Payload.objects.filter(data="later").exists()

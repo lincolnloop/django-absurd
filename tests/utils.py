@@ -6,10 +6,10 @@ import uuid
 import psycopg
 import psycopg.sql
 from absurd_sdk import Absurd, CreateQueueOptions
-from django.core.management import call_command
 from django.db import connections
 from django.dispatch import Signal
 
+from django_absurd import worker
 from django_absurd.test import open_test_connection
 
 if t.TYPE_CHECKING:
@@ -64,8 +64,8 @@ def make_tasks_settings(
     return {"default": {"BACKEND": ABSURD_BACKEND, "OPTIONS": options}}
 
 
-def run_absurd_worker(queue: str = "default", concurrency: int = 1) -> None:
-    call_command("absurd_worker", queue=queue, burst=True, concurrency=concurrency)
+def run_absurd_worker(queue: str = "default") -> None:
+    worker.drain_queue(queue)
 
 
 def claim_one_run(queue: str = "default", *, claim_timeout: int) -> uuid.UUID:
