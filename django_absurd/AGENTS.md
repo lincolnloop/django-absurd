@@ -244,11 +244,7 @@ options you passed — both rows show up in the admin, filterable by that name. 
 task's own status and return value once it runs; a struggling wrapper leaves that id
 `READY` with no visible errors until it runs out of attempts, then `FAILED`.
 
-The wrapper's own primitives are unlogged: `build_deferred_handler(target)` builds a
-handler that receives the raw SDK context, so a deferred task's wait-until-due sleep and
-its `enqueue:<target>` step emit no durable-primitive lines. The run-level
-`task suspended` line already makes the deferral visible; wrapping that context in
-`AsyncAbsurdTaskContext` is a one-line change if per-step visibility is ever wanted.
+A deferral logs as the run-level `task suspended` line, not as sleep or step lines.
 
 ## Workers
 
@@ -962,24 +958,18 @@ test — it doesn't care how it got there, only what's present.
 
 ### Logging
 
-Two loggers, two questions:
+- **`django.tasks`** — Django's own task lifecycle; `AbsurdBackend` emits its signals.
+  Portable across backends.
+- **`django_absurd`** — what Absurd did: attempts, durations, worker and beat lifecycle,
+  steps, replays, sleeps, event waits. One child per module, so
+  `django_absurd.scheduler` is the beat and `django_absurd.context` the durable
+  primitives — level either down on its own.
 
-- **`django.tasks`** — Django's own view of a task's life, because `AbsurdBackend` emits
-  Django's task signals. Portable across task backends.
-- **`django_absurd`** — the Absurd-specific detail Django's view has no field for:
-  attempt counts, durations, worker and beat lifecycle, and durable-primitive detail —
-  steps, replays, sleeps, and event waits. One child logger per module, so
-  `django_absurd` routes everything, `django_absurd.scheduler` targets just the beat,
-  and `django_absurd.context` targets just the durable-primitive lines — level it down
-  if steps get chatty.
-
-`absurd_worker` and `absurd_beat` attach a plain `StreamHandler` at `INFO` to
-`django_absurd` on startup, so a fresh project is not silent. Name `django_absurd` or a
-child in your
+`absurd_worker` and `absurd_beat` attach a `StreamHandler` at `INFO` so a fresh project
+is not silent. Name `django_absurd` or a child in
 [`LOGGING`](https://docs.djangoproject.com/en/6.0/topics/logging/#configuring-logging)
-and that stops — your configuration wins. Configure only `root` and they add no handler
-either, since yours already catches these records; they still raise the level to `INFO`,
-so a root handler left at `WARNING` does not swallow them:
+and they stop; name only `root` and they add no handler but still raise the level, so a
+`WARNING` root does not swallow them:
 
 ```python
 LOGGING = {
