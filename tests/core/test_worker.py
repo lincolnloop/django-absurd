@@ -446,22 +446,23 @@ def test_async_task_runs_end_to_end(dj_absurd: AbsurdTestRuntime) -> None:
 def test_blocking_worker_drains_then_stops() -> None:
     # Exercises the blocking (live-worker) path deterministically — no sleeps:
     # the stopper awaits each task to a terminal state (SDK await_task_result),
-    # THEN calls stop_worker() (the flag start_worker's loop polls).
+    # THEN sets the stop event the worker loop polls.
     # run_blocking_worker returns once stopped.
     call_command("absurd_sync_queues")
     results = [tasks.make_group.enqueue(f"blk-{i}") for i in range(3)]
     task_ids = [r.id.rsplit(":", 1)[-1] for r in results]
 
     async def drive() -> None:
+        stop = asyncio.Event()
         async with aworker_client(backend(), "default") as client:
 
             async def stopper() -> None:
                 for tid in task_ids:
                     await client.await_task_result(tid)
-                client.stop_worker()
+                stop.set()
 
             await asyncio.gather(
-                run_blocking_worker(client, WorkerOptions(concurrency=2)),
+                run_blocking_worker(client, WorkerOptions(concurrency=2), stop=stop),
                 stopper(),
             )
 

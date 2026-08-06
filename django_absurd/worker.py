@@ -1,7 +1,9 @@
 import asyncio
 import inspect
 import logging
+import os
 import signal
+import socket
 import threading
 import typing as t
 import uuid
@@ -481,25 +483,119 @@ def mark_task_result_failed(
     )
 
 
-async def run_blocking_worker(client: AsyncAbsurd, options: WorkerOptions) -> None:
+async def run_blocking_worker(
+    client: AsyncAbsurd, options: WorkerOptions, *, stop: asyncio.Event | None = None
+) -> None:
+    stop_signal = stop if stop is not None else asyncio.Event()
     loop = asyncio.get_running_loop()
 
     def handle_stop() -> None:
-        client.stop_worker()
+        stop_signal.set()
 
     loop.add_signal_handler(signal.SIGINT, handle_stop)
     loop.add_signal_handler(signal.SIGTERM, handle_stop)
+    # Worker id as the SDK's own start_worker derives it, since we no longer call it.
+    worker_id = options.worker_id or f"{socket.gethostname()}:{os.getpid()}"
+    # Both loops below are ported from
+    # https://github.com/earendil-works/absurd/pull/137, because the SDK's
+    # AsyncAbsurd.start_worker awaits its whole claimed batch before claiming again —
+    # one slow task then idles every other slot. Delete them in favour of
+    # client.start_worker once a released SDK carries that fix.
     try:
-        await client.start_worker(
-            worker_id=options.worker_id,
-            claim_timeout=options.claim_timeout,
-            concurrency=options.concurrency,
-            batch_size=options.batch_size,
-            poll_interval=options.poll_interval,
-        )
+        if options.concurrency <= 1:
+            await run_one_slot_at_a_time(client, options, stop_signal, worker_id)
+        else:
+            await refill_slots_until_stopped(client, options, stop_signal, worker_id)
     finally:
         loop.remove_signal_handler(signal.SIGINT)
         loop.remove_signal_handler(signal.SIGTERM)
+
+
+async def run_one_slot_at_a_time(
+    client: AsyncAbsurd,
+    options: WorkerOptions,
+    stop: asyncio.Event,
+    worker_id: str,
+) -> None:
+    """Claim a whole batch and execute it sequentially — the single-slot fast path.
+
+    Straight from the SDK's SYNC worker, which has always had it. Without this branch
+    the windowed loop's cap of ``min(batch_size, free capacity)`` would silently turn
+    ``--batch-size N --concurrency 1`` from one round trip into N.
+    """
+    batch_size = options.batch_size or options.concurrency
+    while not stop.is_set():
+        claimed = await client.claim_tasks(batch_size, options.claim_timeout, worker_id)
+        if not claimed:
+            await asyncio.sleep(options.poll_interval)
+            continue
+        for claimed_task in claimed:
+            await client._execute_task(claimed_task, options.claim_timeout)  # noqa: SLF001 -- SDK exposes no public counted dispatch; mirrors work_batch
+
+
+async def refill_slots_until_stopped(
+    client: AsyncAbsurd,
+    options: WorkerOptions,
+    stop: asyncio.Event,
+    worker_id: str,
+) -> None:
+    """Keep ``concurrency`` slots busy, claiming again the moment one frees.
+
+    ONE ``executing`` window across iterations is the whole point: rebuilding it per
+    batch is what makes the SDK's async worker wait on its slowest claimed task before
+    claiming anything else.
+    """
+    effective_batch_size = options.batch_size or options.concurrency
+    executing: set[asyncio.Task[None]] = set()
+    try:
+        while not stop.is_set():
+            reap_finished_slots(executing)
+            capacity = options.concurrency - len(executing)
+            if capacity <= 0:
+                await wait_for_slot_progress(executing, options.poll_interval)
+                continue
+            claimed = await client.claim_tasks(
+                min(effective_batch_size, capacity), options.claim_timeout, worker_id
+            )
+            if not claimed:
+                await wait_for_slot_progress(executing, options.poll_interval)
+                continue
+            for claimed_task in claimed:
+                executing.add(
+                    asyncio.create_task(
+                        client._execute_task(claimed_task, options.claim_timeout)  # noqa: SLF001 -- SDK exposes no public counted dispatch; mirrors work_batch
+                    )
+                )
+    finally:
+        # A stop means stop CLAIMING: the window it already owns runs to completion.
+        await asyncio.gather(*executing)
+
+
+def reap_finished_slots(executing: set[asyncio.Task[None]]) -> None:
+    """Free every finished slot, re-raising whatever its task raised.
+
+    ``_execute_task`` records a handler's own failure against the run and returns, so
+    an exception surfacing here is the worker's own machinery breaking — never a task
+    failing — and must not be swallowed into a worker that keeps polling.
+    """
+    for finished in [entry for entry in executing if entry.done()]:
+        executing.discard(finished)
+        finished.result()
+
+
+async def wait_for_slot_progress(
+    executing: set[asyncio.Task[None]], poll_interval: float
+) -> None:
+    """Wait until a slot frees, or ``poll_interval`` passes, whichever comes first.
+
+    ``asyncio.wait`` only observes; the loop head reaps what it reports.
+    """
+    if not executing:
+        await asyncio.sleep(poll_interval)
+        return
+    await asyncio.wait(
+        executing, timeout=poll_interval, return_when=asyncio.FIRST_COMPLETED
+    )
 
 
 async def run_worker_with_beat(
@@ -507,13 +603,14 @@ async def run_worker_with_beat(
     options: WorkerOptions,
     backend: AbsurdBackend,
 ) -> None:
+    stop = asyncio.Event()
     beat_stop = threading.Event()
     beat_thread = threading.Thread(
         target=run_beat, args=(backend,), kwargs={"stop": beat_stop}, daemon=True
     )
     beat_thread.start()
     try:
-        await run_blocking_worker(client, options)
+        await run_blocking_worker(client, options, stop=stop)
     finally:
         beat_stop.set()
         await asyncio.get_running_loop().run_in_executor(None, beat_thread.join, 5)
