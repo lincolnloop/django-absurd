@@ -128,8 +128,8 @@ pre-commit gates), see [`../CLAUDE.md`](../CLAUDE.md).
 Measured on this repo; the point is to spend the slow gate once, not per edit.
 
 - **Iterate with a targeted, coverage-free run:** `uv run pytest <path> -q --no-cov`.
-  Coverage instrumentation dominates a single-file run, and `-q` keeps the output
-  scannable.
+  Every suite's `pytest.toml` turns coverage on via `addopts`, and that instrumentation
+  dominates a single-file run; `-q` keeps the output scannable.
 - **Run `tox -e dev` once, before the commit** — not after every edit. It is ~2.5
   minutes because it builds three suites; nothing about a one-file change needs that
   loop.

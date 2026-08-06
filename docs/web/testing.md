@@ -253,30 +253,6 @@ request and no marker to add.
   [`OPTIONS["CLEANUP"]`](cleanup.md#schedule-recurring-cleanup) is set — right alongside
   Django's own post-test flush.
 
-### What cleanup does not reset
-
-Cleanup truncates queue **state** — tasks, runs, checkpoints, events. It does not drop
-the queue **catalog**: a queue provisioned during a test still exists afterwards, and
-`--reuse-db` carries it into the next run.
-
-That matters for a test asserting on provisioning output, because a queue is only
-reported as created once:
-
-```python
-def test_sync_reports_what_it_created(capsys):
-    call_command("absurd_sync_queues")
-    assert "Created: reports" in capsys.readouterr().out   # passes first run,
-                                                           # fails on --reuse-db
-```
-
-Give such a test a queue name no other test declares, or drop the schema around it. The
-symptom is a test that passes alone, passes on a fresh database, and fails the second
-time you run the same file — which reads like flakiness and isn't.
-
-**A storm of deadlock or duplicate-key errors across unrelated tests** usually means two
-test runs are hitting the same database at once, not a bug in the code under test. Check
-for a second run before you start bisecting.
-
 ## No database access, no Absurd access
 
 A test with no DB access can't touch Absurd either: `enqueue()` goes through Django's
