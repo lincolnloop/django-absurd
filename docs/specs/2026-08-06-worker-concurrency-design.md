@@ -7,8 +7,7 @@ migration onto a rewritten loop.
 
 ## Problem
 
-Two defects, one cause — the worker never re-claims until the whole claimed batch
-finishes.
+One defect: the worker never re-claims until the whole claimed batch finishes.
 
 **Slot refill.** `run_blocking_worker` (`worker.py:493`) delegates to the SDK's
 `AsyncAbsurd.start_worker`, which rebuilds `executing` per batch and ends each iteration
@@ -27,8 +26,9 @@ That shape came from the fix for the sync-side bug
 applied to the async path. TypeScript and Go workers already cap claims by free
 capacity; async Python was the only worker without refill.
 
-**`--burst`.** Same barrier in `adrain_queue` (`worker.py:271`), with no windowing at
-all. Not fixed — removed. See below.
+`adrain_queue` (`worker.py:271`) carries the same barrier, with no windowing at all —
+but it is not a second defect to fix, because `--burst` is being deleted and the drain
+that remains runs one task at a time. See below.
 
 ## Decisions
 
@@ -39,13 +39,13 @@ Locked in design discussion; do not re-derive.
   the SDK but has sat unreviewed since 2026-08-03. Port its structure into `worker.py`
   over the public `claim_tasks`; drop the local loop when a released SDK carries the
   fix.
-- **`--burst` is removed, not fixed.** Absurd has no burst concept to inherit: the SDK
-  offers `work_batch` (one batch, sequential, no drain-to-empty) and `start_worker`
-  (resident); `absurdctl` ships no worker command at all. `--burst` was invented here
-  for tests, and the drain-to-empty concept stays where it belongs — the test fixture.
-  Peers do ship it (RQ `--burst`, Procrastinate `wait=False`), so this forfeits the
-  scale-to-zero / cron-drain deployment story. Accepted: one worker mode is worth more
-  than a deployment mode nobody has asked for.
+- **`--burst` is removed, not fixed.** It was built as an entry point for the test
+  suite, never as a public API — nothing is lost by deleting it. Absurd has no burst
+  concept to inherit either: the SDK offers `work_batch` (one batch, sequential, no
+  drain-to-empty) and `start_worker` (resident), and `absurdctl` ships no worker command
+  at all. The drain-to-empty concept stays where it was always meant to live,
+  `dj_absurd.drain()`. Documenting the flag as a deployment mode ("cron / one-shot",
+  `AGENTS.md:263`) was wrong when written; removal corrects it.
 - **`--concurrency` becomes a blocking-worker knob only.**
 - **Graceful stop; cancel only on cancellation.** Stop signal → stop claiming, await
   in-flight to completion. Coroutine cancelled → cancel in-flight, then await them.
@@ -107,8 +107,12 @@ event it uses for the beat thread, so one signal stops both.
 - `run_worker` loses `burst=`; blocking only.
 - `drain_queue` keeps `adrain_queue` as its private, sequential engine — behavior
   unchanged, it already runs at `concurrency=1`. Public surface is `dj_absurd.drain()`.
+- The `worker started: … burst=%s …` log line (`worker.py:191`) loses its `burst` field,
+  which `test_worker.py:399` asserts verbatim.
+- Prose that calls the drain "burst" (`DrainedRun`'s docstring, `LazyTaskRegistry`'s,
+  `test.py`, `pytest_plugin.py`) says "drain" instead.
 
-Straight removal, no deprecation: alpha, and the package says so.
+Straight removal, no deprecation period: nothing public is being withdrawn.
 
 ## Tests
 
@@ -163,8 +167,9 @@ where `--concurrency` now lives.
 
 ## Docs
 
-- `AGENTS.md:249-267` — one worker mode; drop the burst bullet; `--concurrency`
-  described honestly as refilling a slot as soon as it frees.
+- `AGENTS.md:249-267` — one worker mode; drop the burst bullet, including its "cron /
+  one-shot" claim, which advertised test scaffolding as a deployment mode;
+  `--concurrency` described honestly as refilling a slot as soon as it frees.
 - `AGENTS.md:852`, `docs/web/testing.md:122` — describe `dj_absurd.drain()` on its own
   terms instead of as "the fixture counterpart of `absurd_worker --burst`".
 
