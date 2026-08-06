@@ -1,11 +1,15 @@
 import contextlib
+import os
+import signal
 import threading
+import time
 import typing as t
 import uuid
 
 import psycopg
 import psycopg.sql
 from absurd_sdk import Absurd, CreateQueueOptions
+from django.core.management import call_command
 from django.db import connections
 from django.dispatch import Signal
 
@@ -66,6 +70,44 @@ def make_tasks_settings(
 
 def run_absurd_worker(queue: str = "default") -> None:
     worker.drain_queue(queue)
+
+
+def run_worker_command_until(
+    is_done: t.Callable[[], bool] | None = None,
+    *,
+    timeout: float = 15.0,
+    **options: t.Any,
+) -> None:
+    """Run ``absurd_worker`` to completion, stopping it once ``is_done()`` holds.
+
+    The command runs in the calling thread so ``capsys``/``caplog`` see it; a watcher
+    thread fires the SIGTERM the worker's own signal handler turns into a graceful
+    stop. Waits for that handler to be installed first — a signal delivered before
+    then kills the test session instead.
+    """
+    previous_handler = signal.getsignal(signal.SIGTERM)
+
+    def stop_once_done() -> None:
+        deadline = time.monotonic() + timeout
+        try:
+            while time.monotonic() < deadline:  # pragma: no branch
+                if signal.getsignal(signal.SIGTERM) is not previous_handler and (
+                    is_done is None or is_done()
+                ):
+                    break
+                time.sleep(0.05)
+            os.kill(os.getpid(), signal.SIGTERM)
+        finally:
+            # Thread-local, so this closes only the connection the predicate's ORM
+            # read opened on this thread.
+            connections.close_all()
+
+    watcher = threading.Thread(target=stop_once_done, daemon=True)
+    watcher.start()
+    try:
+        call_command("absurd_worker", **options)
+    finally:
+        watcher.join(timeout=5)
 
 
 def claim_one_run(queue: str = "default", *, claim_timeout: int) -> uuid.UUID:

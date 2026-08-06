@@ -26,7 +26,7 @@ from django_absurd.worker import (
     drain_queue,
     run_blocking_worker,
 )
-from tests import atasks, tasks
+from tests import atasks, tasks, utils
 from tests.jobs import record_from_jobs
 from tests.utils import run_absurd_worker
 
@@ -175,7 +175,9 @@ def test_queue_defaults_to_default(
         }
     }
     tasks.make_group.enqueue("dflt")  # auto-creates the default queue
-    call_command("absurd_worker", burst=True)  # no --queue -> "default"
+    utils.run_worker_command_until(  # no --queue -> "default"
+        lambda: Group.objects.filter(name="dflt").exists()
+    )
     out = capsys.readouterr().out
     assert out == (
         "🐘 Started worker on queue 'default'.\n🐘 Stopped worker on queue 'default'.\n"
@@ -206,7 +208,7 @@ def test_worker_uses_single_backend_at_nondefault_alias(
             "QUEUES": ["default"],
         }
     }
-    call_command("absurd_worker", burst=True)
+    utils.run_worker_command_until()
     assert "Started worker on queue 'default'." in capsys.readouterr().out
 
 
@@ -258,10 +260,12 @@ def test_command_parses_all_flags_with_defaults() -> None:
     assert opts["worker_id"] is None
 
 
-def test_command_burst_runs_task_end_to_end(dj_absurd: AbsurdTestRuntime) -> None:
+def test_command_runs_task_end_to_end(dj_absurd: AbsurdTestRuntime) -> None:
     dj_absurd.sync_queues()
     result = tasks.make_group.enqueue("via-command")
-    call_command("absurd_worker", queue="default", burst=True)
+    utils.run_worker_command_until(
+        lambda: Group.objects.filter(name="via-command").exists(), queue="default"
+    )
     assert Group.objects.filter(name="via-command").exists()
     snap = dj_absurd.get_result(result.id)
     assert snap.state == "completed"
@@ -271,7 +275,7 @@ def test_worker_start_provisions_all_declared_queues(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     # full provision on start: every declared queue, not just the served one
-    call_command("absurd_worker", queue="default", burst=True)
+    utils.run_worker_command_until(queue="default")
     created_line, started_line, stopped_line = capsys.readouterr().out.splitlines()
     assert set(created_line.removeprefix("Created: ").split(", ")) == {
         "default",
@@ -301,7 +305,7 @@ def test_worker_command_reconciles_changed_mutable_option(
         }
     }
     capsys.readouterr()  # drop sync output
-    call_command("absurd_worker", queue="default", burst=True)
+    utils.run_worker_command_until(queue="default")
     out = capsys.readouterr().out
     assert out == (
         "Reconciled: default\n"
@@ -334,7 +338,7 @@ def test_worker_command_reconciles_changed_interval_option(
         }
     }
     capsys.readouterr()
-    call_command("absurd_worker", queue="default", burst=True)
+    utils.run_worker_command_until(queue="default")
     out = capsys.readouterr().out
     assert out == (
         "Reconciled: default\n"
@@ -356,7 +360,7 @@ def test_worker_command_no_reconcile_when_unchanged(
     call_command("absurd_sync_queues")
     before = Queue.objects.get(queue_name="default").cleanup_ttl
     capsys.readouterr()
-    call_command("absurd_worker", queue="default", burst=True)
+    utils.run_worker_command_until(queue="default")
     out = capsys.readouterr().out
     # Drift-gated no-op: no Created/Reconciled, no "No queues to sync.", just
     # the start and stop lines.
@@ -383,7 +387,7 @@ def test_worker_command_warns_on_storage_mode_drift(
         }
     }
     capsys.readouterr()
-    call_command("absurd_worker", queue="default", burst=True)
+    utils.run_worker_command_until(queue="default")
     cap = capsys.readouterr()
     assert cap.out == (
         "🐘 Started worker on queue 'default'.\n🐘 Stopped worker on queue 'default'.\n"
@@ -396,8 +400,8 @@ def test_worker_command_warns_on_storage_mode_drift(
         "Queue 'default': storage_mode cannot be changed "
         "(existing: 'unpartitioned', declared: 'partitioned'); skipping.\n"
         "worker started: alias=default queue=default database=default"
-        " burst=True concurrency=1\n"
-        "worker stopped: alias=default queue=default database=default runs=0\n"
+        " burst=False concurrency=1\n"
+        "worker stopped: alias=default queue=default database=default\n"
     )
 
 

@@ -24,7 +24,7 @@ def test_sync_queues_decorates_its_console_output(settings: SettingsWrapper) -> 
 def test_the_worker_banner_carries_the_elephant(dj_absurd: AbsurdTestRuntime) -> None:
     dj_absurd.sync_queues()
     out = io.StringIO()
-    call_command("absurd_worker", queue="default", burst=True, stdout=out)
+    utils.run_worker_command_until(queue="default", stdout=out)
 
     assert out.getvalue() == (
         "🐘 Started worker on queue 'default'.\n🐘 Stopped worker on queue 'default'.\n"
@@ -37,7 +37,7 @@ def test_worker_banner_keeps_the_elephant_on_a_utf8_stream(
     dj_absurd.sync_queues()
     buffer = io.BytesIO()
     out = io.TextIOWrapper(buffer, encoding="utf-8")
-    call_command("absurd_worker", queue="default", burst=True, stdout=out)
+    utils.run_worker_command_until(queue="default", stdout=out)
     out.flush()
 
     assert buffer.getvalue().decode("utf-8") == (
@@ -51,7 +51,7 @@ def test_worker_banner_drops_the_elephant_on_a_stream_that_cannot_encode_it(
     dj_absurd.sync_queues()
     buffer = io.BytesIO()
     out = io.TextIOWrapper(buffer, encoding="cp1252")
-    call_command("absurd_worker", queue="default", burst=True, stdout=out)
+    utils.run_worker_command_until(queue="default", stdout=out)
     out.flush()
 
     assert buffer.getvalue().decode("cp1252") == (
