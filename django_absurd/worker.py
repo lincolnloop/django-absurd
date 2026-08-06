@@ -566,9 +566,46 @@ async def refill_slots_until_stopped(
                         client._execute_task(claimed_task, options.claim_timeout)  # noqa: SLF001 -- SDK exposes no public counted dispatch; mirrors work_batch
                     )
                 )
+    except asyncio.CancelledError:
+        # The connection every one of these runs writes through is about to close, so
+        # none of them may outlive the loop. The sync worker gets this free from
+        # ThreadPoolExecutor.__exit__; the async loop has to do it by hand.
+        await cancel_and_drain_slots(executing)
+        raise
     finally:
         # A stop means stop CLAIMING: the window it already owns runs to completion.
-        await asyncio.gather(*executing)
+        await finish_remaining_slots(executing)
+
+
+async def cancel_and_drain_slots(executing: set[asyncio.Task[None]]) -> None:
+    """Cancel the whole in-flight window and wait for it to unwind.
+
+    Awaiting is the point: ``cancel()`` only requests, so returning without it leaves
+    handlers still on the loop. Emptying ``executing`` leaves nothing for the caller's
+    ``finally`` to await a second time — that pass is the graceful one, and it would
+    re-raise a slot's own ``CancelledError`` in place of the loop's.
+    """
+    for entry in executing:
+        entry.cancel()
+    await asyncio.gather(*executing, return_exceptions=True)
+    executing.clear()
+
+
+async def finish_remaining_slots(executing: set[asyncio.Task[None]]) -> None:
+    """Await the whole in-flight window, then surface the first machinery failure.
+
+    Two steps rather than one bare ``gather``: a gather raises the instant one slot
+    fails, abandoning its siblings mid-execution against a connection
+    ``aworker_client`` is about to close. ``asyncio.wait`` settles every slot first, so
+    the gather after it only re-raises — and it marks the other slots' exceptions
+    retrieved, so none resurfaces as "Task exception was never retrieved". What
+    surfaces here is never a task failing: ``_execute_task`` records a handler's own
+    failure against the run and returns normally.
+    """
+    if not executing:
+        return
+    await asyncio.wait(executing)
+    await asyncio.gather(*executing)
 
 
 def reap_finished_slots(executing: set[asyncio.Task[None]]) -> None:

@@ -128,3 +128,55 @@ def test_one_slot_runs_a_claimed_batch_in_order() -> None:
     asyncio.run(drive())
 
     assert ORDER == ["first", "second", "third"]
+
+
+def test_stopping_lets_in_flight_work_finish_and_claims_nothing_new() -> None:
+    call_command("absurd_sync_queues")
+    arm_events("slow", "unclaimed")
+
+    hold_until_released.enqueue("slow")
+    record_started.enqueue("unclaimed")
+
+    async def drive() -> None:
+        stop = asyncio.Event()
+        async with aworker_client(get_default_backend(), "default") as client:
+
+            async def stop_once_the_slow_task_holds_a_slot() -> None:
+                await asyncio.wait_for(STARTED["slow"].wait(), timeout=5)
+                stop.set()
+                HOLD["gate"].set()
+
+            await asyncio.gather(
+                run_blocking_worker(client, WorkerOptions(concurrency=1), stop=stop),
+                stop_once_the_slow_task_holds_a_slot(),
+            )
+
+    asyncio.run(drive())
+
+    assert ORDER == ["slow"]
+    assert not STARTED["unclaimed"].is_set()
+
+
+def test_cancelling_the_worker_leaves_no_handler_running_on_the_loop() -> None:
+    call_command("absurd_sync_queues")
+    arm_events("slow")
+
+    hold_until_released.enqueue("slow")
+
+    async def drive() -> None:
+        async with aworker_client(get_default_backend(), "default") as client:
+            worker = asyncio.create_task(
+                run_blocking_worker(client, WorkerOptions(concurrency=2))
+            )
+            await asyncio.wait_for(STARTED["slow"].wait(), timeout=5)
+            worker.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await worker
+            leftovers = [
+                pending
+                for pending in asyncio.all_tasks()
+                if pending is not asyncio.current_task() and not pending.done()
+            ]
+            assert leftovers == []
+
+    asyncio.run(drive())
