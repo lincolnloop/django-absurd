@@ -60,22 +60,18 @@ and rebuilding the admin views — then polls for work.
 
 ## Logging
 
-Two loggers, two questions:
+- **`django.tasks`** — Django's own task lifecycle; `AbsurdBackend` emits its signals.
+  Portable across backends.
+- **`django_absurd`** — what Absurd did: attempts, durations, [worker](#workers) and
+  [beat](cron-jobs.md#run-the-beat) lifecycle, steps, replays, sleeps, event waits. One
+  child per module, so `django_absurd.scheduler` is the beat and `django_absurd.context`
+  the durable primitives — level either down on its own.
 
-- **`django.tasks`** — Django's own view of a task's life, because `AbsurdBackend` emits
-  Django's task signals. Portable across task backends.
-- **`django_absurd`** — the Absurd-specific detail Django's view has no field for:
-  attempt counts, durations, [worker](#workers) and [beat](cron-jobs.md#run-the-beat)
-  lifecycle. One child logger per module, so `django_absurd` routes everything and
-  `django_absurd.scheduler` targets just the beat.
-
-`absurd_worker` and `absurd_beat` attach a plain `StreamHandler` at `INFO` to
-`django_absurd` on startup, so a fresh project is not silent. Name `django_absurd` or a
-child in your
+`absurd_worker` and `absurd_beat` attach a `StreamHandler` at `INFO` so a fresh project
+is not silent. Name `django_absurd` or a child in
 [`LOGGING`](https://docs.djangoproject.com/en/6.0/topics/logging/#configuring-logging)
-and that stops — your configuration wins. Configure only `root` and they add no handler
-either, since yours already catches these records; they still raise the level to `INFO`,
-so a root handler left at `WARNING` does not swallow them:
+and they stop; name only `root` and they add no handler but still raise the level, so a
+`WARNING` root does not swallow them:
 
 ```python
 LOGGING = {

@@ -10,6 +10,7 @@ from tests import tasks
 from tests.models import Payload
 
 DURABLE_STEP_CALLS: dict[str, int] = {"n": 0}
+CHARGE_ATTEMPTS: dict[str, int] = {"n": 0}
 
 
 @task
@@ -94,3 +95,28 @@ async def aawait_event_once(name: str) -> t.Any:
 @task
 async def aemit_event_once(name: str, payload: t.Any) -> None:
     await aget_absurd_context().emit_event(name, payload)
+
+
+@task
+async def aawait_the_probe_event() -> t.Any:
+    return await aget_absurd_context().await_event("probe.go", timeout=3600)
+
+
+@task
+async def aemit_the_probe_event() -> None:
+    await aget_absurd_context().emit_event("probe.go", {"go": True})
+
+
+@task
+async def acharge_then_fail_once() -> str:
+    context = aget_absurd_context()
+
+    async def charge() -> str:
+        return "charged"
+
+    result = await context.step("charge", charge)
+    CHARGE_ATTEMPTS["n"] += 1
+    if CHARGE_ATTEMPTS["n"] == 1:
+        msg = "acharge_then_fail_once"
+        raise ValueError(msg)
+    return result

@@ -114,6 +114,13 @@ enqueueing a second task. While the wrapper waits, the caller's id reports "read
 truthful answer to "has my task started", and the framework has no status meaning "the
 deferral is retrying."
 
+The wrapper's own durable calls stay unlogged. Its sleep and its inner enqueue run
+against the raw SDK context, not the wrapper this project hands user code, so no
+per-primitive lines appear for them — deliberate, because the run-level suspension line
+already says a deferral is waiting, and the primitive log exists to narrate what _user_
+code asked for. Threading it through the logging wrapper is a one-line change if that
+ever stops being true.
+
 ### Lifecycle signals: sent for the framework's logging, not offered as a hook
 
 The framework logs a task's lifecycle by receiving its own three task signals, so a
