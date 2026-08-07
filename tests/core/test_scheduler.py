@@ -711,7 +711,7 @@ def test_worker_with_beat_runs_scheduled_task(
     with time_machine.travel(
         dt.datetime(2026, 1, 1, 0, 0, 59, tzinfo=dt.UTC), tick=True
     ):
-        utils.run_worker_command_until(
+        utils.start_worker_until_done(
             lambda: Group.objects.filter(name="beat-ran").exists(),
             beat=True,
             poll_interval=0.05,
@@ -801,7 +801,7 @@ def test_plain_worker_runs_blocking_worker(
     backend = get_absurd_backends()["default"]
 
     with caplog.at_level(logging.INFO, logger="django_absurd"):
-        utils.run_worker_command_until(
+        utils.start_worker_until_done(
             lambda: Group.objects.filter(name="plain-worker").exists(),
             poll_interval=0.05,
             queue="default",

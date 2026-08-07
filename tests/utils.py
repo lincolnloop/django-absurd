@@ -72,13 +72,16 @@ def run_absurd_worker(queue: str = "default") -> None:
     worker.drain_queue(queue)
 
 
-def run_worker_command_until(
-    is_done: t.Callable[[], bool] | None = None,
+def start_worker_until_done(
+    is_done: t.Callable[[], bool],
     *,
     timeout: float = 5.0,
     **options: t.Any,
 ) -> None:
     """Run ``absurd_worker`` to completion, stopping it once ``is_done()`` holds.
+
+    ``is_done`` gates on real work — a row the task wrote, a beat firing — so this is
+    for tests asserting an OUTCOME of running the worker, not just that it started.
 
     The command runs in the calling thread so ``capsys``/``caplog`` see it; a watcher
     thread fires the SIGTERM the worker's own signal handler turns into a graceful
@@ -99,9 +102,7 @@ def run_worker_command_until(
         deadline = time.monotonic() + timeout
         try:
             while time.monotonic() < deadline:  # pragma: no branch
-                if stop_handler_is_installed(previous_handler) and (
-                    is_done is None or is_done()
-                ):
+                if stop_handler_is_installed(previous_handler) and is_done():
                     break
                 if returned.wait(0.05):
                     break
@@ -119,6 +120,20 @@ def run_worker_command_until(
     finally:
         returned.set()
         watcher.join(timeout=5)
+
+
+def start_worker(*, timeout: float = 5.0, **options: t.Any) -> None:
+    """Run ``absurd_worker`` just long enough to see its signal handler installed, then
+    stop it — for tests asserting something that happens before the worker loop ever
+    claims a run: the provisioning report, the startup banner, the logging handler the
+    command attaches. Nothing about the worker's actual work is waited on; a test that
+    needs a row or a beat to have landed wants ``start_worker_until_done`` instead.
+
+    Delegates to ``start_worker_until_done`` with an always-true predicate so there is
+    one implementation of the watcher thread, the handler-installed guard, and the
+    thread-local ``connections.close_all()``.
+    """
+    start_worker_until_done(lambda: True, timeout=timeout, **options)
 
 
 def stop_handler_is_installed(previous_handler: object) -> bool:

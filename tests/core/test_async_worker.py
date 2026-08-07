@@ -157,7 +157,7 @@ def test_worker_command_concurrency_is_not_serial() -> None:
     backend = get_absurd_backends()["default"]
     start = time.monotonic()
 
-    utils.run_worker_command_until(
+    utils.start_worker_until_done(
         lambda: all(backend.get_result(r.id).is_finished for r in results),
         queue="default",
         concurrency=4,

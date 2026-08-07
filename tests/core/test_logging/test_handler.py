@@ -36,7 +36,7 @@ def test_enqueuing_attaches_nothing(dj_absurd: AbsurdTestRuntime) -> None:
 
 @pytest.mark.django_db(transaction=True)
 def test_running_the_worker_gives_the_package_a_console_handler() -> None:
-    utils.run_worker_command_until(queue="default")
+    utils.start_worker(queue="default")
     logger = logging.getLogger("django_absurd")
     assert len(logger.handlers) == 1
     assert isinstance(logger.handlers[0], logging.StreamHandler)
@@ -48,7 +48,7 @@ def test_the_worker_defers_to_a_project_that_configured_this_package(
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     settings.LOGGING = CONSOLE_LOGGING
-    utils.run_worker_command_until(queue="default")
+    utils.start_worker(queue="default")
     assert logging.getLogger("django_absurd").handlers == []
 
 
