@@ -6,6 +6,7 @@ from django.core.management import call_command
 from django.tasks import task
 
 from django_absurd.backends import AbsurdBackend, get_absurd_backends
+from django_absurd.test import AbsurdTestRuntime
 from django_absurd.worker import WorkerOptions, aworker_client, run_blocking_worker
 
 pytestmark = [
@@ -142,6 +143,43 @@ def test_stopping_lets_in_flight_work_finish_and_claims_nothing_new() -> None:
 
     assert ORDER == ["slow"]
     assert not STARTED["unclaimed"].is_set()
+
+
+def test_stopping_at_concurrency_above_one_still_finishes_a_held_slot(
+    dj_absurd: AbsurdTestRuntime,
+) -> None:
+    # The concurrency=1 stop test above takes the other code path entirely, so only
+    # this one pins the windowed loop's contract: a stop stops CLAIMING, it never
+    # cancels the window already claimed. The release is deliberately late — the stop
+    # has to land while the task is still parked on the gate, because a worker that
+    # cancels on stop leaves that run un-completed while one that waits does not.
+    call_command("absurd_sync_queues")
+    arm_events("slow")
+
+    result = hold_until_released.enqueue("slow")
+
+    async def drive() -> None:
+        stop = asyncio.Event()
+        async with aworker_client(get_default_backend(), "default") as client:
+
+            async def release_once_the_worker_has_stopped_claiming() -> None:
+                await asyncio.wait_for(STARTED["slow"].wait(), timeout=5)
+                stop.set()
+                await asyncio.sleep(0.1)
+                HOLD["gate"].set()
+
+            await asyncio.gather(
+                run_blocking_worker(
+                    client,
+                    WorkerOptions(concurrency=2, poll_interval=0.01),
+                    stop=stop,
+                ),
+                release_once_the_worker_has_stopped_claiming(),
+            )
+
+    asyncio.run(drive())
+
+    assert dj_absurd.get_result(result.id).state == "completed"
 
 
 def test_cancelling_the_worker_leaves_no_handler_running_on_the_loop() -> None:
