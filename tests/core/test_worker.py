@@ -647,14 +647,14 @@ def test_worker_command_logs_the_stop_request_again_on_a_second_signal(
 
     def deliver_two_signals_then_release() -> None:
         assert TASK_STARTED["repeat"].wait(5)
-        if utils.stop_handler_is_installed(previous_handler):
+        if utils.stop_handler_is_installed(previous_handler):  # pragma: no branch
             os.kill(os.getpid(), signal.SIGTERM)
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:  # pragma: no branch
             if count_stop_requested() >= 1:
                 break
             time.sleep(0.005)
-        if utils.stop_handler_is_installed(previous_handler):
+        if utils.stop_handler_is_installed(previous_handler):  # pragma: no branch
             os.kill(os.getpid(), signal.SIGTERM)
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:  # pragma: no branch
