@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 
 import pytest
 from django.core.management import call_command
@@ -66,22 +67,15 @@ def test_worker_starts_a_later_task_while_a_slow_one_still_runs() -> None:
         async with aworker_client(get_default_backend(), "default") as client:
 
             async def release_once_the_third_task_starts() -> None:
-                try:
+                with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(STARTED["fast-2"].wait(), timeout=5)
-                finally:
-                    HOLD["gate"].set()
-                    stop.set()
+                HOLD["gate"].set()
+                stop.set()
 
-            outcomes = await asyncio.gather(
+            await asyncio.gather(
                 run_blocking_worker(client, WorkerOptions(concurrency=2), stop=stop),
                 release_once_the_third_task_starts(),
-                return_exceptions=True,
             )
-            for outcome in outcomes:
-                if isinstance(outcome, BaseException) and not isinstance(
-                    outcome, TimeoutError
-                ):
-                    raise outcome
 
     asyncio.run(drive())
 
@@ -104,26 +98,19 @@ def test_one_slot_runs_a_claimed_batch_in_order() -> None:
         async with aworker_client(get_default_backend(), "default") as client:
 
             async def stop_once_all_three_ran() -> None:
-                try:
+                with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(
                         asyncio.gather(*(STARTED[n].wait() for n in STARTED)),
                         timeout=5,
                     )
-                finally:
-                    stop.set()
+                stop.set()
 
-            outcomes = await asyncio.gather(
+            await asyncio.gather(
                 run_blocking_worker(
                     client, WorkerOptions(batch_size=3, concurrency=1), stop=stop
                 ),
                 stop_once_all_three_ran(),
-                return_exceptions=True,
             )
-            for outcome in outcomes:
-                if isinstance(outcome, BaseException) and not isinstance(
-                    outcome, TimeoutError
-                ):
-                    raise outcome
 
     asyncio.run(drive())
 
