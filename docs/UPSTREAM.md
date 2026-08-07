@@ -69,18 +69,18 @@ Two consequences:
 - There is no post-persist seam at all on the blocking-worker path, which is the SDK's
   own claim → execute → gather loop.
 
-Needed wherever a worker must know how a run actually ended. Burst draining reads the
-outcome back from the database for exactly this reason (`fetch_run_outcome`), and any
-observer of an Absurd-side ending — a cancellation, an expired claim, a `max_duration`
-sweep — has no seam to learn of it from.
+Needed wherever a worker must know how a run actually ended. `dj_absurd.drain()` reads
+the outcome back from the database for exactly this reason (`fetch_run_outcome`), and
+any observer of an Absurd-side ending — a cancellation, an expired claim, a
+`max_duration` sweep — has no seam to learn of it from.
 
 ## Public API to execute one claimed run and return its outcome
 
-`work_batch` runs its own claim loop. Burst draining needs "execute exactly these
-claims, then stop", so `execute_claimed_run` calls `client._execute_task`. And because
-no public accessor keys by `run_id` — only by `task_id`, which collapses a retry's
-several runs into one answer — the outcome comes from a second read through the
-per-queue dynamic model.
+`work_batch` runs its own claim loop. The drain needs "execute exactly these claims,
+then stop", so `execute_claimed_run` calls `client._execute_task`. And because no public
+accessor keys by `run_id` — only by `task_id`, which collapses a retry's several runs
+into one answer — the outcome comes from a second read through the per-queue dynamic
+model.
 
 Ask: a public `execute(claimed) -> outcome`. It retires both workarounds at once; a read
 accessor keyed by `run_id` would retire half.
