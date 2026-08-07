@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import inspect
 import logging
 import os
@@ -549,7 +550,7 @@ async def run_one_slot_at_a_time(
     while not stop.is_set():
         claimed = await client.claim_tasks(batch_size, options.claim_timeout, worker_id)
         if not claimed:
-            await asyncio.sleep(options.poll_interval)
+            await wait_for_stop_or_timeout(stop, options.poll_interval)
             continue
         for claimed_task in claimed:
             await client._execute_task(claimed_task, options.claim_timeout)  # noqa: SLF001 -- SDK exposes no public counted dispatch; mirrors work_batch
@@ -574,13 +575,13 @@ async def refill_slots_until_stopped(
             reap_finished_slots(executing)
             capacity = options.concurrency - len(executing)
             if capacity <= 0:
-                await wait_for_slot_progress(executing, options.poll_interval)
+                await wait_for_slot_progress(executing, stop, options.poll_interval)
                 continue
             claimed = await client.claim_tasks(
                 min(effective_batch_size, capacity), options.claim_timeout, worker_id
             )
             if not claimed:
-                await wait_for_slot_progress(executing, options.poll_interval)
+                await wait_for_slot_progress(executing, stop, options.poll_interval)
                 continue
             for claimed_task in claimed:
                 executing.add(
@@ -643,18 +644,32 @@ def reap_finished_slots(executing: set[asyncio.Task[None]]) -> None:
 
 
 async def wait_for_slot_progress(
-    executing: set[asyncio.Task[None]], poll_interval: float
+    executing: set[asyncio.Task[None]], stop: asyncio.Event, poll_interval: float
 ) -> None:
     """Wait until a slot frees, or ``poll_interval`` passes, whichever comes first.
 
-    ``asyncio.wait`` only observes; the loop head reaps what it reports.
+    ``asyncio.wait`` only observes; the loop head reaps what it reports. It needs no
+    stop of its own: waking early on one would only reach a ``finally`` that awaits
+    the very slots being waited on here. An EMPTY window has nothing to wait on, so
+    that arm is a plain idle and races the stop like every other idle does.
     """
     if not executing:
-        await asyncio.sleep(poll_interval)
+        await wait_for_stop_or_timeout(stop, poll_interval)
         return
     await asyncio.wait(
         executing, timeout=poll_interval, return_when=asyncio.FIRST_COMPLETED
     )
+
+
+async def wait_for_stop_or_timeout(stop: asyncio.Event, poll_interval: float) -> None:
+    """Idle for ``poll_interval``, returning the moment ``stop`` is set.
+
+    Sleeping blind instead would make an idle worker sit out the rest of its poll
+    interval before noticing a SIGTERM — and idle is exactly when a stop tends to
+    arrive, so that is the whole of the delay a shutdown shows.
+    """
+    with contextlib.suppress(TimeoutError):
+        await asyncio.wait_for(stop.wait(), poll_interval)
 
 
 async def run_worker_with_beat(
