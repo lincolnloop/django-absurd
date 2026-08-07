@@ -118,9 +118,8 @@ the queues.
 ### `drain(queue="default")`
 
 Runs every currently-claimable task on `queue` to completion, in-process — no
-[worker](how-it-works.md#workers) subprocess, no polling loop to manage. It's the
-fixture counterpart of `absurd_worker --burst`: it drains the backlog present at call
-time, then returns one `RunSnapshot` per run executed, in claim order.
+[worker](how-it-works.md#workers) subprocess, no polling loop to manage — one at a time,
+returning one `RunSnapshot` per run executed, in claim order.
 
 It provisions nothing, unlike the CLI, which provisions declared queues on start.
 `migrate` provisions every declared queue already, so a test database arrives ready. A

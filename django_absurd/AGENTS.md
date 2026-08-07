@@ -257,14 +257,17 @@ A single worker runs **both** sync and async tasks: `async def` tasks run on an 
 loop (true concurrency for I/O-bound work), sync `def` tasks run in a thread pool. On
 start it runs a full sync — reconciling **every** declared queue (creating missing ones,
 applying declared policy changes) and rebuilding the admin views so they reflect the
-whole catalog, not just the served queue — and reports to stdout.
+whole catalog, not just the served queue — and reports to stdout. It then polls until
+`SIGINT`/`SIGTERM`.
 
-- **Blocking** (default): long-running; polls until `SIGINT`/`SIGTERM`.
-- **Burst** (`--burst`): drain the current backlog, then exit `0` (cron / one-shot).
 - `--queue` (default `"default"`): which queue to consume.
-- `--concurrency N` (default `1`): max tasks in flight — sizes both the event-loop
-  concurrency and the sync thread pool. Other flags: `--claim-timeout`,
-  `--poll-interval`, `--batch-size`, and `--worker-id`.
+- `--concurrency N` (default `1`): number of tasks in flight at once. A slot is refilled
+  as soon as it frees, rather than waiting for the whole batch to finish — one slow task
+  no longer idles the others. Sizes both the event-loop concurrency and the sync thread
+  pool.
+- A stop signal (`SIGINT`/`SIGTERM`) stops claiming and lets in-flight tasks finish
+  before the worker exits. Other flags: `--claim-timeout`, `--poll-interval`,
+  `--batch-size`, and `--worker-id`.
 
 ## Scheduling recurring tasks
 
@@ -804,7 +807,7 @@ members:
 | `freeze_time(instant=None)`                 | context manager pinning durable time (`None` = real now at entry)                            |
 | `now`                                       | virtual now, timezone-aware, as Postgres itself reports it                                   |
 | `sync_queues()`                             | provision every declared queue (rarely needed; see below)                                    |
-| `drain(queue="default")`                    | burst-drain a queue, returning `list[RunSnapshot]`                                           |
+| `drain(queue="default")`                    | run a queue's claimable tasks to completion, returning `list[RunSnapshot]`                   |
 | `emit(name, payload=None, queue="default")` | deliver an event, resolving a task suspended in `await_event`                                |
 | `get_result(task_id, queue=...)`            | look up one task, returning `TaskSnapshot` (raises `TaskNotFoundError` on a miss; see below) |
 
@@ -848,12 +851,11 @@ catalog, so reach for this only when the test itself changed queue topology — 
 the queues.
 
 **`drain()`** runs every currently-claimable task on `queue` to completion, in-process —
-no [worker](#workers) subprocess, no polling loop to manage. It's the fixture
-counterpart of `absurd_worker --burst`: it drains the backlog present at call time, then
-returns one `RunSnapshot` per run executed, in claim order. It provisions nothing
-(unlike the CLI, which provisions declared queues on start): `migrate` provisions every
-declared queue already, so a test database arrives ready, but a queue a single test
-declares by overriding `TASKS` needs `dj_absurd.sync_queues()` first or `drain()` raises
+no [worker](#workers) subprocess, no polling loop to manage — one at a time, returning
+one `RunSnapshot` per run executed, in claim order. It provisions nothing (unlike the
+CLI, which provisions declared queues on start): `migrate` provisions every declared
+queue already, so a test database arrives ready, but a queue a single test declares by
+overriding `TASKS` needs `dj_absurd.sync_queues()` first or `drain()` raises
 `QueueNotProvisionedError` naming that command (a queue that isn't declared at all
 raises `QueueNotDeclaredError`) — see [Exceptions](#exceptions) above for the full
 typed-error taxonomy.
