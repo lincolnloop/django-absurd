@@ -114,7 +114,7 @@ def _sweep_stranded_fake_now(request: pytest.FixtureRequest) -> None:
 
 @pytest.fixture
 def dj_absurd() -> t.Iterator[AbsurdTestRuntime]:
-    """Read/drain/clock facade for durable tests: snapshot task/run state, burst-drain a
+    """Read/drain/clock facade for durable tests: snapshot task/run state, drain a
     queue, and freeze Absurd's durable clock with ``freeze_time``.
 
     Requires ``@pytest.mark.django_db(transaction=True)`` — its reads run on a

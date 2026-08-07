@@ -661,16 +661,6 @@ def test_absurd_beat_no_backend_errors(
     )
 
 
-def test_worker_beat_rejects_burst(
-    settings: pytest_django.fixtures.SettingsWrapper,
-) -> None:
-    settings.TASKS = make_tasks_setting(
-        {"g": {"task": "tests.tasks.make_group", "cron": "*/1 * * * *", "args": ["x"]}}
-    )
-    with pytest.raises(CommandError, match="--beat"):
-        call_command("absurd_worker", queue="default", burst=True, beat=True)
-
-
 def test_beat_stop_interrupts_long_sleep(
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
@@ -803,7 +793,7 @@ def test_plain_worker_runs_blocking_worker(
     caplog: pytest.LogCaptureFixture,
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
-    # Covers worker.py line 114: else branch of arun_worker (no burst, no beat).
+    # Covers arun_worker's else branch: a worker started without --beat.
     settings.TASKS = make_tasks_setting(
         {
             "g": {

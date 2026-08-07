@@ -65,7 +65,7 @@ class WorkerOptions:
 
 @dataclass(frozen=True)
 class DrainedRun:
-    """One run executed during a burst drain, in claim order.
+    """One run executed during a drain, in claim order.
 
     ``state``/``result``/``failure`` cost one read per run, taken immediately after
     THAT run executes — never batched at drain end, so a run that re-arms itself (an
@@ -89,9 +89,10 @@ class DrainedRun:
 class LazyTaskRegistry(dict[str, dict[str, t.Any]]):
     """dict subclass that resolves tasks by import_string on first claim.
 
-    The SDK reads _registry.get(task_name) in both _execute_task (burst) and
-    start_worker (blocking). Overriding .get intercepts all dispatch reads and
-    resolves any importable Task on demand — no tasks.py scan required. Value type
+    The SDK reads _registry.get(task_name) in _execute_task, which every dispatch
+    goes through — the drain and the blocking loop alike. Overriding .get intercepts
+    all dispatch reads and resolves any importable Task on demand — no tasks.py scan
+    required. Value type
     matches the SDK's own ``_registry: Dict[str, Dict[str, Any]]`` declaration — each
     entry mixes str/None/Callable fields, so the inner ``Any`` is a genuine boundary.
     """
@@ -139,7 +140,7 @@ class LazyTaskRegistry(dict[str, dict[str, t.Any]]):
 
 
 def drain_queue(queue: str = "default") -> list[DrainedRun]:
-    """Burst-drain ``queue`` in-process, one ``DrainedRun`` per run, in claim order.
+    """Drain ``queue`` in-process, one ``DrainedRun`` per run, in claim order.
 
     The entry point behind ``AbsurdTestRuntime.drain``: resolves the backend itself
     and takes no ``WorkerOptions`` — worker knobs live on the ``absurd_worker`` CLI.
@@ -153,9 +154,10 @@ def drain_queue(queue: str = "default") -> list[DrainedRun]:
     backend = resolve_backend()
     if queue not in backend.queues:
         raise QueueNotDeclaredError(queue, backend.alias, backend.queues)
+    validate_backend(backend.database)
 
     try:
-        return run_worker(backend, queue, burst=True)
+        return asyncio.run(arun_drain(backend, queue, WorkerOptions()))
     except psycopg.errors.UndefinedTable as exc:
         if not names_a_queue_table(exc, queue):
             raise
@@ -166,58 +168,78 @@ def run_worker(
     backend: AbsurdBackend,
     queue: str,
     *,
-    burst: bool = False,
     run_beat: bool = False,
     options: WorkerOptions | None = None,
-) -> list[DrainedRun]:
+) -> None:
     options = options or WorkerOptions()
     validate_backend(backend.database)
-    return asyncio.run(
-        arun_worker(backend, queue, burst=burst, run_beat=run_beat, options=options)
-    )
+    asyncio.run(arun_worker(backend, queue, run_beat=run_beat, options=options))
 
 
 async def arun_worker(
     backend: AbsurdBackend,
     queue: str,
     *,
-    burst: bool = False,
     run_beat: bool = False,
     options: WorkerOptions,
+) -> None:
+    async with open_worker_runtime(backend, queue, options) as client:
+        if run_beat:
+            await run_worker_with_beat(client, options, backend)
+        else:
+            await run_blocking_worker(client, options)
+        logger.info(
+            "worker stopped: alias=%s queue=%s database=%s",
+            backend.alias,
+            queue,
+            backend.database,
+        )
+
+
+async def arun_drain(
+    backend: AbsurdBackend, queue: str, options: WorkerOptions
 ) -> list[DrainedRun]:
+    """Drain ``queue`` on the same runtime the blocking worker runs on.
+
+    The coroutine behind ``drain_queue``: same executor, same client, same started
+    line — it differs only in claiming until the queue is empty instead of until a
+    signal arrives, so its stopped line can report how many runs that took.
+    """
+    async with open_worker_runtime(backend, queue, options) as client:
+        drained = await adrain_queue(backend.database, client, queue, options)
+        logger.info(
+            "worker stopped: alias=%s queue=%s database=%s runs=%d",
+            backend.alias,
+            queue,
+            backend.database,
+            len(drained),
+        )
+        return drained
+
+
+@asynccontextmanager
+async def open_worker_runtime(
+    backend: AbsurdBackend, queue: str, options: WorkerOptions
+) -> t.AsyncGenerator[AsyncAbsurd, None]:
+    """Set up what every worker entry point needs, and announce it started.
+
+    A thread pool sized to ``concurrency`` installed as the loop's default executor
+    (every sync task body lands there), the SDK client on its own connection, and the
+    ``worker started`` line. Each caller logs its own ``worker stopped`` line, because
+    only a drain has a run count to report.
+    """
     with ThreadPoolExecutor(max_workers=options.concurrency) as executor:
         loop = asyncio.get_running_loop()
         loop.set_default_executor(executor)
         async with aworker_client(backend, queue) as client:
             logger.info(
-                "worker started: alias=%s queue=%s database=%s burst=%s concurrency=%d",
+                "worker started: alias=%s queue=%s database=%s concurrency=%d",
                 backend.alias,
                 queue,
                 backend.database,
-                burst,
                 options.concurrency,
             )
-            if burst:
-                drained = await adrain_queue(backend.database, client, queue, options)
-                logger.info(
-                    "worker stopped: alias=%s queue=%s database=%s runs=%d",
-                    backend.alias,
-                    queue,
-                    backend.database,
-                    len(drained),
-                )
-                return drained
-            if run_beat:
-                await run_worker_with_beat(client, options, backend)
-            else:
-                await run_blocking_worker(client, options)
-            logger.info(
-                "worker stopped: alias=%s queue=%s database=%s",
-                backend.alias,
-                queue,
-                backend.database,
-            )
-            return []
+            yield client
 
 
 @asynccontextmanager
@@ -327,7 +349,7 @@ async def fetch_run_outcome(
     No public SDK accessor keys a read by ``run_id`` (only ``task_id``, which
     collapses a retry's several runs), so read the run row through the same
     per-queue dynamic model the other reads use — no SQL of its own. ORM means
-    Django's connection via a ``sync_to_async`` hop; only burst drains pay it, and
+    Django's connection via a ``sync_to_async`` hop; only drains pay it, and
     next to executing the task it is noise. The row is committed by the time
     ``_execute_task`` returns (the SDK writes on autocommit). ``aget``, not
     ``afirst``: a missing just-executed run is a broken invariant that should raise.

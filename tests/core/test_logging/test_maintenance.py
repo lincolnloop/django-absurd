@@ -55,7 +55,7 @@ def test_the_worker_logs_when_it_stops(
     ]
     started = (
         f"worker started: alias={backend.alias} queue=default"
-        f" database={backend.database} burst=True concurrency=1"
+        f" database={backend.database} concurrency=1"
     )
     stopped = (
         f"worker stopped: alias={backend.alias} queue=default"

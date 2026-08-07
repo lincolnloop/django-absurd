@@ -28,7 +28,6 @@ from django_absurd.worker import (
 )
 from tests import atasks, tasks, utils
 from tests.jobs import record_from_jobs
-from tests.utils import run_absurd_worker
 
 pytestmark = [
     pytest.mark.django_db(transaction=True),
@@ -61,7 +60,7 @@ def test_worker_client_rejects_non_psycopg3(settings: SettingsWrapper) -> None:
         }
     }
     with pytest.raises(CommandError, match="psycopg"):
-        call_command("absurd_worker", queue="default", burst=True)
+        call_command("absurd_worker", queue="default")
 
 
 def test_worker_client_opens_without_provisioning_check() -> None:
@@ -93,7 +92,7 @@ def test_worker_client_absent_schema_errors() -> None:
 def test_end_to_end_executes_and_records_result(dj_absurd: AbsurdTestRuntime) -> None:
     dj_absurd.sync_queues()
     result = tasks.make_group.enqueue("alpha")
-    run_absurd_worker()
+    utils.run_absurd_worker()
     assert Group.objects.filter(name="alpha").exists()
     snap = dj_absurd.get_result(result.id)
     assert snap.state == "completed"
@@ -103,7 +102,7 @@ def test_end_to_end_executes_and_records_result(dj_absurd: AbsurdTestRuntime) ->
 def test_failing_task_records_failure(dj_absurd: AbsurdTestRuntime) -> None:
     dj_absurd.sync_queues()
     result = tasks.boom.enqueue()
-    run_absurd_worker()
+    utils.run_absurd_worker()
     snap = dj_absurd.get_result(result.id)
     assert snap.state == "failed"
 
@@ -113,7 +112,7 @@ def test_takes_context_attempt_is_one_on_first_run(
 ) -> None:
     dj_absurd.sync_queues()
     result = tasks.report_attempt.enqueue()
-    run_absurd_worker()
+    utils.run_absurd_worker()
     snap = dj_absurd.get_result(result.id)
     assert snap.result == 1
 
@@ -123,7 +122,7 @@ def test_takes_context_task_result_carries_real_args(
 ) -> None:
     dj_absurd.sync_queues()
     result = tasks.report_args.enqueue("x", "y")
-    run_absurd_worker()
+    utils.run_absurd_worker()
     snap = dj_absurd.get_result(result.id)
     assert snap.result == ["x", "y"]
 
@@ -131,7 +130,7 @@ def test_takes_context_task_result_carries_real_args(
 def test_using_queue_name_routes_to_worker_queue() -> None:
     call_command("absurd_sync_queues")
     tasks.routed.using(queue_name="default").enqueue()
-    run_absurd_worker()
+    utils.run_absurd_worker()
     assert Group.objects.filter(name="routed").exists()
 
 
@@ -139,7 +138,7 @@ def test_handler_logs_task_outcome(caplog: pytest.LogCaptureFixture) -> None:
     call_command("absurd_sync_queues")
     tasks.make_group.enqueue("logged")
     with caplog.at_level(logging.INFO, logger="django_absurd"):
-        run_absurd_worker()
+        utils.run_absurd_worker()
     assert "tests.tasks.make_group" in caplog.text
     assert "completed" in caplog.text
 
@@ -149,7 +148,7 @@ def test_unregistered_name_defers_not_crashes(dj_absurd: AbsurdTestRuntime) -> N
     spawn = get_absurd_client("default").spawn(
         "not.a.real.task", {"args": [], "kwargs": {}}, queue="default"
     )
-    run_absurd_worker()
+    utils.run_absurd_worker()
     snap = dj_absurd.get_result(spawn["task_id"])
     assert snap.state != "failed"
 
@@ -159,7 +158,7 @@ def test_task_outside_tasks_py_runs(dj_absurd: AbsurdTestRuntime) -> None:
     # never find it (it would defer forever). Lazy resolution runs it by module_path.
     dj_absurd.sync_queues()
     result = record_from_jobs.enqueue("from-jobs")
-    run_absurd_worker()
+    utils.run_absurd_worker()
     assert Group.objects.filter(name="from-jobs").exists()
     snap = dj_absurd.get_result(result.id)
     assert snap.result == "from-jobs"
@@ -196,7 +195,7 @@ def test_unknown_queue_errors_listing_valid(settings: SettingsWrapper) -> None:
 
 def test_worker_rejects_alias_flag(settings: SettingsWrapper) -> None:
     with pytest.raises(CommandError):
-        call_command("absurd_worker", "--alias", "default", burst=True)
+        call_command("absurd_worker", "--alias", "default")
 
 
 def test_worker_uses_single_backend_at_nondefault_alias(
@@ -223,7 +222,7 @@ def test_worker_no_backend_errors(settings: SettingsWrapper) -> None:
             r"django_absurd\.backends\.AbsurdBackend entry to TASKS\."
         ),
     ):
-        call_command("absurd_worker", burst=True)
+        call_command("absurd_worker")
 
 
 def test_worker_multiple_backends_errors(settings: SettingsWrapper) -> None:
@@ -240,7 +239,7 @@ def test_worker_multiple_backends_errors(settings: SettingsWrapper) -> None:
         },
     }
     with pytest.raises(CommandError) as exc:
-        call_command("absurd_worker", burst=True)
+        call_command("absurd_worker")
     assert str(exc.value) == (
         "django-absurd supports one Absurd backend per project; "
         "configure exactly one AbsurdBackend in TASKS."
@@ -252,7 +251,6 @@ def test_command_parses_all_flags_with_defaults() -> None:
     parser = cmd.create_parser("manage.py", "absurd_worker")
     opts = vars(parser.parse_args([]))
     assert opts["queue"] == "default"  # --queue defaults to "default"
-    assert opts["burst"] is False
     assert opts["concurrency"] == 1
     assert opts["claim_timeout"] == 120
     assert opts["poll_interval"] == 0.25
@@ -400,23 +398,12 @@ def test_worker_command_warns_on_storage_mode_drift(
         "Queue 'default': storage_mode cannot be changed "
         "(existing: 'unpartitioned', declared: 'partitioned'); skipping.\n"
         "worker started: alias=default queue=default database=default"
-        " burst=False concurrency=1\n"
+        " concurrency=1\n"
         "worker stopped: alias=default queue=default database=default\n"
     )
 
 
 def test_worker_command_schema_absent_errors_migrate() -> None:
-    with connection.cursor() as cur:
-        cur.execute("DROP SCHEMA IF EXISTS absurd CASCADE")
-    try:
-        with pytest.raises(CommandError, match="migrate"):
-            call_command("absurd_worker", queue="default", burst=True)
-    finally:
-        call_command("migrate", "django_absurd", "zero", verbosity=0)
-        call_command("migrate", verbosity=0)  # restore absurd schema
-
-
-def test_worker_non_burst_command_schema_absent_errors_migrate() -> None:
     # The provision_backend/ImproperlyConfigured translation errors before ever
     # reaching the blocking worker loop.
     with connection.cursor() as cur:
@@ -434,14 +421,14 @@ def test_start_worker_drains_concurrently() -> None:
     for i in range(5):
         tasks.make_group.enqueue(f"g{i}")
 
-    run_absurd_worker()
+    utils.run_absurd_worker()
     assert Group.objects.filter(name__startswith="g").count() == 5
 
 
 def test_async_task_runs_end_to_end(dj_absurd: AbsurdTestRuntime) -> None:
     dj_absurd.sync_queues()
     r = atasks.aecho.enqueue("hi-async")
-    run_absurd_worker()
+    utils.run_absurd_worker()
     snap = dj_absurd.get_result(r.id)
     assert snap.state == "completed"
     assert snap.result == "hi-async"
@@ -485,7 +472,7 @@ def test_undeclared_queue_is_rejected(
     # raises CommandError, drain_queue raises the package's own QueueNotDeclaredError.
     def invoke() -> None:
         if entrypoint == "command":
-            call_command("absurd_worker", queue="nope", burst=True)
+            call_command("absurd_worker", queue="nope")
         else:
             drain_queue("nope")
 
@@ -569,6 +556,6 @@ def test_non_task_name_defers_not_crashes(dj_absurd: AbsurdTestRuntime) -> None:
     spawn = get_absurd_client("default").spawn(
         "tests.atasks.asleep", {"args": [], "kwargs": {}}, queue="default"
     )
-    run_absurd_worker()
+    utils.run_absurd_worker()
     snap = dj_absurd.get_result(spawn["task_id"])
     assert snap.state != "failed"
