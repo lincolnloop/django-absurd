@@ -171,10 +171,19 @@ def run_worker(
     *,
     run_beat: bool = False,
     options: WorkerOptions | None = None,
+    on_stop_requested: t.Callable[[], None] | None = None,
 ) -> None:
     options = options or WorkerOptions()
     validate_backend(backend.database)
-    asyncio.run(arun_worker(backend, queue, run_beat=run_beat, options=options))
+    asyncio.run(
+        arun_worker(
+            backend,
+            queue,
+            run_beat=run_beat,
+            options=options,
+            on_stop_requested=on_stop_requested,
+        )
+    )
 
 
 async def arun_worker(
@@ -183,12 +192,17 @@ async def arun_worker(
     *,
     run_beat: bool = False,
     options: WorkerOptions,
+    on_stop_requested: t.Callable[[], None] | None = None,
 ) -> None:
     async with open_worker_runtime(backend, queue, options) as client:
         if run_beat:
-            await run_worker_with_beat(client, options, backend)
+            await run_worker_with_beat(
+                client, options, backend, on_stop_requested=on_stop_requested
+            )
         else:
-            await run_blocking_worker(client, options)
+            await run_blocking_worker(
+                client, options, on_stop_requested=on_stop_requested
+            )
         logger.info(
             "worker stopped: alias=%s queue=%s database=%s",
             backend.alias,
@@ -507,13 +521,20 @@ def mark_task_result_failed(
 
 
 async def run_blocking_worker(
-    client: AsyncAbsurd, options: WorkerOptions, *, stop: asyncio.Event | None = None
+    client: AsyncAbsurd,
+    options: WorkerOptions,
+    *,
+    stop: asyncio.Event | None = None,
+    on_stop_requested: t.Callable[[], None] | None = None,
 ) -> None:
     stop_signal = stop if stop is not None else asyncio.Event()
     loop = asyncio.get_running_loop()
 
     def handle_stop() -> None:
         stop_signal.set()
+        logger.info("worker stop requested: finishing in-flight tasks")
+        if on_stop_requested is not None:
+            on_stop_requested()
 
     loop.add_signal_handler(signal.SIGINT, handle_stop)
     loop.add_signal_handler(signal.SIGTERM, handle_stop)
@@ -676,6 +697,8 @@ async def run_worker_with_beat(
     client: AsyncAbsurd,
     options: WorkerOptions,
     backend: AbsurdBackend,
+    *,
+    on_stop_requested: t.Callable[[], None] | None = None,
 ) -> None:
     stop = asyncio.Event()
     beat_stop = threading.Event()
@@ -684,7 +707,9 @@ async def run_worker_with_beat(
     )
     beat_thread.start()
     try:
-        await run_blocking_worker(client, options, stop=stop)
+        await run_blocking_worker(
+            client, options, stop=stop, on_stop_requested=on_stop_requested
+        )
     finally:
         beat_stop.set()
         await asyncio.get_running_loop().run_in_executor(None, beat_thread.join, 5)

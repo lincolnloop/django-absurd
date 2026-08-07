@@ -27,7 +27,9 @@ def test_the_worker_banner_carries_the_elephant(dj_absurd: AbsurdTestRuntime) ->
     utils.run_worker_command_until(queue="default", stdout=out)
 
     assert out.getvalue() == (
-        "🐘 Started worker on queue 'default'.\n🐘 Stopped worker on queue 'default'.\n"
+        "🐘 Started worker on queue 'default'.\n"
+        "🐘 Stop requested on queue 'default'; finishing in-flight tasks.\n"
+        "🐘 Stopped worker on queue 'default'.\n"
     )
 
 
@@ -41,7 +43,9 @@ def test_worker_banner_keeps_the_elephant_on_a_utf8_stream(
     out.flush()
 
     assert buffer.getvalue().decode("utf-8") == (
-        "🐘 Started worker on queue 'default'.\n🐘 Stopped worker on queue 'default'.\n"
+        "🐘 Started worker on queue 'default'.\n"
+        "🐘 Stop requested on queue 'default'; finishing in-flight tasks.\n"
+        "🐘 Stopped worker on queue 'default'.\n"
     )
 
 
@@ -55,7 +59,9 @@ def test_worker_banner_drops_the_elephant_on_a_stream_that_cannot_encode_it(
     out.flush()
 
     assert buffer.getvalue().decode("cp1252") == (
-        "Started worker on queue 'default'.\nStopped worker on queue 'default'.\n"
+        "Started worker on queue 'default'.\n"
+        "Stop requested on queue 'default'; finishing in-flight tasks.\n"
+        "Stopped worker on queue 'default'.\n"
     )
 
 

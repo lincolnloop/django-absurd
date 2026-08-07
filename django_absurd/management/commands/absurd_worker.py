@@ -99,5 +99,18 @@ class Command(AbsurdReportCommand):
 
         elephant = console.build_glyph_prefix(self.stdout, "🐘")
         self.stdout.write(f"{elephant}Started worker on queue '{queue}'.")
-        run_worker(backend, queue, run_beat=options["beat"], options=worker_options)
+
+        def announce_stop_requested() -> None:
+            self.stdout.write(
+                f"{elephant}Stop requested on queue '{queue}'; "
+                "finishing in-flight tasks."
+            )
+
+        run_worker(
+            backend,
+            queue,
+            run_beat=options["beat"],
+            options=worker_options,
+            on_stop_requested=announce_stop_requested,
+        )
         self.stdout.write(f"{elephant}Stopped worker on queue '{queue}'.")
