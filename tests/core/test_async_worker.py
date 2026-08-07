@@ -144,3 +144,27 @@ def test_async_concurrency_is_not_serial() -> None:
     asyncio.run(drive())
     elapsed = time.monotonic() - start
     assert elapsed < 1.5  # 4 * 0.5s serial == 2.0s; concurrent ~0.5s (well under)
+    # is_finished alone would also hold for four instant FAILUREs, which settle fast
+    # enough to pass the bound above without anything having slept.
+    backend = get_absurd_backends()["default"]
+    assert [backend.get_result(r.id).status for r in results] == [
+        TaskResultStatus.SUCCESSFUL
+    ] * len(results)
+
+
+def test_worker_command_concurrency_is_not_serial() -> None:
+    results = [atasks.asleeper.enqueue(0.5) for _ in range(4)]
+    backend = get_absurd_backends()["default"]
+    start = time.monotonic()
+
+    utils.run_worker_command_until(
+        lambda: all(backend.get_result(r.id).is_finished for r in results),
+        queue="default",
+        concurrency=4,
+    )
+
+    elapsed = time.monotonic() - start
+    assert elapsed < 1.5  # 4 * 0.5s serial == 2.0s; concurrent ~0.5s (well under)
+    assert [backend.get_result(r.id).status for r in results] == [
+        TaskResultStatus.SUCCESSFUL
+    ] * len(results)
