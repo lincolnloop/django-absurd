@@ -624,7 +624,9 @@ def test_worker_command_reports_the_stop_request_on_both_channels(
 
 
 def test_worker_command_logs_the_stop_request_again_on_a_second_signal(
-    caplog: pytest.LogCaptureFixture, dj_absurd: AbsurdTestRuntime
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+    dj_absurd: AbsurdTestRuntime,
 ) -> None:
     # A held task keeps the worker mid-shutdown (looping never re-checked, handler
     # still installed) long enough to deliver a SECOND signal deterministically —
@@ -645,13 +647,15 @@ def test_worker_command_logs_the_stop_request_again_on_a_second_signal(
 
     def deliver_two_signals_then_release() -> None:
         assert TASK_STARTED["repeat"].wait(5)
-        os.kill(os.getpid(), signal.SIGTERM)
+        if utils.stop_handler_is_installed(previous_handler):
+            os.kill(os.getpid(), signal.SIGTERM)
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:  # pragma: no branch
             if count_stop_requested() >= 1:
                 break
             time.sleep(0.005)
-        os.kill(os.getpid(), signal.SIGTERM)
+        if utils.stop_handler_is_installed(previous_handler):
+            os.kill(os.getpid(), signal.SIGTERM)
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:  # pragma: no branch
             if count_stop_requested() >= 2:
@@ -669,6 +673,12 @@ def test_worker_command_logs_the_stop_request_again_on_a_second_signal(
             signal.signal(signal.SIGTERM, previous_handler)
 
     assert count_stop_requested() == 2
+    assert capsys.readouterr().out == (
+        "🐘 Started worker on queue 'default'.\n"
+        "🐘 Stop requested on queue 'default'; finishing in-flight tasks.\n"
+        "🐘 Stop requested on queue 'default'; finishing in-flight tasks.\n"
+        "🐘 Stopped worker on queue 'default'.\n"
+    )
 
 
 def test_run_worker_without_on_stop_requested_writes_nothing_to_stdout(
@@ -684,10 +694,10 @@ def test_run_worker_without_on_stop_requested_writes_nothing_to_stdout(
     def fire_sigterm_once_installed() -> None:
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:  # pragma: no branch
-            if signal.getsignal(signal.SIGTERM) is not previous_handler:
+            if utils.stop_handler_is_installed(previous_handler):
+                os.kill(os.getpid(), signal.SIGTERM)
                 break
             time.sleep(0.005)
-        os.kill(os.getpid(), signal.SIGTERM)
 
     killer = threading.Thread(target=fire_sigterm_once_installed, daemon=True)
     try:
