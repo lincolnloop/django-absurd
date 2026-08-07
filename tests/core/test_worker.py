@@ -405,12 +405,15 @@ def test_worker_command_warns_on_storage_mode_drift(
 
 def test_worker_command_schema_absent_errors_migrate() -> None:
     # The provision_backend/ImproperlyConfigured translation errors before ever
-    # reaching the blocking worker loop.
+    # reaching the blocking worker loop. Driven through the live-worker helper: a
+    # command that fails this early installs no signal handler, so the stop signal
+    # that helper exists to send must never go out — it would land on pytest's own
+    # SIGTERM handler and take the session down with it.
     with connection.cursor() as cur:
         cur.execute("DROP SCHEMA IF EXISTS absurd CASCADE")
     try:
         with pytest.raises(CommandError, match="migrate"):
-            call_command("absurd_worker", queue="default")
+            utils.run_worker_command_until(queue="default")
     finally:
         call_command("migrate", "django_absurd", "zero", verbosity=0)
         call_command("migrate", verbosity=0)  # restore absurd schema

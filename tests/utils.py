@@ -75,29 +75,39 @@ def run_absurd_worker(queue: str = "default") -> None:
 def run_worker_command_until(
     is_done: t.Callable[[], bool] | None = None,
     *,
-    timeout: float = 15.0,
+    timeout: float = 5.0,
     **options: t.Any,
 ) -> None:
     """Run ``absurd_worker`` to completion, stopping it once ``is_done()`` holds.
 
     The command runs in the calling thread so ``capsys``/``caplog`` see it; a watcher
     thread fires the SIGTERM the worker's own signal handler turns into a graceful
-    stop. Waits for that handler to be installed first — a signal delivered before
-    then kills the test session instead.
+    stop, and only ever while that handler is the one installed — see
+    ``stop_handler_is_installed``. A command that errors out before the worker loop
+    gets no signal at all.
+
+    The stop lives in a ``finally``, so a predicate that raises still stops the worker
+    (the exception then surfaces through pytest's unhandled-thread-exception hook)
+    rather than leaving the command running with nothing left to end it. ``timeout``
+    stays under the suite's per-test cap so an unreachable predicate stops the worker
+    and fails its own test, instead of the cap firing first.
     """
     previous_handler = signal.getsignal(signal.SIGTERM)
+    returned = threading.Event()
 
     def stop_once_done() -> None:
         deadline = time.monotonic() + timeout
         try:
             while time.monotonic() < deadline:  # pragma: no branch
-                if signal.getsignal(signal.SIGTERM) is not previous_handler and (
+                if stop_handler_is_installed(previous_handler) and (
                     is_done is None or is_done()
                 ):
                     break
-                time.sleep(0.05)
-            os.kill(os.getpid(), signal.SIGTERM)
+                if returned.wait(0.05):
+                    break
         finally:
+            if not returned.is_set() and stop_handler_is_installed(previous_handler):
+                os.kill(os.getpid(), signal.SIGTERM)
             # Thread-local, so this closes only the connection the predicate's ORM
             # read opened on this thread.
             connections.close_all()
@@ -107,7 +117,21 @@ def run_worker_command_until(
     try:
         call_command("absurd_worker", **options)
     finally:
+        returned.set()
         watcher.join(timeout=5)
+
+
+def stop_handler_is_installed(previous_handler: object) -> bool:
+    """Whether the SIGTERM handler currently installed is the worker's own.
+
+    Anything else means a signal would land somewhere that is not a graceful stop:
+    whatever pytest had installed before the command reached the worker loop, or
+    Python's default — which terminates the session outright — after asyncio removes
+    the worker's handler on the way out. Both are exactly what a stray SIGTERM from a
+    watcher thread must not hit.
+    """
+    handler = signal.getsignal(signal.SIGTERM)
+    return handler is not previous_handler and callable(handler)
 
 
 def claim_one_run(queue: str = "default", *, claim_timeout: int) -> uuid.UUID:
