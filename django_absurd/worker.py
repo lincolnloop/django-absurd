@@ -92,9 +92,9 @@ class LazyTaskRegistry(dict[str, dict[str, t.Any]]):
     The SDK reads _registry.get(task_name) in _execute_task, which every dispatch
     goes through — the drain and the blocking loop alike. Overriding .get intercepts
     all dispatch reads and resolves any importable Task on demand — no tasks.py scan
-    required. Value type
-    matches the SDK's own ``_registry: Dict[str, Dict[str, Any]]`` declaration — each
-    entry mixes str/None/Callable fields, so the inner ``Any`` is a genuine boundary.
+    required. Value type matches the SDK's own
+    ``_registry: Dict[str, Dict[str, Any]]`` declaration — each entry mixes
+    str/None/Callable fields, so the inner ``Any`` is a genuine boundary.
     """
 
     def __init__(self, queue: str, backend: AbsurdBackend) -> None:

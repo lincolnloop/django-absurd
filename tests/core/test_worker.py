@@ -407,8 +407,9 @@ def test_worker_command_schema_absent_errors_migrate() -> None:
     # The provision_backend/ImproperlyConfigured translation errors before ever
     # reaching the blocking worker loop. Driven through the live-worker helper: a
     # command that fails this early installs no signal handler, so the stop signal
-    # that helper exists to send must never go out — it would land on pytest's own
-    # SIGTERM handler and take the session down with it.
+    # that helper exists to send must never go out — pytest installs no SIGTERM
+    # handler of its own, so a stray kill would hit Python's default (SIG_DFL) and
+    # take the session down with it.
     with connection.cursor() as cur:
         cur.execute("DROP SCHEMA IF EXISTS absurd CASCADE")
     try:

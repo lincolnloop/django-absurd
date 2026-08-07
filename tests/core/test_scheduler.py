@@ -26,7 +26,7 @@ from django_absurd.scheduler import (
     spawn_scheduled,
 )
 from django_absurd.test import AbsurdTestRuntime, FrozenTime
-from tests import tasks
+from tests import tasks, utils
 from tests.models import Payload
 from tests.utils import make_tasks_settings
 
@@ -706,24 +706,17 @@ def test_worker_with_beat_runs_scheduled_task(
     )
     call_command("absurd_sync_queues")
 
-    def watch() -> None:
-        deadline = time.monotonic() + 15
-        while time.monotonic() < deadline:  # pragma: no branch
-            if Group.objects.filter(name="beat-ran").exists():
-                break
-            time.sleep(0.05)
-        # stop worker + beat (main-thread handler)
-        os.kill(os.getpid(), signal.SIGTERM)
-
-    watcher = threading.Thread(target=watch, daemon=True)
-    watcher.start()
     # tick=True near a boundary: next "*/1" slot is ~1s away in real time, so beat fires
     # almost immediately; the live worker (fast poll) drains it.
     with time_machine.travel(
         dt.datetime(2026, 1, 1, 0, 0, 59, tzinfo=dt.UTC), tick=True
     ):
-        call_command("absurd_worker", queue="default", beat=True, poll_interval=0.05)
-    watcher.join(timeout=5)
+        utils.run_worker_command_until(
+            lambda: Group.objects.filter(name="beat-ran").exists(),
+            beat=True,
+            poll_interval=0.05,
+            queue="default",
+        )
 
     assert Group.objects.filter(name="beat-ran").exists()
 
@@ -807,19 +800,12 @@ def test_plain_worker_runs_blocking_worker(
     tasks.make_group.enqueue("plain-worker")
     backend = get_absurd_backends()["default"]
 
-    def watch() -> None:
-        deadline = time.monotonic() + 15
-        while time.monotonic() < deadline:  # pragma: no branch
-            if Group.objects.filter(name="plain-worker").exists():
-                break
-            time.sleep(0.05)
-        os.kill(os.getpid(), signal.SIGTERM)
-
-    watcher = threading.Thread(target=watch, daemon=True)
-    watcher.start()
     with caplog.at_level(logging.INFO, logger="django_absurd"):
-        call_command("absurd_worker", queue="default", poll_interval=0.05)
-    watcher.join(timeout=5)
+        utils.run_worker_command_until(
+            lambda: Group.objects.filter(name="plain-worker").exists(),
+            poll_interval=0.05,
+            queue="default",
+        )
 
     assert Group.objects.filter(name="plain-worker").exists()
     stopped = [

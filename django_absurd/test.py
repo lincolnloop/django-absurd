@@ -336,8 +336,8 @@ class AbsurdTestRuntime:
         run_off_event_loop(functools.partial(emit_event, name, payload, queue=queue))
 
     def drain(self, queue: str = "default") -> list[RunSnapshot]:
-        """Burst-drain ``queue`` synchronously, one ``RunSnapshot`` per run, in claim
-        order.
+        """Run every currently-claimable task on ``queue`` to completion, synchronously,
+        one at a time, returning one ``RunSnapshot`` per run in claim order.
 
         A suspended run (durable sleep, ``await_event``) is returned with
         ``state="sleeping"``. The same run can appear twice — an ``await_event``
