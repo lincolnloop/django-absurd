@@ -187,3 +187,20 @@ commit where it last lived — recoverable from git any time.
   specifies a `django_absurd:defer:` name _prefix_, where the shipped code uses a
   `:run_after` suffix) →
   [view @24c7b81](https://github.com/lincolnloop/django-absurd/blob/24c7b8192f42c07bb4d9c1f60fab6c71f72d5010/docs/plans/2026-07-31-run-after-wrapper-task.md)
+- 2026-08-01 — task-signals design spec (sending Django's three lifecycle signals from
+  the backend: the enqueue and worker seams, one containment helper so no receiver can
+  damage a task, terminal-only failure reporting, a start per episode rather than per
+  attempt, and why Absurd's own control-flow endings announce nothing) →
+  [view @8bd0a54](https://github.com/lincolnloop/django-absurd/blob/8bd0a54ace32b774ea708ef9cc6a91588a805c6f/docs/specs/2026-08-01-task-signals-design.md)
+- 2026-08-02 — task-signals implementation plan (TDD build of the two seams, the
+  containment helper, and the receiver-raises tests) →
+  [view @8bd0a54](https://github.com/lincolnloop/django-absurd/blob/8bd0a54ace32b774ea708ef9cc6a91588a805c6f/docs/plans/2026-08-02-task-signals.md)
+- 2026-08-06 — worker-concurrency design spec (one worker mode: a local rolling-window
+  claim loop replacing the SDK's batch-joining async worker, an own stop event with
+  graceful-stop/cancel-and-drain semantics, and removal of `absurd_worker --burst` as
+  test scaffolding that had leaked onto the CLI) →
+  [view @8bd0a54](https://github.com/lincolnloop/django-absurd/blob/8bd0a54ace32b774ea708ef9cc6a91588a805c6f/docs/specs/2026-08-06-worker-concurrency-design.md)
+- 2026-08-06 — worker-concurrency implementation plan (six tasks: refill loop, shutdown
+  semantics, the ~50-site test migration off `--burst`, the signal-driven command
+  helper, the removal itself, and the docs sweep) →
+  [view @8bd0a54](https://github.com/lincolnloop/django-absurd/blob/8bd0a54ace32b774ea708ef9cc6a91588a805c6f/docs/plans/2026-08-06-worker-concurrency.md)
