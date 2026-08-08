@@ -206,10 +206,12 @@ header.md-header .md-header__topic > a.md-ellipsis:hover {
   gap: 0.5rem;
 }
 
-.md-footer-meta.md-typeset .md-copyright > * + *::before {
-  content: "|";
-  margin-right: 0.5rem;
-  opacity: 0.35;
+/* Divider as a border, not a `|` glyph: the text beside it is itself a flex
+ * column, so a ::before pseudo-element would become a flex item and stack above
+ * the first line instead of sitting alongside it. */
+.md-footer-meta.md-typeset .md-copyright > * + * {
+  border-left: 0.05rem solid color-mix(in srgb, currentColor 30%, transparent);
+  padding-left: 0.5rem;
 }
 
 /* Copyright over generator credit, as one column beside the logo. */
