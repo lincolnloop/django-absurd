@@ -252,17 +252,69 @@ database:
       TO <scheduling_role>;
   ```
 
-**Locally, don't hand-roll it.** django-absurd's own
+### Docker
+
+The stock `postgres` image ships no pg_cron, so build it in:
+
+```dockerfile title="Dockerfile.pg_cron"
+FROM postgres:18
+
+# Alpine carries no pg_cron package — the Debian variant is required.
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends postgresql-18-cron; \
+    rm -rf /var/lib/apt/lists/*
+
+# Runs once, on a fresh volume. initdb scripts run against POSTGRES_DB, so
+# \connect the central database explicitly — the extension may only exist in
+# the one cron.database_name names.
+RUN printf '%s\n' \
+    '\connect postgres' \
+    'CREATE EXTENSION IF NOT EXISTS pg_cron;' \
+    > /docker-entrypoint-initdb.d/10-pg_cron.sql
+```
+
+The preload flag and `cron.database_name` are server settings, so they go on the
+command, not in the image:
+
+```yaml title="compose.yaml"
+services:
+  db:
+    build:
+      context: .
+      dockerfile: Dockerfile.pg_cron
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_cron
+      - -c
+      - cron.database_name=postgres
+    environment:
+      - POSTGRES_PASSWORD=postgres
+```
+
+- **Pin the package version** for anything but scratch work —
+  `postgresql-18-cron=1.6.7-3.pgdg13+1`, say. Unpinned, a rebuild can move you across a
+  pg_cron release.
+- **Match the major versions.** `postgresql-18-cron` goes with `postgres:18`.
+- `cron.database_name=postgres` keeps the extension in the central database while your
+  app database schedules cross-database into it. Point it at your app database instead
+  for the traditional single-database setup — nothing else changes.
+- The extension is created on a **fresh volume only**. Changing these settings against
+  an existing volume needs the volume recreated, or `CREATE EXTENSION` run by hand.
+
+django-absurd runs its own pg_cron suite against exactly this shape — see
 [`Dockerfile.pg_cron`](https://github.com/lincolnloop/django-absurd/blob/main/Dockerfile.pg_cron)
 and the `db_pg_cron` service in
 [`compose.yaml`](https://github.com/lincolnloop/django-absurd/blob/main/compose.yaml)
-already satisfy every prerequisite above — the PGDG package, the preload flag,
-`cron.database_name`, and `CREATE EXTENSION` on the central database. They run the test
-suite, so they stay current. Copy them.
+for a working reference, though those are wired for the test suite rather than for an
+app.
 
-Managed Postgres (Amazon RDS, Google Cloud SQL, Azure Database, …) exposes these as
-parameter-group or flag options, and typically lets you pre-install the extension and
-grants once, centrally.
+### Managed Postgres
+
+Amazon RDS, Google Cloud SQL, Azure Database, … expose the above as parameter-group or
+flag options, and typically let you pre-install the extension and grants once,
+centrally.
 
 `manage.py check --database default` — and `migrate`, which runs checks first — reports
 `absurd.E012` if the central database is unreachable or missing the extension.
