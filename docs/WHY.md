@@ -185,6 +185,15 @@ sees a task's name rather than the task object the signals must carry, it fires 
 synthetic deferral wrapper too — which must announce nothing — and the code it would
 replace is already ours, so there is no private reach it would legitimise.
 
+Two asymmetries on the enqueue announcement are known and deliberate. It is sent when
+the enqueue happens, not when the surrounding transaction commits, so a rollback can
+discard a task whose enqueue was already announced; deferring it to commit would put
+this backend's timing out of step with every other one, which is a worse trade than the
+gap it closes. And a database-side schedule announces nothing at enqueue at all: it
+spawns through the database rather than the library's enqueue path, so a receiver sees a
+start with no enqueue before it. The in-process scheduler goes through the normal path
+and does not have this gap.
+
 **The sends must not be able to damage a task, and are contained in one place.**
 Uncontained, an exception from any receiver — including the framework's own — escapes
 into the engine's error handling, which reads it as the _task_ failing, so one buggy
