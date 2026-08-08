@@ -69,7 +69,7 @@ All optional:
 DATABASE_ROUTERS = ["django_absurd.routers.AbsurdRouter"]
 ```
 
-Only when `DATABASE` points at an alias other than `"default"`. The
+Only when `DATABASE` names an alias other than `"default"`. The
 [router](https://docs.djangoproject.com/en/6.0/topics/db/multi-db/#using-routers) sends
 django-absurd's schema and queries there.
 
@@ -79,8 +79,7 @@ django-absurd's schema and queries there.
 python manage.py check django_absurd
 ```
 
-Verifies the configuration and points at anything wrong. Fix what it reports rather than
-silencing it:
+Verifies the configuration. Fix what it reports rather than silencing it:
 
 | ID            | Means                                                                                                                                                                                      |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -109,14 +108,12 @@ except DjangoAbsurdError:
     ...
 ```
 
-django-absurd's own failure modes raise typed errors under `DjangoAbsurdError`:
-`QueueNotDeclaredError` (the queue was never declared) and `QueueNotProvisionedError`
-(declared, but has no table yet — run `manage.py absurd_sync_queues`). They come from
-[`emit_event`](workflows.md#emit-from-a-view) and the test fixture's
-[`drain()`](testing.md#drain).
+Typed errors under `DjangoAbsurdError`: `QueueNotDeclaredError` (never declared) and
+`QueueNotProvisionedError` (declared, no table yet — run
+`manage.py absurd_sync_queues`). Raised by [`emit_event`](workflows.md#emit-from-a-view)
+and the test fixture's [`drain()`](testing.md#drain).
 
-- `enqueue` raises `QueueNotDeclaredError` too, but only when the backend's `QUEUES`
-  option is empty or unset. With `QUEUES` configured, a typo'd queue name at enqueue is
-  rejected earlier as Django's own `InvalidTask`.
-- The hierarchy is not total. Other failures still raise plain `ImproperlyConfigured` /
-  `RuntimeError` / `TypeError` from outside it.
+- `enqueue` raises `QueueNotDeclaredError` only when `QUEUES` is empty or unset. With
+  `QUEUES` configured, a typo is rejected earlier as Django's own `InvalidTask`.
+- The hierarchy isn't total — other failures still raise plain `ImproperlyConfigured` /
+  `RuntimeError` / `TypeError`.

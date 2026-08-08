@@ -32,10 +32,9 @@ existing database connection.
     pip install --pre django-absurd
     ```
 
-Only pre-releases are published while django-absurd is in alpha, hence the flags. You
-need Python **3.12+**, Django **6.0+**, and PostgreSQL on the **psycopg (v3)** driver
-(`django.db.backends.postgresql`) — Absurd reuses Django's connection, so psycopg2 won't
-work.
+Only pre-releases are published during alpha, hence the flags. Needs Python **3.12+**,
+Django **6.0+**, and PostgreSQL on the **psycopg (v3)** driver — Absurd reuses Django's
+connection, so psycopg2 won't work.
 
 ## Quickstart
 
@@ -83,7 +82,7 @@ result = add.enqueue(2, 3)
 python manage.py absurd_worker
 ```
 
-That's the whole loop. The task runs on the [worker](how-it-works.md#workers), and the
+That's the whole loop. The task runs on the [worker](how-it-works.md#workers) and its
 result is stored in Postgres — [fetch it later](tasks.md#read-the-result) with
 `add.get_result(result.id)`.
 

@@ -20,14 +20,12 @@ def send_report(user_id: int) -> None: ...
 result = send_report.enqueue(42)  # returns a TaskResult; a worker runs it
 ```
 
-A [`@task`](https://docs.djangoproject.com/en/6.0/topics/tasks/) can live in any
-importable module, and `async def` works the same way — enqueue it with
-`await send_report.aenqueue(42)`.
+A [`@task`](https://docs.djangoproject.com/en/6.0/topics/tasks/) lives in any importable
+module. `async def` works the same — `await send_report.aenqueue(42)`.
 
-- Enqueuing rides the surrounding transaction. A task enqueued inside `atomic()` is
-  dropped if the block rolls back.
-- A task may run **more than once** (at-least-once delivery) — keep handlers idempotent.
-  See [runs & retries](how-it-works.md#runs-retries-checkpoints).
+- Enqueuing rides the surrounding transaction, so an `atomic()` rollback drops the task.
+- Delivery is **at-least-once** — keep handlers idempotent. See
+  [runs & retries](how-it-works.md#runs-retries-checkpoints).
 
 ## Read the result
 
@@ -42,8 +40,10 @@ result.return_value  # available once SUCCESSFUL
 result.errors  # populated when FAILED
 ```
 
-Ids are the `"<queue>:<uuid>"` form. `context.task_result.id` reports the same value
-inside a `takes_context` task, so either can be handed straight back to `get_result`.
+Ids are `"<queue>:<uuid>"` — the same value `context.task_result.id` reports inside a
+`takes_context` task, so either can go straight back to `get_result`.
+
+→ [Django: task results](https://docs.djangoproject.com/en/6.0/ref/tasks/#task-results).
 
 ## Run it later
 
@@ -53,14 +53,14 @@ send_report.using(run_after=timezone.now() + dt.timedelta(hours=1)).enqueue(42)
 
 Django's
 [`run_after`](https://docs.djangoproject.com/en/6.0/ref/tasks/#django.tasks.Task.run_after)
-defers a single enqueue. It takes a timezone-aware `datetime`. For a repeating schedule
-rather than a one-off, use [Cron Jobs](cron-jobs.md).
+defers one enqueue, taking a timezone-aware `datetime`. For a repeating schedule, use
+[Cron Jobs](cron-jobs.md).
 
-- A second row named `<your task's dotted path>:run_after` waits, then enqueues yours
-  with the options you passed. Both rows show up in the admin.
-- The id `enqueue` returned keeps working throughout: `READY` while the wrapper waits,
-  then your task's own status and return value. If the wrapper itself can't launch, that
-  id stays `READY` with no visible error until it runs out of attempts, then `FAILED`.
+- A wrapper row named `<task path>:run_after` waits, then enqueues yours. Both appear in
+  the admin.
+- The id you got back keeps working: `READY` while the wrapper waits, then your task's
+  own status and result. A wrapper that can't launch stays `READY` with no visible error
+  until it exhausts its attempts.
 
 ## Retries & spawn options
 
@@ -110,18 +110,17 @@ per-invocation → decorator →
 - **Backoff defaults, once you pick a `kind`:** `fixed` waits `base_seconds` (`60`);
   `exponential` waits `base_seconds` (`30`) × `factor` (`2`) ^ (attempt − 1), uncapped
   unless you set `max_seconds`.
-- Passing `headers` or `idempotency_key` to the decorator form is an error, statically
-  and at runtime.
-- `bind` returns an ordinary `Task` — `aenqueue`, `call`, `get_result`, and `using` all
-  work through it.
-- Django's own options stay on `.using()`, never on `absurd_params`. The two compose in
-  either order: `absurd_params(...).bind(send_report.using(queue_name="reports"))` and
-  `absurd_params(...).bind(send_report).using(queue_name="reports")` are equivalent.
-- `max_attempts=None` means **retry forever**, and only an explicit `None` does — omit
-  it and the backend fills in its default on every enqueue. Such a task is never
-  terminal, so Django's task logger never records a final line for it.
-- On a non-Absurd backend the params are silently inert, and you get one `WARNING`
-  naming the task and the backend (deduped per task).
+- `headers` and `idempotency_key` on the decorator form are an error, statically and at
+  runtime.
+- `bind` returns an ordinary `Task`, so `aenqueue`, `call`, `get_result`, and `using`
+  all still work.
+- Django's own options stay on
+  [`.using()`](https://docs.djangoproject.com/en/6.0/ref/tasks/#django.tasks.Task.using),
+  never on `absurd_params`. They compose in either order.
+- `max_attempts=None` means **retry forever** — and only an explicit `None` does, since
+  omitting it fills in the default. Such a task is never terminal, so Django's task
+  logger never records a final line.
+- On a non-Absurd backend the params are inert, with one `WARNING` per task.
 
 →
 [Absurd: retries & durable execution](https://earendil-works.github.io/absurd/concepts/).
@@ -134,11 +133,9 @@ absurd_params(
 ).bind(send_report).enqueue(42)
 ```
 
-Whichever enqueue reaches a key first owns it; every later enqueue is swallowed and
-handed the **first** task's id.
-
-The comparison is the key alone — no task name, no arguments — so namespace it yourself
-or unrelated work collides:
+Whichever enqueue reaches a key first owns it; later ones are swallowed and handed the
+**first** task's id. The comparison is the key alone — no task name, no arguments — so
+namespace it yourself or unrelated work collides:
 
 ```python
 absurd_params(idempotency_key="nightly").bind(send_report).enqueue(42)
@@ -146,10 +143,13 @@ absurd_params(idempotency_key="nightly").bind(purge_cache).enqueue()
 # -> same id, and purge_cache never runs
 ```
 
-- **A key is scoped to one queue.** The same key on `default` and on `reports` reserves
-  independently, and both tasks run.
-- **A key is held for as long as its task row exists** — freed only once the task is
-  terminal and [cleanup](cleanup.md) deletes it, `cleanup_ttl` (default 30 days) after
-  it finished. Not a "once per hour" window; "once until the row is swept".
-- The [beat scheduler](cron-jobs.md) namespaces its own keys: a `cron:`-prefixed hash of
-  the schedule name, cron expression, and slot.
+- **Scoped to one queue.** The same key on `default` and on `reports` reserves
+  independently, and both run.
+- **Held as long as the task row exists** — freed only once the task is terminal and
+  [cleanup](cleanup.md) deletes it, `cleanup_ttl` (default 30 days) later. Not "once per
+  hour"; "once until the row is swept".
+- The [beat scheduler](cron-jobs.md) namespaces its own: a `cron:`-prefixed hash of the
+  schedule name, expression, and slot.
+
+→
+[Absurd: idempotency keys](https://earendil-works.github.io/absurd/concepts/#idempotency-keys).
