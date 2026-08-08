@@ -4,12 +4,13 @@ docs_dir = "docs/web"
 extra_css = ["stylesheets/extra.css"]
 nav = [
   {"Home" = "index.md"},
-  {"Configuration" = "configuration.md"},
   {"Tasks" = "tasks.md"},
   {"Workflows" = "workflows.md"},
   {"Cron Jobs" = "cron-jobs.md"},
   {"Cleanup" = "cleanup.md"},
+  {"Logging" = "logging.md"},
   {"Testing" = "testing.md"},
+  {"Configuration" = "configuration.md"},
   {"How it works" = "how-it-works.md"},
 ]
 repo_name = "lincolnloop/django-absurd"
@@ -60,6 +61,7 @@ favicon = "assets/favicon.png"
 features = [
   "content.code.copy",
   "content.code.annotate",
+  "content.tabs.link",
   "navigation.instant",
   "navigation.instant.prefetch",
   "navigation.top",
