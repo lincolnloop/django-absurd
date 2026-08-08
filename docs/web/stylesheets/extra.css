@@ -177,20 +177,22 @@ header.md-header .md-header__topic > a.md-ellipsis:hover {
   vertical-align: top;
 }
 
-/* First column hugs its content. It wraps only when it must, and then only at
- * argument boundaries — the space after each comma in a signature is the sole
- * break opportunity, so `await_event(event_name, step_name=None)` breaks per
- * argument instead of mid-identifier. */
 .md-typeset table:not([class]) th:nth-child(1),
 .md-typeset table:not([class]) td:nth-child(1) {
   width: 1%;
-  white-space: normal;
-  overflow-wrap: normal;
-  word-break: normal;
+  white-space: nowrap;
 }
 
-.md-typeset table:not([class]) td:nth-child(1) > code {
-  white-space: normal;
+/* Signature reference lists: the term is a full call signature, so it gets its
+ * own line and the description hangs beneath it — no column to squeeze. */
+.md-typeset dl dt {
+  margin-top: 0.8em;
+  font-weight: 400;
+}
+
+.md-typeset dl dd {
+  margin-left: 1.2em;
+  color: var(--md-default-fg-color--light);
 }
 
 .md-typeset .highlight > pre > code {
