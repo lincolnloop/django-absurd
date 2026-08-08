@@ -99,14 +99,17 @@ absurd_params(
 per-invocation → decorator →
 [`OPTIONS["DEFAULT_MAX_ATTEMPTS"]`](configuration.md#backend-options) (5).
 
-| Field             | Where              | What it does                                                                             |
-| ----------------- | ------------------ | ---------------------------------------------------------------------------------------- |
-| `max_attempts`    | default + per-call | Retry ceiling; `None` means retry forever.                                               |
-| `retry_strategy`  | default + per-call | Backoff: `kind` (`fixed`/`exponential`/`none`), `base_seconds`, `factor`, `max_seconds`. |
-| `cancellation`    | default + per-call | `max_duration`, `max_delay` (seconds).                                                   |
-| `headers`         | per-call only      | Arbitrary JSON metadata carried with the task.                                           |
-| `idempotency_key` | per-call only      | Dedupe within a queue — see [below](#idempotency-keys).                                  |
+| Field             | Where                | Default                                                          | What it does                                                                             |
+| ----------------- | -------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `max_attempts`    | decorator + per-call | [`DEFAULT_MAX_ATTEMPTS`](configuration.md#backend-options) (`5`) | Retry ceiling; `None` means retry forever.                                               |
+| `retry_strategy`  | decorator + per-call | `kind: "none"` — retry immediately, no backoff                   | Backoff: `kind` (`fixed`/`exponential`/`none`), `base_seconds`, `factor`, `max_seconds`. |
+| `cancellation`    | decorator + per-call | unset — no time limit                                            | `max_duration`, `max_delay` (seconds).                                                   |
+| `headers`         | per-call only        | unset                                                            | Arbitrary JSON metadata carried with the task.                                           |
+| `idempotency_key` | per-call only        | unset — no deduping                                              | Dedupe within a queue — see [below](#idempotency-keys).                                  |
 
+- **Backoff defaults, once you pick a `kind`:** `fixed` waits `base_seconds` (`60`);
+  `exponential` waits `base_seconds` (`30`) × `factor` (`2`) ^ (attempt − 1), uncapped
+  unless you set `max_seconds`.
 - Passing `headers` or `idempotency_key` to the decorator form is an error, statically
   and at runtime.
 - `bind` returns an ordinary `Task` — `aenqueue`, `call`, `get_result`, and `using` all

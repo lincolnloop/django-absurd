@@ -93,6 +93,11 @@ A run must make progress within `claim_timeout` seconds (default 120) or it is
 re-claimed and replayed from the last checkpoint. Keep steps short, or heartbeat. Pass
 `seconds` to extend by a specific amount instead of the worker's `claim_timeout`.
 
+→
+[Absurd: Concepts — Workers](https://earendil-works.github.io/absurd/concepts/#workers)
+(the claim lease, and how a checkpoint write extends it) ·
+[Retries](https://earendil-works.github.io/absurd/concepts/#retries)
+
 ## Sleep
 
 === "Sync"
