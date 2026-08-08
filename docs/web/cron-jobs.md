@@ -21,14 +21,14 @@ TASKS = {
         "OPTIONS": {
             "SCHEDULE": {
                 "nightly-report": {
-                    "task": "myapp.tasks.send_report",   # dotted path to a @task
-                    "cron": "0 2 * * *",                 # 2am daily
+                    "task": "myapp.tasks.send_report",  # dotted path to a @task
+                    "cron": "0 2 * * *",  # 2am daily
                 },
                 "heartbeat": {
                     "task": "myapp.tasks.ping",
                     "cron": "*/5 * * * *",
-                    "queue": "monitoring",               # optional; must be declared
-                    "kwargs": {"source": "beat"},        # optional
+                    "queue": "monitoring",  # optional; must be declared
+                    "kwargs": {"source": "beat"},  # optional
                 },
             },
         },
@@ -77,7 +77,7 @@ Runnable demo:
 INSTALLED_APPS = [
     # ...
     "django_absurd",
-    "django_absurd.pg_cron",   # must come AFTER "django_absurd"
+    "django_absurd.pg_cron",  # must come AFTER "django_absurd"
 ]
 ```
 
@@ -188,8 +188,7 @@ session.
 | `SYNC_SCHEDULES_ON_MIGRATE` | `True`  | Governs `migrate`'s automatic reconcile against a real database.                                                                                                                                     |
 | `SYNC_SCHEDULES_ON_TEST_DB` | `False` | Governs `migrate`'s automatic reconcile once Django has swapped in a test database. Setting it without `PG_CRON_ON_TEST_DB` is `absurd.E011` — the toggle is meaningless while the seam stays inert. |
 
-→
-[Testing — getting a `SCHEDULE` into pg_cron](testing.md#getting-a-schedule-into-pg_cron-for-a-test).
+→ [Testing — getting a `SCHEDULE` into pg_cron](testing.md#schedule-in-a-test).
 
 ### Before you go to production
 

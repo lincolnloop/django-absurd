@@ -66,11 +66,11 @@ a sync task, `aget_absurd_context()` in an `async def` one. Neither needs
 def process_order(order_id: int) -> None:
     context = get_absurd_context()
 
-    @context.run_step                     # name = "charge"
+    @context.run_step  # name = "charge"
     def charge():
         return charge_card(order_id)
 
-    @context.run_step("ship-item")        # explicit name
+    @context.run_step("ship-item")  # explicit name
     def ship_item():
         return ship(order_id)
 ```
@@ -83,7 +83,7 @@ Wraps `step` for cases where a lambda is awkward. Sync only.
 def process():
     for row in big_result_set:
         process_row(row)
-        context.heartbeat()   # extend the claim
+        context.heartbeat()  # extend the claim
 
 
 context.step("process", process)
@@ -107,7 +107,7 @@ re-claimed and replayed from the last checkpoint. Keep steps short, or heartbeat
     def process_order(order_id: int) -> None:
         context = get_absurd_context()
         context.step("charge", lambda: charge_card(order_id))
-        context.sleep_for("cooldown", 5)           # suspend for ~5 seconds
+        context.sleep_for("cooldown", 5)  # suspend for ~5 seconds
         context.step("ship", lambda: ship(order_id))
     ```
 

@@ -33,7 +33,7 @@ TASKS = {
     "default": {
         "BACKEND": "django_absurd.backends.AbsurdBackend",
         "OPTIONS": {
-            "CLEANUP": {"schedule": "0 3 * * *"},   # 3am daily
+            "CLEANUP": {"schedule": "0 3 * * *"},  # 3am daily
         },
     },
 }

@@ -56,7 +56,7 @@ import datetime as dt
 
 def test_followup_sleeps_seven_days_then_completes(dj_absurd):
     with dj_absurd.freeze_time(dt.datetime(2026, 1, 1, tzinfo=dt.UTC)) as frozen_time:
-        send_followup.enqueue()          # enqueue INSIDE the block
+        send_followup.enqueue()  # enqueue INSIDE the block
 
         (sleeping,) = dj_absurd.drain()
         assert sleeping.state == "sleeping"
@@ -65,8 +65,8 @@ def test_followup_sleeps_seven_days_then_completes(dj_absurd):
 
         (woken,) = dj_absurd.drain()
         assert woken.state == "completed"
-        assert woken.run_id == sleeping.run_id   # the same run resumed...
-        assert woken.attempt == 1                # ...so it was never a retry
+        assert woken.run_id == sleeping.run_id  # the same run resumed...
+        assert woken.attempt == 1  # ...so it was never a retry
 ```
 
 `freeze_time(instant=None)` pins durable time for the block — `None` means real now at
@@ -93,7 +93,7 @@ moves: `move_to(datetime)` and `shift(timedelta)`. Both move Python's clock (via
   boundary.
 - **A freeze doesn't reach [pg_cron](cron-jobs.md#postgres-side-pg_cron).** Its launcher
   runs in another database on its own clock, so advancing durable time cannot make a
-  schedule fire — see [below](#getting-a-schedule-into-pg_cron-for-a-test).
+  schedule fire — see [below](#schedule-in-a-test).
 
 A test that never opens a block pays nothing; the other members never touch the clock.
 `FrozenTime`, `AbsurdTestRuntime` (what `dj_absurd` is typed as), `TaskSnapshot`, and
@@ -102,7 +102,7 @@ helpers.
 
 ## Fixture API
 
-### `dj_absurd.drain(queue="default")`
+### `dj_absurd.drain(queue="default")` { #drain data-toc-label="drain()" }
 
 Runs every currently-claimable task on `queue` to completion, one at a time, returning
 one `RunSnapshot` per run executed, in claim order.
@@ -132,17 +132,17 @@ one `RunSnapshot` per run executed, in claim order.
   `drain()` raises `QueueNotProvisionedError`. An undeclared queue raises
   `QueueNotDeclaredError`; see [exceptions](configuration.md#exceptions).
 
-### `dj_absurd.emit(name, payload=None, queue="default")`
+### `dj_absurd.emit(name, payload=None, queue="default")` { #emit data-toc-label="emit()" }
 
 Delivers an [event](workflows.md#events), resolving a task suspended in `await_event` —
 the waiter resumes on the next `drain()`. An unprovisioned queue raises
 `QueueNotProvisionedError`, same as `drain()`.
 
-### `dj_absurd.get_result(task_id, queue=...)`
+### `dj_absurd.get_result(task_id, queue=...)` { #get-result data-toc-label="get_result()" }
 
 ```python
-result = reports_task.enqueue()   # id is "reports:<uuid>"
-dj_absurd.get_result(result.id)   # queries the "reports" queue
+result = reports_task.enqueue()  # id is "reports:<uuid>"
+dj_absurd.get_result(result.id)  # queries the "reports" queue
 ```
 
 Looks up one task and returns a `TaskSnapshot`, raising `TaskNotFoundError` on a miss.
@@ -176,14 +176,14 @@ which `TaskResult.status` can't show — and skips the worker round-trip.
   the id names — the fixture is for inspecting state that really exists. Use Django's
   own `get_result` when you want your task's status and return value.
 
-### `dj_absurd.sync_queues()`
+### `dj_absurd.sync_queues()` { #sync-queues data-toc-label="sync_queues()" }
 
 Provisions every declared queue — the runtime counterpart of
 `manage.py absurd_sync_queues`. Rarely needed: reach for it only when the test itself
 changed queue topology, such as a `settings` override declaring a queue the migration
 never saw.
 
-### `dj_absurd.now`
+### `dj_absurd.now` { #now data-toc-label="now" }
 
 Virtual now, timezone-aware, as Postgres itself reports it — read through the fixture's
 own fresh connection rather than computed in Python.
@@ -207,7 +207,7 @@ teardown — no fixture to request, no marker to add.
   [database access blocking](https://pytest-django.readthedocs.io/en/latest/database.html)
   like any other query.
 
-## Getting a `SCHEDULE` into pg_cron for a test
+## Getting a `SCHEDULE` into pg_cron for a test { #schedule-in-a-test data-toc-label="SCHEDULE in a test" }
 
 ```python
 settings.TASKS["default"]["OPTIONS"]["PG_CRON_ON_TEST_DB"] = True
@@ -226,7 +226,7 @@ data. `PG_CRON_ON_TEST_DB` is the opt-in.
 - Either way, cleanup clears whatever ended up in `cron.job` / `ScheduledTask` —
   settings-synced, admin-authored, or created directly by the test.
 
-## `manage.py test`
+## `manage.py test` { #manage-py-test data-toc-label="manage.py test" }
 
 ```python
 from django.test.runner import DiscoverRunner

@@ -17,7 +17,7 @@ from django.tasks import task
 def send_report(user_id: int) -> None: ...
 
 
-result = send_report.enqueue(42)   # returns a TaskResult; a worker runs it
+result = send_report.enqueue(42)  # returns a TaskResult; a worker runs it
 ```
 
 A [`@task`](https://docs.djangoproject.com/en/6.0/topics/tasks/) can live in any
@@ -34,12 +34,12 @@ importable module, and `async def` works the same way — enqueue it with
 ```python
 result = send_report.enqueue(42)
 
-result = send_report.get_result(result.id)          # by id, sync
-result = await send_report.aget_result(result.id)   # async
+result = send_report.get_result(result.id)  # by id, sync
+result = await send_report.aget_result(result.id)  # async
 
-result.status         # READY | RUNNING | SUCCESSFUL | FAILED
-result.return_value   # available once SUCCESSFUL
-result.errors         # populated when FAILED
+result.status  # READY | RUNNING | SUCCESSFUL | FAILED
+result.return_value  # available once SUCCESSFUL
+result.errors  # populated when FAILED
 ```
 
 Ids are the `"<queue>:<uuid>"` form. `context.task_result.id` reports the same value
@@ -75,7 +75,7 @@ from django_absurd import absurd_params
 
 
 @task
-@absurd_params(max_attempts=3)   # apply BELOW @task
+@absurd_params(max_attempts=3)  # apply BELOW @task
 def send_report(user_id: int) -> None: ...
 ```
 
@@ -87,7 +87,7 @@ from django_absurd import absurd_params
 absurd_params(
     max_attempts=5,
     retry_strategy={
-        "kind": "exponential",   # "fixed" | "exponential" | "none"
+        "kind": "exponential",  # "fixed" | "exponential" | "none"
         "base_seconds": 2,
         "factor": 2,
         "max_seconds": 300,
