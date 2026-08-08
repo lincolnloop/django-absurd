@@ -31,22 +31,18 @@ def test_add_completes(dj_absurd):
 ```
 
 `dj_absurd` is the only fixture. `drain()` runs every claimable task to completion
-in-process — no [worker](how-it-works.md#workers) subprocess, no polling loop to manage
-— and hands back one `RunSnapshot` per run, so assert against the run itself rather than
-a status string.
+in-process — no [worker](how-it-works.md#workers) subprocess, no polling loop — and
+returns one `RunSnapshot` per run.
 
-- **`transaction=True` is required.** Absurd works on a connection separate from the
-  test's, so under a plain
-  [`db`](https://pytest-django.readthedocs.io/en/latest/helpers.html#db) test the
-  enqueued row is invisible to it. `drain`, `emit`, and `get_result` detect the open
-  transaction and raise rather than silently no-opping.
-- **Every member works unchanged from an `async def` test** — same names, nothing to
-  `await` on the fixture. Enqueue with Django's own `await my_task.aenqueue()`, since
-  `enqueue()` is synchronous.
+- **`transaction=True` is required.** Absurd works on its own connection, so under a
+  plain [`db`](https://pytest-django.readthedocs.io/en/latest/helpers.html#db) test the
+  enqueued row is invisible to it. `drain`, `emit`, and `get_result` raise rather than
+  silently no-op.
+- **Works unchanged from `async def` tests** — same names, nothing to `await` on the
+  fixture. Enqueue with `await my_task.aenqueue()`.
 - **Multi-DB: declare the Absurd alias** in the test's
-  [`databases`](https://docs.djangoproject.com/en/6.0/topics/testing/tools/#django.test.TransactionTestCase.databases).
-  Draining commits real state through the worker's own connection; without the alias
-  declared, cleanup skips it afterwards and that state leaks into the next test.
+  [`databases`](https://docs.djangoproject.com/en/6.0/topics/testing/tools/#django.test.TransactionTestCase.databases),
+  or committed state leaks into the next test.
 
 ## Move durable time
 
@@ -69,36 +65,29 @@ def test_followup_sleeps_seven_days_then_completes(dj_absurd):
         assert woken.attempt == 1  # ...so it was never a retry
 ```
 
-`freeze_time(instant=None)` pins durable time for the block — `None` means real now at
-entry — and yields a `FrozenTime` whose two movers are the only way durable time ever
-moves: `move_to(datetime)` and `shift(timedelta)`. Both move Python's clock (via
+`freeze_time(instant=None)` pins durable time for the block (`None` = real now). Its
+`FrozenTime` handle has the only two movers, `move_to(datetime)` and `shift(timedelta)`,
+and each moves Python's clock (via
 [time-machine](https://github.com/adamchainz/time-machine)) and Postgres's
-`absurd.fake_now` GUC together.
+`absurd.fake_now` together.
 
 - **Enter the block before the `enqueue()` calls whose deadlines you want to control.**
   Freezing to a past instant after rows already exist leaves their deadlines in the
   database's future, so nothing is claimable until a later move passes them.
-- `shift(Δ)` is absolute elapsed time, not wall-clock arithmetic. Seven days from
-  `01:30` on a spring-forward morning lands 7 × 24 hours later as an instant, which is
-  the only thing a durable deadline measures.
-- Blocks don't nest — two frozen instants can't both be "now", so opening one inside
-  another raises, as does using a `FrozenTime` after its own block exited. Sequential
+- `shift(Δ)` is absolute elapsed time, not wall-clock arithmetic — seven days across a
+  spring-forward morning is 7 × 24 hours, which is what a durable deadline measures.
+- Blocks don't nest, and a `FrozenTime` raises once its block has exited. Sequential
   blocks are fine.
-- **Install [time-machine](https://github.com/adamchainz/time-machine) yourself.** It's
-  a test dependency of _your_ project, not bundled with django-absurd and not one of its
-  extras. Only `freeze_time` imports it, lazily on first use, raising
-  `ImproperlyConfigured` naming the install command if it's missing.
-- **A savepoint rollback inside the block reverts Django's session clock**, so a later
-  `enqueue()` stamps real time and won't look claimable. Don't enqueue across a rollback
-  boundary.
-- **A freeze doesn't reach [pg_cron](cron-jobs.md#postgres-side-pg_cron).** Its launcher
-  runs in another database on its own clock, so advancing durable time cannot make a
-  schedule fire — see [below](#schedule-in-a-test).
+- **Install [time-machine](https://github.com/adamchainz/time-machine) yourself** — it's
+  a test dependency of _your_ project. Only `freeze_time` needs it, and it raises
+  `ImproperlyConfigured` naming the install command if missing.
+- **Don't enqueue across a savepoint rollback.** The rollback reverts Django's session
+  clock, so a later `enqueue()` stamps real time and won't look claimable.
+- **A freeze doesn't reach [pg_cron](cron-jobs.md#postgres-side-pg_cron)** — its
+  launcher runs in another database on its own clock. See [below](#schedule-in-a-test).
 
-A test that never opens a block pays nothing; the other members never touch the clock.
 `FrozenTime`, `AbsurdTestRuntime` (what `dj_absurd` is typed as), `TaskSnapshot`, and
-`RunSnapshot` are all importable from `django_absurd.test` for annotating your own
-helpers.
+`RunSnapshot` are importable from `django_absurd.test` for annotating your own helpers.
 
 ## Fixture API
 
@@ -126,11 +115,10 @@ one `RunSnapshot` per run executed, in claim order.
 | `failed`    | raised, and out of retries                                                                                                        |
 | `cancelled` | cancelled before or during execution                                                                                              |
 
-- **`drain` provisions nothing**, unlike the CLI. `migrate` already provisions the
-  declared catalog, so a test database arrives ready — but a queue a single test
-  declares by overriding `TASKS` has no table yet. Call `sync_queues()` first, or
-  `drain()` raises `QueueNotProvisionedError`. An undeclared queue raises
-  `QueueNotDeclaredError`; see [exceptions](configuration.md#exceptions).
+- **`drain` provisions nothing**, unlike the CLI. `migrate` leaves a test database
+  ready, but a queue declared by overriding `TASKS` in one test has no table — call
+  `sync_queues()` first or `drain()` raises `QueueNotProvisionedError`. Undeclared
+  raises `QueueNotDeclaredError`; see [exceptions](configuration.md#exceptions).
 
 ### `dj_absurd.emit(name, payload=None, queue="default")` { #emit data-toc-label="emit()" }
 
@@ -145,10 +133,9 @@ result = reports_task.enqueue()  # id is "reports:<uuid>"
 dj_absurd.get_result(result.id)  # queries the "reports" queue
 ```
 
-Looks up one task and returns a `TaskSnapshot`, raising `TaskNotFoundError` on a miss.
-Where [`my_task.get_result(result.id)`](tasks.md#read-the-result) reads Django's
-`TaskResult.status`, this reads Absurd's own states directly — including `sleeping`,
-which `TaskResult.status` can't show — and skips the worker round-trip.
+Returns a `TaskSnapshot`, or raises `TaskNotFoundError`. Unlike
+[`my_task.get_result()`](tasks.md#read-the-result) it reads Absurd's own states —
+including `sleeping`, which `TaskResult.status` can't show.
 
 | Field              | Meaning                                           |
 | ------------------ | ------------------------------------------------- |
@@ -161,51 +148,43 @@ which `TaskResult.status` can't show — and skips the worker round-trip.
 | `result`           | the task's return value, once `completed`         |
 | `failure`          | `None` except on a terminal failure (see below)   |
 
-- `task_id` accepts a bare uuid or Django's `TaskResult.id` (`"queue:uuid"`). A prefix
-  wins over `queue`'s default; an explicit `queue=` that disagrees with the prefix
-  raises `TaskIdQueueMismatchError`. A bare uuid with no `queue` resolves to
-  `"default"`.
-- **A task-level view cannot express an in-flight
-  [retry](tasks.md#retries-spawn-options).** `attempts` already reads `2` before the
-  second attempt has run; `state="sleeping"` covers a retry backoff as well as a durable
-  sleep; and `failure` is `None` mid-backoff, because `last_attempt_run` already points
-  at the fresh pending run. Use `drain()`'s `RunSnapshot` to tell these apart — it
-  reports each run's own state right after that run executes.
+- `task_id` takes a bare uuid or a prefixed `"queue:uuid"`. The prefix wins over
+  `queue`'s default; a `queue=` that disagrees raises `TaskIdQueueMismatchError`.
+- **This view can't express an in-flight [retry](tasks.md#retries-spawn-options):**
+  `attempts` reads `2` before the second attempt runs, `state="sleeping"` covers a
+  backoff as well as a durable sleep, and `failure` is `None` mid-backoff. Use
+  `drain()`'s `RunSnapshot` to tell them apart.
 - **A deferred task's id names its wrapper.** A [`run_after`](tasks.md#run-it-later)
-  enqueue creates a `<your task path>:run_after` row, and this method reports the row
-  the id names — the fixture is for inspecting state that really exists. Use Django's
-  own `get_result` when you want your task's status and return value.
+  enqueue creates a `<task path>:run_after` row and this reports that row. Use Django's
+  own `get_result` for your task's status and return value.
 
 ### `dj_absurd.sync_queues()` { #sync-queues data-toc-label="sync_queues()" }
 
 Provisions every declared queue — the runtime counterpart of
-`manage.py absurd_sync_queues`. Rarely needed: reach for it only when the test itself
-changed queue topology, such as a `settings` override declaring a queue the migration
-never saw.
+`manage.py absurd_sync_queues`. Only needed when a test changes queue topology, such as
+a `settings` override declaring a queue the migration never saw.
 
 ### `dj_absurd.now` { #now data-toc-label="now" }
 
-Virtual now, timezone-aware, as Postgres itself reports it — read through the fixture's
-own fresh connection rather than computed in Python.
+Virtual now, timezone-aware, as Postgres reports it — read over a fresh connection, not
+computed in Python.
 
 ## Cleanup is automatic
 
-pytest users do nothing. The plugin wires Absurd state cleanup into Django's own test
-teardown — no fixture to request, no marker to add.
+pytest users do nothing — the plugin wires cleanup into Django's own test teardown. No
+fixture to request, no marker to add.
 
-- Plain `TestCase` / `db` tests are cleaned by Django's own
-  [rollback](https://docs.djangoproject.com/en/6.0/topics/testing/overview/#rollback-emulation).
-  An `enqueue()` rides the same uncommitted transaction, so nothing is left to flush.
-- `transaction=True` tests commit for real, so django-absurd truncates queue state after
-  each one — and, with [`django_absurd.pg_cron`](cron-jobs.md#postgres-side-pg_cron)
-  installed, unschedules its own settings- and admin-authored jobs plus the
-  [`OPTIONS["CLEANUP"]`](cleanup.md#schedule-recurring-cleanup) job.
-- In a multi-DB project cleanup only runs for a test whose `databases` includes the
-  Absurd alias (respecting `"__all__"`), matching Django's own per-alias flush scoping.
-- A test with no DB access can't touch Absurd either: `enqueue()` goes through Django's
-  connection, so it trips pytest-django's own
-  [database access blocking](https://pytest-django.readthedocs.io/en/latest/database.html)
-  like any other query.
+- Plain `TestCase` / `db` tests need none: the `enqueue()` rides the same uncommitted
+  transaction Django
+  [rolls back](https://docs.djangoproject.com/en/6.0/topics/testing/overview/#rollback-emulation).
+- `transaction=True` tests commit for real, so queue state is truncated after each — and
+  with [`django_absurd.pg_cron`](cron-jobs.md#postgres-side-pg_cron) installed, its
+  settings- and admin-authored jobs plus the
+  [`OPTIONS["CLEANUP"]`](cleanup.md#schedule-recurring-cleanup) job are unscheduled too.
+- Multi-DB: cleanup only runs when the test's `databases` includes the Absurd alias.
+- No DB access means no Absurd access — `enqueue()` trips pytest-django's own
+  [blocking](https://pytest-django.readthedocs.io/en/latest/database.html) like any
+  query.
 
 ## Getting a `SCHEDULE` into pg_cron for a test { #schedule-in-a-test data-toc-label="SCHEDULE in a test" }
 
@@ -215,16 +194,13 @@ call_command("absurd_sync_crons")
 ```
 
 Every `cron.*` write is [inert on a test database](cron-jobs.md#test-databases) by
-default — detected automatically — precisely so a
-[`SCHEDULE`](cron-jobs.md#declare-a-schedule) doesn't start firing for real against test
-data. `PG_CRON_ON_TEST_DB` is the opt-in.
+default, so a [`SCHEDULE`](cron-jobs.md#declare-a-schedule) can't fire for real against
+test data. `PG_CRON_ON_TEST_DB` is the opt-in.
 
-- Without it, `absurd_sync_crons` refuses to run (`CommandError`) rather than silently
-  doing nothing.
-- Letting `migrate`'s automatic reconcile do the work instead also requires
+- Without it, `absurd_sync_crons` refuses to run rather than silently doing nothing.
+- Using `migrate`'s automatic reconcile instead also needs
   `SYNC_SCHEDULES_ON_TEST_DB = True`.
-- Either way, cleanup clears whatever ended up in `cron.job` / `ScheduledTask` —
-  settings-synced, admin-authored, or created directly by the test.
+- Cleanup clears whatever ends up in `cron.job` / `ScheduledTask` either way.
 
 ## `manage.py test` { #manage-py-test data-toc-label="manage.py test" }
 
