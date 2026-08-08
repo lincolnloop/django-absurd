@@ -14,19 +14,21 @@
   >
     {% include "partials/lincolnloop-logo.html" %}
   </a>
-  {% if config.copyright %}
-    <div class="md-copyright__highlight">
-      {{ config.copyright }}
-    </div>
-  {% endif %}
-  {% if not config.extra.generator == false %}
-    {#- Wrapped so it is a flex item like its siblings; the theme leaves it as a
-        bare text node, which no `|` separator rule can reach. -#}
-    <span class="dj-footer-generator">
-      Made with
-      <a href="https://zensical.org/" target="_blank" rel="noopener">
-        Zensical
-      </a>
-    </span>
-  {% endif %}
+  {#- Copyright and generator stack in their own column, so the credit sits under
+      the copyright line rather than under the logo. -#}
+  <div class="dj-footer-text">
+    {% if config.copyright %}
+      <div class="md-copyright__highlight">
+        {{ config.copyright }}
+      </div>
+    {% endif %}
+    {% if not config.extra.generator == false %}
+      <span class="dj-footer-generator">
+        Made with
+        <a href="https://zensical.org/" target="_blank" rel="noopener">
+          Zensical
+        </a>
+      </span>
+    {% endif %}
+  </div>
 </div>

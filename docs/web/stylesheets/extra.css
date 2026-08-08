@@ -212,14 +212,10 @@ header.md-header .md-header__topic > a.md-ellipsis:hover {
   opacity: 0.35;
 }
 
-/* The generator credit drops to its own line: a full-basis flex item wraps, and
- * being first on that line it takes no `|` separator. */
-.md-footer-meta.md-typeset .dj-footer-generator {
-  flex-basis: 100%;
-}
-
-.md-footer-meta.md-typeset .dj-footer-generator::before {
-  content: none;
+/* Copyright over generator credit, as one column beside the logo. */
+.md-footer-meta.md-typeset .dj-footer-text {
+  display: flex;
+  flex-direction: column;
 }
 
 /* Inert: the wordmark never reacts to hover or focus. Two theme rules have to
