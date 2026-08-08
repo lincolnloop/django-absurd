@@ -37,6 +37,24 @@ async def record_started(name: str) -> None:
     STARTED[name].set()
 
 
+@task(queue_name="default")
+async def hold_until_released_then_unwind(name: str) -> None:
+    """Occupy one slot, and finish unwinding only after yielding once more.
+
+    The cleanup arm is the point: a handler that awaits anything while unwinding —
+    a durable step, an async close — is still on the loop after ``cancel()`` merely
+    requests its cancellation, and only an await of the cancelled slot reaches its
+    ``-unwound`` line.
+    """
+    ORDER.append(name)
+    STARTED[name].set()
+    try:
+        await HOLD["gate"].wait()
+    finally:
+        await asyncio.sleep(0)
+        ORDER.append(f"{name}-unwound")
+
+
 def arm_events(*names: str) -> None:
     ORDER.clear()
     STARTED.clear()
@@ -203,5 +221,30 @@ def test_cancelling_the_worker_leaves_no_handler_running_on_the_loop() -> None:
                 if pending is not asyncio.current_task() and not pending.done()
             ]
             assert leftovers == []
+
+    asyncio.run(drive())
+
+
+def test_cancelling_the_worker_waits_for_each_slot_to_finish_unwinding() -> None:
+    # What the test above cannot see: a handler parked on an Event unwinds in the same
+    # loop turn that resolves ``await worker``, so a cancel-without-await still leaves
+    # no leftover task behind. Here the handler yields once while unwinding, which the
+    # worker only outlives if it never awaited what it cancelled — so the last thing
+    # the handler records lands after the worker's cancellation, or not at all.
+    call_command("absurd_sync_queues")
+    arm_events("slow")
+
+    hold_until_released_then_unwind.enqueue("slow")
+
+    async def drive() -> None:
+        async with aworker_client(get_default_backend(), "default") as client:
+            worker = asyncio.create_task(
+                run_blocking_worker(client, WorkerOptions(concurrency=2))
+            )
+            await asyncio.wait_for(STARTED["slow"].wait(), timeout=5)
+            worker.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await worker
+            assert ORDER == ["slow", "slow-unwound"]
 
     asyncio.run(drive())
