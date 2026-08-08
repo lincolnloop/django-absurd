@@ -143,11 +143,12 @@ header.md-header .md-header__topic > a.md-ellipsis:hover {
   text-underline-offset: 0.12em;
 }
 
-/* No header mark: the site name carries the brand. The theme still emits the
- * anchor that would wrap a logo, so hide it rather than leave an empty button. */
-.md-header__button.md-logo,
-.md-nav__button.md-logo {
-  display: none;
+/* Branded logo image in the header/nav. */
+.md-header__button.md-logo img,
+.md-nav__button.md-logo img {
+  width: 1.3rem;
+  height: 1.3rem;
+  object-fit: contain;
 }
 
 /* Compact ledger tables. */
@@ -197,16 +198,20 @@ header.md-header .md-header__topic > a.md-ellipsis:hover {
 /* Footer: the Lincoln Loop wordmark, sitting above the copyright line. Its text
  * paths inherit `currentColor`, so it follows the footer's own foreground in
  * both schemes; the circle keeps the fixed brand colour. */
-/* Inert: the wordmark inherits the footer's own colour and does not react to
- * hover or focus. The triple selector pins that against the theme's own link
- * styling. */
-.dj-footer-brand,
-.dj-footer-brand:hover,
-.dj-footer-brand:focus {
+/* Inert: the wordmark inherits the footer's own colour and never reacts to
+ * hover or focus. The `.md-typeset` prefix is load-bearing — the footer meta
+ * carries that class, so a bare `.dj-footer-brand:hover` (0,2,0) loses to the
+ * document-link rule `.md-typeset a:hover` (0,2,1) and the mark would pick up
+ * both the accent colour and an underline. */
+.md-typeset .dj-footer-brand,
+.md-typeset .dj-footer-brand:hover,
+.md-typeset .dj-footer-brand:focus,
+.md-typeset .dj-footer-brand:focus-visible {
   display: block;
   margin-bottom: 0.4rem;
   color: inherit;
   opacity: 1;
+  text-decoration: none;
   transition: none;
 }
 

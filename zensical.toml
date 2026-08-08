@@ -73,6 +73,7 @@ features = [
 ]
 font = false
 language = "en"
+logo = "assets/logo.png"
 
 [[project.theme.palette]]
 accent = "grey"
