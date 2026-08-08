@@ -243,16 +243,19 @@ Headers passed at [enqueue time](tasks.md#retries-spawn-options) are available o
 
 ## API
 
-| Method / property                                       | Sync | Async   | Description                                               |
-| ------------------------------------------------------- | ---- | ------- | --------------------------------------------------------- |
-| `step(name, fn)`                                        | yes  | `await` | Run `fn()`, checkpoint the result; skip on replay         |
-| `sleep_for(step_name, duration)`                        | yes  | `await` | Suspend the task for `duration` seconds                   |
-| `sleep_until(step_name, wake_at)`                       | yes  | `await` | Suspend until a `datetime`, Unix timestamp, or float      |
-| `await_event(event_name, step_name=None, timeout=None)` | yes  | `await` | Suspend until the named event arrives; return its payload |
-| `emit_event(event_name, payload=None)`                  | yes  | `await` | Emit an event on the task's own queue (replay-safe)       |
-| `heartbeat(seconds=None)`                               | yes  | `await` | Extend the claim timeout (keep the run alive)             |
-| `headers`                                               | yes  | yes     | Read-only mapping of headers passed at enqueue time       |
-| `run_step([name])` (decorator, sync only)               | yes  | —       | Wraps `step`; derives the checkpoint name from `fn`       |
+Everything below is available on both contexts. On the async one, `await` the methods —
+`headers` is a property, and `run_step` is sync-only.
+
+| Method / property                                       | Description                                               |
+| ------------------------------------------------------- | --------------------------------------------------------- |
+| `step(name, fn)`                                        | Run `fn()`, checkpoint the result; skip on replay         |
+| `sleep_for(step_name, duration)`                        | Suspend the task for `duration` seconds                   |
+| `sleep_until(step_name, wake_at)`                       | Suspend until a `datetime`, Unix timestamp, or float      |
+| `await_event(event_name, step_name=None, timeout=None)` | Suspend until the named event arrives; return its payload |
+| `emit_event(event_name, payload=None)`                  | Emit an event on the task's own queue (replay-safe)       |
+| `heartbeat(seconds=None)`                               | Extend the claim timeout (keep the run alive)             |
+| `headers`                                               | Read-only mapping of headers passed at enqueue time       |
+| `run_step([name])`                                      | Decorator wrapping `step`; derives the name from `fn`     |
 
 The async context also exposes `.absurd_ctx` for anything the wrapper doesn't mirror.
 There is no `await_task_result` — use Django's own

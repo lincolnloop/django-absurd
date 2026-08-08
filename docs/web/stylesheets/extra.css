@@ -177,10 +177,20 @@ header.md-header .md-header__topic > a.md-ellipsis:hover {
   vertical-align: top;
 }
 
+/* First column hugs its content. It wraps only when it must, and then only at
+ * argument boundaries — the space after each comma in a signature is the sole
+ * break opportunity, so `await_event(event_name, step_name=None)` breaks per
+ * argument instead of mid-identifier. */
 .md-typeset table:not([class]) th:nth-child(1),
 .md-typeset table:not([class]) td:nth-child(1) {
   width: 1%;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.md-typeset table:not([class]) td:nth-child(1) > code {
+  white-space: normal;
 }
 
 .md-typeset .highlight > pre > code {
