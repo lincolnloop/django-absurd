@@ -252,6 +252,14 @@ database:
       TO <scheduling_role>;
   ```
 
+**Locally, don't hand-roll it.** django-absurd's own
+[`Dockerfile.pg_cron`](https://github.com/lincolnloop/django-absurd/blob/main/Dockerfile.pg_cron)
+and the `db_pg_cron` service in
+[`compose.yaml`](https://github.com/lincolnloop/django-absurd/blob/main/compose.yaml)
+already satisfy every prerequisite above — the PGDG package, the preload flag,
+`cron.database_name`, and `CREATE EXTENSION` on the central database. They run the test
+suite, so they stay current. Copy them.
+
 Managed Postgres (Amazon RDS, Google Cloud SQL, Azure Database, …) exposes these as
 parameter-group or flag options, and typically lets you pre-install the extension and
 grants once, centrally.
