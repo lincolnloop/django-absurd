@@ -88,6 +88,8 @@ migration, so "migrate on deploy" covers it. The extension itself is one-time
   does not.
 - **Timezone is the `cron.timezone` GUC, default GMT** — not Django's `TIME_ZONE`. Set
   it to match if yours is non-UTC.
+- **To stop a job, remove it from `SCHEDULE`.** Every reconcile re-arms settings-owned
+  jobs, so disabling one directly in `cron.job` doesn't survive the next deploy.
 - `absurd.W003` if the app is ordered before `"django_absurd"`.
 
 Runnable demo:
@@ -142,27 +144,21 @@ leftover schedule would fire for real against test data.
 
 → [Testing — getting a `SCHEDULE` into pg_cron](testing.md#schedule-in-a-test).
 
-### Before you go to production
+### Uninstall
 
-!!! warning "Uninstalling is not self-cleaning"
+```bash
+python manage.py absurd_sync_crons --teardown   # --noinput in automation
+```
 
-    Removing the app stops the reconcile but leaves jobs firing, and `migrate` never
-    touches admin-authored ones. Run this **first**:
+Run this **before** removing `"django_absurd.pg_cron"` from `INSTALLED_APPS` or
+switching back to beat. Removing the app stops the reconcile but leaves the jobs firing,
+and nothing cleans up afterwards.
 
-    ```bash
-    python manage.py absurd_sync_crons --teardown   # --noinput in automation
-    ```
+- It unschedules every owned job and deletes its row, admin-authored included —
+  otherwise the next `migrate` resurrects them. Hence the confirmation prompt.
+- `migrate` alone never tears down admin-authored jobs, so it is not a substitute.
 
-    It unschedules every owned job and deletes its row, admin-authored included —
-    otherwise the next `migrate` resurrects them. Hence the prompt.
-
-- **The kill switch is `SCHEDULE`, not `cron.alter_job`.** Every reconcile re-arms
-  settings-owned jobs, so edits to `cron.job` don't persist.
-- Consider a
-  [`cron.job_run_details`](https://github.com/citusdata/pg_cron#viewing-job-run-details)
-  purge job — the only place fire-time failures show up, and it grows unbounded.
-
-## Operator setup
+### Operator setup
 
 One-time, on the **central** database named by `cron.database_name` — not necessarily
 the Absurd one. See [pg_cron's own docs](https://github.com/citusdata/pg_cron).
@@ -187,7 +183,11 @@ Managed Postgres (RDS, Cloud SQL, Azure) exposes these as parameter-group flags.
 `manage.py check` reports `absurd.E012` if the central database is unreachable or
 missing the extension.
 
-### Docker
+Also worth scheduling: a
+[`cron.job_run_details`](https://github.com/citusdata/pg_cron#viewing-job-run-details)
+purge. It's the only place fire-time failures show up, and it grows unbounded.
+
+#### Docker
 
 The stock `postgres` image ships no pg_cron. Copy django-absurd's own — its pg_cron
 suite runs against exactly these:
