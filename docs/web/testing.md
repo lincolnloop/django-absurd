@@ -18,15 +18,22 @@ import pytest
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
-def test_my_task_completes(dj_absurd):
-    result = my_task.enqueue()
+def test_add_completes(dj_absurd):
+    add.enqueue(2, 3)
 
-    assert [run.state for run in dj_absurd.drain()] == ["completed"]
-    assert dj_absurd.get_result(result.id).state == "completed"
+    (run,) = dj_absurd.drain()
+
+    assert run.state == "completed"
+    assert run.result == 5
+    assert run.task_name == "myapp.tasks.add"
+    assert run.args == [2, 3]
+    assert run.attempt == 1
 ```
 
 `dj_absurd` is the only fixture. `drain()` runs every claimable task to completion
-in-process — no [worker](how-it-works.md#workers) subprocess, no polling loop to manage.
+in-process — no [worker](how-it-works.md#workers) subprocess, no polling loop to manage
+— and hands back one `RunSnapshot` per run, so assert against the run itself rather than
+a status string.
 
 - **`transaction=True` is required.** Absurd works on a connection separate from the
   test's, so under a plain
@@ -47,14 +54,19 @@ in-process — no [worker](how-it-works.md#workers) subprocess, no polling loop 
 import datetime as dt
 
 
-def test_a_task_sleeps_seven_days_then_completes(dj_absurd):
+def test_followup_sleeps_seven_days_then_completes(dj_absurd):
     with dj_absurd.freeze_time(dt.datetime(2026, 1, 1, tzinfo=dt.UTC)) as frozen_time:
-        result = my_weekly_followup_task.enqueue()   # enqueue INSIDE the block
-        assert [run.state for run in dj_absurd.drain()] == ["sleeping"]
+        send_followup.enqueue()          # enqueue INSIDE the block
+
+        (sleeping,) = dj_absurd.drain()
+        assert sleeping.state == "sleeping"
 
         frozen_time.shift(dt.timedelta(days=7))
-        assert [run.state for run in dj_absurd.drain()] == ["completed"]
-        assert dj_absurd.get_result(result.id).state == "completed"
+
+        (woken,) = dj_absurd.drain()
+        assert woken.state == "completed"
+        assert woken.run_id == sleeping.run_id   # the same run resumed...
+        assert woken.attempt == 1                # ...so it was never a retry
 ```
 
 `freeze_time(instant=None)` pins durable time for the block — `None` means real now at
@@ -90,7 +102,7 @@ helpers.
 
 ## Fixture API
 
-### `drain(queue="default")`
+### `dj_absurd.drain(queue="default")`
 
 Runs every currently-claimable task on `queue` to completion, one at a time, returning
 one `RunSnapshot` per run executed, in claim order.
@@ -120,13 +132,13 @@ one `RunSnapshot` per run executed, in claim order.
   `drain()` raises `QueueNotProvisionedError`. An undeclared queue raises
   `QueueNotDeclaredError`; see [exceptions](configuration.md#exceptions).
 
-### `emit(name, payload=None, queue="default")`
+### `dj_absurd.emit(name, payload=None, queue="default")`
 
 Delivers an [event](workflows.md#events), resolving a task suspended in `await_event` —
 the waiter resumes on the next `drain()`. An unprovisioned queue raises
 `QueueNotProvisionedError`, same as `drain()`.
 
-### `get_result(task_id, queue=...)`
+### `dj_absurd.get_result(task_id, queue=...)`
 
 ```python
 result = reports_task.enqueue()   # id is "reports:<uuid>"
@@ -164,14 +176,14 @@ which `TaskResult.status` can't show — and skips the worker round-trip.
   the id names — the fixture is for inspecting state that really exists. Use Django's
   own `get_result` when you want your task's status and return value.
 
-### `sync_queues()`
+### `dj_absurd.sync_queues()`
 
 Provisions every declared queue — the runtime counterpart of
 `manage.py absurd_sync_queues`. Rarely needed: reach for it only when the test itself
 changed queue topology, such as a `settings` override declaring a queue the migration
 never saw.
 
-### `now`
+### `dj_absurd.now`
 
 Virtual now, timezone-aware, as Postgres itself reports it — read through the fixture's
 own fresh connection rather than computed in Python.

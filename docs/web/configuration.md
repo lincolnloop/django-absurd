@@ -113,7 +113,7 @@ django-absurd's own failure modes raise typed errors under `DjangoAbsurdError`:
 `QueueNotDeclaredError` (the queue was never declared) and `QueueNotProvisionedError`
 (declared, but has no table yet — run `manage.py absurd_sync_queues`). They come from
 [`emit_event`](workflows.md#emit-from-a-view) and the test fixture's
-[`drain()`](testing.md#drainqueuedefault).
+[`drain()`](testing.md#dj_absurddrainqueuedefault).
 
 - `enqueue` raises `QueueNotDeclaredError` too, but only when the backend's `QUEUES`
   option is empty or unset. With `QUEUES` configured, a typo'd queue name at enqueue is
