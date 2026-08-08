@@ -197,7 +197,7 @@ claim finds it and resumes with the payload.
   database alias.
 - An undeclared queue raises `QueueNotDeclaredError`; a declared but unprovisioned one
   raises `QueueNotProvisionedError` naming `manage.py absurd_sync_queues`. See
-  [our own exceptions](configuration.md#our-own-exceptions).
+  [exceptions](configuration.md#exceptions).
 - `emit_event` is sync — wrap it in `sync_to_async` from an async view.
 
 ### Timeout

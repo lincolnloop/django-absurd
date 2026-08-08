@@ -98,7 +98,7 @@ silencing it:
 | `absurd.W002` | (Warning) A queue's declared `storage_mode` differs from the database; `storage_mode` is immutable once the queue exists.                                                                  |
 | `absurd.W003` | (Warning) `django_absurd.pg_cron` is ordered before `django_absurd` in `INSTALLED_APPS` (see [Cron Jobs](cron-jobs.md)).                                                                   |
 
-## Our own exceptions
+## Exceptions
 
 ```python
 from django_absurd.exceptions import DjangoAbsurdError

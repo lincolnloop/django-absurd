@@ -118,8 +118,7 @@ one `RunSnapshot` per run executed, in claim order.
   declared catalog, so a test database arrives ready — but a queue a single test
   declares by overriding `TASKS` has no table yet. Call `sync_queues()` first, or
   `drain()` raises `QueueNotProvisionedError`. An undeclared queue raises
-  `QueueNotDeclaredError`; see
-  [our own exceptions](configuration.md#our-own-exceptions).
+  `QueueNotDeclaredError`; see [exceptions](configuration.md#exceptions).
 
 ### `emit(name, payload=None, queue="default")`
 
