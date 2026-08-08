@@ -198,18 +198,32 @@ header.md-header .md-header__topic > a.md-ellipsis:hover {
 /* Footer: the Lincoln Loop wordmark, sitting above the copyright line. Its text
  * paths inherit `currentColor`, so it follows the footer's own foreground in
  * both schemes; the circle keeps the fixed brand colour. */
-/* Inert: the wordmark inherits the footer's own colour and never reacts to
- * hover or focus. The `.md-typeset` prefix is load-bearing — the footer meta
- * carries that class, so a bare `.dj-footer-brand:hover` (0,2,0) loses to the
- * document-link rule `.md-typeset a:hover` (0,2,1) and the mark would pick up
- * both the accent colour and an underline. */
-.md-typeset .dj-footer-brand,
-.md-typeset .dj-footer-brand:hover,
-.md-typeset .dj-footer-brand:focus,
-.md-typeset .dj-footer-brand:focus-visible {
-  display: block;
-  margin-bottom: 0.4rem;
-  color: inherit;
+/* Footer meta: logo | copyright | generator, on one line. */
+.md-footer-meta.md-typeset .md-copyright {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.md-footer-meta.md-typeset .md-copyright > * + *::before {
+  content: "|";
+  margin-right: 0.5rem;
+  opacity: 0.35;
+}
+
+/* Inert: the wordmark never reacts to hover or focus. Two theme rules have to
+ * be outranked, and they disagree with each other — `.md-typeset a:hover`
+ * (0,2,1) colours it on hover, while `html .md-footer-meta.md-typeset
+ * a:not(:focus,:hover)` (0,2,2) colours it at rest. Matching the resting
+ * colour at (0,3,1) pins both states to the same value. */
+html .md-footer-meta.md-typeset .dj-footer-brand,
+html .md-footer-meta.md-typeset .dj-footer-brand:hover,
+html .md-footer-meta.md-typeset .dj-footer-brand:focus,
+html .md-footer-meta.md-typeset .dj-footer-brand:focus-visible {
+  display: inline-flex;
+  align-items: center;
+  color: var(--md-default-fg-color);
   opacity: 1;
   text-decoration: none;
   transition: none;
@@ -217,7 +231,7 @@ header.md-header .md-header__topic > a.md-ellipsis:hover {
 
 .dj-footer-brand svg {
   display: block;
-  width: 5.2rem;
+  width: 4.4rem;
   height: auto;
 }
 

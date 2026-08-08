@@ -20,9 +20,13 @@
     </div>
   {% endif %}
   {% if not config.extra.generator == false %}
-    Made with
-    <a href="https://zensical.org/" target="_blank" rel="noopener">
-      Zensical
-    </a>
+    {#- Wrapped so it is a flex item like its siblings; the theme leaves it as a
+        bare text node, which no `|` separator rule can reach. -#}
+    <span class="dj-footer-generator">
+      Made with
+      <a href="https://zensical.org/" target="_blank" rel="noopener">
+        Zensical
+      </a>
+    </span>
   {% endif %}
 </div>
