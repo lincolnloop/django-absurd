@@ -143,21 +143,26 @@ https://github.com/earendil-works/absurd/issues/91) and was never applied to the
 path. The TypeScript and Go workers already cap claims by free capacity.
 
 Retires: `django_absurd/worker.py`'s own rolling-window loop over the public
-`claim_tasks`, standing in for `client.start_worker`, plus its own `asyncio.Event` stop
-handle and `try/except asyncio.CancelledError` that cancels and drains the in-flight
-window — the sync worker gets that for free from `ThreadPoolExecutor.__exit__`.
+`claim_tasks`, standing in for `client.start_worker`, and the
+`try/except asyncio.CancelledError` that cancels and drains that loop's in-flight window
+— the sync worker gets that for free from `ThreadPoolExecutor.__exit__`. Not the
+`asyncio.Event` stop handle: it is what makes an in-process stop testable, it survives
+either way, and the section below is built on it.
 
 **Filed:** https://github.com/earendil-works/absurd/pull/137, open since 2026-08-03.
 
 ## Wake idle waits on stop instead of sleeping out the poll interval
 
 Both SDK workers notice a stop only between polls. The async loop does
-`await asyncio.sleep(poll_interval)` on an empty claim; the sync one blocks in
-`concurrent.futures.wait(timeout=poll_interval)`. `stop_worker()` just flips a bool that
-is read on the next pass, so a `SIGTERM`/`SIGINT` arriving mid-sleep goes unacted on for
-up to a full `poll_interval` (default 0.25s). Measured against this project's own test
-suite: 16 signal-stopped tests ran about 4s slower in aggregate, roughly 30% on those
-modules — and the same bound delays every production shutdown.
+`await asyncio.sleep(poll_interval)` on an empty claim. The sync one has two idle arms:
+with nothing executing — which includes every `concurrency <= 1` worker, whose whole
+loop is that arm — it blocks in `time.sleep(poll_interval)`, and only with a non-empty
+window does it block in `concurrent.futures.wait(timeout=poll_interval)`.
+`stop_worker()` just flips a bool that is read on the next pass, so a `SIGTERM`/`SIGINT`
+arriving mid-sleep goes unacted on for up to a full `poll_interval` (default 0.25s).
+Measured against this project's own test suite: 16 signal-stopped tests ran about 4s
+slower in aggregate — a **+43% slowdown** on those modules against `origin/main` (9.22s
+→ 13.22s) — and the same bound delays every production shutdown.
 
 Ask: the idle waits should wake as soon as a stop is requested, rather than sleeping
 blind.
