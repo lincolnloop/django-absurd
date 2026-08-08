@@ -18,26 +18,24 @@ existing database connection.
 
     APIs and behavior may change between releases.
 
-## Requirements
-
-- Python **3.12+**, Django **6.0+**
-- PostgreSQL with the **psycopg (v3)** driver (`django.db.backends.postgresql`). Absurd
-  reuses Django's connection — psycopg2 won't work.
-
 ## Install
 
-django-absurd is in **alpha** — only pre-releases are published, so your installer must
-be allowed to pick them up.
+=== "uv"
 
-```bash
-uv add django-absurd --prerelease allow
-```
+    ```bash
+    uv add django-absurd --prerelease allow
+    ```
 
-Using pip:
+=== "pip"
 
-```bash
-pip install --pre django-absurd
-```
+    ```bash
+    pip install --pre django-absurd
+    ```
+
+Only pre-releases are published while django-absurd is in alpha, hence the flags. You
+need Python **3.12+**, Django **6.0+**, and PostgreSQL on the **psycopg (v3)** driver
+(`django.db.backends.postgresql`) — Absurd reuses Django's connection, so psycopg2 won't
+work.
 
 ## Quickstart
 
@@ -92,6 +90,8 @@ result is stored in Postgres — [fetch it later](tasks.md#read-the-result) with
 ## Next
 
 - **[Tasks](tasks.md)** — enqueue with retries and other options, and read results.
+- **[Workflows](workflows.md)** — checkpointed steps, durable sleep, and events.
+- **[Cron Jobs](cron-jobs.md)** — run tasks on a recurring cadence.
 - **[Configuration](configuration.md)** — every setting, in one place.
 - **[How it works](how-it-works.md)** — how queues, runs, checkpoints, and the admin fit
-  together, with links to the Absurd and Django docs.
+  together.

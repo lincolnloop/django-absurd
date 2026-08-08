@@ -58,41 +58,8 @@ One worker runs both sync and `async def` [tasks](tasks.md) (async on an event l
 sync in a thread pool). On start it does a full sync — provisioning every declared queue
 and rebuilding the admin views — then polls for work.
 
-## Logging
-
-- **`django.tasks`** — Django's own task lifecycle; `AbsurdBackend` emits its signals.
-  Portable across backends.
-- **`django_absurd`** — what Absurd did: attempts, durations, [worker](#workers) and
-  [beat](cron-jobs.md#run-the-beat) lifecycle, steps, replays, sleeps, event waits. One
-  child per module, so `django_absurd.scheduler` is the beat and `django_absurd.context`
-  the durable primitives — level either down on its own.
-
-`absurd_worker` and `absurd_beat` attach a `StreamHandler` at `INFO` so a fresh project
-is not silent. Name `django_absurd` or a child in
-[`LOGGING`](https://docs.djangoproject.com/en/6.0/topics/logging/#configuring-logging)
-and they stop; name only `root` and they add no handler but still raise the level, so a
-`WARNING` root does not swallow them:
-
-```python
-LOGGING = {
-    "version": 1,
-    "disable_existing_loggers": False,
-    "handlers": {"console": {"class": "logging.StreamHandler"}},
-    "loggers": {
-        # everything from this package...
-        "django_absurd": {"handlers": ["console"], "level": "INFO"},
-        # ...or quiet one part of it
-        "django_absurd.scheduler": {
-            "handlers": ["console"],
-            "level": "WARNING",
-            "propagate": False,
-        },
-    },
-}
-```
-
-Neither logger is the complete record. Postgres is: the
-[stored result](tasks.md#read-the-result) and the queue-state models below.
+Two loggers report what happened — see [Logging](logging.md). Neither is the complete
+record; Postgres is.
 
 ## Admin & ORM introspection
 

@@ -1,0 +1,44 @@
+---
+icon: lucide/scroll-text
+---
+
+# Logging
+
+```python title="settings.py"
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {"console": {"class": "logging.StreamHandler"}},
+    "loggers": {
+        # everything from this package...
+        "django_absurd": {"handlers": ["console"], "level": "INFO"},
+        # ...or quiet one part of it
+        "django_absurd.scheduler": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+    },
+}
+```
+
+Two loggers, configured like any other in Django's
+[`LOGGING`](https://docs.djangoproject.com/en/6.0/topics/logging/#configuring-logging):
+
+- **`django.tasks`** — Django's own task lifecycle. `AbsurdBackend` emits its signals,
+  so this stays portable across backends.
+- **`django_absurd`** — what Absurd did: attempts, durations,
+  [worker](how-it-works.md#workers) and [beat](cron-jobs.md#run-it-with-beat) lifecycle,
+  steps, replays, sleeps, event waits. One child per module — `django_absurd.scheduler`
+  is the beat, `django_absurd.context` the durable primitives — so either can be
+  levelled down on its own.
+
+`absurd_worker` and `absurd_beat` attach a `StreamHandler` at `INFO` so a fresh project
+is not silent.
+
+- Naming `django_absurd` or one of its children in `LOGGING` stops them.
+- Naming only `root` adds no handler but still raises the level, so a `WARNING` root
+  does not swallow them.
+- **Neither logger is the complete record.** Postgres is: the
+  [stored result](tasks.md#read-the-result) and the
+  [queue-state models](how-it-works.md#admin-orm-introspection).

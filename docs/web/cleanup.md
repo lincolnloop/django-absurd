@@ -4,20 +4,8 @@ icon: lucide/trash-2
 
 # Cleanup / retention
 
-Absurd stores task rows in Postgres — they accumulate unless you prune them. Each queue
-exposes two retention knobs (see
-[Configuration — Declaring queues](configuration.md#declaring-queues)):
-
-| Option          | What it controls                                                                                         |
-| --------------- | -------------------------------------------------------------------------------------------------------- |
-| `cleanup_ttl`   | Minimum age a terminal task must reach before it is deleted.                                             |
-| `cleanup_limit` | Max terminal rows deleted **per queue** per run — applied separately to task and event rows (batch cap). |
-
-**Terminal** means completed, failed, or cancelled — running and pending tasks are never
-touched. See [Absurd's cleanup docs](https://earendil-works.github.io/absurd/cleanup/)
-for the retention model, and
-[Absurd's storage docs](https://earendil-works.github.io/absurd/storage/) for how queues
-store rows.
+Task rows accumulate in Postgres unless you prune them. Cleanup deletes **terminal**
+rows — completed, failed, or cancelled. Running and pending tasks are never touched.
 
 ## Run on demand
 
@@ -26,24 +14,19 @@ python manage.py absurd_cleanup            # every queue
 python manage.py absurd_cleanup reports    # only the named queue(s)
 ```
 
-Deletes eligible rows across the configured Absurd backend and prints per-queue counts:
+Prints per-queue counts:
 
 ```
 default: 12 tasks, 0 events deleted
 ```
 
-The same function is importable — `cleanup_queues()` for all queues, or
-`cleanup_queues(["reports", "emails"])` for specific ones — returning a list of
-per-queue count dicts.
-
-Passing an unknown queue name to `absurd_cleanup` (or `cleanup_queues([...])`) raises a
-database error — the queue must exist. This is deliberate: cleanup is a maintenance
-operation, so the raw error surfaces rather than being masked by a guard.
+- The same function is importable: `cleanup_queues()` for all queues, or
+  `cleanup_queues(["reports", "emails"])` for specific ones, returning a list of
+  per-queue count dicts.
+- An unknown queue name raises a database error rather than being masked by a guard —
+  cleanup is a maintenance operation, so the raw error surfaces.
 
 ## Schedule recurring cleanup
-
-Add `OPTIONS["CLEANUP"] = {"schedule": "<cron>"}` to run cleanup automatically on
-cadence — no user code required:
 
 ```python title="settings.py"
 TASKS = {
@@ -56,62 +39,65 @@ TASKS = {
 }
 ```
 
-This works under **either** scheduler:
+Runs cleanup automatically on cadence, no user code required, under **either**
+[scheduler](cron-jobs.md) — beat runs it in-process; pg_cron calls Absurd's own native
+`absurd.cleanup_all_queues` from a job on django-absurd's lane.
 
-- **beat** — runs cleanup in-process on the declared cadence.
-- **pg_cron** — calls Absurd's own native cleanup function (`absurd.cleanup_all_queues`)
-  from a job on django-absurd's own database-namespaced lane,
-  `_dj:<absurd database>:c:cleanup_all`, alongside your other cron jobs (see
-  [Cron Jobs](cron-jobs.md)). When `django_absurd.pg_cron` is installed, django-absurd
-  is authoritative over **that** job: it schedules it from `OPTIONS["CLEANUP"]` and
-  removes it otherwise — including at migrate teardown / scheduler-flip even when
-  `CLEANUP` was never set.
+- With `django_absurd.pg_cron` installed, django-absurd is authoritative over that job:
+  it schedules it from `OPTIONS["CLEANUP"]` and removes it otherwise, including at
+  migrate teardown or a scheduler flip, even when `CLEANUP` was never set.
+- `manage.py check` reports `absurd.E010` for a malformed `CLEANUP`. The cron grammar is
+  checked at `check` time for beat, and by the database at sync for pg_cron.
 
 !!! warning "Drive cleanup one way only"
 
     `OPTIONS["CLEANUP"]` **or** `absurdctl cron` — never both. Absurd's own maintenance
     scheduler (`absurd.enable_cron`, which `absurdctl cron --enable <queue>` drives) is a
-    separate mechanism creating **per-queue** jobs, and django-absurd neither uses nor
-    manages it. It cannot see or remove those jobs, so they survive every teardown and
-    would fire alongside its own.
+    separate mechanism creating **per-queue** jobs that django-absurd neither uses nor
+    manages. It cannot see or remove them, so they survive every teardown and fire
+    alongside its own.
 
-`manage.py check` reports `absurd.E010` for a malformed `CLEANUP` (not a
-`{"schedule": …}` map, or unknown keys); the cron grammar is checked at `check` time for
-beat, and by the database at sync for pg_cron. See
-[Absurd's cleanup docs](https://earendil-works.github.io/absurd/cleanup/) for the
-underlying retention model.
+## Retention knobs
 
-Retention knobs (`cleanup_ttl`, `cleanup_limit`) remain per-queue policy — configure
-them in `OPTIONS["QUEUES"]` (see
-[Configuration — Declaring queues](configuration.md#declaring-queues)).
+```python
+"OPTIONS": {"QUEUES": {
+    "reports": {"cleanup_ttl": "7 days", "cleanup_limit": 1000},
+}}
+```
+
+Per-queue policy, set where you [declare the queue](configuration.md#declaring-queues):
+
+| Option          | What it controls                                                                                         |
+| --------------- | -------------------------------------------------------------------------------------------------------- |
+| `cleanup_ttl`   | Minimum age a terminal task must reach before it is deleted.                                             |
+| `cleanup_limit` | Max terminal rows deleted **per queue** per run — applied separately to task and event rows (batch cap). |
+
+→ [Absurd: cleanup](https://earendil-works.github.io/absurd/cleanup/) ·
+[Absurd: storage](https://earendil-works.github.io/absurd/storage/).
 
 ## Reset — drop all queues
-
-`absurd_flush` **deletes all task history** — it removes every queue (its per-queue
-tables and registry entry) along with all tasks, runs, and events in them. It does
-**not** uninstall Absurd: the schema, migrations, and functions stay in place, so you
-never re-`migrate` — you only re-provision the queues. It prompts for confirmation; pass
-`--noinput` (alias `--no-input`) to skip the prompt in automation:
 
 ```bash
 python manage.py absurd_flush            # prompts, then drops on 'yes'
 python manage.py absurd_flush --noinput  # drops without prompting
 ```
 
+Removes every queue — its per-queue tables and registry entry — along with all tasks,
+runs, and events in them. It does **not** uninstall Absurd: the schema, migrations, and
+functions stay, so you never re-`migrate`, you only re-provision the queues.
+
 !!! warning "Destructive"
 
-    This permanently deletes all task history across every queue. It leaves the Absurd
-    schema and migrations untouched — re-provision your declared queues afterward with
-    `migrate`, `absurd_sync_queues`, or by starting a worker.
+    This permanently deletes all task history across every queue. Re-provision your
+    declared queues afterward with `migrate`, `absurd_sync_queues`, or by starting a
+    worker.
 
-    Any existing scheduled jobs (pg_cron schedule jobs and beat schedules) survive the
-    flush and will **error on each fire** until the queues exist again — re-provision
-    promptly. Exception: the cleanup job from `OPTIONS["CLEANUP"]`
-    (`_dj:<absurd database>:c:cleanup_all`) also survives and runs harmlessly — it finds
-    no eligible rows until queues are re-provisioned.
+    Existing scheduled jobs (pg_cron and beat) survive the flush and **error on each
+    fire** until the queues exist again — re-provision promptly. The one exception is the
+    cleanup job from `OPTIONS["CLEANUP"]`, which survives and runs harmlessly, finding no
+    eligible rows.
 
-    `absurd_flush` (via per-queue `drop_queue` → `disable_cron`) also removes that
-    queue's per-queue Absurd maintenance cron jobs (`absurd_partitions_<md5>` /
-    `absurd_cleanup_<md5>` / `absurd_detach_plan_<md5>`) if any were created via
-    `absurdctl cron --enable <queue>`; the `OPTIONS["CLEANUP"]` job is not per-queue and
-    is unaffected (it survives).
+    Per-queue Absurd maintenance jobs created via `absurdctl cron --enable <queue>`
+    (`absurd_partitions_<md5>` / `absurd_cleanup_<md5>` / `absurd_detach_plan_<md5>`) are
+    removed along with their queue. The `OPTIONS["CLEANUP"]` job is not per-queue and is
+    unaffected.
