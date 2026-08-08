@@ -293,9 +293,6 @@ services:
       - POSTGRES_PASSWORD=postgres
 ```
 
-- **Pin the package version** for anything but scratch work —
-  `postgresql-18-cron=1.6.7-3.pgdg13+1`, say. Unpinned, a rebuild can move you across a
-  pg_cron release.
 - **Match the major versions.** `postgresql-18-cron` goes with `postgres:18`.
 - `cron.database_name=postgres` keeps the extension in the central database while your
   app database schedules cross-database into it. Point it at your app database instead
