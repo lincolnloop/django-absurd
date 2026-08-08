@@ -28,10 +28,10 @@ Two loggers, configured like any other in Django's
 - **`django.tasks`** — Django's own task lifecycle. `AbsurdBackend` emits its signals,
   so this stays portable across backends.
 - **`django_absurd`** — what Absurd did: attempts, durations,
-  [worker](how-it-works.md#workers) and [beat](cron-jobs.md#run-it-with-beat) lifecycle,
-  steps, replays, sleeps, event waits. One child per module — `django_absurd.scheduler`
-  is the beat, `django_absurd.context` the durable primitives — so either can be
-  levelled down on its own.
+  [worker](how-it-works.md#workers) and [beat](cron-jobs.md#application-side-beat)
+  lifecycle, steps, replays, sleeps, event waits. One child per module —
+  `django_absurd.scheduler` is the beat, `django_absurd.context` the durable primitives
+  — so either can be levelled down on its own.
 
 `absurd_worker` and `absurd_beat` attach a `StreamHandler` at `INFO` so a fresh project
 is not silent.

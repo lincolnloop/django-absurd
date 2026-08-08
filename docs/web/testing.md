@@ -79,7 +79,7 @@ moves: `move_to(datetime)` and `shift(timedelta)`. Both move Python's clock (via
 - **A savepoint rollback inside the block reverts Django's session clock**, so a later
   `enqueue()` stamps real time and won't look claimable. Don't enqueue across a rollback
   boundary.
-- **A freeze doesn't reach [pg_cron](cron-jobs.md#run-it-with-pg_cron).** Its launcher
+- **A freeze doesn't reach [pg_cron](cron-jobs.md#postgres-side-pg_cron).** Its launcher
   runs in another database on its own clock, so advancing durable time cannot make a
   schedule fire — see [below](#getting-a-schedule-into-pg_cron-for-a-test).
 
@@ -185,7 +185,7 @@ teardown — no fixture to request, no marker to add.
   [rollback](https://docs.djangoproject.com/en/6.0/topics/testing/overview/#rollback-emulation).
   An `enqueue()` rides the same uncommitted transaction, so nothing is left to flush.
 - `transaction=True` tests commit for real, so django-absurd truncates queue state after
-  each one — and, with [`django_absurd.pg_cron`](cron-jobs.md#run-it-with-pg_cron)
+  each one — and, with [`django_absurd.pg_cron`](cron-jobs.md#postgres-side-pg_cron)
   installed, unschedules its own settings- and admin-authored jobs plus the
   [`OPTIONS["CLEANUP"]`](cleanup.md#schedule-recurring-cleanup) job.
 - In a multi-DB project cleanup only runs for a test whose `databases` includes the

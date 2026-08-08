@@ -4,9 +4,11 @@ icon: lucide/timer
 
 # Cron Jobs
 
-Run [tasks](tasks.md) on a recurring cadence. Two ways to drive schedules — a **beat**
-process, or **pg_cron** (Postgres fires them directly). Both read the same `SCHEDULE`
-map.
+Run [tasks](tasks.md) on a recurring cadence. **Pick one of two schedulers** —
+application-side [beat](#application-side-beat), or Postgres-side
+[pg_cron](#postgres-side-pg_cron). Both read the same `SCHEDULE` map, so switching is a
+deploy-time decision, not a rewrite. You cannot run both: once the pg_cron app is
+installed, `absurd_beat` and `absurd_worker --beat` raise `CommandError`.
 
 → [Absurd's cron patterns](https://earendil-works.github.io/absurd/patterns/cron/).
 
@@ -44,7 +46,7 @@ TASKS = {
 Entries are validated by `manage.py check` (`absurd.E007`), names included — a schedule
 name may only contain `[A-Za-z0-9_-]`.
 
-## Run it with beat
+## Application-side (beat)
 
 ```bash
 python manage.py absurd_beat
@@ -69,7 +71,7 @@ Runnable demo:
 [`examples/beat/`](https://github.com/lincolnloop/django-absurd/tree/main/examples/beat)
 (`docker compose up`).
 
-## Run it with pg_cron
+## Postgres-side (pg_cron)
 
 ```python title="settings.py"
 INSTALLED_APPS = [
@@ -100,8 +102,6 @@ Installing the extension itself is one-time operator work — see
   `TIME_ZONE`. If your `TIME_ZONE` is non-UTC, set `cron.timezone = 'America/New_York'`
   in `postgresql.conf` to match, or `0 2 * * *` means two different things under the two
   schedulers.
-- **Beat and pg_cron are mutually exclusive.** Running `absurd_beat` (or
-  `absurd_worker --beat`) while the app is installed raises `CommandError`.
 - `manage.py check` reports `absurd.W003` if the app is ordered before
   `"django_absurd"`.
 
