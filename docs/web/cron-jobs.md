@@ -183,12 +183,19 @@ the Absurd one. See [pg_cron's own docs](https://github.com/citusdata/pg_cron).
       TO <scheduling_role>;
   ```
 
-For a working Docker setup, copy
-[`Dockerfile.pg_cron`](https://github.com/lincolnloop/django-absurd/blob/main/Dockerfile.pg_cron)
-and the `db_pg_cron` service in
-[`compose.yaml`](https://github.com/lincolnloop/django-absurd/blob/main/compose.yaml) —
-django-absurd's own pg_cron suite runs against them. Managed Postgres (RDS, Cloud SQL,
-Azure) exposes the same knobs as parameter-group flags.
-
+Managed Postgres (RDS, Cloud SQL, Azure) exposes these as parameter-group flags.
 `manage.py check` reports `absurd.E012` if the central database is unreachable or
 missing the extension.
+
+### Docker
+
+The stock `postgres` image ships no pg_cron. Copy django-absurd's own — its pg_cron
+suite runs against exactly these:
+
+- [`Dockerfile.pg_cron`](https://github.com/lincolnloop/django-absurd/blob/main/Dockerfile.pg_cron)
+  — Debian base (Alpine has no pg_cron package), the PGDG package, and an initdb script
+  that creates the extension on the central database.
+- The `db_pg_cron` service in
+  [`compose.yaml`](https://github.com/lincolnloop/django-absurd/blob/main/compose.yaml)
+  — the `shared_preload_libraries` and `cron.database_name` server flags, which can't
+  live in the image.
