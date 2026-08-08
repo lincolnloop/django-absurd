@@ -1,0 +1,28 @@
+{#-
+  Overrides the theme's copyright partial to add the Lincoln Loop wordmark.
+  The mark is inlined rather than referenced as an <img>: its text paths use
+  `currentColor`, and an SVG loaded through <img> is an isolated document that
+  cannot see the page's colour, so it would render black in dark mode.
+-#}
+<div class="md-copyright">
+  <a
+    class="dj-footer-brand"
+    href="https://lincolnloop.com/"
+    target="_blank"
+    rel="noopener"
+    title="Built by Lincoln Loop"
+  >
+    {% include "partials/lincolnloop-logo.html" %}
+  </a>
+  {% if config.copyright %}
+    <div class="md-copyright__highlight">
+      {{ config.copyright }}
+    </div>
+  {% endif %}
+  {% if not config.extra.generator == false %}
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  {% endif %}
+</div>

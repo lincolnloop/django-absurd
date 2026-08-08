@@ -195,6 +195,27 @@ header.md-header .md-header__topic > a.md-ellipsis:hover {
   color: var(--md-default-fg-color--light);
 }
 
+/* Footer: the Lincoln Loop wordmark, sitting above the copyright line. Its text
+ * paths inherit `currentColor`, so it follows the footer's own foreground in
+ * both schemes; the circle keeps the fixed brand colour. */
+.dj-footer-brand {
+  display: block;
+  margin-bottom: 0.4rem;
+  color: var(--md-footer-fg-color--light, currentColor);
+  opacity: 0.75;
+  transition: opacity 125ms;
+}
+
+.dj-footer-brand:hover {
+  opacity: 1;
+}
+
+.dj-footer-brand svg {
+  display: block;
+  width: 5.2rem;
+  height: auto;
+}
+
 .md-typeset .highlight > pre > code {
   padding-left: 0.6rem;
   padding-right: 0.6rem;
