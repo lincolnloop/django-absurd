@@ -37,8 +37,8 @@ pre-commit gates), see [`../CLAUDE.md`](../CLAUDE.md).
   0). The one sanctioned ticking use is `tests/core/test_scheduler.py`'s live worker
   crossing a `*/1` boundary, which needs real time to pass.
 - **freezegun is banned** — it patches `time.monotonic`, which IS asyncio's event-loop
-  clock, so a frozen freezegun deadlocks the burst drain unkillably. Do not reintroduce
-  it. `pytest-asyncio` is a dev dependency for writing `async def` tests; nothing in
+  clock, so a frozen freezegun deadlocks the drain unkillably. Do not reintroduce it.
+  `pytest-asyncio` is a dev dependency for writing `async def` tests; nothing in
   `django_absurd/` may depend on it.
 - **No monkeypatching / `unittest.mock.patch`.** Test observable behavior, not
   internals. If a test needs to patch our own functions to reach a branch, restructure

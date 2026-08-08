@@ -16,7 +16,7 @@ from django_absurd.apps import provision_queues_after_migrate
 from django_absurd.exceptions import ViewNotProvisionedError
 from django_absurd.models import Queue
 from django_absurd.queues import get_absurd_client
-from tests import tasks
+from tests import tasks, utils
 
 if t.TYPE_CHECKING:
     from django.apps.config import AppConfig
@@ -92,7 +92,9 @@ def test_sync_command_rebuilds_views_with_new_queue() -> None:
         next(s for s in ADMIN_ENTITY_SPECS if s.name == "tasks")
     )
     tasks.add.using(queue_name="other").enqueue(1, 1)
-    call_command("absurd_worker", queue="other", burst=True)
+    utils.start_worker_until_done(
+        lambda: task_model.objects.filter(queue="other").exists(), queue="other"
+    )
     qs = task_model.objects.values_list("queue", flat=True).distinct()
     assert "other" in set(qs)
 
@@ -107,9 +109,11 @@ def test_worker_start_rebuilds_when_it_created_queue() -> None:
         next(s for s in ADMIN_ENTITY_SPECS if s.name == "tasks")
     )
     get_absurd_client().drop_queue("other")
-    call_command("absurd_worker", queue="other", burst=True)
+    utils.start_worker(queue="other")
     tasks.add.using(queue_name="other").enqueue(7, 8)
-    call_command("absurd_worker", queue="other", burst=True)
+    utils.start_worker_until_done(
+        lambda: task_model.objects.filter(queue="other").exists(), queue="other"
+    )
     assert task_model.objects.filter(queue="other").count() >= 1
 
 

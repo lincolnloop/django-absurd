@@ -3,11 +3,11 @@ import typing as t
 import pytest
 from django.contrib.admin.utils import quote
 from django.contrib.auth.models import User
-from django.core.management import call_command
 from django.test import Client
 from django.urls import reverse, reverse_lazy
 
 from django_absurd.models import Run
+from django_absurd.test import AbsurdTestRuntime
 from tests import tasks
 from tests.core.test_admin.utils import parse_html, result_rows, seed_mixed
 
@@ -34,11 +34,12 @@ def run_for(result: "TaskResult[t.Any, t.Any]") -> t.Any:
 def test_changelist_shows_dates_ordered_by_recent_activity(
     admin_user: User,
     client: Client,
+    dj_absurd: AbsurdTestRuntime,
 ) -> None:
     older = tasks.add.enqueue(1, 1)
-    call_command("absurd_worker", queue="default", burst=True)  # older run starts
+    dj_absurd.drain()  # older run starts
     newer = tasks.add.enqueue(2, 2)
-    call_command("absurd_worker", queue="default", burst=True)  # newer run starts later
+    dj_absurd.drain()  # newer run starts later
     client.force_login(admin_user)
     response = client.get(CHANGELIST)
     soup = parse_html(response)
@@ -94,6 +95,7 @@ def test_detail_groups_fields_into_fieldsets(
 def test_changelist_and_detail_survive_indefinite_available_at(
     admin_user: User,
     client: Client,
+    dj_absurd: AbsurdTestRuntime,
 ) -> None:
     # await_event with no timeout writes Postgres's 'infinity' sentinel into
     # available_at (absurd.await_event, migrations/0001_initial_0_4_0.sql:1664:
@@ -102,7 +104,7 @@ def test_changelist_and_detail_survive_indefinite_available_at(
     # un-guarded available_at column crashes both the changelist and the detail
     # page with a DataError before anything renders.
     tasks.sawait_event_once.enqueue("admin-infinity-check")
-    call_command("absurd_worker", queue="default", burst=True)  # suspends indefinitely
+    dj_absurd.drain()  # suspends indefinitely
 
     client.force_login(admin_user)
     changelist_response = client.get(CHANGELIST)

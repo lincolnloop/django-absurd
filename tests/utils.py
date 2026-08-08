@@ -1,5 +1,8 @@
 import contextlib
+import os
+import signal
 import threading
+import time
 import typing as t
 import uuid
 
@@ -10,6 +13,7 @@ from django.core.management import call_command
 from django.db import connections
 from django.dispatch import Signal
 
+from django_absurd import worker
 from django_absurd.test import open_test_connection
 
 if t.TYPE_CHECKING:
@@ -64,8 +68,85 @@ def make_tasks_settings(
     return {"default": {"BACKEND": ABSURD_BACKEND, "OPTIONS": options}}
 
 
-def run_absurd_worker(queue: str = "default", concurrency: int = 1) -> None:
-    call_command("absurd_worker", queue=queue, burst=True, concurrency=concurrency)
+def run_absurd_worker(queue: str = "default") -> None:
+    worker.drain_queue(queue)
+
+
+def start_worker_until_done(
+    is_done: t.Callable[[], bool],
+    *,
+    timeout: float = 5.0,
+    **options: t.Any,
+) -> None:
+    """Run ``absurd_worker`` to completion, stopping it once ``is_done()`` holds.
+
+    ``is_done`` gates on real work — a row the task wrote, a beat firing — so this is
+    for tests asserting an OUTCOME of running the worker, not just that it started.
+
+    The command runs in the calling thread so ``capsys``/``caplog`` see it; a watcher
+    thread fires the SIGTERM the worker's own signal handler turns into a graceful
+    stop, and only ever while that handler is the one installed — see
+    ``stop_handler_is_installed``. A command that errors out before the worker loop
+    gets no signal at all.
+
+    The stop lives in a ``finally``, so a predicate that raises still stops the worker
+    (the exception then surfaces through pytest's unhandled-thread-exception hook)
+    rather than leaving the command running with nothing left to end it. ``timeout``
+    stays under the suite's per-test cap so an unreachable predicate stops the worker
+    and fails its own test, instead of the cap firing first.
+    """
+    previous_handler = signal.getsignal(signal.SIGTERM)
+    returned = threading.Event()
+
+    def stop_once_done() -> None:
+        deadline = time.monotonic() + timeout
+        try:
+            while time.monotonic() < deadline:  # pragma: no branch
+                if stop_handler_is_installed(previous_handler) and is_done():
+                    break
+                if returned.wait(0.05):
+                    break
+        finally:
+            if not returned.is_set() and stop_handler_is_installed(previous_handler):
+                os.kill(os.getpid(), signal.SIGTERM)
+            # Thread-local, so this closes only the connection the predicate's ORM
+            # read opened on this thread.
+            connections.close_all()
+
+    watcher = threading.Thread(target=stop_once_done, daemon=True)
+    watcher.start()
+    try:
+        call_command("absurd_worker", **options)
+    finally:
+        returned.set()
+        watcher.join(timeout=5)
+
+
+def start_worker(*, timeout: float = 5.0, **options: t.Any) -> None:
+    """Run ``absurd_worker`` just long enough to see its signal handler installed, then
+    stop it — for tests asserting something that happens before the worker loop ever
+    claims a run: the provisioning report, the startup banner, the logging handler the
+    command attaches. Nothing about the worker's actual work is waited on; a test that
+    needs a row or a beat to have landed wants ``start_worker_until_done`` instead.
+
+    Delegates to ``start_worker_until_done`` with an always-true predicate so there is
+    one implementation of the watcher thread, the handler-installed guard, and the
+    thread-local ``connections.close_all()``.
+    """
+    start_worker_until_done(lambda: True, timeout=timeout, **options)
+
+
+def stop_handler_is_installed(previous_handler: object) -> bool:
+    """Whether the SIGTERM handler currently installed is the worker's own.
+
+    Anything else means a signal would land somewhere that is not a graceful stop:
+    whatever pytest had installed before the command reached the worker loop, or
+    Python's default — which terminates the session outright — after asyncio removes
+    the worker's handler on the way out. Both are exactly what a stray SIGTERM from a
+    watcher thread must not hit.
+    """
+    handler = signal.getsignal(signal.SIGTERM)
+    return handler is not previous_handler and callable(handler)
 
 
 def claim_one_run(queue: str = "default", *, claim_timeout: int) -> uuid.UUID:

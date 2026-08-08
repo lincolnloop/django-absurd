@@ -57,7 +57,7 @@ def test_unbounded_attempts_never_report_terminal(
 ) -> None:
     finished = utils.RecordingReceiver()
     # A backoff is mandatory here: with max_attempts=None and the default delay-0
-    # strategy, the burst drain re-claims the failing task forever and the test hangs
+    # strategy, the drain re-claims the failing task forever and the test hangs
     # until pytest-timeout kills it.
     unbounded = params_module.absurd_params(
         max_attempts=None,

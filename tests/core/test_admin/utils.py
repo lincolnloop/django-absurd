@@ -6,10 +6,9 @@ import typing as t
 from bs4 import BeautifulSoup, ResultSet, Tag
 from django.conf import settings
 from django.contrib import admin as djadmin
-from django.core.management import call_command
 from django.urls import clear_url_caches
 
-from django_absurd import absurd_params
+from django_absurd import absurd_params, worker
 from django_absurd.admin import register_absurd_admin
 from tests import tasks
 from tests.utils import HasContent
@@ -38,8 +37,8 @@ def seed() -> None:
     tasks.add.enqueue(2, 3)
     tasks.add.using(queue_name="other").enqueue(7, 8)
     tasks.boom.enqueue()
-    call_command("absurd_worker", queue="default", burst=True)
-    call_command("absurd_worker", queue="other", burst=True)
+    worker.drain_queue("default")
+    worker.drain_queue("other")
 
 
 def seed_mixed() -> tuple[
@@ -48,6 +47,6 @@ def seed_mixed() -> tuple[
     """Three default-queue tasks in distinct terminal/queued states."""
     completed = tasks.add.enqueue(2, 3)
     failed = absurd_params(max_attempts=1).bind(tasks.boom).enqueue()
-    call_command("absurd_worker", queue="default", burst=True)
-    pending = tasks.add.enqueue(5, 6)  # enqueued after the burst → never claimed
+    worker.drain_queue("default")
+    pending = tasks.add.enqueue(5, 6)  # enqueued after the drain → never claimed
     return completed, failed, pending

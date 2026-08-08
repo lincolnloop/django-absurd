@@ -15,6 +15,7 @@ from django_absurd.connection import register_jsonb_loader
 from django_absurd.exceptions import QueueNotDeclaredError
 from django_absurd.queues import get_absurd_client
 from django_absurd.tasks import AbsurdTask
+from django_absurd.test import AbsurdTestRuntime
 from tests import tasks, utils
 
 if t.TYPE_CHECKING:
@@ -108,11 +109,13 @@ def test_aenqueue_lands() -> None:
     assert len(get_absurd_client().claim_tasks(batch_size=1)) == 1
 
 
-def test_enqueue_auto_creates_declared_queue_and_runs() -> None:
+def test_enqueue_auto_creates_declared_queue_and_runs(
+    dj_absurd: AbsurdTestRuntime,
+) -> None:
     # 'default' declared but unprovisioned (no absurd_sync_queues). Enqueue auto-creates
     # it; the worker then runs the task end-to-end.
     tasks.make_group.enqueue("auto")
-    call_command("absurd_worker", queue="default", burst=True)
+    dj_absurd.drain()
     assert Group.objects.filter(name="auto").exists()
 
 
@@ -141,11 +144,13 @@ def test_enqueue_with_empty_queues_reports_undeclared(
     )
 
 
-def test_enqueue_auto_create_survives_outer_atomic() -> None:
+def test_enqueue_auto_create_survives_outer_atomic(
+    dj_absurd: AbsurdTestRuntime,
+) -> None:
     with transaction.atomic():
         tasks.make_group.enqueue("inatomic")
         assert Group.objects.count() == 0  # nothing committed yet
-    call_command("absurd_worker", queue="default", burst=True)
+    dj_absurd.drain()
     assert Group.objects.filter(name="inatomic").exists()
 
 

@@ -28,11 +28,6 @@ class Command(AbsurdReportCommand):
             help="Queue name to consume (default: 'default').",
         )
         parser.add_argument(
-            "--burst",
-            action="store_true",
-            help="Drain the queue then exit (no persistent blocking loop).",
-        )
-        parser.add_argument(
             "--concurrency",
             type=int,
             default=1,
@@ -67,10 +62,7 @@ class Command(AbsurdReportCommand):
         parser.add_argument(
             "--beat",
             action="store_true",
-            help=(
-                "Run the beat scheduler in the worker loop"
-                " (not compatible with --burst)."
-            ),
+            help="Run the beat scheduler in the worker loop.",
         )
 
     def handle(self, *args: t.Any, **options: t.Any) -> None:
@@ -80,10 +72,6 @@ class Command(AbsurdReportCommand):
         except BackendNotConfiguredError as exc:
             raise CommandError(str(exc)) from exc
         queue = options["queue"]
-
-        if options["burst"] and options["beat"]:
-            msg = "--beat is not compatible with --burst."
-            raise CommandError(msg)
 
         if options["beat"] and backend.scheduler == "pg_cron":
             raise CommandError(BEAT_DISABLED_UNDER_PG_CRON)
@@ -111,11 +99,18 @@ class Command(AbsurdReportCommand):
 
         elephant = console.build_glyph_prefix(self.stdout, "🐘")
         self.stdout.write(f"{elephant}Started worker on queue '{queue}'.")
+
+        def announce_stop_requested() -> None:
+            self.stdout.write(
+                f"{elephant}Stop requested on queue '{queue}'; "
+                "finishing in-flight tasks."
+            )
+
         run_worker(
             backend,
             queue,
-            burst=options["burst"],
             run_beat=options["beat"],
             options=worker_options,
+            on_stop_requested=announce_stop_requested,
         )
         self.stdout.write(f"{elephant}Stopped worker on queue '{queue}'.")

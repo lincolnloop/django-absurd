@@ -2,9 +2,9 @@ import typing as t
 import uuid
 
 import pytest
-from django.core.management import call_command
 from django.db import connections
 
+from django_absurd import worker
 from django_absurd.admin_views import (
     ADMIN_ENTITY_SPECS,
     EntitySpec,
@@ -25,8 +25,8 @@ CHECKS_SPEC: EntitySpec = next(s for s in ADMIN_ENTITY_SPECS if s.name == "check
 def seed_two_queues() -> None:
     tasks.add.enqueue(2, 3)
     tasks.add.using(queue_name="other").enqueue(7, 8)
-    call_command("absurd_worker", queue="default", burst=True)
-    call_command("absurd_worker", queue="other", burst=True)
+    worker.drain_queue("default")
+    worker.drain_queue("other")
 
 
 def test_zero_queue_view_is_empty() -> None:

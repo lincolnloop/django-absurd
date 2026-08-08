@@ -1,6 +1,10 @@
 import asyncio
 import datetime as dt
 import logging
+import os
+import signal
+import threading
+import time
 
 import psycopg.errors
 import pytest
@@ -9,6 +13,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command, load_command_class
 from django.core.management.base import CommandError
 from django.db import connection
+from django.tasks import task
 from pytest_django.fixtures import SettingsWrapper
 
 from django_absurd.backends import AbsurdBackend, get_absurd_backends
@@ -25,10 +30,10 @@ from django_absurd.worker import (
     aworker_client,
     drain_queue,
     run_blocking_worker,
+    run_worker,
 )
-from tests import atasks, tasks
+from tests import atasks, tasks, utils
 from tests.jobs import record_from_jobs
-from tests.utils import run_absurd_worker
 
 pytestmark = [
     pytest.mark.django_db(transaction=True),
@@ -61,7 +66,7 @@ def test_worker_client_rejects_non_psycopg3(settings: SettingsWrapper) -> None:
         }
     }
     with pytest.raises(CommandError, match="psycopg"):
-        call_command("absurd_worker", queue="default", burst=True)
+        call_command("absurd_worker", queue="default")
 
 
 def test_worker_client_opens_without_provisioning_check() -> None:
@@ -93,7 +98,7 @@ def test_worker_client_absent_schema_errors() -> None:
 def test_end_to_end_executes_and_records_result(dj_absurd: AbsurdTestRuntime) -> None:
     dj_absurd.sync_queues()
     result = tasks.make_group.enqueue("alpha")
-    run_absurd_worker()
+    utils.run_absurd_worker()
     assert Group.objects.filter(name="alpha").exists()
     snap = dj_absurd.get_result(result.id)
     assert snap.state == "completed"
@@ -103,7 +108,7 @@ def test_end_to_end_executes_and_records_result(dj_absurd: AbsurdTestRuntime) ->
 def test_failing_task_records_failure(dj_absurd: AbsurdTestRuntime) -> None:
     dj_absurd.sync_queues()
     result = tasks.boom.enqueue()
-    run_absurd_worker()
+    utils.run_absurd_worker()
     snap = dj_absurd.get_result(result.id)
     assert snap.state == "failed"
 
@@ -113,7 +118,7 @@ def test_takes_context_attempt_is_one_on_first_run(
 ) -> None:
     dj_absurd.sync_queues()
     result = tasks.report_attempt.enqueue()
-    run_absurd_worker()
+    utils.run_absurd_worker()
     snap = dj_absurd.get_result(result.id)
     assert snap.result == 1
 
@@ -123,7 +128,7 @@ def test_takes_context_task_result_carries_real_args(
 ) -> None:
     dj_absurd.sync_queues()
     result = tasks.report_args.enqueue("x", "y")
-    run_absurd_worker()
+    utils.run_absurd_worker()
     snap = dj_absurd.get_result(result.id)
     assert snap.result == ["x", "y"]
 
@@ -131,7 +136,7 @@ def test_takes_context_task_result_carries_real_args(
 def test_using_queue_name_routes_to_worker_queue() -> None:
     call_command("absurd_sync_queues")
     tasks.routed.using(queue_name="default").enqueue()
-    run_absurd_worker()
+    utils.run_absurd_worker()
     assert Group.objects.filter(name="routed").exists()
 
 
@@ -139,7 +144,7 @@ def test_handler_logs_task_outcome(caplog: pytest.LogCaptureFixture) -> None:
     call_command("absurd_sync_queues")
     tasks.make_group.enqueue("logged")
     with caplog.at_level(logging.INFO, logger="django_absurd"):
-        run_absurd_worker()
+        utils.run_absurd_worker()
     assert "tests.tasks.make_group" in caplog.text
     assert "completed" in caplog.text
 
@@ -149,7 +154,7 @@ def test_unregistered_name_defers_not_crashes(dj_absurd: AbsurdTestRuntime) -> N
     spawn = get_absurd_client("default").spawn(
         "not.a.real.task", {"args": [], "kwargs": {}}, queue="default"
     )
-    run_absurd_worker()
+    utils.run_absurd_worker()
     snap = dj_absurd.get_result(spawn["task_id"])
     assert snap.state != "failed"
 
@@ -159,7 +164,7 @@ def test_task_outside_tasks_py_runs(dj_absurd: AbsurdTestRuntime) -> None:
     # never find it (it would defer forever). Lazy resolution runs it by module_path.
     dj_absurd.sync_queues()
     result = record_from_jobs.enqueue("from-jobs")
-    run_absurd_worker()
+    utils.run_absurd_worker()
     assert Group.objects.filter(name="from-jobs").exists()
     snap = dj_absurd.get_result(result.id)
     assert snap.result == "from-jobs"
@@ -175,10 +180,14 @@ def test_queue_defaults_to_default(
         }
     }
     tasks.make_group.enqueue("dflt")  # auto-creates the default queue
-    call_command("absurd_worker", burst=True)  # no --queue -> "default"
+    utils.start_worker_until_done(  # no --queue -> "default"
+        lambda: Group.objects.filter(name="dflt").exists()
+    )
     out = capsys.readouterr().out
     assert out == (
-        "🐘 Started worker on queue 'default'.\n🐘 Stopped worker on queue 'default'.\n"
+        "🐘 Started worker on queue 'default'.\n"
+        "🐘 Stop requested on queue 'default'; finishing in-flight tasks.\n"
+        "🐘 Stopped worker on queue 'default'.\n"
     )
     assert Group.objects.filter(name="dflt").exists()
 
@@ -194,7 +203,7 @@ def test_unknown_queue_errors_listing_valid(settings: SettingsWrapper) -> None:
 
 def test_worker_rejects_alias_flag(settings: SettingsWrapper) -> None:
     with pytest.raises(CommandError):
-        call_command("absurd_worker", "--alias", "default", burst=True)
+        call_command("absurd_worker", "--alias", "default")
 
 
 def test_worker_uses_single_backend_at_nondefault_alias(
@@ -206,7 +215,7 @@ def test_worker_uses_single_backend_at_nondefault_alias(
             "QUEUES": ["default"],
         }
     }
-    call_command("absurd_worker", burst=True)
+    utils.start_worker()
     assert "Started worker on queue 'default'." in capsys.readouterr().out
 
 
@@ -221,7 +230,7 @@ def test_worker_no_backend_errors(settings: SettingsWrapper) -> None:
             r"django_absurd\.backends\.AbsurdBackend entry to TASKS\."
         ),
     ):
-        call_command("absurd_worker", burst=True)
+        call_command("absurd_worker")
 
 
 def test_worker_multiple_backends_errors(settings: SettingsWrapper) -> None:
@@ -238,7 +247,7 @@ def test_worker_multiple_backends_errors(settings: SettingsWrapper) -> None:
         },
     }
     with pytest.raises(CommandError) as exc:
-        call_command("absurd_worker", burst=True)
+        call_command("absurd_worker")
     assert str(exc.value) == (
         "django-absurd supports one Absurd backend per project; "
         "configure exactly one AbsurdBackend in TASKS."
@@ -250,7 +259,6 @@ def test_command_parses_all_flags_with_defaults() -> None:
     parser = cmd.create_parser("manage.py", "absurd_worker")
     opts = vars(parser.parse_args([]))
     assert opts["queue"] == "default"  # --queue defaults to "default"
-    assert opts["burst"] is False
     assert opts["concurrency"] == 1
     assert opts["claim_timeout"] == 120
     assert opts["poll_interval"] == 0.25
@@ -258,10 +266,12 @@ def test_command_parses_all_flags_with_defaults() -> None:
     assert opts["worker_id"] is None
 
 
-def test_command_burst_runs_task_end_to_end(dj_absurd: AbsurdTestRuntime) -> None:
+def test_command_runs_task_end_to_end(dj_absurd: AbsurdTestRuntime) -> None:
     dj_absurd.sync_queues()
     result = tasks.make_group.enqueue("via-command")
-    call_command("absurd_worker", queue="default", burst=True)
+    utils.start_worker_until_done(
+        lambda: Group.objects.filter(name="via-command").exists(), queue="default"
+    )
     assert Group.objects.filter(name="via-command").exists()
     snap = dj_absurd.get_result(result.id)
     assert snap.state == "completed"
@@ -271,14 +281,19 @@ def test_worker_start_provisions_all_declared_queues(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     # full provision on start: every declared queue, not just the served one
-    call_command("absurd_worker", queue="default", burst=True)
-    created_line, started_line, stopped_line = capsys.readouterr().out.splitlines()
+    utils.start_worker(queue="default")
+    created_line, started_line, stop_requested_line, stopped_line = (
+        capsys.readouterr().out.splitlines()
+    )
     assert set(created_line.removeprefix("Created: ").split(", ")) == {
         "default",
         "other",
         "reports",
     }
     assert started_line == "🐘 Started worker on queue 'default'."
+    assert stop_requested_line == (
+        "🐘 Stop requested on queue 'default'; finishing in-flight tasks."
+    )
     assert stopped_line == "🐘 Stopped worker on queue 'default'."
     assert Queue.objects.filter(queue_name="default").exists()
     assert Queue.objects.filter(queue_name="other").exists()
@@ -301,11 +316,12 @@ def test_worker_command_reconciles_changed_mutable_option(
         }
     }
     capsys.readouterr()  # drop sync output
-    call_command("absurd_worker", queue="default", burst=True)
+    utils.start_worker(queue="default")
     out = capsys.readouterr().out
     assert out == (
         "Reconciled: default\n"
         "🐘 Started worker on queue 'default'.\n"
+        "🐘 Stop requested on queue 'default'; finishing in-flight tasks.\n"
         "🐘 Stopped worker on queue 'default'.\n"
     )
     assert Queue.objects.get(queue_name="default").cleanup_limit == 250  # DB proof
@@ -334,11 +350,12 @@ def test_worker_command_reconciles_changed_interval_option(
         }
     }
     capsys.readouterr()
-    call_command("absurd_worker", queue="default", burst=True)
+    utils.start_worker(queue="default")
     out = capsys.readouterr().out
     assert out == (
         "Reconciled: default\n"
         "🐘 Started worker on queue 'default'.\n"
+        "🐘 Stop requested on queue 'default'; finishing in-flight tasks.\n"
         "🐘 Stopped worker on queue 'default'.\n"
     )
     assert Queue.objects.get(queue_name="default").cleanup_ttl == dt.timedelta(days=60)
@@ -356,12 +373,14 @@ def test_worker_command_no_reconcile_when_unchanged(
     call_command("absurd_sync_queues")
     before = Queue.objects.get(queue_name="default").cleanup_ttl
     capsys.readouterr()
-    call_command("absurd_worker", queue="default", burst=True)
+    utils.start_worker(queue="default")
     out = capsys.readouterr().out
     # Drift-gated no-op: no Created/Reconciled, no "No queues to sync.", just
     # the start and stop lines.
     assert out == (
-        "🐘 Started worker on queue 'default'.\n🐘 Stopped worker on queue 'default'.\n"
+        "🐘 Started worker on queue 'default'.\n"
+        "🐘 Stop requested on queue 'default'; finishing in-flight tasks.\n"
+        "🐘 Stopped worker on queue 'default'.\n"
     )
     assert Queue.objects.get(queue_name="default").cleanup_ttl == before
 
@@ -383,10 +402,12 @@ def test_worker_command_warns_on_storage_mode_drift(
         }
     }
     capsys.readouterr()
-    call_command("absurd_worker", queue="default", burst=True)
+    utils.start_worker(queue="default")
     cap = capsys.readouterr()
     assert cap.out == (
-        "🐘 Started worker on queue 'default'.\n🐘 Stopped worker on queue 'default'.\n"
+        "🐘 Started worker on queue 'default'.\n"
+        "🐘 Stop requested on queue 'default'; finishing in-flight tasks.\n"
+        "🐘 Stopped worker on queue 'default'.\n"
     )
     # The command's own warning shares stderr with the console handler the worker
     # attaches, whose StreamHandler defaults to stderr as Django's own console
@@ -396,30 +417,24 @@ def test_worker_command_warns_on_storage_mode_drift(
         "Queue 'default': storage_mode cannot be changed "
         "(existing: 'unpartitioned', declared: 'partitioned'); skipping.\n"
         "worker started: alias=default queue=default database=default"
-        " burst=True concurrency=1\n"
-        "worker stopped: alias=default queue=default database=default runs=0\n"
+        " concurrency=1\n"
+        "worker stop requested: finishing in-flight tasks\n"
+        "worker stopped: alias=default queue=default database=default\n"
     )
 
 
 def test_worker_command_schema_absent_errors_migrate() -> None:
-    with connection.cursor() as cur:
-        cur.execute("DROP SCHEMA IF EXISTS absurd CASCADE")
-    try:
-        with pytest.raises(CommandError, match="migrate"):
-            call_command("absurd_worker", queue="default", burst=True)
-    finally:
-        call_command("migrate", "django_absurd", "zero", verbosity=0)
-        call_command("migrate", verbosity=0)  # restore absurd schema
-
-
-def test_worker_non_burst_command_schema_absent_errors_migrate() -> None:
     # The provision_backend/ImproperlyConfigured translation errors before ever
-    # reaching the blocking worker loop.
+    # reaching the blocking worker loop. Driven through the live-worker helper: a
+    # command that fails this early installs no signal handler, so the stop signal
+    # that helper exists to send must never go out — pytest installs no SIGTERM
+    # handler of its own, so a stray kill would hit Python's default (SIG_DFL) and
+    # take the session down with it.
     with connection.cursor() as cur:
         cur.execute("DROP SCHEMA IF EXISTS absurd CASCADE")
     try:
         with pytest.raises(CommandError, match="migrate"):
-            call_command("absurd_worker", queue="default")
+            utils.start_worker(queue="default")
     finally:
         call_command("migrate", "django_absurd", "zero", verbosity=0)
         call_command("migrate", verbosity=0)  # restore absurd schema
@@ -430,14 +445,14 @@ def test_start_worker_drains_concurrently() -> None:
     for i in range(5):
         tasks.make_group.enqueue(f"g{i}")
 
-    run_absurd_worker()
+    utils.run_absurd_worker()
     assert Group.objects.filter(name__startswith="g").count() == 5
 
 
 def test_async_task_runs_end_to_end(dj_absurd: AbsurdTestRuntime) -> None:
     dj_absurd.sync_queues()
     r = atasks.aecho.enqueue("hi-async")
-    run_absurd_worker()
+    utils.run_absurd_worker()
     snap = dj_absurd.get_result(r.id)
     assert snap.state == "completed"
     assert snap.result == "hi-async"
@@ -446,22 +461,23 @@ def test_async_task_runs_end_to_end(dj_absurd: AbsurdTestRuntime) -> None:
 def test_blocking_worker_drains_then_stops() -> None:
     # Exercises the blocking (live-worker) path deterministically — no sleeps:
     # the stopper awaits each task to a terminal state (SDK await_task_result),
-    # THEN calls stop_worker() (the flag start_worker's loop polls).
+    # THEN sets the stop event the worker loop polls.
     # run_blocking_worker returns once stopped.
     call_command("absurd_sync_queues")
     results = [tasks.make_group.enqueue(f"blk-{i}") for i in range(3)]
     task_ids = [r.id.rsplit(":", 1)[-1] for r in results]
 
     async def drive() -> None:
+        stop = asyncio.Event()
         async with aworker_client(backend(), "default") as client:
 
             async def stopper() -> None:
                 for tid in task_ids:
                     await client.await_task_result(tid)
-                client.stop_worker()
+                stop.set()
 
             await asyncio.gather(
-                run_blocking_worker(client, WorkerOptions(concurrency=2)),
+                run_blocking_worker(client, WorkerOptions(concurrency=2), stop=stop),
                 stopper(),
             )
 
@@ -480,7 +496,7 @@ def test_undeclared_queue_is_rejected(
     # raises CommandError, drain_queue raises the package's own QueueNotDeclaredError.
     def invoke() -> None:
         if entrypoint == "command":
-            call_command("absurd_worker", queue="nope", burst=True)
+            call_command("absurd_worker", queue="nope")
         else:
             drain_queue("nope")
 
@@ -564,6 +580,131 @@ def test_non_task_name_defers_not_crashes(dj_absurd: AbsurdTestRuntime) -> None:
     spawn = get_absurd_client("default").spawn(
         "tests.atasks.asleep", {"args": [], "kwargs": {}}, queue="default"
     )
-    run_absurd_worker()
+    utils.run_absurd_worker()
     snap = dj_absurd.get_result(spawn["task_id"])
     assert snap.state != "failed"
+
+
+STOP_REQUESTED_LOG = "worker stop requested: finishing in-flight tasks"
+
+TASK_STARTED: dict[str, threading.Event] = {}
+RELEASE_GATE: dict[str, threading.Event] = {}
+
+
+@task(queue_name="default")
+async def wait_for_release(name: str) -> None:
+    """Announce it started, then park on a `threading.Event` a signal-sending OS
+    thread can set — an `asyncio.Event` would not be thread-safe to set from there."""
+    TASK_STARTED[name].set()
+    await asyncio.to_thread(RELEASE_GATE[name].wait)
+
+
+def test_worker_command_reports_the_stop_request_on_both_channels(
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+    dj_absurd: AbsurdTestRuntime,
+) -> None:
+    dj_absurd.sync_queues()
+    with caplog.at_level(logging.INFO, logger="django_absurd"):
+        utils.start_worker(queue="default")
+
+    assert capsys.readouterr().out == (
+        "🐘 Started worker on queue 'default'.\n"
+        "🐘 Stop requested on queue 'default'; finishing in-flight tasks.\n"
+        "🐘 Stopped worker on queue 'default'.\n"
+    )
+    messages = [
+        r.getMessage() for r in caplog.records if r.name == "django_absurd.worker"
+    ]
+    assert messages == [
+        "worker started: alias=default queue=default database=default concurrency=1",
+        STOP_REQUESTED_LOG,
+        "worker stopped: alias=default queue=default database=default",
+    ]
+
+
+def test_worker_command_logs_the_stop_request_again_on_a_second_signal(
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+    dj_absurd: AbsurdTestRuntime,
+) -> None:
+    # A held task keeps the worker mid-shutdown (looping never re-checked, handler
+    # still installed) long enough to deliver a SECOND signal deterministically —
+    # gated on the first stop-requested log line landing, never on a sleep — and
+    # proves the operator's second Ctrl-C gets answered too, not swallowed.
+    dj_absurd.sync_queues()
+    TASK_STARTED["repeat"] = threading.Event()
+    RELEASE_GATE["repeat"] = threading.Event()
+    wait_for_release.enqueue("repeat")
+    previous_handler = signal.getsignal(signal.SIGTERM)
+
+    def count_stop_requested() -> int:
+        return sum(
+            1
+            for r in caplog.records
+            if r.name == "django_absurd.worker" and r.getMessage() == STOP_REQUESTED_LOG
+        )
+
+    def deliver_two_signals_then_release() -> None:
+        assert TASK_STARTED["repeat"].wait(5)
+        if utils.stop_handler_is_installed(previous_handler):  # pragma: no branch
+            os.kill(os.getpid(), signal.SIGTERM)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:  # pragma: no branch
+            if count_stop_requested() >= 1:
+                break
+            time.sleep(0.005)
+        if utils.stop_handler_is_installed(previous_handler):  # pragma: no branch
+            os.kill(os.getpid(), signal.SIGTERM)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:  # pragma: no branch
+            if count_stop_requested() >= 2:
+                break
+            time.sleep(0.005)
+        RELEASE_GATE["repeat"].set()
+
+    killer = threading.Thread(target=deliver_two_signals_then_release, daemon=True)
+    with caplog.at_level(logging.INFO, logger="django_absurd"):
+        killer.start()
+        try:
+            call_command("absurd_worker", poll_interval=0.05, queue="default")
+        finally:
+            killer.join(timeout=5)
+            signal.signal(signal.SIGTERM, previous_handler)
+
+    assert count_stop_requested() == 2
+    assert capsys.readouterr().out == (
+        "🐘 Started worker on queue 'default'.\n"
+        "🐘 Stop requested on queue 'default'; finishing in-flight tasks.\n"
+        "🐘 Stop requested on queue 'default'; finishing in-flight tasks.\n"
+        "🐘 Stopped worker on queue 'default'.\n"
+    )
+
+
+def test_run_worker_without_on_stop_requested_writes_nothing_to_stdout(
+    capsys: pytest.CaptureFixture[str], dj_absurd: AbsurdTestRuntime
+) -> None:
+    # run_worker (the library entrypoint, not the command) is the "default stays
+    # silent" case: nothing under django_absurd/ writes to stdout on its own, so a
+    # real stop signal through it must produce no output even though the log line
+    # still fires.
+    dj_absurd.sync_queues()
+    previous_handler = signal.getsignal(signal.SIGTERM)
+
+    def fire_sigterm_once_installed() -> None:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:  # pragma: no branch
+            if utils.stop_handler_is_installed(previous_handler):
+                os.kill(os.getpid(), signal.SIGTERM)
+                break
+            time.sleep(0.005)
+
+    killer = threading.Thread(target=fire_sigterm_once_installed, daemon=True)
+    try:
+        killer.start()
+        run_worker(backend(), "default", options=WorkerOptions(poll_interval=0.05))
+    finally:
+        killer.join(timeout=5)
+        signal.signal(signal.SIGTERM, previous_handler)
+
+    assert capsys.readouterr().out == ""

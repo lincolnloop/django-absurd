@@ -26,7 +26,7 @@ from django_absurd.scheduler import (
     spawn_scheduled,
 )
 from django_absurd.test import AbsurdTestRuntime, FrozenTime
-from tests import tasks
+from tests import tasks, utils
 from tests.models import Payload
 from tests.utils import make_tasks_settings
 
@@ -188,7 +188,7 @@ def test_beat_fires_each_due_slot(
         run_beat_until(
             frozen_time, backend, dt.datetime(2026, 1, 1, 0, 2, 30, tzinfo=dt.UTC)
         )
-        call_command("absurd_worker", queue="default", burst=True)
+        dj_absurd.drain()
         expected_fires = 2  # slots 00:01 and 00:02
         assert Payload.objects.count() == expected_fires
 
@@ -218,7 +218,7 @@ def test_beat_fires_multiple_schedules_due_same_slot(
         run_beat_until(
             frozen_time, backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC)
         )
-        call_command("absurd_worker", queue="default", burst=True)
+        dj_absurd.drain()
         assert set(Group.objects.values_list("name", flat=True)) == {"a", "b"}
 
 
@@ -278,7 +278,7 @@ def test_beat_isolates_failing_schedule(
         run_beat_until(
             frozen_time, backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC)
         )
-        call_command("absurd_worker", queue="default", burst=True)
+        dj_absurd.drain()
         expected_good = 1  # "bad" raised in spawn (unimportable, logged); "good" ran
         assert Payload.objects.count() == expected_good
 
@@ -313,7 +313,7 @@ def test_beat_spawns_task_with_args(
         run_beat_until(
             frozen_time, backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC)
         )
-        call_command("absurd_worker", queue="default", burst=True)
+        dj_absurd.drain()
         assert Group.objects.filter(name="beat-args").exists()
 
 
@@ -336,7 +336,7 @@ def test_beat_spawns_task_with_kwargs(
         run_beat_until(
             frozen_time, backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC)
         )
-        call_command("absurd_worker", queue="default", burst=True)
+        dj_absurd.drain()
         assert Group.objects.filter(name="beat-kw").exists()
 
 
@@ -362,7 +362,7 @@ def test_beat_empty_queue_string_falls_back_to_task_queue(
         run_beat_until(
             frozen_time, backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC)
         )
-        call_command("absurd_worker", queue="default", burst=True)
+        dj_absurd.drain()
         assert Group.objects.filter(name="beat-empty-q").exists()
 
 
@@ -386,9 +386,9 @@ def test_beat_routes_task_to_queue(
         run_beat_until(
             frozen_time, backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC)
         )
-        call_command("absurd_worker", queue="default", burst=True)
+        dj_absurd.drain()
         assert not Group.objects.filter(name="beat-routed").exists()
-        call_command("absurd_worker", queue="other", burst=True)
+        dj_absurd.drain(queue="other")
         assert Group.objects.filter(name="beat-routed").exists()
 
 
@@ -418,9 +418,9 @@ def test_beat_routes_task_to_queue_non_default_alias(
         run_beat_until(
             frozen_time, backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC)
         )
-        call_command("absurd_worker", queue="default", burst=True)
+        dj_absurd.drain()
         assert not Group.objects.filter(name="beat-non-default").exists()
-        call_command("absurd_worker", queue="other", burst=True)
+        dj_absurd.drain(queue="other")
         assert Group.objects.filter(name="beat-non-default").exists()
 
 
@@ -520,6 +520,7 @@ def test_settings_provider_sets_backend_alias(
 
 
 def test_idempotency_key_dedups_same_slot(
+    dj_absurd: AbsurdTestRuntime,
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     # The command/loop never re-fires a single slot; this tests spawn_scheduled
@@ -541,7 +542,7 @@ def test_idempotency_key_dedups_same_slot(
     slot = dt.datetime(2026, 1, 1, 0, 1, tzinfo=dt.UTC)
     spawn_scheduled(schedule, slot)
     spawn_scheduled(schedule, slot)
-    call_command("absurd_worker", queue="default", burst=True)
+    dj_absurd.drain()
     assert Payload.objects.count() == 1
 
 
@@ -660,16 +661,6 @@ def test_absurd_beat_no_backend_errors(
     )
 
 
-def test_worker_beat_rejects_burst(
-    settings: pytest_django.fixtures.SettingsWrapper,
-) -> None:
-    settings.TASKS = make_tasks_setting(
-        {"g": {"task": "tests.tasks.make_group", "cron": "*/1 * * * *", "args": ["x"]}}
-    )
-    with pytest.raises(CommandError, match="--beat"):
-        call_command("absurd_worker", queue="default", burst=True, beat=True)
-
-
 def test_beat_stop_interrupts_long_sleep(
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
@@ -715,24 +706,17 @@ def test_worker_with_beat_runs_scheduled_task(
     )
     call_command("absurd_sync_queues")
 
-    def watch() -> None:
-        deadline = time.monotonic() + 15
-        while time.monotonic() < deadline:  # pragma: no branch
-            if Group.objects.filter(name="beat-ran").exists():
-                break
-            time.sleep(0.05)
-        # stop worker + beat (main-thread handler)
-        os.kill(os.getpid(), signal.SIGTERM)
-
-    watcher = threading.Thread(target=watch, daemon=True)
-    watcher.start()
     # tick=True near a boundary: next "*/1" slot is ~1s away in real time, so beat fires
     # almost immediately; the live worker (fast poll) drains it.
     with time_machine.travel(
         dt.datetime(2026, 1, 1, 0, 0, 59, tzinfo=dt.UTC), tick=True
     ):
-        call_command("absurd_worker", queue="default", beat=True, poll_interval=0.05)
-    watcher.join(timeout=5)
+        utils.start_worker_until_done(
+            lambda: Group.objects.filter(name="beat-ran").exists(),
+            beat=True,
+            poll_interval=0.05,
+            queue="default",
+        )
 
     assert Group.objects.filter(name="beat-ran").exists()
 
@@ -792,7 +776,7 @@ def test_beat_skips_not_yet_due_schedule(
             backend,
             dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC),
         )
-        call_command("absurd_worker", queue="default", burst=True)
+        dj_absurd.drain()
         assert Payload.objects.count() == 1
         assert Payload.objects.filter(data="due").exists()
         assert not Payload.objects.filter(data="later").exists()
@@ -802,7 +786,7 @@ def test_plain_worker_runs_blocking_worker(
     caplog: pytest.LogCaptureFixture,
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
-    # Covers worker.py line 114: else branch of arun_worker (no burst, no beat).
+    # Covers arun_worker's else branch: a worker started without --beat.
     settings.TASKS = make_tasks_setting(
         {
             "g": {
@@ -816,19 +800,12 @@ def test_plain_worker_runs_blocking_worker(
     tasks.make_group.enqueue("plain-worker")
     backend = get_absurd_backends()["default"]
 
-    def watch() -> None:
-        deadline = time.monotonic() + 15
-        while time.monotonic() < deadline:  # pragma: no branch
-            if Group.objects.filter(name="plain-worker").exists():
-                break
-            time.sleep(0.05)
-        os.kill(os.getpid(), signal.SIGTERM)
-
-    watcher = threading.Thread(target=watch, daemon=True)
-    watcher.start()
     with caplog.at_level(logging.INFO, logger="django_absurd"):
-        call_command("absurd_worker", queue="default", poll_interval=0.05)
-    watcher.join(timeout=5)
+        utils.start_worker_until_done(
+            lambda: Group.objects.filter(name="plain-worker").exists(),
+            poll_interval=0.05,
+            queue="default",
+        )
 
     assert Group.objects.filter(name="plain-worker").exists()
     stopped = [

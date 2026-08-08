@@ -336,8 +336,8 @@ class AbsurdTestRuntime:
         run_off_event_loop(functools.partial(emit_event, name, payload, queue=queue))
 
     def drain(self, queue: str = "default") -> list[RunSnapshot]:
-        """Burst-drain ``queue`` synchronously, one ``RunSnapshot`` per run, in claim
-        order.
+        """Run every currently-claimable task on ``queue`` to completion, synchronously,
+        one at a time, returning one ``RunSnapshot`` per run in claim order.
 
         A suspended run (durable sleep, ``await_event``) is returned with
         ``state="sleeping"``. The same run can appear twice — an ``await_event``
@@ -454,7 +454,7 @@ class AbsurdTestRuntime:
         always lands Python-ahead — the benign side.
 
         Postgres-ahead is unrecoverable: the run is claimed, the SDK re-suspends on
-        replay, and the burst drain re-arms the same wake forever. Python-ahead just
+        replay, and the drain re-arms the same wake forever. Python-ahead just
         leaves a sleeping run unclaimed. Which order lands which side ahead flips with
         the move's direction:
 
@@ -528,7 +528,7 @@ class AbsurdTestRuntime:
     def _write_fake_now(self, instant: dt.datetime) -> None:
         """Set ``absurd.fake_now`` at DATABASE level, then on Django's live session.
 
-        Database level because the burst worker opens its OWN connection per drain —
+        Database level because a drain opens its OWN connection every time —
         only a database default reaches it; session level too because a default
         reaches only NEW sessions, so ``enqueue()`` on Django's already-open
         connection would keep stamping real time. ``ALTER DATABASE`` rejects bind
@@ -750,9 +750,9 @@ def run_off_event_loop[T](work: t.Callable[[], T]) -> T:
     With no loop running in this thread, ``work`` is simply called: the sync path is
     untouched, same thread, same connection, same traceback. Under a running loop it
     goes to a worker thread, where there IS no running loop, so both Django's
-    ``async_unsafe`` guards and ``asyncio.run`` inside the burst worker are legal
+    ``async_unsafe`` guards and ``asyncio.run`` inside the drain are legal
     again. Blocking the loop is safe here because a test is the only thing on it and
-    ``work`` never awaits it back — ``drain()``'s ``arun_worker`` builds a loop of its
+    ``work`` never awaits it back — ``drain()``'s ``drain_queue`` builds a loop of its
     own in the worker thread.
 
     Callers keep their guards on THEIR OWN thread and call this for the DB work only:

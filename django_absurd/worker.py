@@ -1,7 +1,10 @@
 import asyncio
+import contextlib
 import inspect
 import logging
+import os
 import signal
+import socket
 import threading
 import typing as t
 import uuid
@@ -63,7 +66,7 @@ class WorkerOptions:
 
 @dataclass(frozen=True)
 class DrainedRun:
-    """One run executed during a burst drain, in claim order.
+    """One run executed during a drain, in claim order.
 
     ``state``/``result``/``failure`` cost one read per run, taken immediately after
     THAT run executes — never batched at drain end, so a run that re-arms itself (an
@@ -87,11 +90,12 @@ class DrainedRun:
 class LazyTaskRegistry(dict[str, dict[str, t.Any]]):
     """dict subclass that resolves tasks by import_string on first claim.
 
-    The SDK reads _registry.get(task_name) in both _execute_task (burst) and
-    start_worker (blocking). Overriding .get intercepts all dispatch reads and
-    resolves any importable Task on demand — no tasks.py scan required. Value type
-    matches the SDK's own ``_registry: Dict[str, Dict[str, Any]]`` declaration — each
-    entry mixes str/None/Callable fields, so the inner ``Any`` is a genuine boundary.
+    The SDK reads _registry.get(task_name) in _execute_task, which every dispatch
+    goes through — the drain and the blocking loop alike. Overriding .get intercepts
+    all dispatch reads and resolves any importable Task on demand — no tasks.py scan
+    required. Value type matches the SDK's own
+    ``_registry: Dict[str, Dict[str, Any]]`` declaration — each entry mixes
+    str/None/Callable fields, so the inner ``Any`` is a genuine boundary.
     """
 
     def __init__(self, queue: str, backend: AbsurdBackend) -> None:
@@ -137,7 +141,7 @@ class LazyTaskRegistry(dict[str, dict[str, t.Any]]):
 
 
 def drain_queue(queue: str = "default") -> list[DrainedRun]:
-    """Burst-drain ``queue`` in-process, one ``DrainedRun`` per run, in claim order.
+    """Drain ``queue`` in-process, one ``DrainedRun`` per run, in claim order.
 
     The entry point behind ``AbsurdTestRuntime.drain``: resolves the backend itself
     and takes no ``WorkerOptions`` — worker knobs live on the ``absurd_worker`` CLI.
@@ -151,9 +155,10 @@ def drain_queue(queue: str = "default") -> list[DrainedRun]:
     backend = resolve_backend()
     if queue not in backend.queues:
         raise QueueNotDeclaredError(queue, backend.alias, backend.queues)
+    validate_backend(backend.database)
 
     try:
-        return run_worker(backend, queue, burst=True)
+        return asyncio.run(arun_drain(backend, queue, WorkerOptions()))
     except psycopg.errors.UndefinedTable as exc:
         if not names_a_queue_table(exc, queue):
             raise
@@ -164,14 +169,20 @@ def run_worker(
     backend: AbsurdBackend,
     queue: str,
     *,
-    burst: bool = False,
     run_beat: bool = False,
     options: WorkerOptions | None = None,
-) -> list[DrainedRun]:
+    on_stop_requested: t.Callable[[], None] | None = None,
+) -> None:
     options = options or WorkerOptions()
     validate_backend(backend.database)
-    return asyncio.run(
-        arun_worker(backend, queue, burst=burst, run_beat=run_beat, options=options)
+    asyncio.run(
+        arun_worker(
+            backend,
+            queue,
+            run_beat=run_beat,
+            options=options,
+            on_stop_requested=on_stop_requested,
+        )
     )
 
 
@@ -179,43 +190,71 @@ async def arun_worker(
     backend: AbsurdBackend,
     queue: str,
     *,
-    burst: bool = False,
     run_beat: bool = False,
     options: WorkerOptions,
+    on_stop_requested: t.Callable[[], None] | None = None,
+) -> None:
+    async with open_worker_runtime(backend, queue, options) as client:
+        if run_beat:
+            await run_worker_with_beat(
+                client, options, backend, on_stop_requested=on_stop_requested
+            )
+        else:
+            await run_blocking_worker(
+                client, options, on_stop_requested=on_stop_requested
+            )
+        logger.info(
+            "worker stopped: alias=%s queue=%s database=%s",
+            backend.alias,
+            queue,
+            backend.database,
+        )
+
+
+async def arun_drain(
+    backend: AbsurdBackend, queue: str, options: WorkerOptions
 ) -> list[DrainedRun]:
+    """Drain ``queue`` on the same runtime the blocking worker runs on.
+
+    The coroutine behind ``drain_queue``: same executor, same client, same started
+    line — it differs only in claiming until the queue is empty instead of until a
+    signal arrives, so its stopped line can report how many runs that took.
+    """
+    async with open_worker_runtime(backend, queue, options) as client:
+        drained = await adrain_queue(backend.database, client, queue, options)
+        logger.info(
+            "worker stopped: alias=%s queue=%s database=%s runs=%d",
+            backend.alias,
+            queue,
+            backend.database,
+            len(drained),
+        )
+        return drained
+
+
+@asynccontextmanager
+async def open_worker_runtime(
+    backend: AbsurdBackend, queue: str, options: WorkerOptions
+) -> t.AsyncGenerator[AsyncAbsurd, None]:
+    """Set up what every worker entry point needs, and announce it started.
+
+    A thread pool sized to ``concurrency`` installed as the loop's default executor
+    (every sync task body lands there), the SDK client on its own connection, and the
+    ``worker started`` line. Each caller logs its own ``worker stopped`` line, because
+    only a drain has a run count to report.
+    """
     with ThreadPoolExecutor(max_workers=options.concurrency) as executor:
         loop = asyncio.get_running_loop()
         loop.set_default_executor(executor)
         async with aworker_client(backend, queue) as client:
             logger.info(
-                "worker started: alias=%s queue=%s database=%s burst=%s concurrency=%d",
+                "worker started: alias=%s queue=%s database=%s concurrency=%d",
                 backend.alias,
                 queue,
                 backend.database,
-                burst,
                 options.concurrency,
             )
-            if burst:
-                drained = await adrain_queue(backend.database, client, queue, options)
-                logger.info(
-                    "worker stopped: alias=%s queue=%s database=%s runs=%d",
-                    backend.alias,
-                    queue,
-                    backend.database,
-                    len(drained),
-                )
-                return drained
-            if run_beat:
-                await run_worker_with_beat(client, options, backend)
-            else:
-                await run_blocking_worker(client, options)
-            logger.info(
-                "worker stopped: alias=%s queue=%s database=%s",
-                backend.alias,
-                queue,
-                backend.database,
-            )
-            return []
+            yield client
 
 
 @asynccontextmanager
@@ -325,7 +364,7 @@ async def fetch_run_outcome(
     No public SDK accessor keys a read by ``run_id`` (only ``task_id``, which
     collapses a retry's several runs), so read the run row through the same
     per-queue dynamic model the other reads use — no SQL of its own. ORM means
-    Django's connection via a ``sync_to_async`` hop; only burst drains pay it, and
+    Django's connection via a ``sync_to_async`` hop; only drains pay it, and
     next to executing the task it is noise. The row is committed by the time
     ``_execute_task`` returns (the SDK writes on autocommit). ``aget``, not
     ``afirst``: a missing just-executed run is a broken invariant that should raise.
@@ -481,39 +520,196 @@ def mark_task_result_failed(
     )
 
 
-async def run_blocking_worker(client: AsyncAbsurd, options: WorkerOptions) -> None:
+async def run_blocking_worker(
+    client: AsyncAbsurd,
+    options: WorkerOptions,
+    *,
+    stop: asyncio.Event | None = None,
+    on_stop_requested: t.Callable[[], None] | None = None,
+) -> None:
+    stop_signal = stop if stop is not None else asyncio.Event()
     loop = asyncio.get_running_loop()
 
     def handle_stop() -> None:
-        client.stop_worker()
+        stop_signal.set()
+        logger.info("worker stop requested: finishing in-flight tasks")
+        if on_stop_requested is not None:
+            on_stop_requested()
 
     loop.add_signal_handler(signal.SIGINT, handle_stop)
     loop.add_signal_handler(signal.SIGTERM, handle_stop)
+    # Worker id as the SDK's own start_worker derives it, since we no longer call it.
+    worker_id = options.worker_id or f"{socket.gethostname()}:{os.getpid()}"
+    # Both loops below are ported from
+    # https://github.com/earendil-works/absurd/pull/137, because the SDK's
+    # AsyncAbsurd.start_worker awaits its whole claimed batch before claiming again —
+    # one slow task then idles every other slot. Delete them in favour of
+    # client.start_worker once a released SDK carries that fix.
     try:
-        await client.start_worker(
-            worker_id=options.worker_id,
-            claim_timeout=options.claim_timeout,
-            concurrency=options.concurrency,
-            batch_size=options.batch_size,
-            poll_interval=options.poll_interval,
-        )
+        if options.concurrency <= 1:
+            await run_one_slot_at_a_time(client, options, stop_signal, worker_id)
+        else:
+            await refill_slots_until_stopped(client, options, stop_signal, worker_id)
     finally:
         loop.remove_signal_handler(signal.SIGINT)
         loop.remove_signal_handler(signal.SIGTERM)
+
+
+async def run_one_slot_at_a_time(
+    client: AsyncAbsurd,
+    options: WorkerOptions,
+    stop: asyncio.Event,
+    worker_id: str,
+) -> None:
+    """Claim a whole batch and execute it sequentially — the single-slot fast path.
+
+    Straight from the SDK's SYNC worker, which has always had it. Without this branch
+    the windowed loop's cap of ``min(batch_size, free capacity)`` would silently turn
+    ``--batch-size N --concurrency 1`` from one round trip into N.
+    """
+    batch_size = options.batch_size or options.concurrency
+    while not stop.is_set():
+        claimed = await client.claim_tasks(batch_size, options.claim_timeout, worker_id)
+        if not claimed:
+            await wait_for_stop_or_timeout(stop, options.poll_interval)
+            continue
+        for claimed_task in claimed:
+            await client._execute_task(claimed_task, options.claim_timeout)  # noqa: SLF001 -- SDK exposes no public counted dispatch; mirrors work_batch
+
+
+async def refill_slots_until_stopped(
+    client: AsyncAbsurd,
+    options: WorkerOptions,
+    stop: asyncio.Event,
+    worker_id: str,
+) -> None:
+    """Keep ``concurrency`` slots busy, claiming again the moment one frees.
+
+    ONE ``executing`` window across iterations is the whole point: rebuilding it per
+    batch is what makes the SDK's async worker wait on its slowest claimed task before
+    claiming anything else.
+    """
+    effective_batch_size = options.batch_size or options.concurrency
+    executing: set[asyncio.Task[None]] = set()
+    try:
+        while not stop.is_set():
+            reap_finished_slots(executing)
+            capacity = options.concurrency - len(executing)
+            if capacity <= 0:
+                await wait_for_slot_progress(executing, stop, options.poll_interval)
+                continue
+            claimed = await client.claim_tasks(
+                min(effective_batch_size, capacity), options.claim_timeout, worker_id
+            )
+            if not claimed:
+                await wait_for_slot_progress(executing, stop, options.poll_interval)
+                continue
+            for claimed_task in claimed:
+                executing.add(
+                    asyncio.create_task(
+                        client._execute_task(claimed_task, options.claim_timeout)  # noqa: SLF001 -- SDK exposes no public counted dispatch; mirrors work_batch
+                    )
+                )
+    except asyncio.CancelledError:
+        # The connection every one of these runs writes through is about to close, so
+        # none of them may outlive the loop. The sync worker gets this free from
+        # ThreadPoolExecutor.__exit__; the async loop has to do it by hand.
+        await cancel_and_drain_slots(executing)
+        raise
+    finally:
+        # A stop means stop CLAIMING: the window it already owns runs to completion.
+        await finish_remaining_slots(executing)
+
+
+async def cancel_and_drain_slots(executing: set[asyncio.Task[None]]) -> None:
+    """Cancel the whole in-flight window and wait for it to unwind.
+
+    Awaiting is the point: ``cancel()`` only requests, so returning without it leaves
+    handlers still on the loop. Emptying ``executing`` leaves nothing for the caller's
+    ``finally`` to await a second time — that pass is the graceful one, and it would
+    re-raise a slot's own ``CancelledError`` in place of the loop's.
+    """
+    for entry in executing:
+        entry.cancel()
+    await asyncio.gather(*executing, return_exceptions=True)
+    executing.clear()
+
+
+async def finish_remaining_slots(executing: set[asyncio.Task[None]]) -> None:
+    """Await the whole in-flight window, then surface the first machinery failure.
+
+    Two steps rather than one bare ``gather``: a gather raises the instant one slot
+    fails, abandoning its siblings mid-execution against a connection
+    ``aworker_client`` is about to close. ``asyncio.wait`` settles every slot first, so
+    the gather after it only re-raises — and it marks the other slots' exceptions
+    retrieved, so none resurfaces as "Task exception was never retrieved". What
+    surfaces here is never a task failing: ``_execute_task`` records a handler's own
+    failure against the run and returns normally.
+    """
+    if not executing:
+        return
+    await asyncio.wait(executing)
+    await asyncio.gather(*executing)
+
+
+def reap_finished_slots(executing: set[asyncio.Task[None]]) -> None:
+    """Free every finished slot, re-raising whatever its task raised.
+
+    ``_execute_task`` records a handler's own failure against the run and returns, so
+    an exception surfacing here is the worker's own machinery breaking — never a task
+    failing — and must not be swallowed into a worker that keeps polling.
+    """
+    for finished in [entry for entry in executing if entry.done()]:
+        executing.discard(finished)
+        finished.result()
+
+
+async def wait_for_slot_progress(
+    executing: set[asyncio.Task[None]], stop: asyncio.Event, poll_interval: float
+) -> None:
+    """Wait until a slot frees, or ``poll_interval`` passes, whichever comes first.
+
+    ``asyncio.wait`` only observes; the loop head reaps what it reports. It needs no
+    stop of its own: waking early on one would only reach a ``finally`` that awaits
+    the very slots being waited on here. An EMPTY window has nothing to wait on, so
+    that arm is a plain idle and races the stop like every other idle does.
+    """
+    if not executing:
+        await wait_for_stop_or_timeout(stop, poll_interval)
+        return
+    await asyncio.wait(
+        executing, timeout=poll_interval, return_when=asyncio.FIRST_COMPLETED
+    )
+
+
+async def wait_for_stop_or_timeout(stop: asyncio.Event, poll_interval: float) -> None:
+    """Idle for ``poll_interval``, returning the moment ``stop`` is set.
+
+    Sleeping blind instead would make an idle worker sit out the rest of its poll
+    interval before noticing a SIGTERM — and idle is exactly when a stop tends to
+    arrive, so that is the whole of the delay a shutdown shows.
+    """
+    with contextlib.suppress(TimeoutError):
+        await asyncio.wait_for(stop.wait(), poll_interval)
 
 
 async def run_worker_with_beat(
     client: AsyncAbsurd,
     options: WorkerOptions,
     backend: AbsurdBackend,
+    *,
+    on_stop_requested: t.Callable[[], None] | None = None,
 ) -> None:
+    stop = asyncio.Event()
     beat_stop = threading.Event()
     beat_thread = threading.Thread(
         target=run_beat, args=(backend,), kwargs={"stop": beat_stop}, daemon=True
     )
     beat_thread.start()
     try:
-        await run_blocking_worker(client, options)
+        await run_blocking_worker(
+            client, options, stop=stop, on_stop_requested=on_stop_requested
+        )
     finally:
         beat_stop.set()
         await asyncio.get_running_loop().run_in_executor(None, beat_thread.join, 5)

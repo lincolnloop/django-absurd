@@ -5,8 +5,9 @@ django-absurd currently compensates for. One section per **askable change**: wha
 would want, why, and which workaround it retires. Grouped that way on purpose, so a
 section can be filed as-is rather than re-derived from a list of symptoms.
 
-**Nothing here is filed yet.** When upstream ships one, delete the section rather than
-marking it done, and remove the workaround it names.
+Most of these are not filed yet. A section says explicitly when it has been. When
+upstream ships one — filed or not — delete the section rather than marking it done, and
+remove the workaround it names.
 
 Three of these are marked in code by the `noqa: SLF001` comments in
 `django_absurd/worker.py` — each names the private attribute it reaches and why.
@@ -69,18 +70,18 @@ Two consequences:
 - There is no post-persist seam at all on the blocking-worker path, which is the SDK's
   own claim → execute → gather loop.
 
-Needed wherever a worker must know how a run actually ended. Burst draining reads the
-outcome back from the database for exactly this reason (`fetch_run_outcome`), and any
-observer of an Absurd-side ending — a cancellation, an expired claim, a `max_duration`
-sweep — has no seam to learn of it from.
+Needed wherever a worker must know how a run actually ended. `dj_absurd.drain()` reads
+the outcome back from the database for exactly this reason (`fetch_run_outcome`), and
+any observer of an Absurd-side ending — a cancellation, an expired claim, a
+`max_duration` sweep — has no seam to learn of it from.
 
 ## Public API to execute one claimed run and return its outcome
 
-`work_batch` runs its own claim loop. Burst draining needs "execute exactly these
-claims, then stop", so `execute_claimed_run` calls `client._execute_task`. And because
-no public accessor keys by `run_id` — only by `task_id`, which collapses a retry's
-several runs into one answer — the outcome comes from a second read through the
-per-queue dynamic model.
+`work_batch` runs its own claim loop. The drain needs "execute exactly these claims,
+then stop", so `execute_claimed_run` calls `client._execute_task`. And because no public
+accessor keys by `run_id` — only by `task_id`, which collapses a retry's several runs
+into one answer — the outcome comes from a second read through the per-queue dynamic
+model.
 
 Ask: a public `execute(claimed) -> outcome`. It retires both workarounds at once; a read
 accessor keyed by `run_id` would retire half.
@@ -123,3 +124,57 @@ carries `enqueued_at=None` — correct at enqueue, unknown at execution.
 Ask: public properties for all three.
 
 Retires: `read_sdk_claimed_task`, and the `enqueued_at=None` compromise.
+
+## Cap the async worker's claims by free capacity, not by batch
+
+`AsyncAbsurd.start_worker` rebuilds its in-flight set from scratch each iteration —
+claim a batch, run it, `await asyncio.gather(*executing)` — so one slow task in a batch
+idles every other slot until the whole batch finishes. Measured on this project's load
+harness at 4 slots with a mixed-duration backlog: one worker at `--concurrency 4` took
+47.99s (sync tasks) / 45.68s (async) against 16.36s / 15.12s for four workers at
+`--concurrency 1`; mean slots busy 1.06 of 4; 73% of offered capacity wasted while the
+backlog still held work. A uniform-duration control showed only 1.07x, which identifies
+the batch boundary as the cause, not task length.
+
+The SDK's sync worker does not have this: it keeps one `executing` set across iterations
+and claims `min(batch_size, concurrency - len(executing))`. That shape came from the fix
+for the sync-side version of the same bug (upstream issue
+https://github.com/earendil-works/absurd/issues/91) and was never applied to the async
+path. The TypeScript and Go workers already cap claims by free capacity.
+
+Retires: `django_absurd/worker.py`'s own rolling-window loop over the public
+`claim_tasks`, standing in for `client.start_worker`, and the
+`try/except asyncio.CancelledError` that cancels and drains that loop's in-flight window
+— the sync worker gets that for free from `ThreadPoolExecutor.__exit__`. Not the
+`asyncio.Event` stop handle: it is what makes an in-process stop testable, it survives
+either way, and the section below is built on it.
+
+**Filed:** https://github.com/earendil-works/absurd/pull/137, open since 2026-08-03.
+
+## Wake idle waits on stop instead of sleeping out the poll interval
+
+Both SDK workers notice a stop only between polls. The async loop does
+`await asyncio.sleep(poll_interval)` on an empty claim. The sync one has two idle arms:
+with nothing executing — which includes every `concurrency <= 1` worker, whose whole
+loop is that arm — it blocks in `time.sleep(poll_interval)`, and only with a non-empty
+window does it block in `concurrent.futures.wait(timeout=poll_interval)`.
+`stop_worker()` just flips a bool that is read on the next pass, so a `SIGTERM`/`SIGINT`
+arriving mid-sleep goes unacted on for up to a full `poll_interval` (default 0.25s).
+Measured against this project's own test suite: 16 signal-stopped tests ran about 4s
+slower in aggregate — a **+43% slowdown** on those modules against `origin/main` (9.22s
+→ 13.22s) — and the same bound delays every production shutdown.
+
+Ask: the idle waits should wake as soon as a stop is requested, rather than sleeping
+blind.
+
+What makes this a real design question rather than a one-line fix: `stop_worker()` is a
+plain synchronous public method, callable from any thread, and the client holds no loop
+reference — so an `asyncio.Event` cannot simply replace the flag, since setting one from
+another thread needs `call_soon_threadsafe`. That is upstream's call to make: an event
+plus a threadsafe setter, or sliced sleeps that re-check the flag. The sync worker
+shares the same lag and needs its own answer.
+
+Retires: `django_absurd/worker.py`'s `wait_for_stop_or_timeout`, which races
+`stop.wait()` against the poll timeout in both idle paths. Our own stop is an
+`asyncio.Event` set by the worker's own signal handler on the same loop, which is why we
+can do this safely and upstream's public API cannot trivially copy it.

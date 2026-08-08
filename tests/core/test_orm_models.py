@@ -4,11 +4,10 @@ import typing as t
 
 import pytest
 from django.apps import apps as global_apps
-from django.core.management import call_command
 from django.db.models import Count
 
 import django_absurd.models
-from django_absurd import absurd_params
+from django_absurd import absurd_params, worker
 from django_absurd import models as dm
 from django_absurd.admin_views import (
     ADMIN_ENTITY_SPECS,
@@ -68,8 +67,8 @@ def seed_two_queues() -> None:
     tasks.add.enqueue(2, 3)
     tasks.add.using(queue_name="other").enqueue(7, 8)
     absurd_params(max_attempts=1).bind(tasks.boom).enqueue()
-    call_command("absurd_worker", queue="default", burst=True)
-    call_command("absurd_worker", queue="other", burst=True)
+    worker.drain_queue("default")
+    worker.drain_queue("other")
 
 
 @pytest.mark.django_db(transaction=True)
