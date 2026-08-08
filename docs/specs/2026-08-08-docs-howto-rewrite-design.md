@@ -31,6 +31,10 @@ they bite hardest.
    - which module a logger child comes from
 6. **Admonitions only for damage.** `!!! warning` reserved for data loss / destructive
    commands (`absurd_flush`, pg_cron teardown, kill-switch). Everything else demoted.
+7. **Django surface before Absurd-specifics.** Where a page covers both, plain Django
+   API comes first and finishes before any django-absurd-only surface starts. Never
+   interleave — a reader who only needs Django's API stops reading partway down and has
+   missed nothing.
 
 ## Caveat tiers
 
@@ -59,6 +63,22 @@ Quickstart already example-led. Trim install/requirements prose. Keep 5 numbered
 
 ### `tasks.md`
 
+**Django surface first, Absurd-specific second.** Today the basic Django loop is split
+in half by the ~100-line `absurd_params` section. New order:
+
+1. Enqueue
+2. Read the result
+3. Run it later (`run_after`)
+4. Retries & spawn options (`absurd_params`)
+5. Idempotency keys
+
+Absurd params stay on this page — a reader looking up "enqueue with 3 retries" gets one
+place to look.
+
+- **"Define a task" section is cut.** `index.md` already teaches `@task`. Page opens on
+  the enqueue example, decorator inside the same block (you need one to enqueue). The
+  two facts that section carried — `async def` works, task can live in any importable
+  module — become one line under it.
 - "Retries & spawn options": lead with `@absurd_params` decorator example, then per-call
   `.bind()` example, then field table. Cut the three composition paragraphs → 2 tier-1
   bullets.
