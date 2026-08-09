@@ -51,16 +51,22 @@ def run_pg_cron_cleanup_check(
     return cap.out + cap.err
 
 
-def test_pg_cron_cleanup_accepts_arbitrary_nonempty_schedule(
+@pytest.mark.parametrize("schedule", ["0 3 * * *", "30 seconds", "@daily"])
+def test_pg_cron_cleanup_accepts_pg_cron_grammar(
+    capsys: pytest.CaptureFixture[str],
+    schedule: str,
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
+    out = run_pg_cron_cleanup_check(settings, capsys, {"schedule": schedule})
+    assert "absurd.E010" not in out
+
+
+def test_pg_cron_cleanup_rejects_a_non_cron_schedule(
     capsys: pytest.CaptureFixture[str],
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
-    """Under pg_cron, CLEANUP's cron grammar is DB-authoritative at sync time — the
-    check only requires a non-empty string, unlike beat's croniter validation."""
-    out = run_pg_cron_cleanup_check(
-        settings, capsys, {"schedule": "not a cron but pg_cron doesn't validate this"}
-    )
-    assert "absurd.E010" not in out
+    out = run_pg_cron_cleanup_check(settings, capsys, {"schedule": "not a cron"})
+    assert "absurd.E010" in out
 
 
 def test_pg_cron_cleanup_rejects_empty_schedule(
@@ -396,3 +402,23 @@ def test_pg_cron_non_string_name_yields_e007_not_typeerror(
     )
     assert "absurd.E007" in out
     assert "TypeError" not in out
+
+
+def test_pg_cron_cleanup_cron_grammar_is_checked(
+    capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
+    # CLEANUP's cron is pg_cron's own grammar too, so it earns the same check as a
+    # SCHEDULE entry: beat's 6-field form would otherwise reach sync, where pg_cron
+    # accepts it and silently drops the sixth field.
+    settings.TASKS = make_tasks_settings(
+        queues=BASE_QUEUES, cleanup={"schedule": "*/30 * * * * *"}
+    )
+    try:
+        call_command("check", "django_absurd")
+    except SystemCheckError as exc:
+        out = capsys.readouterr().err + str(exc)
+    else:
+        out = capsys.readouterr().err
+    assert "absurd.E010" in out
+    assert "Expected a 5-field cron expression; got 6 fields." in out

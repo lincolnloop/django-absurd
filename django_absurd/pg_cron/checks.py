@@ -10,7 +10,7 @@ from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.db.utils import OperationalError
 
 from django_absurd.backends import get_absurd_backends, get_declared_queues
-from django_absurd.checks import E007_HINT_QUEUE, E007_MSG
+from django_absurd.checks import E007_HINT_QUEUE, E007_MSG, E010_MSG
 from django_absurd.connection import open_central_connection
 from django_absurd.pg_cron import detection
 from django_absurd.pg_cron.validators import (
@@ -134,6 +134,35 @@ def check_pg_cron_effective_queue(
             )
         ]
     return []
+
+
+@register("absurd")
+def check_pg_cron_cleanup_schedule(
+    *,
+    app_configs: Sequence[AppConfig] | None,
+    **kwargs: t.Any,
+) -> list[CheckMessage]:
+    """CLEANUP's cron is pg_cron's grammar too — core validates its SHAPE and, under
+    beat, its croniter grammar; the pg_cron grammar belongs to this app."""
+    errors: list[CheckMessage] = []
+    for backend in get_absurd_backends().values():
+        cleanup = backend.options.get("CLEANUP")
+        if not isinstance(cleanup, Mapping):
+            continue  # core's check_absurd_cleanup_config reports the shape
+        schedule = cleanup.get("schedule")
+        if not isinstance(schedule, str):
+            continue
+        try:
+            validate_pg_cron_schedule(schedule)
+        except ValidationError as exc:
+            errors.append(
+                Error(
+                    f"{E010_MSG} {exc.message}",
+                    hint=E007_HINT_PG_CRON_CRON,
+                    id="absurd.E010",
+                )
+            )
+    return errors
 
 
 @register("absurd")
