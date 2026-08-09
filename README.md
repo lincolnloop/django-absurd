@@ -1,36 +1,24 @@
 # django-absurd
 
-Django integration for [Absurd](https://earendil-works.github.io/absurd/), the
-Postgres-native workflow engine. Runs Django's
-[Tasks](https://docs.djangoproject.com/en/6.0/topics/tasks/) framework on Postgres — no
-separate broker — reusing Django's own database connection.
+Run background tasks in Django on **Postgres** — no separate broker, no Redis, no
+Celery. Plugs [Absurd](https://earendil-works.github.io/absurd/), a Postgres-native
+workflow engine, into Django's
+[Tasks](https://docs.djangoproject.com/en/6.0/topics/tasks/) framework, reusing your
+existing database connection.
 
 > **Alpha.** APIs and behavior may change between releases.
 
-## Requirements
-
-- Python 3.12+, Django 6.0+
-- PostgreSQL with the **psycopg (v3)** Django backend (the Absurd SDK reuses Django's
-  connection and requires psycopg3)
-
 ## Install
 
-django-absurd is in **alpha** — only pre-releases are published, so your installer must
-be allowed to pick them up.
-
 ```console
-uv add django-absurd --prerelease allow
+uv add django-absurd --prerelease allow    # or: pip install --pre django-absurd
 ```
 
-Using pip:
-
-```console
-pip install --pre django-absurd
-```
+Only pre-releases are published during alpha, hence the flags. Needs Python 3.12+,
+Django 6.0+, and PostgreSQL on the **psycopg (v3)** driver — Absurd reuses Django's
+connection, so psycopg2 won't work.
 
 ## Quickstart
-
-Add the app and point Django's `TASKS` setting at the backend:
 
 ```python
 # settings.py
@@ -47,12 +35,8 @@ TASKS = {
 ```
 
 ```console
-python manage.py migrate          # create the Absurd schema
-python manage.py absurd_worker    # run a worker (consumes the "default" queue)
+python manage.py migrate    # installs the Absurd schema, provisions declared queues
 ```
-
-Define a task with Django's Tasks API and enqueue it — the `"default"` queue is
-**created automatically** on first use:
 
 ```python
 from django.tasks import task
@@ -63,13 +47,20 @@ def add(a: int, b: int) -> int:
     return a + b
 
 
-result = add.enqueue(2, 3)  # returns a TaskResult; the worker runs it
+result = add.enqueue(2, 3)   # returns a TaskResult; a worker runs it
 ```
+
+```console
+python manage.py absurd_worker
+```
+
+That's the whole loop. The `"default"` queue is declared for you, so `migrate`
+provisions it without any `QUEUES` setting of your own.
 
 ## Documentation
 
-- **[Documentation](https://lincolnloop.github.io/django-absurd/)** — configuration,
-  tasks, workflows, scheduling, cleanup, testing, and how it works.
+- **[Documentation](https://lincolnloop.github.io/django-absurd/)** — tasks, workflows,
+  cron jobs, workers, cleanup, monitoring, testing, and configuration.
 - **[Runnable examples](examples/)** — three dockerized nanodjango demos (`web`
   enqueue+result, `beat`, and `pg_cron`), each with one `docker compose up`.
 

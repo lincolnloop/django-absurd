@@ -183,6 +183,66 @@ header.md-header .md-header__topic > a.md-ellipsis:hover {
   white-space: nowrap;
 }
 
+/* Signature reference lists: the term is a full call signature, so it gets its
+ * own line and the description hangs beneath it — no column to squeeze. */
+.md-typeset dl dt {
+  margin-top: 0.8em;
+  font-weight: 400;
+}
+
+.md-typeset dl dd {
+  margin-left: 1.2em;
+  color: var(--md-default-fg-color--light);
+}
+
+/* Footer: the Lincoln Loop wordmark, sitting above the copyright line. Its text
+ * paths inherit `currentColor`, so it follows the footer's own foreground in
+ * both schemes; the circle keeps the fixed brand colour. */
+/* Footer meta: logo | copyright | generator, on one line. */
+.md-footer-meta.md-typeset .md-copyright {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+/* Divider as a border, not a `|` glyph: the text beside it is itself a flex
+ * column, so a ::before pseudo-element would become a flex item and stack above
+ * the first line instead of sitting alongside it. */
+.md-footer-meta.md-typeset .md-copyright > * + * {
+  border-left: 0.05rem solid color-mix(in srgb, currentColor 30%, transparent);
+  padding-left: 0.5rem;
+}
+
+/* Copyright over generator credit, as one column beside the logo. */
+.md-footer-meta.md-typeset .dj-footer-text {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Inert: the wordmark never reacts to hover or focus. Two theme rules have to
+ * be outranked, and they disagree with each other — `.md-typeset a:hover`
+ * (0,2,1) colours it on hover, while `html .md-footer-meta.md-typeset
+ * a:not(:focus,:hover)` (0,2,2) colours it at rest. Matching the resting
+ * colour at (0,3,1) pins both states to the same value. */
+html .md-footer-meta.md-typeset .dj-footer-brand,
+html .md-footer-meta.md-typeset .dj-footer-brand:hover,
+html .md-footer-meta.md-typeset .dj-footer-brand:focus,
+html .md-footer-meta.md-typeset .dj-footer-brand:focus-visible {
+  display: inline-flex;
+  align-items: center;
+  color: var(--md-default-fg-color);
+  opacity: 1;
+  text-decoration: none;
+  transition: none;
+}
+
+.dj-footer-brand svg {
+  display: block;
+  width: 4.4rem;
+  height: auto;
+}
+
 .md-typeset .highlight > pre > code {
   padding-left: 0.6rem;
   padding-right: 0.6rem;
