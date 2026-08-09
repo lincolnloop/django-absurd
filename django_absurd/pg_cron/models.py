@@ -160,7 +160,7 @@ class ScheduledTask(models.Model):
         except ValidationError as exc:
             errors["queue"] = exc.messages
         try:
-            validate_pg_cron_cron(self.cron, backend.database)
+            validate_pg_cron_cron(self.cron)
         except ValidationError as exc:
             errors["cron"] = exc.messages
         return errors

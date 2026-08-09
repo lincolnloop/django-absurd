@@ -96,17 +96,12 @@ def test_pg_cron_task_import_raise_reports_e007_not_crash(
     assert "could not be imported" in out
 
 
-@pytest.mark.parametrize("cron", ["*/30 * * * * *", "30 seconds"])
-def test_pg_cron_cron_grammar_not_checked(
+@pytest.mark.parametrize("cron", ["30 seconds", "@daily", "0 2 * * *"])
+def test_pg_cron_cron_grammar_accepted_at_check_time(
     capsys: pytest.CaptureFixture[str],
     settings: pytest_django.fixtures.SettingsWrapper,
     cron: str,
 ) -> None:
-    """pg_cron cron grammar is DB-authoritative.
-
-    Neither '[1-59] seconds' interval nor 6-field expression rejected at check
-    time — cron.schedule validates at sync (croniter is beat-only validator).
-    """
     out = run_pg_cron_check(
         settings,
         capsys,
@@ -116,6 +111,25 @@ def test_pg_cron_cron_grammar_not_checked(
         },
     )
     assert "absurd.E007" not in out
+
+
+def test_pg_cron_rejects_beats_six_field_cron_at_check_time(
+    capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
+    # The beat scheduler's leading-seconds form is not pg_cron syntax. pg_cron would
+    # accept it and silently drop the sixth field — its parser reads five fields and
+    # then the command — so the schedule would run hourly, not every 30 seconds.
+    out = run_pg_cron_check(
+        settings,
+        capsys,
+        {
+            "queues": BASE_QUEUES,
+            "schedule": {"s": {"task": "tests.tasks.add", "cron": "*/30 * * * * *"}},
+        },
+    )
+    assert "absurd.E007" in out
+    assert "Expected a 5-field cron expression; got 6 fields." in out
 
 
 def test_pg_cron_bad_name_charset_rejected(

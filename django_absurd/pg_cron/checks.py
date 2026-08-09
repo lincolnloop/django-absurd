@@ -16,10 +16,17 @@ from django_absurd.pg_cron import detection
 from django_absurd.pg_cron.validators import (
     validate_declared_queue,
     validate_name_charset,
+    validate_pg_cron_cron,
 )
 
 E007_HINT_PG_CRON_NAME = (
     "Schedule names must match [A-Za-z0-9_-]+ when using the pg_cron scheduler."
+)
+
+E007_HINT_PG_CRON_CRON = (
+    "Use a 5-field cron expression, an interval such as '30 seconds' (1-59), or one of"
+    " @hourly/@daily/@weekly/@monthly/@yearly. The beat scheduler's 6-field"
+    " leading-seconds form is not pg_cron syntax."
 )
 
 E011_MSG = (
@@ -70,6 +77,7 @@ def validate_pg_cron_schedule(
     queue_override = spec.get("queue")
     errors: list[CheckMessage] = []
     errors.extend(check_pg_cron_name(name))
+    errors.extend(check_pg_cron_grammar(name, spec.get("cron", "")))
     errors.extend(
         check_pg_cron_effective_queue(name, task_path, queue_override, declared_queues)
     )
@@ -89,6 +97,22 @@ def check_pg_cron_name(name: t.Any) -> list[CheckMessage]:
             )
         )
     return errors
+
+
+def check_pg_cron_grammar(name: str, cron: t.Any) -> list[CheckMessage]:
+    if not isinstance(cron, str):
+        return []  # core's schedule-shape check reports a non-string cron
+    try:
+        validate_pg_cron_cron(cron)
+    except ValidationError as exc:
+        return [
+            Error(
+                f"{E007_MSG} Schedule {name!r}: {exc.message}",
+                hint=E007_HINT_PG_CRON_CRON,
+                id="absurd.E007",
+            )
+        ]
+    return []
 
 
 def check_pg_cron_effective_queue(

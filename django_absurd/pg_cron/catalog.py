@@ -9,10 +9,8 @@ self-heal), so concurrent writers converge without one.
 """
 
 import typing as t
-import uuid
 
 import psycopg
-from django.core.exceptions import ValidationError
 from django.db import connections
 
 from django_absurd.connection import open_central_connection
@@ -98,36 +96,6 @@ def prune_jobs(alias: str, *, source: str, keep_names: list[str]) -> None:
         )
         stale = [jobid for jobid, jobname in cur.fetchall() if jobname not in keep]
         unschedule_jobids(cur, stale)
-
-
-def probe_cron_grammar(alias: str, *, cron: str) -> None:
-    """Validate a pg_cron schedule expression by asking pg_cron itself.
-
-    pg_cron owns its grammar (a 5-field cron or the interval form ``<n> seconds``), so
-    rather than a hand-rolled matcher we schedule a throwaway job bound to the app
-    database and immediately unschedule it — nothing persists. If pg_cron rejects the
-    expression, surface its own error message as a ``ValidationError`` on the cron
-    field.
-
-    The central connection is autocommit and yields a RAW psycopg cursor, so there is no
-    transaction to roll back (and ``wrap_database_errors`` only translates exceptions
-    escaping the whole ``with`` block): the grammar error arrives here as the
-    untranslated ``psycopg.Error``, which we catch and re-raise as ``ValidationError``.
-    On success the throwaway job is removed explicitly."""
-    if is_pg_cron_inert(alias):
-        return
-    app_database = resolve_app_database_name(alias)
-    probe_jobname = f"_dj:__probe__:{uuid.uuid4()}"
-    with open_central_connection(alias) as cur:
-        try:
-            cur.execute(
-                "select cron.schedule_in_database(%s, %s, %s, %s, NULL, %s)",
-                [probe_jobname, cron, "select 1", app_database, True],
-            )
-        except psycopg.Error as exc:
-            raise ValidationError(str(exc).strip()) from exc
-        (jobid,) = t.cast("tuple[int]", cur.fetchone())
-        cur.execute("select cron.unschedule(%s)", [jobid])
 
 
 def flush_database_jobs(alias: str) -> None:
