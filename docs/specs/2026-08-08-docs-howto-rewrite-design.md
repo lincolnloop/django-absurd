@@ -122,10 +122,11 @@ Light trim. Already close. Keep both `absurd_flush` warnings.
 Lead with one complete settings block, then the two queue-declaration forms, then
 `OPTIONS` table, then check-ID table. Gains "Our own exceptions" from `workflows.md`.
 
-### `logging.md` (new)
+### `monitoring.md` (new)
 
-Extracted from `how-it-works.md`. Real how-to with an example, currently buried in a
-concepts page. Opens with the `LOGGING` dict, then the two logger names.
+Opens with the `LOGGING` dict, then the two logger names, then the admin pages and the
+queue-state ORM models — all extracted from `how-it-works.md`. One page for "what
+happened to my tasks?", whether the answer is logs, the admin, or a query.
 
 ### `testing.md`
 
@@ -136,16 +137,33 @@ concepts page. Opens with the `LOGGING` dict, then the two logger names.
 - Snapshot-caveat trio (attempts-created, sleeping-ambiguity, failure-None) stays —
   already bulleted.
 
-### `how-it-works.md`
+### `how-it-works.md` — deleted
 
-Only non-how-to page, stays that way. Short concept map + outbound links. Loses Logging.
+Retired mid-rewrite. Once every other page led with an example, it was the only one that
+never did, and its sections restated material the how-to pages now own. Distributed:
+
+| Section                     | Went to                                        |
+| --------------------------- | ---------------------------------------------- |
+| Workers                     | `workers.md` (new) — it had no page of its own |
+| Runs, retries & checkpoints | `workers.md#runs-retries`                      |
+| Schema & migrations         | `workers.md` — it is what `migrate` does       |
+| Admin & ORM introspection   | `monitoring.md`                                |
+| Queues                      | `configuration.md#declaring-queues`            |
+| The flow · Events & waits   | dropped — restated Tasks and Workflows         |
+
+### `workers.md` (new)
+
+Running a worker had no home despite being referenced from five pages. Opens with the
+command, then the full `--flags` table read from `absurd_worker.py` (only `--queue` was
+documented before), then runs/retries and what `migrate` installs.
 
 ## `zensical.toml`
 
 - `nav`:
-  `Home · Tasks · Workflows · Cron Jobs · Cleanup · Logging · Testing · Configuration · How it works`.
+  `Home · Tasks · Workflows · Cron Jobs · Workers · Cleanup · Monitoring · Testing · Configuration`.
   Configuration moves down — reference, and index quickstart already covers minimal
   setup.
+- `theme.custom_dir = "overrides"` for the footer wordmark.
 - `theme.features`: add `content.tabs.link`.
 - New page needs `icon` frontmatter matching existing lucide set.
 
@@ -160,7 +178,13 @@ Only non-how-to page, stays that way. Short concept map + outbound links. Loses 
 
 - Cross-links: every in-page anchor referenced elsewhere must still exist after headings
   move. Sweep `ag --hidden` over `docs/`, `README.md`, `django_absurd/AGENTS.md`,
-  `examples/` for `.md#anchor` refs; fix breaks.
+  `examples/`, and `.claude/` for `.md#anchor` refs; fix breaks. A bare `ag` misses
+  `.claude/`, where `sync-docs` records the page set.
+- Outbound links: verify each anchor against the live page before shipping it. Django's
+  `takes_context` is at `#task-context`, not `#django.tasks.Task.takes_context`.
+- Rendered output, not just a green formatter: prettier reflows a `def_list` into
+  invalid syntax that still passes its own check. Fence those blocks with
+  `<!-- prettier-ignore-start/end -->` and confirm `<dl>` in the built HTML.
 - Site builds clean.
 - `pre-commit run --all-files` (prettier owns Markdown formatting).
 - No test run — docs only, no behavior change.
