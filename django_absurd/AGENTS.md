@@ -148,8 +148,9 @@ System check IDs:
   key, non-serializable or wrong-shaped args/kwargs, or undeclared queue). See
   [Scheduling recurring tasks](#scheduling-recurring-tasks).
 - `absurd.E009` — `OPTIONS["DEFAULT_MAX_ATTEMPTS"]` is not an integer `>= 1`.
-- `absurd.E010` — invalid `CLEANUP` configuration (not a `{"schedule": …}` map, or
-  unknown keys; cron grammar checked at `check` time for beat, at sync for pg_cron).
+- `absurd.E010` — invalid `CLEANUP` configuration (not a `{"schedule": …}` map, unknown
+  keys, or a cron expression its scheduler cannot run — beat's croniter grammar or
+  pg_cron's, both checked at `check` time).
 - `absurd.E011` — `OPTIONS["SYNC_SCHEDULES_ON_TEST_DB"]` is `True` without
   `OPTIONS["PG_CRON_ON_TEST_DB"]`. See [Test databases](#test-databases).
 - `absurd.E012` — the central `cron.database_name` database (auto-discovered) is
@@ -459,11 +460,22 @@ OPTIONS = {
 }
 ```
 
-`pg_cron` validates its own schedule grammar: a 5-field cron **or** the interval form
-`<n> seconds` (1-59). Sub-minute cadence therefore works under `pg_cron` via
-`30 seconds` — distinct from beat's 6-field croniter syntax, which `pg_cron` does not
-accept. This grammar is validated by the database (at sync for settings schedules, at
-save time for admin ones), not by `check`.
+`pg_cron` has its own schedule grammar, validated by `manage.py check` for settings
+schedules and at save time for admin ones — in Python, without reaching the database.
+Accepted:
+
+- a standard **5-field** cron, `min hour dom mon dow` (e.g. `"0 2 * * *"`)
+- the interval form **`<n> seconds`**, 1-59, singular or plural and case-insensitive
+  (e.g. `"30 seconds"`) — how sub-minute cadence is expressed under `pg_cron`
+- the aliases `@hourly`, `@daily`, `@weekly`, `@monthly`, `@yearly`/`@annually` and
+  `@midnight`
+
+Two forms are refused **even though `pg_cron` itself accepts them**: beat's 6-field
+leading-seconds syntax (`"*/30 * * * * *"`) and the `#` nth-weekday token
+(`"0 2 * * 5#2"`). `pg_cron`'s parser reads five fields and treats everything after them
+as the command, so it accepts both and silently schedules `"*/30 * * * *"` and "every
+Friday" — a different cadence than the one written, reported as valid. `@reboot` and
+`@restart` are refused too: neither describes a recurring cadence.
 
 Beat and pg_cron are **mutually exclusive**: running `absurd_beat` or
 `absurd_worker --beat` while `django_absurd.pg_cron` is installed raises `CommandError`.
@@ -572,9 +584,10 @@ directly in the admin (create / edit / delete) via a **two-step flow**:
    immediately (un)schedules its `pg_cron` job.
 
 `name` is immutable once created (it forms the job identity); the cron expression is
-validated by `pg_cron` itself at save time (so `<n> seconds` is accepted and an invalid
-expression is rejected with `pg_cron`'s own message). **`max_attempts`** defaults to `5`
-(Absurd's default retry ceiling) and must be `≥ 1`; clearing it stores `NULL`, which
+validated at save time against the grammar above — the same rule `check` applies to
+settings schedules, so an admin row and a settings entry accept exactly the same
+expressions, and saving one needs no database round-trip. **`max_attempts`** defaults to
+`5` (Absurd's default retry ceiling) and must be `≥ 1`; clearing it stores `NULL`, which
 Absurd treats as **retry forever** — a deliberate opt-in, so a mistyped schedule can't
 loop unbounded by accident. The row is the source of truth: any write that persists it
 (admin, ORM, or `loaddata`) keeps `pg_cron` in step (`cron.schedule_in_database` is an
@@ -597,8 +610,9 @@ settings, `a` for admin). Removing admin-authored jobs at teardown is a guarded 
 `absurd.E007` for:
 
 - an unimportable or non-`@task` `task` path
-- an invalid cron expression (beat only; `pg_cron` grammar is validated by the database,
-  not by `check`)
+- an invalid cron expression — under beat, croniter's 5- or 6-field grammar; under
+  `pg_cron`, its own 5-field / `<n> seconds` / alias grammar (see
+  [pg_cron backend](#pg_cron-backend))
 - unknown keys in the spec
 - `args`/`kwargs` values that are not JSON-serializable
 - an `args` that is not a JSON array, or a `kwargs` that is not a JSON object
@@ -670,10 +684,10 @@ scheduler flip even when `CLEANUP` was never set. It never sees or removes an
 `absurd_cleanup_<suffix>` job created by `absurdctl cron` — those names sit outside the
 namespace django-absurd manages, so they survive every teardown and would fire alongside
 it. **Drive cleanup one way only** — `OPTIONS["CLEANUP"]` **or** `absurdctl cron`, never
-both. `manage.py check` reports `absurd.E010` for a malformed `CLEANUP` (the beat cron
-grammar is checked then too; pg_cron's is validated by the database at sync). Retention
-knobs (`cleanup_ttl`, `cleanup_limit`) remain per-queue policy — set them in
-`OPTIONS["QUEUES"]`.
+both. `manage.py check` reports `absurd.E010` for a malformed `CLEANUP`, including a
+cron expression the configured scheduler cannot run — the same grammar rule each
+scheduler applies to its `SCHEDULE` entries. Retention knobs (`cleanup_ttl`,
+`cleanup_limit`) remain per-queue policy — set them in `OPTIONS["QUEUES"]`.
 
 **Reset (destructive):** `manage.py absurd_flush` **deletes all task history** — it
 removes every queue (its per-queue tables and registry entry) along with all tasks,

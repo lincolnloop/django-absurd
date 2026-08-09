@@ -510,7 +510,8 @@ def test_posting_add_with_invalid_cron_shows_pg_crons_message(
     client.force_login(admin_user)
     response = client.post(ADD, {**CHANGE_PAYLOAD, "name": "badcron", "cron": "1 hour"})
     # behavioral: re-rendered with errors, not saved (the exact pg_cron message is
-    # asserted in full by the validator harness's form subject, test_cron.py)
+    # asserted in full by the validator harness's form subject,
+    # validators/test_schedule_grammar.py)
     assert response.status_code == 200
     assert not ScheduledTask.objects.filter(name="badcron").exists()
 

@@ -13,7 +13,7 @@ from django_absurd.pg_cron.choices import RetryKind, Source
 from django_absurd.pg_cron.validators import (
     validate_declared_queue,
     validate_name_charset,
-    validate_pg_cron_cron,
+    validate_pg_cron_schedule,
 )
 from django_absurd.queues import get_absurd_backend, resolve_absurd_database
 from django_absurd.validators import (
@@ -160,7 +160,7 @@ class ScheduledTask(models.Model):
         except ValidationError as exc:
             errors["queue"] = exc.messages
         try:
-            validate_pg_cron_cron(self.cron, backend.database)
+            validate_pg_cron_schedule(self.cron)
         except ValidationError as exc:
             errors["cron"] = exc.messages
         return errors

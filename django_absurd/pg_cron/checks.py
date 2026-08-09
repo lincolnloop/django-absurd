@@ -10,16 +10,23 @@ from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.db.utils import OperationalError
 
 from django_absurd.backends import get_absurd_backends, get_declared_queues
-from django_absurd.checks import E007_HINT_QUEUE, E007_MSG
+from django_absurd.checks import E007_HINT_QUEUE, E007_MSG, E010_MSG
 from django_absurd.connection import open_central_connection
 from django_absurd.pg_cron import detection
 from django_absurd.pg_cron.validators import (
     validate_declared_queue,
     validate_name_charset,
+    validate_pg_cron_schedule,
 )
 
 E007_HINT_PG_CRON_NAME = (
     "Schedule names must match [A-Za-z0-9_-]+ when using the pg_cron scheduler."
+)
+
+E007_HINT_PG_CRON_CRON = (
+    "Use a 5-field cron expression, an interval such as '30 seconds' (1-59), or one of"
+    " @hourly/@daily/@weekly/@monthly/@yearly/@annually/@midnight (lowercase). The beat"
+    " scheduler's 6-field leading-seconds form is not pg_cron syntax."
 )
 
 E011_MSG = (
@@ -54,11 +61,11 @@ def check_pg_cron_schedules(
         if not isinstance(raw_schedule, Mapping):
             continue  # core's check_absurd_schedule_config reports this
         for name, spec in raw_schedule.items():
-            errors.extend(validate_pg_cron_schedule(name, spec, declared_queues))
+            errors.extend(check_pg_cron_schedule(name, spec, declared_queues))
     return errors
 
 
-def validate_pg_cron_schedule(
+def check_pg_cron_schedule(
     name: str,
     spec: t.Any,
     declared_queues: set[str],
@@ -70,6 +77,7 @@ def validate_pg_cron_schedule(
     queue_override = spec.get("queue")
     errors: list[CheckMessage] = []
     errors.extend(check_pg_cron_name(name))
+    errors.extend(check_pg_cron_grammar(name, spec.get("cron", "")))
     errors.extend(
         check_pg_cron_effective_queue(name, task_path, queue_override, declared_queues)
     )
@@ -91,6 +99,22 @@ def check_pg_cron_name(name: t.Any) -> list[CheckMessage]:
     return errors
 
 
+def check_pg_cron_grammar(name: str, cron: t.Any) -> list[CheckMessage]:
+    if not isinstance(cron, str) or not cron.strip():
+        return []  # core reports a missing/non-string cron; don't report it twice
+    try:
+        validate_pg_cron_schedule(cron)
+    except ValidationError as exc:
+        return [
+            Error(
+                f"{E007_MSG} Schedule {name!r}: {exc.message}",
+                hint=E007_HINT_PG_CRON_CRON,
+                id="absurd.E007",
+            )
+        ]
+    return []
+
+
 def check_pg_cron_effective_queue(
     name: str,
     task_path: t.Any,
@@ -110,6 +134,35 @@ def check_pg_cron_effective_queue(
             )
         ]
     return []
+
+
+@register("absurd")
+def check_pg_cron_cleanup_schedule(
+    *,
+    app_configs: Sequence[AppConfig] | None,
+    **kwargs: t.Any,
+) -> list[CheckMessage]:
+    """CLEANUP's cron is pg_cron's grammar too — core validates its SHAPE and, under
+    beat, its croniter grammar; the pg_cron grammar belongs to this app."""
+    errors: list[CheckMessage] = []
+    for backend in get_absurd_backends().values():
+        cleanup = backend.options.get("CLEANUP")
+        if not isinstance(cleanup, Mapping):
+            continue  # core's check_absurd_cleanup_config reports the shape
+        schedule = cleanup.get("schedule")
+        if not isinstance(schedule, str) or not schedule.strip():
+            continue  # core reports a missing/non-string schedule; not twice
+        try:
+            validate_pg_cron_schedule(schedule)
+        except ValidationError as exc:
+            errors.append(
+                Error(
+                    f"{E010_MSG} {exc.message}",
+                    hint=E007_HINT_PG_CRON_CRON,
+                    id="absurd.E010",
+                )
+            )
+    return errors
 
 
 @register("absurd")

@@ -51,16 +51,22 @@ def run_pg_cron_cleanup_check(
     return cap.out + cap.err
 
 
-def test_pg_cron_cleanup_accepts_arbitrary_nonempty_schedule(
+@pytest.mark.parametrize("schedule", ["0 3 * * *", "30 seconds", "@daily"])
+def test_pg_cron_cleanup_accepts_pg_cron_grammar(
+    capsys: pytest.CaptureFixture[str],
+    schedule: str,
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
+    out = run_pg_cron_cleanup_check(settings, capsys, {"schedule": schedule})
+    assert "absurd.E010" not in out
+
+
+def test_pg_cron_cleanup_rejects_a_non_cron_schedule(
     capsys: pytest.CaptureFixture[str],
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
-    """Under pg_cron, CLEANUP's cron grammar is DB-authoritative at sync time — the
-    check only requires a non-empty string, unlike beat's croniter validation."""
-    out = run_pg_cron_cleanup_check(
-        settings, capsys, {"schedule": "not a cron but pg_cron doesn't validate this"}
-    )
-    assert "absurd.E010" not in out
+    out = run_pg_cron_cleanup_check(settings, capsys, {"schedule": "not a cron"})
+    assert "absurd.E010" in out
 
 
 def test_pg_cron_cleanup_rejects_empty_schedule(
@@ -96,17 +102,12 @@ def test_pg_cron_task_import_raise_reports_e007_not_crash(
     assert "could not be imported" in out
 
 
-@pytest.mark.parametrize("cron", ["*/30 * * * * *", "30 seconds"])
-def test_pg_cron_cron_grammar_not_checked(
+@pytest.mark.parametrize("cron", ["30 seconds", "@daily", "0 2 * * *"])
+def test_pg_cron_cron_grammar_accepted_at_check_time(
     capsys: pytest.CaptureFixture[str],
     settings: pytest_django.fixtures.SettingsWrapper,
     cron: str,
 ) -> None:
-    """pg_cron cron grammar is DB-authoritative.
-
-    Neither '[1-59] seconds' interval nor 6-field expression rejected at check
-    time — cron.schedule validates at sync (croniter is beat-only validator).
-    """
     out = run_pg_cron_check(
         settings,
         capsys,
@@ -116,6 +117,25 @@ def test_pg_cron_cron_grammar_not_checked(
         },
     )
     assert "absurd.E007" not in out
+
+
+def test_pg_cron_rejects_beats_six_field_cron_at_check_time(
+    capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
+    # The beat scheduler's leading-seconds form is not pg_cron syntax. pg_cron would
+    # accept it and silently drop the sixth field — its parser reads five fields and
+    # then the command — so the schedule would run hourly, not every 30 seconds.
+    out = run_pg_cron_check(
+        settings,
+        capsys,
+        {
+            "queues": BASE_QUEUES,
+            "schedule": {"s": {"task": "tests.tasks.add", "cron": "*/30 * * * * *"}},
+        },
+    )
+    assert "absurd.E007" in out
+    assert "Expected a 5-field cron expression; got 6 fields." in out
 
 
 def test_pg_cron_bad_name_charset_rejected(
@@ -280,11 +300,8 @@ def test_pg_cron_structurally_absent_cron_rejected(
     settings: pytest_django.fixtures.SettingsWrapper,
     cron: t.Any,
 ) -> None:
-    """pg_cron cron grammar DB-authoritative, structural presence is not.
-
-    Empty or non-string cron rejected at check time (cron.schedule needs
-    schedule string).
-    """
+    """A missing or non-string cron is core's report, not the grammar check's — the
+    grammar check defers to it so one field's problem is reported once."""
     out = run_pg_cron_check(
         settings,
         capsys,
@@ -382,3 +399,42 @@ def test_pg_cron_non_string_name_yields_e007_not_typeerror(
     )
     assert "absurd.E007" in out
     assert "TypeError" not in out
+
+
+def test_pg_cron_cleanup_cron_grammar_is_checked(
+    capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
+    # CLEANUP's cron is pg_cron's own grammar too, so it earns the same check as a
+    # SCHEDULE entry: beat's 6-field form would otherwise reach sync, where pg_cron
+    # accepts it and silently drops the sixth field.
+    out = run_pg_cron_cleanup_check(settings, capsys, {"schedule": "*/30 * * * * *"})
+    assert "absurd.E010" in out
+    assert "Expected a 5-field cron expression; got 6 fields." in out
+
+
+@pytest.mark.parametrize("cleanup", [{"schedule": 5}, {"schedule": "   "}])
+def test_pg_cron_cleanup_defers_a_non_grammar_problem_to_core(
+    capsys: pytest.CaptureFixture[str],
+    cleanup: dict[str, t.Any],
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
+    # Core already reports shape/emptiness as absurd.E010; reporting it again from the
+    # grammar check would show one field's problem twice.
+    out = run_pg_cron_cleanup_check(settings, capsys, cleanup)
+    assert out.count("absurd.E010") == 1
+
+
+def test_pg_cron_schedule_defers_an_empty_cron_to_core(
+    capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
+    out = run_pg_cron_check(
+        settings,
+        capsys,
+        {
+            "queues": BASE_QUEUES,
+            "schedule": {"s": {"task": "tests.tasks.add", "cron": "   "}},
+        },
+    )
+    assert out.count("absurd.E007") == 1

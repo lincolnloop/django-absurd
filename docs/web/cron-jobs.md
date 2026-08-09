@@ -83,9 +83,11 @@ into [pg_cron](https://github.com/citusdata/pg_cron) jobs and your existing
 "migrate on deploy" covers it. The extension itself is one-time
 [operator setup](#operator-setup).
 
-- **Grammar is pg_cron's own**: 5-field cron, or `<n> seconds` (1–59) for sub-minute
-  cadence. Beat's 6-field form is rejected. pg_cron validates it, so `manage.py check`
-  does not.
+- **Grammar is pg_cron's own**: 5-field cron, `<n> seconds` (1–59) for sub-minute
+  cadence, or an `@daily`-style alias. Validated by `manage.py check`.
+- **Beat's 6-field form and `#` are refused**, though pg_cron accepts them: its parser
+  reads five fields and takes the rest as the command, so `"*/30 * * * * *"` would
+  schedule `"*/30 * * * *"` — a cadence you didn't write, reported as valid.
 - **Timezone is the `cron.timezone` GUC, default GMT** — not Django's `TIME_ZONE`. Set
   it to match if yours is non-UTC.
 - **To stop a job, remove it from `SCHEDULE`.** Every reconcile re-arms settings-owned

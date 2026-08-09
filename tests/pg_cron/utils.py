@@ -7,6 +7,7 @@ import importlib.resources
 import os
 import time
 import typing as t
+import uuid
 
 import psycopg
 import psycopg.sql
@@ -233,3 +234,33 @@ def read_absurd_schema_sql() -> str:
         .joinpath("0001_initial_0_4_0.sql")
         .read_text(encoding="utf-8")
     )
+
+
+def pg_cron_accepts(cron: str) -> bool:
+    """Whether the real extension accepts ``cron``, by scheduling and unscheduling a
+    throwaway job on the central catalog.
+
+    Test-only. django-absurd validates schedule grammar in Python (see
+    ``django_absurd.pg_cron.validators``); this exists so those rules can be asserted
+    against the extension itself rather than against our reading of it.
+    """
+    # Deliberately OUTSIDE the _dj: namespace django-absurd manages: tests scan and
+    # flush that prefix, and a probe job appearing there races them. Unscheduled in a
+    # finally instead, so nothing is left behind either way.
+    jobname = f"_parity_{uuid.uuid4()}"
+    with open_central_connection("default") as cur:
+        try:
+            cur.execute(
+                "select cron.schedule_in_database(%s, %s, %s, %s, NULL, %s)",
+                # active=False: the schedule string is parsed before insert either
+                # way, so an interrupted probe leaves nothing that can fire.
+                [jobname, cron, "select 1", fetch_live_database(), False],
+            )
+        except psycopg.Error:
+            return False
+        finally:
+            cur.execute(
+                "select cron.unschedule(jobid) from cron.job where jobname = %s",
+                [jobname],
+            )
+        return True

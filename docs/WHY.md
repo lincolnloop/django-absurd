@@ -386,19 +386,39 @@ static `absurd.E008` check catching `SCHEDULER="pg_cron"` set without the app in
 deriving scheduler from app presence makes that misconfiguration unrepresentable, so
 both the option and the check it needed are gone.
 
-### pg_cron cron grammar is DB-authoritative (croniter is beat-only)
+### The database-side grammar is matched here, not delegated to the database
 
-The two schedulers have different cron grammars, each with its own authority. Beat uses
-croniter (which supports a 6-field leading-seconds form). `pg_cron` has its own grammar
-— a 5-field cron OR the interval form `"[1-59] seconds"` — and `pg_cron` itself is the
-authority. croniter can't parse `"30 seconds"` and would false-reject it, so croniter is
-scoped to beat only: the DB-free `manage.py check` no longer croniter-validates
-`pg_cron` crons. Their grammar is verified by the real `cron.schedule_in_database` at
-sync (and, for admin-authored rows, a save-time savepoint trial). Consequently `pg_cron`
-sub-minute (down to `1 seconds`) is allowed — an admin authoring one accepts the high
-`cron.job_run_details` growth. (An earlier design rejected a _croniter 6-field_ "N
-seconds" shim; that is different — the shim faked seconds on top of croniter's grammar,
-whereas this is `pg_cron`'s own native interval syntax.)
+The two schedulers have different cron grammars. The in-process one uses croniter, which
+accepts a 6-field leading-seconds form. The database-side one accepts a 5-field cron, an
+interval form of one to fifty-nine seconds, or an `@`-alias — and croniter cannot parse
+that interval form, so croniter is scoped to the in-process scheduler only.
+
+The first design made the database the authority: validating an expression meant
+scheduling a throwaway job and immediately unscheduling it. That was abandoned once the
+grammar was measured, because the authority cannot answer the question. The extension's
+parser reads five fields and then **the command**, so a sixth field or an nth-weekday
+token is swallowed as command text — it accepts the expression and schedules a different
+cadence than the one written, reporting success. A probe therefore cannot detect the
+mistake most worth catching, and reports the caller's typo as valid.
+
+So the grammar is matched in Python instead: a port of the interval rule and the alias
+list, with croniter deciding the contents of the five fields — the tedious part, and
+already a dependency. Two forms are refused **although the extension accepts them**,
+which is the point of the change rather than a side effect of it. Validation then costs
+no connection, no privileges and no write, so a schedule can be validated in a unit test
+or a data migration, and one rule serves both the settings check and an admin save.
+
+The risk taken on is drift: we now own an approximation of another project's grammar. It
+is bounded by an asymmetry. Accepting something the extension rejects merely defers the
+error to sync — where settings-declared schedules have always reported it — while
+rejecting something it accepts would block a legal schedule. So the matcher refuses only
+what was measured to be wrong, and a parity suite asserts both directions against the
+real extension, including pinning the truncation behaviour that justifies the
+divergence, so that behaviour changing upstream fails a test rather than passing
+silently.
+
+Sub-minute cadence (down to one second) stays allowed — an author choosing it accepts
+the run-history growth that follows.
 
 ### The extension never lives on the app database (cross-database scheduling)
 

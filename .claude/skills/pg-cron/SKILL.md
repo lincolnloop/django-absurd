@@ -76,9 +76,23 @@ place to look when a job "isn't running."
 
 ## Schedule syntax
 
+Measured against 1.6 by scheduling each form and reading the result, plus the parser
+sources (`src/entry.c`, `src/job_metadata.c`).
+
 - Standard **5-field cron** (`min hour dom mon dow`), evaluated in the server timezone.
-- **Sub-minute intervals**: `'N seconds'` (1–59), pg_cron ≥ 1.4. (No 6-field seconds
-  form — that's a different tool's syntax.)
+  Ranges, steps, lists and month/day names all parse (`*/5`, `1-5`, `1,3,5`, `JAN`,
+  `mon`).
+- **Sub-minute intervals**: `'N seconds'`, 1–59, pg_cron ≥ 1.4. Singular or plural, any
+  case, surrounding whitespace ignored, trailing text refused — `TryParseInterval` is
+  `sscanf(" %u secon%c%c %c")` plus `0 < n < 60`.
+- **`@` aliases DO work**: `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`,
+  `@midnight`, `@hourly`, `@reboot`, `@restart` (all in `entry.c`).
+- **A 6th field is ACCEPTED and silently ignored.** `entry.c` is Vixie's parser, whose
+  syntax is `min hour dom mon dow` **`cmd`** — it reads five fields and takes the rest
+  as the command. `'0 2 * * * *'` schedules `0 2 * * *`; `'0 2 * * 5#2'` means every
+  Friday, not the second one (`#` is not implemented). Both report success, so a
+  schedule-then-read-back probe cannot detect the truncation.
+- Refused: fewer than five fields, `?`, `L`, and `W`.
 
 ## Cross-database jobs (schedule_in_database)
 

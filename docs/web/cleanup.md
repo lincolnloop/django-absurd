@@ -43,8 +43,8 @@ in-process, pg_cron calls Absurd's own `absurd.cleanup_all_queues`.
 
 - With `django_absurd.pg_cron` installed, django-absurd owns that job outright: it
   schedules it from `OPTIONS["CLEANUP"]` and removes it otherwise.
-- `absurd.E010` for a malformed `CLEANUP`. Beat's cron grammar is checked by
-  `manage.py check`, pg_cron's by the database at sync.
+- `absurd.E010` for a malformed `CLEANUP`, including a cron expression the configured
+  scheduler cannot run — `manage.py check` validates both grammars.
 
 !!! warning "Drive cleanup one way only"
 

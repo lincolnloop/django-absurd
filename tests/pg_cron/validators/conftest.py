@@ -41,25 +41,3 @@ def validate_check_and_model(
     if request.param == "check":
         return lambda **kwargs: validate_from_system_check(settings, capsys, **kwargs)
     return lambda **kwargs: validate_from_model(settings, **kwargs)
-
-
-@pytest.fixture(params=["form", "model"])
-def validate_model_and_form(
-    admin_user: User,
-    client: Client,
-    request: pytest.FixtureRequest,
-    settings: pytest_django.fixtures.SettingsWrapper,
-) -> ValidateSubject:
-    """Subjects for rules the system check does not enforce (e.g. cron grammar is
-    DB-authoritative, deferred from check time): the admin form POST + full_clean.
-
-    Opts pg_cron in on the test DB so the cron-grammar probe routes LIVE through the
-    catalog seam (past the inert gate) — otherwise a bad expression would stop
-    raising."""
-    if request.param == "form":
-        return lambda **kwargs: validate_from_admin_post(
-            client, admin_user, settings, pg_cron_on_test_db=True, **kwargs
-        )
-    return lambda **kwargs: validate_from_model(
-        settings, pg_cron_on_test_db=True, **kwargs
-    )

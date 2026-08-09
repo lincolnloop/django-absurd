@@ -191,7 +191,6 @@ def test_unschedule_jobids_reraises_unexpected_error() -> None:
     "verb",
     [
         "flush_database_jobs",
-        "probe_cron_grammar",
         "prune_jobs",
         "schedule_job",
         "unschedule_job",
@@ -202,9 +201,6 @@ def test_verbs_are_noop_when_inert(verb: str) -> None:
     live_db = utils.fetch_live_database()
     calls = {
         "flush_database_jobs": lambda: catalog.flush_database_jobs("default"),
-        "probe_cron_grammar": lambda: catalog.probe_cron_grammar(
-            "default", cron="5 seconds"
-        ),
         "prune_jobs": lambda: catalog.prune_jobs(
             "default", source=Source.SETTINGS, keep_names=[]
         ),
