@@ -18,7 +18,11 @@ throwaway job per expression on the central catalog.
 import pytest
 
 from tests.pg_cron import utils
-from tests.pg_cron.validators.test_schedule_grammar import ACCEPTED, REJECTED
+from tests.pg_cron.validators.test_schedule_grammar import (
+    ACCEPTED,
+    REJECTED,
+    TOLERATED,
+)
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -30,6 +34,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 REJECTED_ONLY_BY_US: list[str] = [
     "0 2 * * * *",
     "0 2 * * 5#2",
+    "0 2 * * *  # note",
     "@daily junk",
     "4294967326 seconds",
     "@reboot",
@@ -58,3 +63,11 @@ def test_expression_we_refuse_is_still_accepted_upstream(
     cron: str,
 ) -> None:
     assert utils.pg_cron_accepts(cron)
+
+
+@pytest.mark.parametrize("cron", TOLERATED)
+def test_expression_we_tolerate_is_refused_by_pg_cron(cron: str) -> None:
+    # The fourth quadrant: we accept, pg_cron does not. Pinned so the day one of these
+    # starts being accepted upstream — or we tighten and stop accepting it — a test
+    # says so instead of the set drifting silently.
+    assert not utils.pg_cron_accepts(cron)

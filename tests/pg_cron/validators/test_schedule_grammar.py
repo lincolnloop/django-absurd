@@ -36,6 +36,9 @@ REJECTED: list[tuple[str, str]] = [
     ("@daily junk", "Not a valid cron expression."),
     # sscanf's %u wraps at 2**32, so pg_cron reads this as 30 and runs every 30s.
     ("4294967326 seconds", "An interval schedule must be between 1 and 59 seconds."),
+    # Same swallowing again: pg_cron takes the trailing comment as the command.
+    ("0 2 * * *  # note", "pg_cron cannot parse '#', 'L', 'W', '?', 'R' or 'H'."),
+    ("0 2 * * JANUARY", "Not a valid cron expression."),
 ]
 
 ACCEPTED: list[str] = [
@@ -48,6 +51,10 @@ ACCEPTED: list[str] = [
     "0 0 * * mon",
     "0 0 * * 7",
     "  0   2 * * *  ",
+    "0\t2 * * *",
+    "0 2 * * MON-FRI",
+    "0 2 * JAN-FEB *",
+    "0 2 * * 5-1",
     "1 seconds",
     "30 seconds",
     "59 seconds",
@@ -75,6 +82,21 @@ def test_invalid_expression_is_rejected_without_asking_the_database(
     result = validate(cron=cron)
     assert result
     assert message in result
+
+
+# Expressions pg_cron REFUSES that we let through. The design permits this direction —
+# the error resurfaces at sync, where settings-declared schedules have always reported
+# it — but the set is recorded so tightening the matcher is a visible decision rather
+# than an accident, and so a new one cannot appear unnoticed.
+TOLERATED: list[str] = ["0\n2 * * *", "*/61 * * * *"]
+
+
+@pytest.mark.parametrize("cron", TOLERATED)
+def test_expression_pg_cron_refuses_is_tolerated_until_sync(
+    validate: ValidateSubject,
+    cron: str,
+) -> None:
+    assert validate(cron=cron) is None
 
 
 @pytest.mark.parametrize("cron", ACCEPTED)
