@@ -148,8 +148,9 @@ System check IDs:
   key, non-serializable or wrong-shaped args/kwargs, or undeclared queue). See
   [Scheduling recurring tasks](#scheduling-recurring-tasks).
 - `absurd.E009` — `OPTIONS["DEFAULT_MAX_ATTEMPTS"]` is not an integer `>= 1`.
-- `absurd.E010` — invalid `CLEANUP` configuration (not a `{"schedule": …}` map, or
-  unknown keys; cron grammar checked at `check` time for beat, at sync for pg_cron).
+- `absurd.E010` — invalid `CLEANUP` configuration (not a `{"schedule": …}` map, unknown
+  keys, or a cron expression its scheduler cannot run — beat's croniter grammar or
+  pg_cron's, both checked at `check` time).
 - `absurd.E011` — `OPTIONS["SYNC_SCHEDULES_ON_TEST_DB"]` is `True` without
   `OPTIONS["PG_CRON_ON_TEST_DB"]`. See [Test databases](#test-databases).
 - `absurd.E012` — the central `cron.database_name` database (auto-discovered) is
@@ -683,10 +684,10 @@ scheduler flip even when `CLEANUP` was never set. It never sees or removes an
 `absurd_cleanup_<suffix>` job created by `absurdctl cron` — those names sit outside the
 namespace django-absurd manages, so they survive every teardown and would fire alongside
 it. **Drive cleanup one way only** — `OPTIONS["CLEANUP"]` **or** `absurdctl cron`, never
-both. `manage.py check` reports `absurd.E010` for a malformed `CLEANUP` (the beat cron
-grammar is checked then too; pg_cron's is validated by the database at sync). Retention
-knobs (`cleanup_ttl`, `cleanup_limit`) remain per-queue policy — set them in
-`OPTIONS["QUEUES"]`.
+both. `manage.py check` reports `absurd.E010` for a malformed `CLEANUP`, including a
+cron expression the configured scheduler cannot run — the same grammar rule each
+scheduler applies to its `SCHEDULE` entries. Retention knobs (`cleanup_ttl`,
+`cleanup_limit`) remain per-queue policy — set them in `OPTIONS["QUEUES"]`.
 
 **Reset (destructive):** `manage.py absurd_flush` **deletes all task history** — it
 removes every queue (its per-queue tables and registry entry) along with all tasks,
