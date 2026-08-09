@@ -265,9 +265,17 @@ whole catalog, not just the served queue — and reports to stdout. It then poll
   as soon as it frees, rather than waiting for the whole batch to finish — one slow task
   no longer idles the others. Sizes both the event-loop concurrency and the sync thread
   pool.
+- `--claim-timeout N` (default `120`): seconds before a claimed task returns to the
+  queue. A run that makes no progress within it is re-claimed and replayed from its last
+  checkpoint.
+- `--poll-interval N` (default `0.25`): seconds between polls.
+- `--batch-size N` (default: `--concurrency`): max tasks claimed per poll cycle.
+- `--worker-id` (default `<host>:<pid>`, synthesized by the SDK): identifier recorded on
+  each claim.
+- `--beat`: also run the beat scheduler in the worker loop. Run exactly one across the
+  fleet; there is no leader election.
 - A stop signal (`SIGINT`/`SIGTERM`) stops claiming and lets in-flight tasks finish
-  before the worker exits. Other flags: `--claim-timeout`, `--poll-interval`,
-  `--batch-size`, and `--worker-id`.
+  before the worker exits.
 
 ## Scheduling recurring tasks
 
