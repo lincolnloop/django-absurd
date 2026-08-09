@@ -73,6 +73,13 @@ The `@` aliases are genuinely implemented in `entry.c` (`@reboot`, `@restart`,
 - **Some invalid expressions still reach sync.** croniter is more permissive than Vixie
   in corners our token filter does not cover, so those keep surfacing as pg_cron's own
   error at sync — exactly today's behavior for settings-lane schedules. No regression.
+- **croniter's version is part of the rule.** It decides the five fields' contents, and
+  its answers move between releases: croniter below 6.0 refuses an inverted range
+  (`0 2 * * 5-1`) that pg_cron accepts and runs — the forbidden direction. The floor is
+  therefore `croniter>=6.0`, which also matches what this project already develops and
+  type-checks against. A future croniter that tightens further would reopen the same
+  hole; the `ACCEPTED` table is what catches it, because the lowest-direct resolution
+  env runs those cases against the floor.
 - **Grammar drift.** We now own an approximation of pg_cron's grammar. Mitigation is the
   existing re-verify trigger on the `postgresql-*-cron` pin (see the pg_cron reference
   in `.claude/skills/pg-cron`), plus the asymmetry: drift mostly produces false accepts,
