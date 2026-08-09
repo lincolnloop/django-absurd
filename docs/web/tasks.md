@@ -4,8 +4,7 @@ icon: lucide/list-checks
 
 # Tasks
 
-Enqueue background work and read the result. For what happens under the hood, see
-[How it works](how-it-works.md).
+Enqueue background work and read the result. A [worker](workers.md) runs it.
 
 ## Enqueue
 
@@ -25,7 +24,7 @@ module. `async def` works the same — `await send_report.aenqueue(42)`.
 
 - Enqueuing rides the surrounding transaction, so an `atomic()` rollback drops the task.
 - Delivery is **at-least-once** — keep handlers idempotent. See
-  [runs & retries](how-it-works.md#runs-retries-checkpoints).
+  [runs & retries](workers.md#runs-retries).
 
 ## Read the result
 

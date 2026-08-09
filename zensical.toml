@@ -7,11 +7,11 @@ nav = [
   {"Tasks" = "tasks.md"},
   {"Workflows" = "workflows.md"},
   {"Cron Jobs" = "cron-jobs.md"},
+  {"Workers" = "workers.md"},
   {"Cleanup" = "cleanup.md"},
-  {"Logging" = "logging.md"},
+  {"Monitoring" = "monitoring.md"},
   {"Testing" = "testing.md"},
   {"Configuration" = "configuration.md"},
-  {"How it works" = "how-it-works.md"},
 ]
 repo_name = "lincolnloop/django-absurd"
 repo_url = "https://github.com/lincolnloop/django-absurd"

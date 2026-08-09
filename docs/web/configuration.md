@@ -41,10 +41,16 @@ Use this to set [retention](https://earendil-works.github.io/absurd/storage/)
 }}
 ```
 
+Declared queues are provisioned at `migrate` and again when a [worker](workers.md)
+starts.
+
 - Setting both forms is a configuration error (`absurd.E002`). Undeclared queue names
   are rejected, never silently created.
 - `storage_mode="partitioned"` is declarable but **experimental — not tested yet**, and
   its partition lifecycle isn't automated. Don't rely on it in production.
+
+→ [Absurd: storage](https://earendil-works.github.io/absurd/storage/) (queue types,
+partitioning, retention).
 
 ## Backend `OPTIONS`
 

@@ -82,8 +82,8 @@ result = add.enqueue(2, 3)
 python manage.py absurd_worker
 ```
 
-That's the whole loop. The task runs on the [worker](how-it-works.md#workers) and its
-result is stored in Postgres — [fetch it later](tasks.md#read-the-result) with
+That's the whole loop. The task runs on the [worker](workers.md) and its result is
+stored in Postgres — [fetch it later](tasks.md#read-the-result) with
 `add.get_result(result.id)`.
 
 ## Next
@@ -91,6 +91,6 @@ result is stored in Postgres — [fetch it later](tasks.md#read-the-result) with
 - **[Tasks](tasks.md)** — enqueue with retries and other options, and read results.
 - **[Workflows](workflows.md)** — checkpointed steps, durable sleep, and events.
 - **[Cron Jobs](cron-jobs.md)** — run tasks on a recurring cadence.
+- **[Workers](workers.md)** — running them, and how runs and retries work.
+- **[Monitoring](monitoring.md)** — logs, the admin, and querying queue state.
 - **[Configuration](configuration.md)** — every setting, in one place.
-- **[How it works](how-it-works.md)** — how queues, runs, checkpoints, and the admin fit
-  together.

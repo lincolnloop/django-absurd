@@ -50,8 +50,8 @@ Validated by `manage.py check` (`absurd.E007`); names are limited to `[A-Za-z0-9
 python manage.py absurd_beat          # or co-located: absurd_worker --beat
 ```
 
-Beat enqueues each task when its slot comes due; a [worker](how-it-works.md#workers)
-then runs it like any other.
+Beat enqueues each task when its slot comes due; a [worker](workers.md) then runs it
+like any other.
 
 - **Run exactly one.** No leader election — concurrent beats each fire every slot.
 - **Never backfills.** A slot missed while down is skipped.
@@ -79,8 +79,8 @@ python manage.py migrate
 
 Postgres fires the schedule directly — no beat process. `migrate` reconciles `SCHEDULE`
 into [pg_cron](https://github.com/citusdata/pg_cron) jobs and your existing
-[workers](how-it-works.md#workers) run the tasks. A settings-only change needs no new
-migration, so "migrate on deploy" covers it. The extension itself is one-time
+[workers](workers.md) run the tasks. A settings-only change needs no new migration, so
+"migrate on deploy" covers it. The extension itself is one-time
 [operator setup](#operator-setup).
 
 - **Grammar is pg_cron's own**: 5-field cron, or `<n> seconds` (1–59) for sub-minute

@@ -31,8 +31,8 @@ def test_add_completes(dj_absurd):
 ```
 
 `dj_absurd` is the only fixture. `drain()` runs every claimable task to completion
-in-process — no [worker](how-it-works.md#workers) subprocess, no polling loop — and
-returns one `RunSnapshot` per run.
+in-process — no [worker](workers.md) subprocess, no polling loop — and returns one
+`RunSnapshot` per run.
 
 - **`transaction=True` is required.** Absurd works on its own connection, so under a
   plain [`db`](https://pytest-django.readthedocs.io/en/latest/helpers.html#db) test the

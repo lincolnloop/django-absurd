@@ -2,7 +2,7 @@
 icon: lucide/scroll-text
 ---
 
-# Logging
+# Monitoring
 
 ```python title="settings.py"
 LOGGING = {
@@ -27,9 +27,9 @@ Two loggers, configured like any other in Django's
 
 - **`django.tasks`** — Django's own task lifecycle. `AbsurdBackend` emits its signals,
   so this stays portable across backends.
-- **`django_absurd`** — what Absurd did: attempts, durations,
-  [worker](how-it-works.md#workers) and [beat](cron-jobs.md#application-side-beat)
-  lifecycle, steps, replays, sleeps, event waits.
+- **`django_absurd`** — what Absurd did: attempts, durations, [worker](workers.md) and
+  [beat](cron-jobs.md#application-side-beat) lifecycle, steps, replays, sleeps, event
+  waits.
 - One child per module, each levellable on its own — `django_absurd.scheduler` is the
   beat, `django_absurd.context` the durable primitives.
 
@@ -40,5 +40,23 @@ is not silent.
 - Naming only `root` adds no handler but still raises the level, so a `WARNING` root
   does not swallow them.
 - **Neither logger is the complete record.** Postgres is: the
-  [stored result](tasks.md#read-the-result) and the
-  [queue-state models](how-it-works.md#admin-orm-introspection).
+  [stored result](tasks.md#read-the-result) and the queue-state models below.
+
+## Query queue state
+
+```python
+from django_absurd.models import Task
+
+Task.objects.filter(queue="reports", state="failed")
+```
+
+Tasks, Runs, Checkpoints, Events, Waits, and the Queues catalog are public models,
+spanning every queue.
+
+## Browse in the admin
+
+With `django.contrib.admin` installed, django-absurd registers **read-only** admin pages
+for the same models, filterable by queue. Turn them off with
+[`ENABLE_ADMIN`](configuration.md#backend-options).
+
+→ [Django: the admin site](https://docs.djangoproject.com/en/6.0/ref/contrib/admin/).
