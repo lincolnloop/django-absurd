@@ -109,6 +109,15 @@ pre-commit gates), see [`../CLAUDE.md`](../CLAUDE.md).
   entrypoint. Validators are pure functions raising `ValidationError`, enforced
   **model-first** (on the model + reused by the checks); a plain `VALID` baseline dict
   so a single override isolates one rule.
+- **A rule that mirrors an external system gets a parity suite** beside the rule table,
+  asserting the same expressions against that system directly — everything the rule
+  accepts is accepted there, everything it rejects is rejected there, with the reject
+  list DERIVED from the rule table so a new case cannot be added without the external
+  system agreeing. Where we deliberately diverge, pin the external behaviour that
+  justifies it in its own table, so the test fails (and tells us to drop the divergence)
+  if the other side ever changes. `tests/pg_cron/validators/ test_cron_parity.py` is the
+  worked example: pg_cron accepts a 6-field expression and silently truncates it, so our
+  validator refuses what pg_cron allows.
 - **Assert the COMPLETE error message, never a fragment** (fragments are unreadable and
   brittle); assert the full stable portion up to any volatile tail.
 - **Narrow `# type: ignore[...]` is expected when a test deliberately passes something

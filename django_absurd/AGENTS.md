@@ -459,11 +459,22 @@ OPTIONS = {
 }
 ```
 
-`pg_cron` validates its own schedule grammar: a 5-field cron **or** the interval form
-`<n> seconds` (1-59). Sub-minute cadence therefore works under `pg_cron` via
-`30 seconds` — distinct from beat's 6-field croniter syntax, which `pg_cron` does not
-accept. This grammar is validated by the database (at sync for settings schedules, at
-save time for admin ones), not by `check`.
+`pg_cron` has its own schedule grammar, validated by `manage.py check` for settings
+schedules and at save time for admin ones — in Python, without reaching the database.
+Accepted:
+
+- a standard **5-field** cron, `min hour dom mon dow` (e.g. `"0 2 * * *"`)
+- the interval form **`<n> seconds`**, 1-59, singular or plural and case-insensitive
+  (e.g. `"30 seconds"`) — how sub-minute cadence is expressed under `pg_cron`
+- the aliases `@hourly`, `@daily`, `@weekly`, `@monthly`, `@yearly`/`@annually` and
+  `@midnight`
+
+Two forms are refused **even though `pg_cron` itself accepts them**: beat's 6-field
+leading-seconds syntax (`"*/30 * * * * *"`) and the `#` nth-weekday token
+(`"0 2 * * 5#2"`). `pg_cron`'s parser reads five fields and treats everything after them
+as the command, so it accepts both and silently schedules `"*/30 * * * *"` and "every
+Friday" — a different cadence than the one written, reported as valid. `@reboot` and
+`@restart` are refused too: neither describes a recurring cadence.
 
 Beat and pg_cron are **mutually exclusive**: running `absurd_beat` or
 `absurd_worker --beat` while `django_absurd.pg_cron` is installed raises `CommandError`.
@@ -572,9 +583,10 @@ directly in the admin (create / edit / delete) via a **two-step flow**:
    immediately (un)schedules its `pg_cron` job.
 
 `name` is immutable once created (it forms the job identity); the cron expression is
-validated by `pg_cron` itself at save time (so `<n> seconds` is accepted and an invalid
-expression is rejected with `pg_cron`'s own message). **`max_attempts`** defaults to `5`
-(Absurd's default retry ceiling) and must be `≥ 1`; clearing it stores `NULL`, which
+validated at save time against the grammar above — the same rule `check` applies to
+settings schedules, so an admin row and a settings entry accept exactly the same
+expressions, and saving one needs no database round-trip. **`max_attempts`** defaults to
+`5` (Absurd's default retry ceiling) and must be `≥ 1`; clearing it stores `NULL`, which
 Absurd treats as **retry forever** — a deliberate opt-in, so a mistyped schedule can't
 loop unbounded by accident. The row is the source of truth: any write that persists it
 (admin, ORM, or `loaddata`) keeps `pg_cron` in step (`cron.schedule_in_database` is an
@@ -597,8 +609,9 @@ settings, `a` for admin). Removing admin-authored jobs at teardown is a guarded 
 `absurd.E007` for:
 
 - an unimportable or non-`@task` `task` path
-- an invalid cron expression (beat only; `pg_cron` grammar is validated by the database,
-  not by `check`)
+- an invalid cron expression — under beat, croniter's 5- or 6-field grammar; under
+  `pg_cron`, its own 5-field / `<n> seconds` / alias grammar (see
+  [pg_cron backend](#pg_cron-backend))
 - unknown keys in the spec
 - `args`/`kwargs` values that are not JSON-serializable
 - an `args` that is not a JSON array, or a `kwargs` that is not a JSON object
