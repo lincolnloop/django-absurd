@@ -1,18 +1,24 @@
-"""Parity between our Python grammar rules and the real extension.
+"""Does our grammar still agree with the pg_cron actually installed?
 
-``test_cron.py`` asserts what django-absurd accepts and rejects. This asserts that
-those answers still match pg_cron itself — including the two places we deliberately
-disagree, so that if a future pg_cron stops silently truncating, these fail and tell
-us the divergence can be dropped.
+``validators/test_schedule_grammar.py`` asserts what django-absurd accepts and rejects,
+in pure Python. This module asks the real extension the same questions and asserts the
+answers line up — the guard against our copy of someone else's rules going stale when
+the ``postgresql-*-cron`` pin moves.
 
-Never surfaced to users: schedule validation stays pure Python (see the design spec).
+Three tables, none hand-maintained in isolation: everything we accept must be accepted
+there, everything we reject must be rejected there (derived from the rule table, so a
+new rejection cannot be added unilaterally), and the two expressions we refuse BECAUSE
+pg_cron silently truncates them are pinned as still-accepted upstream — if that is ever
+fixed, these fail and say the divergence can go.
+
+Unlike the rule tests, this one needs the extension: it schedules and unschedules a
+throwaway job per expression on the central catalog.
 """
 
 import pytest
 
 from tests.pg_cron import utils
-from tests.pg_cron.validators.test_cron import ACCEPTED, REJECTED
-from tests.pg_cron.validators.utils import ValidateSubject
+from tests.pg_cron.validators.test_schedule_grammar import ACCEPTED, REJECTED
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -50,11 +56,3 @@ def test_expression_pg_cron_silently_truncates_is_still_accepted_upstream(
     cron: str,
 ) -> None:
     assert utils.pg_cron_accepts(cron)
-
-
-@pytest.mark.parametrize("cron", REJECTED_ONLY_BY_US)
-def test_expression_pg_cron_silently_truncates_is_rejected_by_us(
-    validate: ValidateSubject,
-    cron: str,
-) -> None:
-    assert validate(cron=cron)
