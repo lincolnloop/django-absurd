@@ -90,8 +90,14 @@ boundaries (`0`, `1`, `59`, `60`, singular, uppercase, padded), the alias set in
 the two rejected ones, and the field-content forms croniter owns (`*/5`, `1-5`, `1,3,5`,
 `JAN`, `mon`, `7`).
 
-The pg_cron suite keeps a test that the probe is gone: no `cron.*` write happens during
-`full_clean()`.
+No test asserts "no `cron.*` write happens during `full_clean()`", and none is written:
+a probe on a valid expression schedules and unschedules, and on an invalid one never
+inserts, so a job-count assertion cannot tell probe-present from probe-absent, and this
+suite forbids monkeypatching. The rule tables are the guard instead — their subjects
+never opt pg_cron in, and four of their cases are ones the extension ACCEPTS, so any
+implementation that asked the database (inert or not) fails them. The residual gap,
+stated rather than claimed away: a redundant probe alongside the matcher would change no
+outcome and no test would notice.
 
 ## Follow-ups, not in scope
 

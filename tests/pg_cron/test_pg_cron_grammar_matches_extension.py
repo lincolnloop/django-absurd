@@ -30,6 +30,8 @@ pytestmark = pytest.mark.django_db(transaction=True)
 REJECTED_ONLY_BY_US: list[str] = [
     "0 2 * * * *",
     "0 2 * * 5#2",
+    "@daily junk",
+    "4294967326 seconds",
     "@reboot",
     "@restart",
 ]
@@ -52,7 +54,7 @@ def test_expression_we_reject_is_also_rejected_by_pg_cron(cron: str) -> None:
 
 
 @pytest.mark.parametrize("cron", REJECTED_ONLY_BY_US)
-def test_expression_pg_cron_silently_truncates_is_still_accepted_upstream(
+def test_expression_we_refuse_is_still_accepted_upstream(
     cron: str,
 ) -> None:
     assert utils.pg_cron_accepts(cron)

@@ -300,11 +300,8 @@ def test_pg_cron_structurally_absent_cron_rejected(
     settings: pytest_django.fixtures.SettingsWrapper,
     cron: t.Any,
 ) -> None:
-    """pg_cron cron grammar DB-authoritative, structural presence is not.
-
-    Empty or non-string cron rejected at check time (cron.schedule needs
-    schedule string).
-    """
+    """A missing or non-string cron is core's report, not the grammar check's — the
+    grammar check defers to it so one field's problem is reported once."""
     out = run_pg_cron_check(
         settings,
         capsys,

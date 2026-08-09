@@ -63,9 +63,10 @@ MAX_INTERVAL_SECONDS = 59
 #     and "30  seconds" both parse;
 #   - `%u` runs through strtoul, which accepts a leading sign, so "+30 seconds" parses
 #     (and "-30 seconds" parses, then fails the range check below, as it does upstream);
-#   - the suffix is matched byte-wise on a lowercased ASCII copy, so re.ASCII is
-#     required: without it `\d` admits other scripts' digits and IGNORECASE folds the
-#     long s (`\u017f`) onto "s", both of which pg_cron refuses.
+#   - matching is byte-wise on a lowercased ASCII copy, so re.ASCII is required: it
+#     keeps `\s` off characters C's isspace refuses (a non-breaking space would
+#     otherwise interval-match) and stops IGNORECASE folding the long s (`\u017f`)
+#     onto "s". Both are expressions pg_cron rejects.
 INTERVAL = re.compile(r"\s*([+-]?[0-9]+)\s*seconds?\s*", re.ASCII | re.IGNORECASE)
 INTERVAL_RANGE_MESSAGE = (
     f"An interval schedule must be between {MIN_INTERVAL_SECONDS}"

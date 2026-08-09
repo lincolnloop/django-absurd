@@ -252,7 +252,9 @@ def pg_cron_accepts(cron: str) -> bool:
         try:
             cur.execute(
                 "select cron.schedule_in_database(%s, %s, %s, %s, NULL, %s)",
-                [jobname, cron, "select 1", fetch_live_database(), True],
+                # active=False: the schedule string is parsed before insert either
+                # way, so an interrupted probe leaves nothing that can fire.
+                [jobname, cron, "select 1", fetch_live_database(), False],
             )
         except psycopg.Error:
             return False

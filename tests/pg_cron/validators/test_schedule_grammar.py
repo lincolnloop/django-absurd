@@ -29,6 +29,13 @@ REJECTED: list[tuple[str, str]] = [
     ("30 \u017feconds", "Expected a 5-field cron expression; got 2 fields."),
     ("hourly", "Expected a 5-field cron expression; got 1 field."),
     ("0 2 15W * *", "pg_cron cannot parse '#', 'L', 'W', '?', 'R' or 'H'."),
+    # Vixie's parser implements none of # L W ? R H: it stops at the unknown character
+    # and swallows the rest as command text, so pg_cron reads this as every Friday.
+    ("0 2 * * 5#2", "pg_cron cannot parse '#', 'L', 'W', '?', 'R' or 'H'."),
+    # Same swallowing after an alias: pg_cron runs "@daily junk" daily.
+    ("@daily junk", "Not a valid cron expression."),
+    # sscanf's %u wraps at 2**32, so pg_cron reads this as 30 and runs every 30s.
+    ("4294967326 seconds", "An interval schedule must be between 1 and 59 seconds."),
 ]
 
 ACCEPTED: list[str] = [
@@ -76,16 +83,3 @@ def test_expression_pg_cron_accepts_is_not_rejected(
     cron: str,
 ) -> None:
     assert validate(cron=cron) is None
-
-
-@pytest.mark.parametrize("cron", ["0 2 * * 5#2"])
-def test_token_pg_cron_cannot_parse_is_rejected(
-    validate: ValidateSubject,
-    cron: str,
-) -> None:
-    # Vixie's parser implements none of #, L, W, ?, R or H. It stops at the unknown
-    # character and swallows the remainder as command text, so "0 2 * * 5#2" is
-    # accepted and means every Friday — not the second Friday.
-    result = validate(cron=cron)
-    assert result
-    assert "pg_cron cannot parse '#', 'L', 'W', '?', 'R' or 'H'." in result
