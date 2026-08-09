@@ -115,9 +115,10 @@ pre-commit gates), see [`../CLAUDE.md`](../CLAUDE.md).
   list DERIVED from the rule table so a new case cannot be added without the external
   system agreeing. Where we deliberately diverge, pin the external behaviour that
   justifies it in its own table, so the test fails (and tells us to drop the divergence)
-  if the other side ever changes. `tests/pg_cron/validators/ test_cron_parity.py` is the
-  worked example: pg_cron accepts a 6-field expression and silently truncates it, so our
-  validator refuses what pg_cron allows.
+  if the other side ever changes.
+  `tests/pg_cron/test_pg_cron_grammar_matches_extension.py` is the worked example:
+  pg_cron accepts a 6-field expression and silently truncates it, so our validator
+  refuses what pg_cron allows.
 - **Assert the COMPLETE error message, never a fragment** (fragments are unreadable and
   brittle); assert the full stable portion up to any volatile tail.
 - **Narrow `# type: ignore[...]` is expected when a test deliberately passes something

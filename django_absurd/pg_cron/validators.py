@@ -57,10 +57,16 @@ CRON_FIELD_COUNT = 5
 MIN_INTERVAL_SECONDS = 1
 MAX_INTERVAL_SECONDS = 59
 
-# Ports pg_cron's TryParseInterval: sscanf(" %u secon%c%c %c") over a lowercased copy,
-# so singular and plural both parse, case is irrelevant, surrounding space is skipped
-# and trailing text is refused.
-INTERVAL = re.compile(r"\s*(\d+)\s+seconds?\s*", re.IGNORECASE)
+# Ports pg_cron's TryParseInterval, `sscanf(" %u secon%c%c %c")` over a lowercased
+# copy, faithfully enough to matter:
+#   - a literal space in a scanf format matches ZERO or more whitespace, so "30seconds"
+#     and "30  seconds" both parse;
+#   - `%u` runs through strtoul, which accepts a leading sign, so "+30 seconds" parses
+#     (and "-30 seconds" parses, then fails the range check below, as it does upstream);
+#   - the suffix is matched byte-wise on a lowercased ASCII copy, so re.ASCII is
+#     required: without it `\d` admits other scripts' digits and IGNORECASE folds the
+#     long s (`\u017f`) onto "s", both of which pg_cron refuses.
+INTERVAL = re.compile(r"\s*([+-]?[0-9]+)\s*seconds?\s*", re.ASCII | re.IGNORECASE)
 INTERVAL_RANGE_MESSAGE = (
     f"An interval schedule must be between {MIN_INTERVAL_SECONDS}"
     f" and {MAX_INTERVAL_SECONDS} seconds."
@@ -111,9 +117,11 @@ def validate_pg_cron_schedule(cron: str) -> None:
 
 
 def validate_alias(expression: str) -> None:
-    if expression.lower() in NON_RECURRING_ALIASES:
+    """Aliases are matched case-SENSITIVELY, as pg_cron matches them (measured: it
+    refuses ``@DAILY``)."""
+    if expression in NON_RECURRING_ALIASES:
         raise ValidationError(NON_RECURRING_ALIAS_MESSAGE)
-    if expression.lower() not in RECURRING_ALIASES:
+    if expression not in RECURRING_ALIASES:
         raise ValidationError(INVALID_CRON_MESSAGE)
 
 
@@ -125,10 +133,10 @@ def validate_interval_seconds(seconds: int) -> None:
 def reject_wrong_field_count(expression: str) -> None:
     fields = expression.split()
     if len(fields) != CRON_FIELD_COUNT:
-        msg = (
-            f"Expected a {CRON_FIELD_COUNT}-field cron expression;"
-            f" got {len(fields)} fields."
+        counted = (
+            f"{len(fields)} field" if len(fields) == 1 else f"{len(fields)} fields"
         )
+        msg = f"Expected a {CRON_FIELD_COUNT}-field cron expression; got {counted}."
         raise ValidationError(msg)
 
 

@@ -17,6 +17,18 @@ REJECTED: list[tuple[str, str]] = [
     ("@reboot", "@reboot and @restart do not describe a recurring schedule."),
     ("@restart", "@reboot and @restart do not describe a recurring schedule."),
     ("99 2 * * *", "Not a valid cron expression."),
+    # pg_cron's alias match is case-SENSITIVE (measured), so these are not aliases.
+    ("@DAILY", "Not a valid cron expression."),
+    ("@Daily", "Not a valid cron expression."),
+    ("@bogus", "Not a valid cron expression."),
+    # strtoul takes a sign, so pg_cron parses -30 and then fails its 0 < n < 60 range.
+    ("-30 seconds", "An interval schedule must be between 1 and 59 seconds."),
+    # `%u` is ASCII-only and the suffix match is byte-wise: neither is the interval
+    # form to pg_cron, so both fall through to the cron grammar and fail on shape.
+    ("٣٠ seconds", "Expected a 5-field cron expression; got 2 fields."),
+    ("30 \u017feconds", "Expected a 5-field cron expression; got 2 fields."),
+    ("hourly", "Expected a 5-field cron expression; got 1 field."),
+    ("0 2 15W * *", "pg_cron cannot parse '#', 'L', 'W', '?', 'R' or 'H'."),
 ]
 
 ACCEPTED: list[str] = [
@@ -34,6 +46,12 @@ ACCEPTED: list[str] = [
     "59 seconds",
     "30 second",
     "30 SECONDS",
+    # scanf's literal space matches ZERO or more whitespace, and %u goes through
+    # strtoul — all three run every 30s on pg_cron (measured).
+    "30seconds",
+    "30  seconds",
+    "+30 seconds",
+    "030 seconds",
     "@daily",
     "@hourly",
 ]
@@ -60,7 +78,7 @@ def test_expression_pg_cron_accepts_is_not_rejected(
     assert validate(cron=cron) is None
 
 
-@pytest.mark.parametrize("cron", ["0 2 * * 5#2", "0 2 15W * *"])
+@pytest.mark.parametrize("cron", ["0 2 * * 5#2"])
 def test_token_pg_cron_cannot_parse_is_rejected(
     validate: ValidateSubject,
     cron: str,

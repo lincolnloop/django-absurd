@@ -77,9 +77,8 @@ E007_HINT_IMPORT = (
 )
 E007_HINT_NOT_TASK = "The path must point to a Django @task-decorated callable."
 E007_HINT_CRON = "Provide a valid cron expression (e.g. '0 2 * * *')."
-E007_HINT_PG_CRON_CRON = (
-    "Set cron to a non-empty schedule string (a 5-field cron or '<n> seconds');"
-    " pg_cron validates the grammar at sync time."
+E007_HINT_PG_CRON_CRON_PRESENT = (
+    "Set cron to a non-empty schedule string; the pg_cron app checks its grammar."
 )
 E007_HINT_UNKNOWN_KEY = (
     "Remove unknown keys; valid keys are: task, cron, queue, args, kwargs."
@@ -261,10 +260,9 @@ def validate_schedule(
             )
         )
 
-    # croniter validates the beat grammar only. pg_cron has its own grammar
-    # (5-field cron or "[1-59] seconds"), validated by the DB at sync — so for
-    # pg_cron the check only enforces structural presence (a non-empty string),
-    # leaving the grammar to cron.schedule.
+    # croniter validates the beat grammar only. pg_cron's grammar is its own and is
+    # checked by the pg_cron app (which core must not import), so here pg_cron gets
+    # the structural check alone: a non-empty string.
     cron = spec.get("cron", "")
     if scheduler == "beat" and not is_valid_beat_cron(cron):
         errors.append(
@@ -278,7 +276,7 @@ def validate_schedule(
         errors.append(
             Error(
                 f"{E007_MSG} Schedule {name!r}: cron must be a non-empty string.",
-                hint=E007_HINT_PG_CRON_CRON,
+                hint=E007_HINT_PG_CRON_CRON_PRESENT,
                 id="absurd.E007",
             )
         )
@@ -340,8 +338,8 @@ def is_valid_cleanup(cleanup: t.Any, scheduler: str) -> bool:
     if not isinstance(cleanup, Mapping) or set(cleanup) != {"schedule"}:
         return False
     schedule = cleanup["schedule"]
-    # pg_cron cron grammar stays DB-authoritative at sync (matching the SCHEDULE
-    # stance); at check time only the beat scheduler's cron is validated here.
+    # Structural check only for pg_cron, whose grammar the pg_cron app checks
+    # (matching the SCHEDULE stance) — core must not import the optional app.
     if scheduler == "beat":
         return is_valid_beat_cron(schedule)
     return isinstance(schedule, str) and bool(schedule.strip())

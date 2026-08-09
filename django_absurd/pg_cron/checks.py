@@ -25,8 +25,8 @@ E007_HINT_PG_CRON_NAME = (
 
 E007_HINT_PG_CRON_CRON = (
     "Use a 5-field cron expression, an interval such as '30 seconds' (1-59), or one of"
-    " @hourly/@daily/@weekly/@monthly/@yearly. The beat scheduler's 6-field"
-    " leading-seconds form is not pg_cron syntax."
+    " @hourly/@daily/@weekly/@monthly/@yearly/@annually/@midnight (lowercase). The beat"
+    " scheduler's 6-field leading-seconds form is not pg_cron syntax."
 )
 
 E011_MSG = (
@@ -100,8 +100,8 @@ def check_pg_cron_name(name: t.Any) -> list[CheckMessage]:
 
 
 def check_pg_cron_grammar(name: str, cron: t.Any) -> list[CheckMessage]:
-    if not isinstance(cron, str):
-        return []  # core's schedule-shape check reports a non-string cron
+    if not isinstance(cron, str) or not cron.strip():
+        return []  # core reports a missing/non-string cron; don't report it twice
     try:
         validate_pg_cron_schedule(cron)
     except ValidationError as exc:
@@ -150,8 +150,8 @@ def check_pg_cron_cleanup_schedule(
         if not isinstance(cleanup, Mapping):
             continue  # core's check_absurd_cleanup_config reports the shape
         schedule = cleanup.get("schedule")
-        if not isinstance(schedule, str):
-            continue
+        if not isinstance(schedule, str) or not schedule.strip():
+            continue  # core reports a missing/non-string schedule; not twice
         try:
             validate_pg_cron_schedule(schedule)
         except ValidationError as exc:

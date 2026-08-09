@@ -244,6 +244,9 @@ def pg_cron_accepts(cron: str) -> bool:
     ``django_absurd.pg_cron.validators``); this exists so those rules can be asserted
     against the extension itself rather than against our reading of it.
     """
+    # Deliberately OUTSIDE the _dj: namespace django-absurd manages: tests scan and
+    # flush that prefix, and a probe job appearing there races them. Unscheduled in a
+    # finally instead, so nothing is left behind either way.
     jobname = f"_parity_{uuid.uuid4()}"
     with open_central_connection("default") as cur:
         try:
@@ -253,5 +256,9 @@ def pg_cron_accepts(cron: str) -> bool:
             )
         except psycopg.Error:
             return False
-        cur.execute("select cron.unschedule(%s)", [jobname])
+        finally:
+            cur.execute(
+                "select cron.unschedule(jobid) from cron.job where jobname = %s",
+                [jobname],
+            )
         return True

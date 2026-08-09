@@ -411,14 +411,33 @@ def test_pg_cron_cleanup_cron_grammar_is_checked(
     # CLEANUP's cron is pg_cron's own grammar too, so it earns the same check as a
     # SCHEDULE entry: beat's 6-field form would otherwise reach sync, where pg_cron
     # accepts it and silently drops the sixth field.
-    settings.TASKS = make_tasks_settings(
-        queues=BASE_QUEUES, cleanup={"schedule": "*/30 * * * * *"}
-    )
-    try:
-        call_command("check", "django_absurd")
-    except SystemCheckError as exc:
-        out = capsys.readouterr().err + str(exc)
-    else:
-        out = capsys.readouterr().err
+    out = run_pg_cron_cleanup_check(settings, capsys, {"schedule": "*/30 * * * * *"})
     assert "absurd.E010" in out
     assert "Expected a 5-field cron expression; got 6 fields." in out
+
+
+@pytest.mark.parametrize("cleanup", [{"schedule": 5}, {"schedule": "   "}])
+def test_pg_cron_cleanup_defers_a_non_grammar_problem_to_core(
+    capsys: pytest.CaptureFixture[str],
+    cleanup: dict[str, t.Any],
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
+    # Core already reports shape/emptiness as absurd.E010; reporting it again from the
+    # grammar check would show one field's problem twice.
+    out = run_pg_cron_cleanup_check(settings, capsys, cleanup)
+    assert out.count("absurd.E010") == 1
+
+
+def test_pg_cron_schedule_defers_an_empty_cron_to_core(
+    capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
+    out = run_pg_cron_check(
+        settings,
+        capsys,
+        {
+            "queues": BASE_QUEUES,
+            "schedule": {"s": {"task": "tests.tasks.add", "cron": "   "}},
+        },
+    )
+    assert out.count("absurd.E007") == 1
