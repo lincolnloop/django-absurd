@@ -2,9 +2,9 @@
 
 Each raises `django.core.exceptions.ValidationError`. `ScheduledTask.clean()` +
 field `validators=[...]` enforce them model-first; the system checks call the
-same callables and wrap failures into `absurd.E007`. The field-level validator
-(name charset) is pure; the contextual one (`validate_pg_cron_cron`) reads the
-database.
+same callables and wrap failures into `absurd.E007`. All of them are pure —
+`validate_declared_queue` imports the task to read its queue, and nothing here
+opens a database connection.
 """
 
 import re
@@ -86,7 +86,7 @@ UNSUPPORTED_SYNTAX = re.compile(r"[#?]|(?<![A-Za-z])[LWRHlwrh](?![A-Za-z])")
 UNSUPPORTED_SYNTAX_MESSAGE = "pg_cron cannot parse '#', 'L', 'W', '?', 'R' or 'H'."
 
 
-def validate_pg_cron_cron(cron: str) -> None:
+def validate_pg_cron_schedule(cron: str) -> None:
     """Validate a pg_cron schedule expression in Python, without asking the database.
 
     pg_cron's OWN grammar, which is not the beat scheduler's: five fields or the

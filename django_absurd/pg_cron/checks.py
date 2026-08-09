@@ -16,7 +16,7 @@ from django_absurd.pg_cron import detection
 from django_absurd.pg_cron.validators import (
     validate_declared_queue,
     validate_name_charset,
-    validate_pg_cron_cron,
+    validate_pg_cron_schedule,
 )
 
 E007_HINT_PG_CRON_NAME = (
@@ -61,11 +61,11 @@ def check_pg_cron_schedules(
         if not isinstance(raw_schedule, Mapping):
             continue  # core's check_absurd_schedule_config reports this
         for name, spec in raw_schedule.items():
-            errors.extend(validate_pg_cron_schedule(name, spec, declared_queues))
+            errors.extend(check_pg_cron_schedule(name, spec, declared_queues))
     return errors
 
 
-def validate_pg_cron_schedule(
+def check_pg_cron_schedule(
     name: str,
     spec: t.Any,
     declared_queues: set[str],
@@ -103,7 +103,7 @@ def check_pg_cron_grammar(name: str, cron: t.Any) -> list[CheckMessage]:
     if not isinstance(cron, str):
         return []  # core's schedule-shape check reports a non-string cron
     try:
-        validate_pg_cron_cron(cron)
+        validate_pg_cron_schedule(cron)
     except ValidationError as exc:
         return [
             Error(
