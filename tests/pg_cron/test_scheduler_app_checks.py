@@ -107,3 +107,33 @@ def test_pg_cron_app_config_path_before_core_warns(
     assert (
         "Place 'django_absurd.pg_cron' after 'django_absurd' in INSTALLED_APPS." in out
     )
+
+
+def test_pg_cron_installed_without_an_absurd_backend_is_reported(
+    capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
+    # A typo'd BACKEND, a wrong alias, or an app-ordering slip leaves the scheduler app
+    # installed with nothing to schedule for. Every ScheduledTask then saves normally
+    # and never gets a job, so say it at check time — before any row exists.
+    settings.TASKS = {
+        "default": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}
+    }
+    try:
+        call_command("check", "django_absurd")
+    except SystemCheckError as exc:
+        out = capsys.readouterr().err + str(exc)
+    else:
+        out = capsys.readouterr().err
+    assert "absurd.E013" in out
+    assert (
+        "django-absurd: 'django_absurd.pg_cron' is installed, but no AbsurdBackend"
+        " is configured." in out
+    )
+
+
+def test_pg_cron_installed_with_a_backend_is_not_reported(
+    capsys: pytest.CaptureFixture[str],
+    settings: pytest_django.fixtures.SettingsWrapper,
+) -> None:
+    assert "absurd.E013" not in run_check(capsys, settings)

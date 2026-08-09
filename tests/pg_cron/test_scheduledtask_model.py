@@ -1,4 +1,7 @@
+import logging
+
 import pytest
+from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from pytest_django.fixtures import SettingsWrapper
 
@@ -23,16 +26,16 @@ def test_long_schedule_name_passes_full_clean(settings: SettingsWrapper) -> None
 def test_full_clean_skips_backend_validation_when_no_backend_configured(
     settings: SettingsWrapper,
 ) -> None:
-    # With no Absurd backend configured at all, there is nothing to validate the
-    # queue/cron against, so full_clean must skip cleanly (and not raise) rather
-    # than reject an otherwise-valid row.
+    # With no Absurd backend there is nothing to validate the QUEUE against, so that
+    # rule is skipped rather than rejecting an otherwise-valid row. The cron is still
+    # checked — see test_cron_is_validated_even_with_no_backend_configured.
     settings.TASKS = {
         "default": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}
     }
     ScheduledTask(
         source="a",
         name="beatrow",
-        task="tests.tasks.add",
+        task="tests.pg_cron.tasks.add",
         queue="default",
         cron="0 2 * * *",
     ).full_clean()
@@ -155,3 +158,50 @@ def test_scheduledtask_unique_per_source_name() -> None:
         task="demo.tasks.ping",
         cron="* * * * *",
     )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_cron_is_validated_even_with_no_backend_configured(
+    settings: SettingsWrapper,
+) -> None:
+    # The queue rule needs a backend to know what is declared; the grammar rule needs
+    # nothing, so a misconfigured TASKS must not buy a row a free pass on its cron.
+    settings.TASKS = {
+        "default": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}
+    }
+    row = ScheduledTask(
+        source=Source.ADMIN,
+        name="s",
+        task="tests.pg_cron.tasks.add",
+        cron="*/30 * * * * *",
+        queue="default",
+    )
+    with pytest.raises(ValidationError) as exc:
+        row.full_clean()
+    assert exc.value.message_dict["cron"] == [
+        "Expected a 5-field cron expression; got 6 fields."
+    ]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_saving_with_no_backend_says_why_no_job_was_scheduled(
+    caplog: pytest.LogCaptureFixture,
+    settings: SettingsWrapper,
+) -> None:
+    # The emission path is best-effort by design, so it returns early rather than
+    # raising — but a row that saves and never gets a job must not be silent.
+    settings.TASKS = {
+        "default": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}
+    }
+    row = ScheduledTask(
+        source=Source.ADMIN,
+        name="orphan",
+        task="tests.pg_cron.tasks.add",
+        queue="default",
+        cron="0 2 * * *",
+    )
+    with caplog.at_level(logging.WARNING, logger="django_absurd.pg_cron.models"):
+        row.save()
+    assert [record.getMessage() for record in caplog.records] == [
+        "pg_cron job not scheduled for 'a:orphan': no AbsurdBackend is configured"
+    ]

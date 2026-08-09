@@ -29,6 +29,16 @@ E007_HINT_PG_CRON_CRON = (
     " scheduler's 6-field leading-seconds form is not pg_cron syntax."
 )
 
+E013_MSG = (
+    "django-absurd: 'django_absurd.pg_cron' is installed, but no AbsurdBackend is"
+    " configured."
+)
+E013_HINT = (
+    "Point a TASKS entry at django_absurd.backends.AbsurdBackend, or remove"
+    " 'django_absurd.pg_cron' from INSTALLED_APPS. Without a backend a ScheduledTask"
+    " row saves normally and never gets a pg_cron job."
+)
+
 E011_MSG = (
     "django-absurd: OPTIONS['SYNC_SCHEDULES_ON_TEST_DB'] is True without"
     " OPTIONS['PG_CRON_ON_TEST_DB']."
@@ -163,6 +173,22 @@ def check_pg_cron_cleanup_schedule(
                 )
             )
     return errors
+
+
+@register("absurd")
+def check_pg_cron_has_a_backend(
+    *,
+    app_configs: Sequence[AppConfig] | None,
+    **kwargs: t.Any,
+) -> list[CheckMessage]:
+    """The scheduler app is installed for a backend that does not resolve.
+
+    Everything downstream degrades quietly in that state — validation skips its
+    backend-dependent rules and emission returns early — so the misconfiguration is
+    reported here, where it is still cheap to fix."""
+    if get_absurd_backends():
+        return []
+    return [Error(E013_MSG, hint=E013_HINT, id="absurd.E013")]
 
 
 @register("absurd")
