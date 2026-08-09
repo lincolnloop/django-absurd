@@ -44,7 +44,8 @@ named **event** arrives — so a retry or resume never redoes completed work.
 
 `step(name, fn)` runs `fn()`, checkpoints the result, and skips it on replay. Get the
 context **inside** a running task — `get_absurd_context()` when sync,
-`aget_absurd_context()` when `async def`. Neither needs `takes_context=True`.
+`aget_absurd_context()` when `async def`. Neither needs Django's own
+[`takes_context`](https://docs.djangoproject.com/en/6.0/ref/tasks/#task-context).
 
 - **Step names and call order must be stable across replays** — Absurd finds checkpoints
   by them. Inserting, removing, or reordering a `step` or sleep corrupts replay; retire

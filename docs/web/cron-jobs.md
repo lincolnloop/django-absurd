@@ -133,6 +133,10 @@ steps: **add** (name, task, cron — the rest resolves from the task's
 
 ### Test databases
 
+```python title="settings.py"
+"OPTIONS": {"PG_CRON_ON_TEST_DB": True}  # opt in; off by default
+```
+
 Every `cron.*` write is inert on a test database, detected automatically — otherwise a
 leftover schedule would fire for real against test data.
 

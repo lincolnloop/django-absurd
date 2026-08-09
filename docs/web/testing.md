@@ -122,6 +122,10 @@ one `RunSnapshot` per run executed, in claim order.
 
 ### `dj_absurd.emit(name, payload=None, queue="default")` { #emit data-toc-label="emit()" }
 
+```python
+dj_absurd.emit(f"warehouse.packed:{order_id}", {"tracking": "abc"})
+```
+
 Delivers an [event](workflows.md#events), resolving a task suspended in `await_event` —
 the waiter resumes on the next `drain()`. An unprovisioned queue raises
 `QueueNotProvisionedError`, same as `drain()`.
