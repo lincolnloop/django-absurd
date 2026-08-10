@@ -15,28 +15,13 @@ Absurd's schema ships as ordinary Django migrations, generated offline from the 
 therefore codegen plus a set of artifacts that must move together, and the generated SQL
 itself tells you what else changed.
 
-**Two ways to generate, and the choice comes first:**
-
-|            | Add a delta                                        | Regenerate from scratch                                                                                          |
-| ---------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Produces   | `000N_absurd_<version>` on top                     | ONE `0001_initial_<version>` replacing every migration                                                           |
-| Source     | `absurdctl migrate --from … --to … --dump-sql`     | `absurdctl.BUNDLED_SCHEMA_SQL`                                                                                   |
-| Costs      | replays history the current version has moved past | EVERY existing database, which must drop the `absurd` schema, clear its `django_migrations` rows, and re-migrate |
-| Right when | **the default, and always safe**                   | ONLY when the maintainer says so in this session                                                                 |
-
-**Adding a delta is the default. Never regenerate unless the maintainer says so in this
-session** — "the project still looks pre-release" is not their decision made for you.
-The reason it was chosen once, at 0.5.0: replaying history reintroduces what upstream
-has since removed, because the earliest schema created `uuid-ossp`, so a delta chain
-creates an extension only to drop it again and demands privileges the package no longer
-needs. That argument expires the day a real installed base exists.
-
-Regenerating also breaks harder than "re-migrate" suggests: with `django_absurd.pg_cron`
-installed, its own migration is recorded as applied while its parent is now a migration
-that is not, so **every** `migrate` in the project raises `InconsistentMigrationHistory`
-until `django_migrations` is edited by hand. Say so wherever the change is announced.
-
-**With deltas: one migration per Absurd release, and the initial is frozen.**
+**One migration per Absurd release, added on top. The initial is frozen, and the schema
+is never regenerated from scratch** — that was done once, late in pre-release, and it is
+not a tool on the shelf. Regenerating renames the initial and breaks every existing
+database: each must drop the `absurd` schema AND clear its `django_migrations` rows,
+because with `django_absurd.pg_cron` installed its migration stays recorded as applied
+while its parent no longer is, so every `migrate` raises `InconsistentMigrationHistory`
+until someone edits that table by hand.
 
 ## When to use
 
@@ -75,27 +60,7 @@ depends on django-absurd by path. Any root dependency change invalidates all thr
 1. **Bump the `absurdctl` pin first**, then `uv sync`. The SQL comes from the wheel, so
    the old pin can only generate the old version.
 
-2. **Generate the SQL, offline.** To regenerate from scratch, read the install SQL out
-   of the wheel and delete every existing migration:
-
-   ```bash
-   uv run python -c "
-   import absurdctl, pathlib
-   pathlib.Path('django_absurd/migrations/0001_initial_<version>.sql').write_text(
-       absurdctl.BUNDLED_SCHEMA_SQL
-   )
-   print(absurdctl.ABSURD_SCHEMA_TARGET_VERSION)"
-   ```
-
-   That constant IS the fresh install (`absurd.sql`), bundled — the printed target
-   version must be the one you are moving to. **`migrate --dump-sql` cannot produce a
-   fresh install:** it only emits ranges, `--from` is mandatory, and `--from 0.0.0`
-   silently starts at an early delta with no schema bootstrap at all. Carry the
-   initial's other operations over when rewriting its wrapper — the psycopg check, and
-   the `Queue` state-only model, which mirrors `absurd.queues` and must be updated
-   together with `django_absurd/models.py` if the release touched that table.
-
-   For a delta instead:
+2. **Generate the delta, offline:**
 
    ```bash
    absurdctl migrate --from <current> --to <new> --dump-sql \
@@ -104,15 +69,15 @@ depends on django-absurd by path. Any root dependency change invalidates all thr
 
    `--dump-sql` needs no database and makes no network call — verify it printed SQL and
    exited 0. An empty or header-only bundle means there is no schema change: stop, and
-   bump only the pins.
+   bump only the pins. `--from` is mandatory, and the command only ever emits a RANGE —
+   no flag produces a fresh install, which is one more reason the initial stays where it
+   is.
 
 3. **Read the delta's own comments before writing any wrapper.** Upstream states what a
    release changes at the top of each bundled migration, and that is your list of
-   downstream work. **Regenerating leaves you no delta to read** — the install SQL's
-   header describes the whole system, not the release — so generate one into the
-   scratchpad anyway, purely to read its comments, then discard it. A release that drops
-   an extension dependency, changes a function signature, or renames a column has
-   consequences in this package's code and in user docs that no test will find for you.
+   downstream work. A release that drops an extension dependency, changes a function
+   signature, or renames a column has consequences in this package's code and in user
+   docs that no test will find for you.
 
 4. **Wrap it** as `000N_absurd_<version>.py`, mirroring `0001`: read the `.sql` with
    `importlib.resources`, depend on the previous migration.
@@ -193,12 +158,19 @@ Two neighbouring cases are different, and conflating them is what previously mad
 - **"Unapplying is refused"** is a real contract test of our own migration: assert that
   unapplying raises, rather than arranging a teardown.
 
+**The FIRST delta flips that test.** Until one exists the schema installs in a single
+migration that reverses, and
+`tests/core/test_migrations.py::test_reverse_drops_absurd_schema` asserts exactly that.
+Adding a delta makes the chain irreversible, so that test has to become an
+assert-the-refusal test in the same commit — it is on the move-together list, and
+nothing else in the tree will remind you.
+
 ## Common mistakes
 
 | Mistake                                                              | Why it happens                                                       | Do instead                                                                                                                                                                                         |
 | -------------------------------------------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Hand-writing a reverse migration                                     | `absurdctl` refuses downgrades, so it looks like your job            | Omit `reverse_sql` — see step 4                                                                                                                                                                    |
-| Adding `reverse_sql` to a DELTA so a test can reach zero             | tests once used migrate-zero to mean "schema absent"                 | Rename the schema instead — see above. The initial legitimately has a reverse; a delta never does                                                                                                  |
+| Adding `reverse_sql` to a delta so a test can reach zero             | tests once used migrate-zero to mean "schema absent"                 | Rename the schema instead — see above. The initial legitimately has a reverse; a delta never does                                                                                                  |
 | Committing without the example lockfiles                             | `git status` shows them, `git commit -am` on named paths misses them | `uv lock --project examples/<name>` ×3, and stage them                                                                                                                                             |
 | Trusting a `concurrently` grep                                       | The word appears in error strings                                    | Read the match before setting `atomic = False`                                                                                                                                                     |
 | Reaching for a one-off `--exclude-newer-package` on the command line | The release looks blocked by a cooloff                               | It is not: Absurd is exempt from both cooloffs, in `pyproject.toml` and `renovate.json`. A command-line override instead records a dated one in the lockfile, which fails `uv sync --locked` in CI |
@@ -209,8 +181,7 @@ Two neighbouring cases are different, and conflating them is what previously mad
 
 - You are typing SQL by hand rather than extracting it from the wheel
 - You are copying function bodies out of the initial migration for any reason
-- You edited the initial migration while on the DELTA path — there it is frozen
-- You are regenerating without the maintainer having said to in this session
+- You edited or renamed the initial migration — it is frozen; add a delta instead
 - You are adding `reverse_sql` to a delta so a test can migrate to zero — fix the test
 - `git status` shows `examples/*/uv.lock` at commit time
 - You cannot say what the release changed in one sentence (you skipped step 3)

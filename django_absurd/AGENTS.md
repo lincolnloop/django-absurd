@@ -1039,10 +1039,6 @@ Neither logger is the complete record. Postgres is:
   **experimental — not tested yet**, with no automated partition lifecycle. Only queues
   declared in `QUEUES` are created — an undeclared queue name is rejected, not silently
   created.
-- **Teardown reverses the initial migration.** `migrate django_absurd zero` drops the
-  `absurd` schema and everything in it. This holds while the schema installs in one
-  migration; a later schema delta will not reverse, because Absurd publishes no
-  downgrade SQL for one.
 
 ## Adopting an existing Absurd database
 
