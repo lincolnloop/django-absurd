@@ -1,12 +1,12 @@
 ---
-name: bump-absurd-version
+name: generating-absurd-migrations
 description:
   Use when moving django-absurd to a new upstream Absurd release — a Renovate PR bumping
   the `absurdctl` pin, an `absurd-sdk` floor change, `ABSURD_SCHEMA_VERSION` drift, or a
   report that `manage.py migrate` ships an older schema than the pinned version.
 ---
 
-# bump-absurd-version
+# generating-absurd-migrations
 
 ## Overview
 
