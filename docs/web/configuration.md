@@ -85,7 +85,8 @@ django-absurd's schema and queries there.
 python manage.py check django_absurd
 ```
 
-Verifies the configuration. Fix what it reports rather than silencing it:
+Verifies the configuration. Fix what it reports rather than silencing it, unless a
+check's own hint says otherwise:
 
 | ID            | Means                                                                                                                                                                                         |
 | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

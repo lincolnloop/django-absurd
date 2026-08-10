@@ -110,7 +110,6 @@ def test_pg_cron_app_config_path_before_core_warns(
 
 
 def test_pg_cron_installed_without_an_absurd_backend_is_reported(
-    capsys: pytest.CaptureFixture[str],
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     # A TASKS pointing somewhere other than an AbsurdBackend leaves the scheduler app

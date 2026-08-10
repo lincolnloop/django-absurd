@@ -97,6 +97,11 @@ pre-commit gates), see [`../CLAUDE.md`](../CLAUDE.md).
   `call_command("check", "django_absurd")` / `call_command("absurd_sync_queues")`,
   capture output with pytest `capsys`, and **assert on the full emitted message text**
   (not on internal return values).
+- **A check test that must ERROR uses `pytest.raises(SystemCheckError)`**, not a helper
+  that captures output — a helper passes whether or not the check fired, and the
+  `try/except/else` shape it invites leaves an unreachable `else` that fails the
+  patch-coverage gate (this recurred twice). The output-capturing helpers are for
+  tolerant sweeps: asserting an ID is ABSENT, or reading several messages at once.
 - Drive check/command states with real DB conditions (sync via the command; drop the
   schema; `override_settings` for an unreachable DB) — not mocks.
 - HTTP mocking (when ever needed): the `responses` library, not `mock`.
