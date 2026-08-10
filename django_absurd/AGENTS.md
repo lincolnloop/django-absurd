@@ -1041,9 +1041,12 @@ Neither logger is the complete record. Postgres is:
   **experimental — not tested yet**, with no automated partition lifecycle. Only queues
   declared in `QUEUES` are created — an undeclared queue name is rejected, not silently
   created.
-- **Migrations do not roll back.** Absurd publishes no downgrade SQL, so each schema
-  migration after the first is irreversible and `migrate django_absurd <earlier>` is
-  refused. Restore from a backup instead.
+- **The Absurd SQL does not roll back.** Absurd publishes no downgrade SQL, so the SQL
+  each schema delta applies is an irreversible operation. Django refuses to unapply a
+  migration containing one, and refuses the whole chain behind it, so
+  `migrate django_absurd <earlier>` fails and a restore is the way back. Everything else
+  reverses normally — the initial migration, and `django_absurd.pg_cron`'s own model
+  migrations.
 
 ## Adopting an existing Absurd database
 

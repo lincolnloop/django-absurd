@@ -204,8 +204,8 @@ def hide_absurd_schema() -> t.Iterator[None]:
     A rename, not a drop: nothing is destroyed, so the schema comes back with its
     functions, tables and rows intact and Django's migration records stay true the whole
     time. Unapplying the migrations would be the other way to get here and is not
-    available — a delta migration carries no downgrade SQL, so the chain is irreversible
-    by design (see ``django_absurd/migrations/0002_absurd_0_5_0.py``).
+    available — Absurd's SQL deltas carry no downgrade SQL, so no unapply reaches past
+    one (see ``django_absurd/migrations/0002_absurd_0_5_0.py``).
     """
     with connections["default"].cursor() as cursor:
         cursor.execute("ALTER SCHEMA absurd RENAME TO absurd_hidden")

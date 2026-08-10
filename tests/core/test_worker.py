@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import datetime as dt
 import logging
 import os
@@ -81,8 +82,10 @@ def test_worker_client_opens_without_provisioning_check() -> None:
 
 def test_worker_client_absent_schema_errors() -> None:
     async def _enter() -> None:
-        async with aworker_client(backend(), "default"):
-            pass
+        # Entering is what raises, so the entry is the whole body — a statement after it
+        # would never run.
+        async with contextlib.AsyncExitStack() as stack:
+            await stack.enter_async_context(aworker_client(backend(), "default"))
 
     with (
         utils.hide_absurd_schema(),

@@ -31,13 +31,14 @@ Maintainer process: migrations are not hand-written. When bumping the pinned Abs
 version, regenerate the SQL with `absurdctl` as the delta between the currently pinned
 schema and the new target version.
 
-Upstream publishes no downgrade SQL, so a delta migration is irreversible rather than
-carrying a hand-written reverse nobody can verify or a no-op reverse that would report a
-successful rollback while leaving the database at the newer schema. Django needs every
-step of an unapply chain to be reversible, so one such delta means the schema cannot be
-migrated backwards at all — recovery is a restore, not a downgrade. Nothing in the
-package may depend on unapplying migrations, and a test that needs the schema out of
-reach renames it instead, which destroys nothing.
+Upstream publishes no downgrade SQL, so the SQL applying a delta is left irreversible
+rather than given a hand-written reverse nobody can verify, or a no-op reverse that
+would report a successful rollback while leaving the database at the newer schema. Since
+an unapply chain is only as reversible as its least reversible step, one such operation
+takes the whole schema with it: it cannot be migrated backwards at all, and recovery is
+a restore rather than a downgrade. Nothing in the package may depend on unapplying
+migrations, and a test that needs the schema out of reach renames it instead, which
+destroys nothing.
 
 The schema lives in a fixed, non-relocatable namespace, and applying it needs a role
 allowed to create that namespace and the UUID extension the earliest pinned version

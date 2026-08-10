@@ -74,12 +74,12 @@ depends on django-absurd by path. Any root dependency change invalidates all thr
      generate; a hand-written reverse is unverifiable and rots, and `RunSQL.noop` lets a
      rollback claim success while leaving the database at the newer schema. A delta with
      no downgrade SQL is genuinely irreversible, and says so.
-   - **Know what that costs.** Django's executor requires every operation in an unapply
-     chain to be reversible, so ONE irreversible delta blocks
-     `migrate django_absurd zero` as well — not just a one-step-back. That is accepted
-     here: `migrate <app> zero` is stock Django, never a django-absurd feature, and
-     nothing in this package may depend on it. See "Tests that need the schema absent"
-     below.
+   - **Know what that costs.** What is irreversible is the SQL operation — but an
+     unapply chain is only as reversible as its least reversible step, so one such
+     operation blocks `migrate django_absurd zero` too, not just a one-step-back. That
+     is accepted here: `migrate <app> zero` is stock Django, never a django-absurd
+     feature, and nothing in this package may depend on it. See "Tests that need the
+     schema absent" below.
    - Set `atomic = False` **only** if the delta contains non-transactional DDL. Grep for
      `concurrently` as a statement, not as a word — it appears inside error-message
      strings, and a false positive here costs you transactional safety for nothing.
@@ -122,17 +122,13 @@ depends on django-absurd by path. Any root dependency change invalidates all thr
 
 ## Tests that need the schema absent
 
-Express absence by RENAMING the schema, not by unapplying migrations — two statements,
-no DDL replay, and no migration state involved:
+Express absence by RENAMING the schema, not by unapplying migrations — one rename each
+way, no DDL replay, and no migration state involved. `tests.utils.hide_absurd_schema` is
+that context manager:
 
 ```python
-with connection.cursor() as cursor:
-    cursor.execute("ALTER SCHEMA absurd RENAME TO absurd_absent")
-try:
-    ...                                     # assert the schema-absent behaviour
-finally:
-    with connection.cursor() as cursor:
-        cursor.execute("ALTER SCHEMA absurd_absent RENAME TO absurd")
+with utils.hide_absurd_schema():
+    ...  # assert the schema-absent behaviour
 ```
 
 `flush_absurd_state(drop_schema=True)` is NOT this — it drops each queue's tables, not
@@ -149,16 +145,15 @@ Two neighbouring cases are different, and conflating them is what previously mad
 
 ## Common mistakes
 
-| Mistake                                              | Why it happens                                                                               | Do instead                                                                                                                                                                                                                                    |
-| ---------------------------------------------------- | -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Hand-writing a reverse migration                     | `absurdctl` refuses downgrades, so it looks like your job                                    | Omit `reverse_sql` — see step 4                                                                                                                                                                                                               |
-| Adding `reverse_sql` so a test can reach zero        | 13 tests once used migrate-zero to mean "schema absent"                                      | Rename the schema instead — see above                                                                                                                                                                                                         |
-| Committing without the example lockfiles             | `git status` shows them, `git commit -am` on named paths misses them                         | `uv lock --project examples/<name>` ×3, and stage them                                                                                                                                                                                        |
-| Trusting a `concurrently` grep                       | The word appears in error strings                                                            | Read the match before setting `atomic = False`                                                                                                                                                                                                |
-| Silencing Renovate's cooloff to land it today        | The pin looks blocked                                                                        | Leave the cooloff alone; a dated `exclude-newer` is a trap nobody removes                                                                                                                                                                     |
-| Fighting `uv` for a release younger than the cooloff | `exclude-newer = "7 days"` in `pyproject.toml` blocks resolution of a just-published version | Pass a scoped one-off `uv lock --exclude-newer-package` and note it, or wait out the window — never edit the repo-wide setting. A lockfile generated that way records the override, so `uv sync --locked` fails in CI until the window clears |
-| Treating it as dependency-only                       | Nothing obviously breaks                                                                     | Read the delta's comments (step 3) and run `sync-docs`                                                                                                                                                                                        |
-| Believing green tests mean it applied                | The suite reuses a database that may predate the delta                                       | Do step 6's from-empty check                                                                                                                                                                                                                  |
+| Mistake                                                              | Why it happens                                                       | Do instead                                                                                                                                                                                         |
+| -------------------------------------------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Hand-writing a reverse migration                                     | `absurdctl` refuses downgrades, so it looks like your job            | Omit `reverse_sql` — see step 4                                                                                                                                                                    |
+| Adding `reverse_sql` so a test can reach zero                        | 13 tests once used migrate-zero to mean "schema absent"              | Rename the schema instead — see above                                                                                                                                                              |
+| Committing without the example lockfiles                             | `git status` shows them, `git commit -am` on named paths misses them | `uv lock --project examples/<name>` ×3, and stage them                                                                                                                                             |
+| Trusting a `concurrently` grep                                       | The word appears in error strings                                    | Read the match before setting `atomic = False`                                                                                                                                                     |
+| Reaching for a one-off `--exclude-newer-package` on the command line | The release looks blocked by a cooloff                               | It is not: Absurd is exempt from both cooloffs, in `pyproject.toml` and `renovate.json`. A command-line override instead records a dated one in the lockfile, which fails `uv sync --locked` in CI |
+| Treating it as dependency-only                                       | Nothing obviously breaks                                             | Read the delta's comments (step 3) and run `sync-docs`                                                                                                                                             |
+| Believing green tests mean it applied                                | The suite reuses a database that may predate the delta               | Do step 6's from-empty check                                                                                                                                                                       |
 
 ## Red flags
 

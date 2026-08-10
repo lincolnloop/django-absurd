@@ -8,8 +8,8 @@ from django.db import migrations
 class Migration(migrations.Migration):
     dependencies = [("django_absurd", "0001_initial_0_4_0")]
 
-    # No reverse_sql: Absurd publishes no downgrade SQL, so this delta is irreversible
-    # rather than reporting a rollback that left the database at the newer schema.
+    # No reverse_sql: Absurd publishes no downgrade SQL, so this operation is left
+    # irreversible rather than reporting a rollback that left the database at 0.5.0.
     operations = [
         migrations.RunSQL(
             sql=importlib.resources.files("django_absurd.migrations")
