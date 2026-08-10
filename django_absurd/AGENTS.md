@@ -1020,16 +1020,11 @@ Neither logger is the complete record. Postgres is:
 
 ### Operational notes
 
-- **Database privileges.** `migrate` runs `CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`
-  and `CREATE SCHEMA IF NOT EXISTS absurd`, so the migrating role needs rights to create
-  extensions and schemas (a superuser, or a role granted those — with `uuid-ossp`
-  allow-listed on managed Postgres). The schema name `absurd` is fixed.
-- **`uuid-ossp` is created and then dropped again.** Absurd stopped needing it, so a
-  later migration drops the extension unless other objects in the database depend on it
-  (in which case it is left alone). The privileges above are still required — the first
-  migration creates it — and the role must OWN the extension for the drop to succeed, so
-  an operator-installed `uuid-ossp` owned by another role fails that migration with a
-  privilege error. Drop it yourself first, or grant ownership.
+- **Database privileges.** `migrate` runs `CREATE SCHEMA IF NOT EXISTS absurd` and needs
+  nothing beyond the rights to do that — **no extension, and so no superuser and no
+  managed-Postgres allow-list entry**. Pre-create the schema and grant the migrating
+  role `CREATE` on it if creating a schema is itself off-limits. The schema name
+  `absurd` is fixed.
 - **At-least-once delivery.** A task may run more than once (e.g. a crash between the
   handler committing and Absurd's bookkeeping). Keep handlers idempotent; use
   `idempotency_key` where it helps.
@@ -1041,12 +1036,10 @@ Neither logger is the complete record. Postgres is:
   **experimental — not tested yet**, with no automated partition lifecycle. Only queues
   declared in `QUEUES` are created — an undeclared queue name is rejected, not silently
   created.
-- **The Absurd SQL does not roll back.** Absurd publishes no downgrade SQL, so the SQL
-  each schema delta applies is an irreversible operation. Django refuses to unapply a
-  migration containing one, and refuses the whole chain behind it, so
-  `migrate django_absurd <earlier>` fails and a restore is the way back. Everything else
-  reverses normally — the initial migration, and `django_absurd.pg_cron`'s own model
-  migrations.
+- **Teardown reverses the initial migration.** `migrate django_absurd zero` drops the
+  `absurd` schema and everything in it. This holds while the schema installs in one
+  migration; a later schema delta will not reverse, because Absurd publishes no
+  downgrade SQL for one.
 
 ## Adopting an existing Absurd database
 

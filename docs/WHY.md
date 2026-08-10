@@ -27,24 +27,31 @@ Absurd version — no network at migrate time, and the schema travels with the p
 version. The schema version is deliberately coupled to the SDK version floor so the two
 cannot drift apart.
 
-Maintainer process: migrations are not hand-written. When bumping the pinned Absurd
-version, regenerate the SQL with `absurdctl` as the delta between the currently pinned
-schema and the new target version.
+Maintainer process: migrations are not hand-written. Bumping the pinned Absurd version
+means regenerating SQL from that version's own tooling — either the delta from the
+currently pinned schema, or, while there are no deployments to preserve, one fresh
+install replacing every migration.
 
-Upstream publishes no downgrade SQL, so the SQL applying a delta is left irreversible
-rather than given a hand-written reverse nobody can verify, or a no-op reverse that
-would report a successful rollback while leaving the database at the newer schema. Since
-an unapply chain is only as reversible as its least reversible step, one such operation
-takes the whole schema with it: it cannot be migrated backwards at all, and recovery is
-a restore rather than a downgrade. Nothing in the package may depend on unapplying
-migrations, and a test that needs the schema out of reach renames it instead, which
-destroys nothing.
+Regenerating from scratch is preferred for as long as it stays available, because a
+trail of deltas replays history that the current version has moved past: the earliest
+schema required a UUID extension that later ones do not, so replaying it creates an
+extension only to drop it again, and demands privileges the package no longer needs.
+That is worth more than a smooth upgrade path for a pre-release, and the choice reverses
+the day one exists.
 
-The schema lives in a fixed, non-relocatable namespace, and applying it needs a role
-allowed to create that namespace and the UUID extension the earliest pinned version
-depends on — so locked-down deployments must grant those rights or pre-create the
-namespace. A later version dropped that dependency and drops the extension again unless
-something else in the database needs it, which requires owning it.
+Once it does, deltas resume, and a delta is left irreversible: upstream publishes no
+downgrade SQL, so the alternatives are a hand-written reverse nobody can verify, or a
+no-op reverse that reports a successful rollback while leaving the database at the newer
+schema. An unapply chain is only as reversible as its least reversible step, so one such
+operation means the schema cannot be migrated backwards at all. Nothing in the package
+may therefore depend on unapplying migrations, and a test that needs the schema out of
+reach renames it instead, which destroys nothing.
+
+The schema lives in a fixed, non-relocatable namespace, so applying it needs a role
+allowed to create that namespace — and nothing beyond that. It needs no extension: the
+one the earliest schema depended on was replaced upstream by a function that falls back
+to what Postgres has built in, which is what makes the package installable by an
+ordinary application role on a locked-down deployment.
 
 ## Tasks, enqueue & the worker
 

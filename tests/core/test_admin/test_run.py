@@ -98,7 +98,7 @@ def test_changelist_and_detail_survive_indefinite_available_at(
     dj_absurd: AbsurdTestRuntime,
 ) -> None:
     # await_event with no timeout writes Postgres's 'infinity' sentinel into
-    # available_at (absurd.await_event, migrations/0001_initial_0_4_0.sql:1664:
+    # available_at (absurd.await_event, migrations/0001_initial_0_5_0.sql:1729:
     # `v_available_at := coalesce(v_timeout_at, 'infinity'::timestamptz)`).
     # psycopg cannot decode a literal infinity into a Python datetime, so an
     # un-guarded available_at column crashes both the changelist and the detail

@@ -34,7 +34,7 @@ class Migration(migrations.Migration):
         migrations.RunPython(require_psycopg, migrations.RunPython.noop),
         migrations.RunSQL(
             sql=importlib.resources.files("django_absurd.migrations")
-            .joinpath("0001_initial_0_4_0.sql")
+            .joinpath("0001_initial_0_5_0.sql")
             .read_text(encoding="utf-8"),
             reverse_sql="DROP SCHEMA IF EXISTS absurd CASCADE;",
         ),

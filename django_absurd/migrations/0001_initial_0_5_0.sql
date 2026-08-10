@@ -1,7 +1,7 @@
 -- Absurd installs a Postgres-native durable workflow system that can be dropped
 -- into an existing database.
 --
--- It bootstraps the `absurd` schema and required extensions so that jobs, runs,
+-- It bootstraps the `absurd` schema and database objects so that jobs, runs,
 -- checkpoints, and workflow events all live alongside application data without
 -- external services.
 --
@@ -30,8 +30,6 @@
 -- without losing context.  Events are uniquely indexed and use first-write-wins
 -- semantics: the first emission per name is cached, later emits are ignored.
 
-create extension if not exists "uuid-ossp";
-
 create schema if not exists absurd;
 
 -- Returns either the actual current timestamp or a fake one if
@@ -50,6 +48,83 @@ begin
   end if;
 
   return clock_timestamp();
+end;
+$$;
+
+-- Calculates a retry delay with a global maximum of one day. Invalid explicit
+-- delays are rejected; exponential overflow saturates at the configured cap.
+create function absurd.retry_delay_seconds (
+  p_strategy jsonb,
+  p_attempt integer
+)
+  returns double precision
+  language plpgsql
+  immutable
+as $$
+declare
+  v_limit constant double precision := 86400;
+  v_kind text;
+  v_base double precision;
+  v_factor double precision;
+  v_max_seconds double precision;
+  v_exponent integer := greatest(coalesce(p_attempt, 1) - 1, 0);
+begin
+  if p_strategy is null then
+    return 0;
+  end if;
+  if jsonb_typeof(p_strategy) <> 'object' then
+    raise exception sqlstate 'AB003'
+      using message = 'retry_strategy must be a JSON object';
+  end if;
+
+  v_kind := coalesce(p_strategy->>'kind', 'none');
+  if v_kind not in ('none', 'fixed', 'exponential') then
+    raise exception sqlstate 'AB003'
+      using message = format('Unsupported retry strategy kind "%s"', v_kind);
+  end if;
+  if v_kind = 'none' then
+    return 0;
+  end if;
+
+  v_base := coalesce(
+    (p_strategy->>'base_seconds')::double precision,
+    case when v_kind = 'fixed' then 60 else 30 end
+  );
+  if v_base not between 0 and v_limit then
+    raise exception sqlstate 'AB003'
+      using message = 'retry_strategy.base_seconds must be between 0 and 86400';
+  end if;
+  if v_kind = 'fixed' then
+    return v_base;
+  end if;
+
+  v_factor := coalesce((p_strategy->>'factor')::double precision, 2);
+  v_max_seconds := coalesce(
+    (p_strategy->>'max_seconds')::double precision,
+    v_limit
+  );
+  if v_factor < 0 or v_factor::text in ('NaN', 'Infinity', '-Infinity') then
+    raise exception sqlstate 'AB003'
+      using message = 'retry_strategy.factor must be a finite non-negative number';
+  end if;
+  if v_max_seconds not between 0 and v_limit then
+    raise exception sqlstate 'AB003'
+      using message = 'retry_strategy.max_seconds must be between 0 and 86400';
+  end if;
+  if v_base = 0 then
+    return 0;
+  end if;
+
+  begin
+    return least(v_base * power(v_factor, v_exponent), v_max_seconds);
+  exception
+    when numeric_value_out_of_range then
+      return case when v_factor < 1 then 0 else v_max_seconds end;
+  end;
+exception
+  when invalid_text_representation or numeric_value_out_of_range then
+    raise exception sqlstate 'AB003'
+      using message = 'retry_strategy contains an invalid number';
 end;
 $$;
 
@@ -82,7 +157,7 @@ create or replace function absurd.get_schema_version ()
   returns text
   language sql
 as $$
-  select '0.4.0'::text;
+  select '0.5.0'::text;
 $$;
 
 -- Queue names are used in generated table/index identifiers.
@@ -718,6 +793,7 @@ begin
   if p_options is not null then
     v_headers := p_options->'headers';
     v_retry_strategy := p_options->'retry_strategy';
+    perform absurd.retry_delay_seconds(v_retry_strategy, 1);
     if p_options ? 'max_attempts' then
       v_max_attempts := (p_options->>'max_attempts')::int;
       if v_max_attempts is not null and v_max_attempts < 1 then
@@ -1121,10 +1197,6 @@ declare
   v_next_attempt integer;
   v_delay_seconds double precision := 0;
   v_next_available timestamptz;
-  v_retry_kind text;
-  v_base double precision;
-  v_factor double precision;
-  v_max_seconds double precision;
   v_first_started timestamptz;
   v_cancellation jsonb;
   v_max_duration bigint;
@@ -1189,22 +1261,15 @@ begin
     if p_retry_at is not null then
       v_next_available := p_retry_at;
     else
-      v_retry_kind := coalesce(v_retry_strategy->>'kind', 'none');
-      if v_retry_kind = 'fixed' then
-        v_base := coalesce((v_retry_strategy->>'base_seconds')::double precision, 60);
-        v_delay_seconds := v_base;
-      elsif v_retry_kind = 'exponential' then
-        v_base := coalesce((v_retry_strategy->>'base_seconds')::double precision, 30);
-        v_factor := coalesce((v_retry_strategy->>'factor')::double precision, 2);
-        v_delay_seconds := v_base * power(v_factor, greatest(v_attempt - 1, 0));
-        v_max_seconds := (v_retry_strategy->>'max_seconds')::double precision;
-        if v_max_seconds is not null then
-          v_delay_seconds := least(v_delay_seconds, v_max_seconds);
-        end if;
-      else
-        v_delay_seconds := 0;
-      end if;
-      v_next_available := v_now + (v_delay_seconds * interval '1 second');
+      -- Legacy tasks may contain retry strategies that predate validation. If
+      -- one is invalid, fail the task permanently rather than wedging the queue.
+      begin
+        v_delay_seconds := absurd.retry_delay_seconds(v_retry_strategy, v_attempt);
+        v_next_available := v_now + (v_delay_seconds * interval '1 second');
+      exception
+        when sqlstate 'AB003' then
+          v_next_available := null;
+      end;
     end if;
 
     if v_next_available < v_now then
@@ -1220,7 +1285,7 @@ begin
       end if;
     end if;
 
-    if not v_task_cancel then
+    if not v_task_cancel and v_next_available is not null then
       v_task_state_after := case when v_next_available > v_now then 'sleeping' else 'pending' end;
       v_new_run_id := absurd.portable_uuidv7();
       v_recorded_attempt := v_next_attempt;
@@ -2226,17 +2291,16 @@ create function absurd.portable_uuidv7 ()
   volatile
 as $$
 declare
-  v_server_num integer := current_setting('server_version_num')::int;
   ts_ms bigint;
   b bytea;
   rnd bytea;
   i int;
 begin
-  if v_server_num >= 180000 then
-    return uuidv7 ();
+  if to_regprocedure('pg_catalog.uuidv7()') is not null then
+    return pg_catalog.uuidv7 ();
   end if;
   ts_ms := floor(extract(epoch from absurd.current_time()) * 1000)::bigint;
-  rnd := uuid_send(uuid_generate_v4 ());
+  rnd := uuid_send(pg_catalog.gen_random_uuid ());
   b := repeat(E'\\000', 16)::bytea;
   for i in 0..5 loop
     b := set_byte(b, i, ((ts_ms >> ((5 - i) * 8)) & 255)::int);
@@ -3084,8 +3148,3 @@ begin
   end loop;
 end;
 $$;
-
-
--- django-absurd: concrete schema version (bundled body reports 'main')
-create or replace function absurd.get_schema_version () returns text language sql
-as $$ select '0.4.0'::text $$;
