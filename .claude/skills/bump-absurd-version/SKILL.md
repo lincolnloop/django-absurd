@@ -40,7 +40,7 @@ Miss one and the failure is silent or lands in CI, not here:
 | `ABSURD_SCHEMA_VERSION` | `django_absurd/__init__.py`   | adopting-an-existing-DB guidance lies               |
 | Root lockfile           | `uv.lock`                     | `--locked` fails in CI                              |
 | **Example lockfiles**   | `examples/*/uv.lock` (three)  | **`uv sync --locked` fails all three example jobs** |
-| Scratch-schema helper   | `tests/pg_cron/utils.py`      | the pg_cron scratch DB is built at the old version  |
+| SDK bounds in comments  | anything naming an SDK range  | a stale bound reads as a verified one               |
 
 The example lockfiles embed the root package's `requires-dist`, because each example
 depends on django-absurd by path. Any root dependency change invalidates all three. Run
