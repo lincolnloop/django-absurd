@@ -10,7 +10,6 @@ import typing as t
 import pytest
 from django.contrib.auth.models import Group
 from django.core.management import call_command
-from django.db import connection
 from django.utils import timezone
 
 from django_absurd import worker
@@ -19,7 +18,7 @@ from django_absurd.cleanup import QueueCleanup, cleanup_queues
 from django_absurd.queues import get_absurd_client
 from django_absurd.scheduler import run_beat
 from django_absurd.test import AbsurdTestRuntime, FrozenTime
-from tests import tasks
+from tests import tasks, utils
 
 if t.TYPE_CHECKING:
     import pytest_django.fixtures
@@ -314,21 +313,16 @@ def test_beat_isolates_failing_cleanup(
 ) -> None:
     sync_queue(settings, cleanup={"schedule": "* * * * *"})
     backend = get_absurd_backends()["default"]
-    with connection.cursor() as cur:
-        cur.execute("DROP SCHEMA IF EXISTS absurd CASCADE")
-    try:
-        with (
-            dj_absurd.freeze_time(BEAT_EPOCH) as frozen_time,
-            caplog.at_level(logging.ERROR, logger="django_absurd"),
-        ):
-            run_beat_until(
-                frozen_time, backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC)
-            )
-        errors = [r for r in caplog.records if r.levelno == logging.ERROR]
-        assert [r.getMessage() for r in errors] == ["cleanup failed"]
-    finally:
-        call_command("migrate", "django_absurd", "zero", verbosity=0)
-        call_command("migrate", verbosity=0)  # restore absurd schema
+    with (
+        utils.hide_absurd_schema(),
+        dj_absurd.freeze_time(BEAT_EPOCH) as frozen_time,
+        caplog.at_level(logging.ERROR, logger="django_absurd"),
+    ):
+        run_beat_until(
+            frozen_time, backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC)
+        )
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert [r.getMessage() for r in errors] == ["cleanup failed"]
 
 
 def test_beat_fires_cleanup_and_task_same_slot(

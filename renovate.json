@@ -46,6 +46,11 @@
       "groupName": "type checking"
     },
     {
+      "description": "Absurd releases are adopted deliberately; skip cooloff.",
+      "matchPackageNames": ["absurd-sdk", "absurdctl"],
+      "minimumReleaseAge": "0"
+    },
+    {
       "description": "uv has no release timestamps; skip cooloff.",
       "matchPackageNames": ["ghcr.io/astral-sh/**"],
       "minimumReleaseAge": "0"

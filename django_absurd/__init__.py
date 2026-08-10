@@ -21,7 +21,7 @@ from django_absurd.context import (
 from django_absurd.events import emit_event
 from django_absurd.params import absurd_params
 
-ABSURD_SCHEMA_VERSION = "0.4.0"
+ABSURD_SCHEMA_VERSION = "0.5.0"
 
 __all__ = [
     "ABSURD_SCHEMA_VERSION",
