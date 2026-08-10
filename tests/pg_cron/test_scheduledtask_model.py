@@ -205,3 +205,30 @@ def test_saving_with_no_backend_says_why_no_job_was_scheduled(
     assert [record.getMessage() for record in caplog.records] == [
         "pg_cron job not scheduled for 'a:orphan': no AbsurdBackend is configured"
     ]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_deleting_with_no_backend_says_the_job_keeps_firing(
+    caplog: pytest.LogCaptureFixture,
+    settings: SettingsWrapper,
+) -> None:
+    # The worse half of the silence: the row goes, its job does not, and it fires on
+    # against a row that no longer exists.
+    settings.TASKS = utils.build_pg_cron_tasks({}, pg_cron_on_test_db=True)
+    row = ScheduledTask.objects.create(
+        source=Source.ADMIN,
+        name="doomed",
+        task="tests.pg_cron.tasks.add",
+        queue="default",
+        cron="0 2 * * *",
+    )
+    settings.TASKS = {
+        "default": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}
+    }
+    with caplog.at_level(logging.WARNING, logger="django_absurd.pg_cron.models"):
+        row.delete()
+    expected = (
+        "pg_cron job not unscheduled for 'a:doomed': no AbsurdBackend is configured;"
+        " it keeps firing until the next reconcile"
+    )
+    assert [record.getMessage() for record in caplog.records] == [expected]

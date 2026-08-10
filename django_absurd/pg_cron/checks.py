@@ -31,12 +31,13 @@ E007_HINT_PG_CRON_CRON = (
 
 E013_MSG = (
     "django-absurd: 'django_absurd.pg_cron' is installed, but no AbsurdBackend is"
-    " configured."
+    " configured, so a schedule would save without ever being scheduled."
 )
 E013_HINT = (
     "Point a TASKS entry at django_absurd.backends.AbsurdBackend, or remove"
-    " 'django_absurd.pg_cron' from INSTALLED_APPS. Without a backend a ScheduledTask"
-    " row saves normally and never gets a pg_cron job."
+    " 'django_absurd.pg_cron' from INSTALLED_APPS. To keep the app installed with"
+    " another backend deliberately (a dev or CI settings module), add 'absurd.E013' to"
+    " SILENCED_SYSTEM_CHECKS."
 )
 
 E011_MSG = (

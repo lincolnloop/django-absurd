@@ -180,8 +180,8 @@ class ScheduledTask(models.Model):
             # raise — but say it, or the row looks scheduled and never fires. The
             # deploy-time report is absurd.E013.
             logger.warning(
-                "pg_cron job not scheduled for %r: no AbsurdBackend is configured",
-                str(self),
+                "pg_cron job not scheduled for '%s': no AbsurdBackend is configured",
+                self,
             )
             return
         alias = resolve_absurd_database()
@@ -196,10 +196,16 @@ class ScheduledTask(models.Model):
 
     def unschedule_pg_cron_job(self) -> None:
         """Remove this row's pg_cron job via the catalog seam, tolerating an
-        already-gone job. Called by the post_delete signal for every deletion; a no-op
-        when no Absurd backend is configured (symmetric with schedule_pg_cron_job) — so
-        deletes don't error on a DB without one."""
+        already-gone job. Called by the post_delete signal for every deletion; when no
+        Absurd backend is configured it warns and returns, symmetric with
+        schedule_pg_cron_job — so deletes don't error on a DB without one, but a job
+        left firing for a row that no longer exists is not silent."""
         if get_absurd_backend() is None:
+            logger.warning(
+                "pg_cron job not unscheduled for '%s': no AbsurdBackend is configured;"
+                " it keeps firing until the next reconcile",
+                self,
+            )
             return
         catalog.unschedule_job(
             resolve_absurd_database(), name=self.name, source=self.source
