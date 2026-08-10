@@ -40,7 +40,7 @@ def resolve_spawn_options(backend: AbsurdBackend, task_path: str) -> JsonObject:
     defaults win over the backend's configured DEFAULT_MAX_ATTEMPTS fallback.
     """
     # absurd_sdk._normalize_spawn_options is a module-level helper (bound:
-    # absurd-sdk>=0.4.0,<0.5.0) that normalises spawn options into the jsonb dict
+    # absurd-sdk>=0.5.0,<0.6.0) that normalises spawn options into the jsonb dict
     # passed to absurd.spawn_task. We import it directly instead of routing through
     # client.spawn so we get the exact same serialisation without creating a client
     # or touching the DB — and lazily, so an SDK drift breaks pg_cron sync rather

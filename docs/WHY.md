@@ -31,9 +31,19 @@ Maintainer process: migrations are not hand-written. When bumping the pinned Abs
 version, regenerate the SQL with `absurdctl` as the delta between the currently pinned
 schema and the new target version.
 
+Upstream publishes no downgrade SQL, so a delta migration is irreversible rather than
+carrying a hand-written reverse nobody can verify or a no-op reverse that would report a
+successful rollback while leaving the database at the newer schema. Django needs every
+step of an unapply chain to be reversible, so one such delta means the schema cannot be
+migrated backwards at all — recovery is a restore, not a downgrade. Nothing in the
+package may depend on unapplying migrations, and a test that needs the schema out of
+reach renames it instead, which destroys nothing.
+
 The schema lives in a fixed, non-relocatable namespace, and applying it needs a role
-allowed to create that namespace and the UUID extension it depends on — so locked-down
-deployments must grant those rights or pre-create the namespace.
+allowed to create that namespace and the UUID extension the earliest pinned version
+depends on — so locked-down deployments must grant those rights or pre-create the
+namespace. A later version dropped that dependency and drops the extension again unless
+something else in the database needs it, which requires owning it.
 
 ## Tasks, enqueue & the worker
 
@@ -539,13 +549,13 @@ the way the configuration paths do: it is a maintenance operation, so the raw da
 error is allowed to surface rather than adding a guard that implies the call was safe.
 
 Wiping everything is a separate, guarded command that drops queues and their data while
-leaving the schema, functions, and migration history intact — because a full schema
-teardown is already what running migrations backwards achieves, and the migration system
-should stay the sole owner of the schema. It follows the framework's own
-destructive-command convention (confirm interactively, skip with a no-input flag) so the
-safety model is one users already know. Dropping a queue removes only that queue's own
-maintenance jobs and data; user-defined recurring schedules live elsewhere and survive,
-so a reset never silently cancels recurring work.
+leaving the schema, functions, and migration history intact — the migration system stays
+the sole owner of the schema, and since migrations do not run backwards, a reset that
+also removed the schema would leave no supported way to get it back. It follows the
+framework's own destructive-command convention (confirm interactively, skip with a
+no-input flag) so the safety model is one users already know. Dropping a queue removes
+only that queue's own maintenance jobs and data; user-defined recurring schedules live
+elsewhere and survive, so a reset never silently cancels recurring work.
 
 ## Admin & ORM introspection
 

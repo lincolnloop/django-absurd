@@ -14,6 +14,7 @@ from django_absurd.admin_views import (
 )
 from django_absurd.apps import provision_queues_after_migrate
 from django_absurd.exceptions import ViewNotProvisionedError
+from django_absurd.flush import flush_absurd_state
 from django_absurd.models import Queue
 from django_absurd.queues import get_absurd_client
 from tests import tasks, utils
@@ -57,9 +58,9 @@ def test_migrate_provisions_declared_queues_and_views(
     # `migrate` fires post_migrate → sync_queues: declared queues created + views
     # built, reported on stdout in Django's migrate style.
     buf = StringIO()
+    flush_absurd_state(drop_schema=True)  # unprovisioned, schema intact
     with django_db_blocker.unblock():
-        call_command("migrate", "django_absurd", "zero", verbosity=0)
-        call_command("migrate", verbosity=1, stdout=buf)  # restores absurd schema
+        call_command("migrate", verbosity=1, stdout=buf)
     out = buf.getvalue()
     assert "Provisioning Absurd queues" in out
     assert "Created 'default'" in out
@@ -77,14 +78,9 @@ def test_provision_skips_when_schema_absent(
     django_db_blocker: "DjangoDbBlocker",
 ) -> None:
     # post_migrate: best-effort; missing schema swallowed, not raised
-    with django_db_blocker.unblock():
-        call_command("migrate", "django_absurd", "zero", verbosity=0)
-    try:
+    with utils.hide_absurd_schema():
         config: AppConfig = apps.get_app_config("django_absurd")
         provision_queues_after_migrate(config)
-    finally:
-        with django_db_blocker.unblock():
-            call_command("migrate", verbosity=0)  # restore absurd schema
 
 
 def test_sync_command_rebuilds_views_with_new_queue() -> None:

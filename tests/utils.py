@@ -197,6 +197,25 @@ def get_absurd_connection_params() -> dict[str, t.Any]:
     return params
 
 
+@contextlib.contextmanager
+def hide_absurd_schema() -> t.Iterator[None]:
+    """Make the Absurd schema unreachable inside the block, then restore it.
+
+    A rename, not a drop: nothing is destroyed, so the schema comes back with its
+    functions, tables and rows intact and Django's migration records stay true the whole
+    time. Unapplying the migrations would be the other way to get here and is not
+    available — a delta migration carries no downgrade SQL, so the chain is irreversible
+    by design (see ``django_absurd/migrations/0002_absurd_0_5_0.py``).
+    """
+    with connections["default"].cursor() as cursor:
+        cursor.execute("ALTER SCHEMA absurd RENAME TO absurd_hidden")
+    try:
+        yield
+    finally:
+        with connections["default"].cursor() as cursor:
+            cursor.execute("ALTER SCHEMA absurd_hidden RENAME TO absurd")
+
+
 def set_database_fake_now(value: str) -> None:
     """Plant a database-level ``absurd.fake_now``, as a killed frozen test would leave.
 

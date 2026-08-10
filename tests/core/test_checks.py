@@ -4,12 +4,13 @@ import pytest
 from absurd_sdk import CreateQueueOptions
 from django.core.management import call_command
 from django.core.management.base import SystemCheckError
-from django.db import connection, connections
+from django.db import connections
 
 if t.TYPE_CHECKING:
     import pytest_django.fixtures
 
 from django_absurd.backends import get_absurd_backends
+from tests import utils
 from tests.utils import make_tasks_settings
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -129,15 +130,10 @@ def test_schema_absent_check_is_silent(
     settings: "pytest_django.fixtures.SettingsWrapper",
 ) -> None:
     settings.TASKS = build_tasks_setting({"a": {}})
-    with connection.cursor() as cur:
-        cur.execute("DROP SCHEMA IF EXISTS absurd CASCADE")
-    try:
+    with utils.hide_absurd_schema():
         out = run_absurd_check(capsys, databases=["default"])
-        assert "absurd.W001" not in out
-        assert "absurd.W002" not in out
-    finally:
-        call_command("migrate", "django_absurd", "zero", verbosity=0)
-        call_command("migrate", verbosity=0)  # restore absurd schema
+    assert "absurd.W001" not in out
+    assert "absurd.W002" not in out
 
 
 @pytest.mark.django_db(databases=["default", "sqlite"])
