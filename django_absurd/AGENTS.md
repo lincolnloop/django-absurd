@@ -156,6 +156,8 @@ System check IDs:
 - `absurd.E012` — the central `cron.database_name` database (auto-discovered) is
   unreachable or missing the `pg_cron` extension; a deploy-time check, see
   [Validate schedules](#validate-schedules).
+- `absurd.E013` — `"django_absurd.pg_cron"` is installed but no `AbsurdBackend` is
+  configured, so schedules would save without ever being scheduled.
 - `absurd.W002` (Warning) — a queue's declared `storage_mode` differs from the database;
   `storage_mode` is immutable once the queue exists.
 - `absurd.W003` (Warning) — `"django_absurd.pg_cron"` is in `INSTALLED_APPS` but ordered

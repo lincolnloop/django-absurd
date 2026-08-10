@@ -1,3 +1,4 @@
+import logging
 import typing as t
 
 from django.core.exceptions import ValidationError
@@ -31,6 +32,8 @@ CRON_HELP_TEXT = (
     ' See <a href="https://github.com/citusdata/pg_cron" target="_blank"'
     ' rel="noopener">pg_cron</a> for the exact schedule syntax.'
 )
+
+logger = logging.getLogger(__name__)
 
 
 def get_default_max_attempts() -> int:
@@ -126,9 +129,15 @@ class ScheduledTask(models.Model):
 
     def clean(self) -> None:
         errors: dict[str, list[str]] = {}
+        # The grammar rule needs no backend — only the queue rule does — so a
+        # misconfigured TASKS does not buy a row a free pass on its cron.
+        try:
+            validate_pg_cron_schedule(self.cron)
+        except ValidationError as exc:
+            errors["cron"] = exc.messages
         backend = get_absurd_backend()
         if backend is not None:
-            errors.update(self.validate_against_backend(backend))
+            errors.update(self.validate_queue_against_backend(backend))
 
         retry_timing_fields = (
             "retry_base_seconds",
@@ -145,11 +154,12 @@ class ScheduledTask(models.Model):
         if errors:
             raise ValidationError(errors)
 
-    def validate_against_backend(
+    def validate_queue_against_backend(
         self, backend: "AbsurdBackend"
     ) -> dict[str, list[str]]:
-        """Validate queue + cron against the single pg_cron backend. Returns field
-        errors (empty if OK)."""
+        """Validate the effective queue against the single pg_cron backend. Returns
+        field errors (empty if OK). The cron grammar is checked in clean(), which needs
+        no backend to do it."""
         errors: dict[str, list[str]] = {}
         # Validate the effective queue (explicit override, else the task's own
         # queue_name) against the backend's declared queues.
@@ -159,10 +169,6 @@ class ScheduledTask(models.Model):
             )
         except ValidationError as exc:
             errors["queue"] = exc.messages
-        try:
-            validate_pg_cron_schedule(self.cron)
-        except ValidationError as exc:
-            errors["cron"] = exc.messages
         return errors
 
     def schedule_pg_cron_job(self) -> None:
@@ -170,6 +176,13 @@ class ScheduledTask(models.Model):
         catalog seam. Called by the post_save signal for every write; a no-op when no
         Absurd backend is configured (and, on a test DB, unless pg_cron is opted in)."""
         if get_absurd_backend() is None:
+            # Best-effort by design (see signals), so this stays a return rather than a
+            # raise — but say it, or the row looks scheduled and never fires. The
+            # deploy-time report is absurd.E013.
+            logger.warning(
+                "pg_cron job not scheduled for '%s': no AbsurdBackend is configured",
+                self,
+            )
             return
         alias = resolve_absurd_database()
         catalog.schedule_job(
@@ -183,10 +196,16 @@ class ScheduledTask(models.Model):
 
     def unschedule_pg_cron_job(self) -> None:
         """Remove this row's pg_cron job via the catalog seam, tolerating an
-        already-gone job. Called by the post_delete signal for every deletion; a no-op
-        when no Absurd backend is configured (symmetric with schedule_pg_cron_job) — so
-        deletes don't error on a DB without one."""
+        already-gone job. Called by the post_delete signal for every deletion; when no
+        Absurd backend is configured it warns and returns, symmetric with
+        schedule_pg_cron_job — so deletes don't error on a DB without one, but a job
+        left firing for a row that no longer exists is not silent."""
         if get_absurd_backend() is None:
+            logger.warning(
+                "pg_cron job not unscheduled for '%s': no AbsurdBackend is configured;"
+                " it keeps firing until the next reconcile",
+                self,
+            )
             return
         catalog.unschedule_job(
             resolve_absurd_database(), name=self.name, source=self.source
