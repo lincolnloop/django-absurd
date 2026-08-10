@@ -5,7 +5,7 @@ import pytest
 from django.contrib.auth.models import Group
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command
-from django.db import connection, connections, transaction
+from django.db import connections, transaction
 from django.tasks import TaskResultStatus, task
 from django.tasks.exceptions import InvalidTask
 from pytest_django.fixtures import SettingsWrapper
@@ -155,14 +155,11 @@ def test_enqueue_auto_create_survives_outer_atomic(
 
 
 def test_enqueue_with_absent_schema_raises_clear_error() -> None:
-    with connection.cursor() as cur:
-        cur.execute("DROP SCHEMA IF EXISTS absurd CASCADE")
-    try:
-        with pytest.raises(ImproperlyConfigured, match="migrate"):
-            tasks.add.enqueue(1, 2)
-    finally:
-        call_command("migrate", "django_absurd", "zero", verbosity=0)
-        call_command("migrate", verbosity=0)  # restore absurd schema
+    with (
+        utils.hide_absurd_schema(),
+        pytest.raises(ImproperlyConfigured, match="migrate"),
+    ):
+        tasks.add.enqueue(1, 2)
 
 
 def test_max_attempts_uses_backend_default_when_unset() -> None:

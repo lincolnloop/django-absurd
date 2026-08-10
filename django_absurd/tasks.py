@@ -24,14 +24,13 @@ class SpawnKwargs(t.TypedDict, total=False):
     type-check per field instead of collapsing to a union."""
 
     max_attempts: int | None
-    # Two known gaps we deliberately do not guard. An unrecognised ``kind`` is
-    # validated NOWHERE: absurd.fail_run does coalesce(v_retry_strategy->>'kind',
-    # 'none') and falls through to v_delay_seconds := 0, so a typo retries with no
-    # backoff instead of erroring (type checkers catch it — the SDK types kind as a
-    # Literal). And an OMITTED ``kind`` raises, though RetryStrategy is total=False:
-    # _serialize_retry_strategy indexes strategy["kind"] unconditionally, so
-    # {"base_seconds": 5} type-checks and then dies at enqueue with KeyError: 'kind'.
-    # No checker can flag that one.
+    # One known gap we deliberately do not guard: an OMITTED ``kind`` raises, though
+    # RetryStrategy is total=False — _serialize_retry_strategy indexes
+    # strategy["kind"] unconditionally, so {"base_seconds": 5} type-checks and then
+    # dies at enqueue with KeyError: 'kind'. No checker can flag that one. An
+    # unrecognised kind, or an out-of-range base_seconds/factor/max_seconds, needs no
+    # guard from us: absurd.spawn_task validates the strategy up front and raises
+    # SQLSTATE AB003, so the enqueue fails instead of quietly retrying with no backoff.
     retry_strategy: RetryStrategy
     cancellation: CancellationPolicy
     headers: JsonObject

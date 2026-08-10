@@ -10,25 +10,29 @@ resolution-markers = [
 exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
 exclude-newer-span = "P7D"
 
+[options.exclude-newer-package]
+absurd-sdk = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
+absurdctl = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
+
 [[package]]
 name = "absurd-sdk"
-version = "0.4.0"
+version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "psycopg", extra = ["binary"] },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1c/bc/db387fbe419df975ac674d1c7926b19574c33f0afe5a8fa3a30f656c2d18/absurd_sdk-0.4.0.tar.gz", hash = "sha256:2c17c81c9ead963c8596fc65e0a68ad1a4bd5b917745a5b2390d0e962f78dd02", size = 14815, upload-time = "2026-05-27T12:06:44.188Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/18/6a/2d4199ddc3d846ba13c51aa9c8614b9ee42a5af5144ef456ef11f4f6aa20/absurd_sdk-0.5.0.tar.gz", hash = "sha256:b22fbe8d10f649d0ed427ba16d885a4a452e4240f412591e7f087fe8584a6f00", size = 14973, upload-time = "2026-08-04T13:06:40.682Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8d/8e/472b63aaa20306e734d45983dea61aefd202fa5e4fc4aa99d51b081c0dac/absurd_sdk-0.4.0-py3-none-any.whl", hash = "sha256:e2bc7e0abfd6b293e07594905039636fcd77ef2e1481b98954d7fe3b344a0dab", size = 15362, upload-time = "2026-05-27T12:06:42.634Z" },
+    { url = "https://files.pythonhosted.org/packages/3b/12/0d1c4e23dc00069a4666fc25c165514657fc62eb723a7bee3ce22ef416ae/absurd_sdk-0.5.0-py3-none-any.whl", hash = "sha256:a21465deaf159ba29ab4d15d87f429ae5dcf6f0e3098bce11ae9bc3e267fd03a", size = 15407, upload-time = "2026-08-04T13:06:39.406Z" },
 ]
 
 [[package]]
 name = "absurdctl"
-version = "0.4.0"
+version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/4a/48/8cd04b054aba4b3f8354a5b4213ae7b60fffd2e27a503b7fd0022d8cae9c/absurdctl-0.4.0.tar.gz", hash = "sha256:060500f84ae0ac27af737e0e70d6e16e3cb12c5aed56a53f7f27841c1a7005a7", size = 67593, upload-time = "2026-05-27T12:05:37.679Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/63/da/f6317eed184d5b1421bd7cbf2d4591137b1315ecccf31a7a861f326eb7eb/absurdctl-0.5.0.tar.gz", hash = "sha256:3d26a1b922fe979e4dcbb81403db967877383888ca82aa0e3e28c3017672f93b", size = 70883, upload-time = "2026-08-04T13:06:34.177Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b2/d0/336f4250e1746b7001c8d67169ac9db4c156d858f00d9a45412295e96f27/absurdctl-0.4.0-py3-none-any.whl", hash = "sha256:cfbb2d6b72bbf8fef0f4da4f9f1210deae84b8c553317d506b6597f9203ff45d", size = 68406, upload-time = "2026-05-27T12:05:36.067Z" },
+    { url = "https://files.pythonhosted.org/packages/c9/3c/00521a4337acc1015842ff3b34879929252be21a0bf0af15385c31b6332f/absurdctl-0.5.0-py3-none-any.whl", hash = "sha256:4d1547532da9816f8d87e78d3b09e7916505916acb3dca37e923c9cb74114f5c", size = 71835, upload-time = "2026-08-04T13:06:33.007Z" },
 ]
 
 [[package]]
@@ -268,14 +272,14 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "absurd-sdk", specifier = ">=0.4.0,<0.5.0" },
+    { name = "absurd-sdk", specifier = ">=0.5.0,<0.6.0" },
     { name = "croniter", specifier = ">=6.0" },
     { name = "django", specifier = ">=6.0" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "absurdctl", specifier = "==0.4.0" },
+    { name = "absurdctl", specifier = "==0.5.0" },
     { name = "beautifulsoup4", specifier = "==4.15.0" },
     { name = "build", specifier = "==1.5.0" },
     { name = "django-coverage-plugin", specifier = "==3.2.2" },

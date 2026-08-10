@@ -4,14 +4,14 @@ requires-python = "==3.14.*"
 
 [[package]]
 name = "absurd-sdk"
-version = "0.4.0"
+version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "psycopg", extra = ["binary"] },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1c/bc/db387fbe419df975ac674d1c7926b19574c33f0afe5a8fa3a30f656c2d18/absurd_sdk-0.4.0.tar.gz", hash = "sha256:2c17c81c9ead963c8596fc65e0a68ad1a4bd5b917745a5b2390d0e962f78dd02", size = 14815, upload-time = "2026-05-27T12:06:44.188Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/18/6a/2d4199ddc3d846ba13c51aa9c8614b9ee42a5af5144ef456ef11f4f6aa20/absurd_sdk-0.5.0.tar.gz", hash = "sha256:b22fbe8d10f649d0ed427ba16d885a4a452e4240f412591e7f087fe8584a6f00", size = 14973, upload-time = "2026-08-04T13:06:40.682Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8d/8e/472b63aaa20306e734d45983dea61aefd202fa5e4fc4aa99d51b081c0dac/absurd_sdk-0.4.0-py3-none-any.whl", hash = "sha256:e2bc7e0abfd6b293e07594905039636fcd77ef2e1481b98954d7fe3b344a0dab", size = 15362, upload-time = "2026-05-27T12:06:42.634Z" },
+    { url = "https://files.pythonhosted.org/packages/3b/12/0d1c4e23dc00069a4666fc25c165514657fc62eb723a7bee3ce22ef416ae/absurd_sdk-0.5.0-py3-none-any.whl", hash = "sha256:a21465deaf159ba29ab4d15d87f429ae5dcf6f0e3098bce11ae9bc3e267fd03a", size = 15407, upload-time = "2026-08-04T13:06:39.406Z" },
 ]
 
 [[package]]
@@ -151,14 +151,14 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "absurd-sdk", specifier = ">=0.4.0,<0.5.0" },
+    { name = "absurd-sdk", specifier = ">=0.5.0,<0.6.0" },
     { name = "croniter", specifier = ">=6.0" },
     { name = "django", specifier = ">=6.0" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "absurdctl", specifier = "==0.4.0" },
+    { name = "absurdctl", specifier = "==0.5.0" },
     { name = "beautifulsoup4", specifier = "==4.15.0" },
     { name = "build", specifier = "==1.5.0" },
     { name = "django-coverage-plugin", specifier = "==3.2.2" },

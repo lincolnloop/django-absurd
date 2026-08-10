@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import datetime as dt
 import logging
 import os
@@ -80,19 +81,17 @@ def test_worker_client_opens_without_provisioning_check() -> None:
 
 
 def test_worker_client_absent_schema_errors() -> None:
-    with connection.cursor() as cur:
-        cur.execute("DROP SCHEMA IF EXISTS absurd CASCADE")
-    try:
+    async def _enter() -> None:
+        # Entering is what raises, so the entry is the whole body — a statement after it
+        # would never run.
+        async with contextlib.AsyncExitStack() as stack:
+            await stack.enter_async_context(aworker_client(backend(), "default"))
 
-        async def _enter() -> None:
-            async with aworker_client(backend(), "default"):
-                pass
-
-        with pytest.raises(ImproperlyConfigured, match="migrate"):
-            asyncio.run(_enter())
-    finally:
-        call_command("migrate", "django_absurd", "zero", verbosity=0)
-        call_command("migrate", verbosity=0)  # restore absurd schema
+    with (
+        utils.hide_absurd_schema(),
+        pytest.raises(ImproperlyConfigured, match="migrate"),
+    ):
+        asyncio.run(_enter())
 
 
 def test_end_to_end_executes_and_records_result(dj_absurd: AbsurdTestRuntime) -> None:
@@ -430,14 +429,11 @@ def test_worker_command_schema_absent_errors_migrate() -> None:
     # that helper exists to send must never go out — pytest installs no SIGTERM
     # handler of its own, so a stray kill would hit Python's default (SIG_DFL) and
     # take the session down with it.
-    with connection.cursor() as cur:
-        cur.execute("DROP SCHEMA IF EXISTS absurd CASCADE")
-    try:
-        with pytest.raises(CommandError, match="migrate"):
-            utils.start_worker(queue="default")
-    finally:
-        call_command("migrate", "django_absurd", "zero", verbosity=0)
-        call_command("migrate", verbosity=0)  # restore absurd schema
+    with (
+        utils.hide_absurd_schema(),
+        pytest.raises(CommandError, match="migrate"),
+    ):
+        utils.start_worker(queue="default")
 
 
 def test_start_worker_drains_concurrently() -> None:

@@ -4,7 +4,7 @@ requires = ["hatch-vcs==0.5.0", "hatchling==1.31.0"]
 
 [dependency-groups]
 dev = [
-  "absurdctl==0.4.0",
+  "absurdctl==0.5.0",
   "beautifulsoup4==4.15.0",
   "build==1.5.0",
   "django-coverage-plugin==3.2.2",
@@ -48,7 +48,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-  "absurd-sdk>=0.4.0,<0.5.0",
+  "absurd-sdk>=0.5.0,<0.6.0",
   "croniter>=6.0",
   "Django>=6.0",
 ]
@@ -180,3 +180,10 @@ max-args = 6
 [tool.uv]
 # Mirror Renovate's minimumReleaseAge cooloff for local/CI resolution.
 exclude-newer = "7 days"
+
+# Absurd itself is exempt, in both places (see renovate.json). The schema this package
+# ships comes from the pinned absurdctl wheel, so a cooloff on it only delays adopting a
+# schema we intend to adopt deliberately anyway.
+[tool.uv.exclude-newer-package]
+absurd-sdk = "0 days"
+absurdctl = "0 days"

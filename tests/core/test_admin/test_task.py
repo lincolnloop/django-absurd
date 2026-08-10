@@ -13,7 +13,7 @@ from pytest_django.fixtures import SettingsWrapper
 from django_absurd.admin_views import ADMIN_ENTITY_SPECS, build_admin_model
 from django_absurd.queues import get_absurd_client
 from django_absurd.test import AbsurdTestRuntime
-from tests import atasks, tasks
+from tests import atasks, tasks, utils
 from tests.core.test_admin.utils import (
     BACKEND,
     parse_html,
@@ -167,16 +167,11 @@ def test_changelist_survives_staleness_detection_failure(
     django_db_blocker: "DjangoDbBlocker",
 ) -> None:
     client.force_login(admin_user)
-    with django_db_blocker.unblock():
-        call_command("migrate", "django_absurd", "zero", verbosity=0)
-    try:
+    with utils.hide_absurd_schema():
         resp = client.get(CHANGELIST)
-        assert resp.status_code == 200
-        # detection failure degrades silently — no spurious staleness warning
-        assert parse_html(resp).select_one("ul.messagelist li.warning") is None
-    finally:
-        with django_db_blocker.unblock():
-            call_command("migrate", "django_absurd", verbosity=0)
+    assert resp.status_code == 200
+    # detection failure degrades silently — no spurious staleness warning
+    assert parse_html(resp).select_one("ul.messagelist li.warning") is None
 
 
 def test_detail_shows_state(admin_user: User, client: Client) -> None:
