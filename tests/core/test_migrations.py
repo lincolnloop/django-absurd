@@ -22,14 +22,13 @@ def test_migrate_installs_absurd_schema_at_pinned_version() -> None:
 
 @pytest.mark.django_db
 def test_migrate_installs_no_extension() -> None:
-    # Why the schema is regenerated rather than replayed: Absurd's earliest schema
-    # created uuid-ossp, and migrating needs no privilege beyond CREATE SCHEMA only
-    # while nothing here creates an extension. Absurd generates uuidv7 itself now,
-    # falling back to pg_catalog when the server predates it.
+    # Migrating must need no privilege beyond creating the schema, which holds only
+    # while nothing here creates an extension: Absurd generates uuidv7 in PL/pgSQL,
+    # falling back to pg_catalog on a server without it.
     installed = fetch_scalar(
-        "SELECT count(*) FROM pg_extension WHERE extname = 'uuid-ossp'"
+        "SELECT array_agg(extname ORDER BY extname) FROM pg_extension"
     )
-    assert installed == 0
+    assert installed == ["plpgsql"]
 
 
 @pytest.mark.django_db(transaction=True)

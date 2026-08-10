@@ -40,6 +40,11 @@ pre-commit gates), see [`../CLAUDE.md`](../CLAUDE.md).
   clock, so a frozen freezegun deadlocks the drain unkillably. Do not reintroduce it.
   `pytest-asyncio` is a dev dependency for writing `async def` tests; nothing in
   `django_absurd/` may depend on it.
+- **A test needing the Absurd schema out of reach uses `utils.hide_absurd_schema()`** —
+  it renames the schema and renames it back, so nothing is destroyed and no migration
+  state moves. Never unapply migrations for this: it replays the whole install per test,
+  and it stops working outright once a schema delta lands (Absurd publishes no downgrade
+  SQL).
 - **No monkeypatching / `unittest.mock.patch`.** Test observable behavior, not
   internals. If a test needs to patch our own functions to reach a branch, restructure
   so a real input drives that branch instead.

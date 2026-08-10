@@ -3,9 +3,7 @@ name: bump-absurd-version
 description:
   Use when moving django-absurd to a new upstream Absurd release — a Renovate PR bumping
   the `absurdctl` pin, an `absurd-sdk` floor change, `ABSURD_SCHEMA_VERSION` drift, or a
-  report that `manage.py migrate` ships an older schema than the pinned version. Covers
-  generating the delta migration offline, the artifacts that must move together, and
-  what a schema change forces in code, tests, and user docs.
+  report that `manage.py migrate` ships an older schema than the pinned version.
 ---
 
 # bump-absurd-version
@@ -19,18 +17,24 @@ itself tells you what else changed.
 
 **Two ways to generate, and the choice comes first:**
 
-|            | Regenerate from scratch                                                       | Add a delta                                        |
-| ---------- | ----------------------------------------------------------------------------- | -------------------------------------------------- |
-| Produces   | ONE `0001_initial_<version>` replacing every migration                        | `000N_absurd_<version>` on top                     |
-| Source     | `absurdctl.BUNDLED_SCHEMA_SQL`                                                | `absurdctl migrate --from … --to … --dump-sql`     |
-| Costs      | every existing database, which must drop the `absurd` schema and re-migrate   | replays history the current version has moved past |
-| Right when | pre-release, no deployment to preserve — this is the DEFAULT while that holds | any real installed base exists                     |
+|            | Add a delta                                        | Regenerate from scratch                                                                                          |
+| ---------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Produces   | `000N_absurd_<version>` on top                     | ONE `0001_initial_<version>` replacing every migration                                                           |
+| Source     | `absurdctl migrate --from … --to … --dump-sql`     | `absurdctl.BUNDLED_SCHEMA_SQL`                                                                                   |
+| Costs      | replays history the current version has moved past | EVERY existing database, which must drop the `absurd` schema, clear its `django_migrations` rows, and re-migrate |
+| Right when | **the default, and always safe**                   | ONLY when the maintainer says so in this session                                                                 |
 
-Regenerating is preferred while it is available because replaying history reintroduces
-what upstream has since removed: the earliest schema created `uuid-ossp`, so a delta
-chain creates an extension only to drop it again, and demands privileges the package no
-longer needs. **Ask before regenerating** — it is a breaking change for anyone running
-the old schema, so it is the maintainer's call, not yours.
+**Adding a delta is the default. Never regenerate unless the maintainer says so in this
+session** — "the project still looks pre-release" is not their decision made for you.
+The reason it was chosen once, at 0.5.0: replaying history reintroduces what upstream
+has since removed, because the earliest schema created `uuid-ossp`, so a delta chain
+creates an extension only to drop it again and demands privileges the package no longer
+needs. That argument expires the day a real installed base exists.
+
+Regenerating also breaks harder than "re-migrate" suggests: with `django_absurd.pg_cron`
+installed, its own migration is recorded as applied while its parent is now a migration
+that is not, so **every** `migrate` in the project raises `InconsistentMigrationHistory`
+until `django_migrations` is edited by hand. Say so wherever the change is announced.
 
 **With deltas: one migration per Absurd release, and the initial is frozen.**
 
@@ -47,16 +51,17 @@ no schema change (check the delta is empty first — step 2 tells you).
 
 Miss one and the failure is silent or lands in CI, not here:
 
-| Artifact                                  | Where                                                                                                                                                                                                          | Miss it and                                                                                                                                         |
-| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `absurdctl` pin                           | `pyproject.toml` dev deps                                                                                                                                                                                      | you generate the delta from the OLD bundled SQL                                                                                                     |
-| `absurd-sdk` floor                        | `pyproject.toml` dependencies                                                                                                                                                                                  | the SDK and schema can drift apart at install time                                                                                                  |
-| Delta SQL + wrapper                       | `django_absurd/migrations/`                                                                                                                                                                                    | nothing ships                                                                                                                                       |
-| `ABSURD_SCHEMA_VERSION`                   | `django_absurd/__init__.py`                                                                                                                                                                                    | adopting-an-existing-DB guidance lies                                                                                                               |
-| Root lockfile                             | `uv.lock`                                                                                                                                                                                                      | `--locked` fails in CI                                                                                                                              |
-| **Example lockfiles**                     | `examples/*/uv.lock` (three)                                                                                                                                                                                   | **`uv sync --locked` fails all three example jobs**                                                                                                 |
-| SDK bounds in comments                    | anything naming an SDK range                                                                                                                                                                                   | a stale bound reads as a verified one                                                                                                               |
-| Anything naming the migration by filename | its dependency in `django_absurd/pg_cron/migrations/0001_initial.py`, the scratch-schema loader in `tests/pg_cron/utils.py`, line-number citations in `admin_views.py` and `tests/core/test_admin/test_run.py` | a renamed initial breaks the migration graph, and the pg_cron suite fails in SETUP (455 errors, `NodeNotFoundError`) — nothing points at the rename |
+| Artifact                                   | Where                                                                                                                                                                                                          | Miss it and                                                                                                                                         |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `absurdctl` pin                            | `pyproject.toml` dev deps                                                                                                                                                                                      | you generate the delta from the OLD bundled SQL                                                                                                     |
+| `absurd-sdk` floor                         | `pyproject.toml` dependencies                                                                                                                                                                                  | the SDK and schema can drift apart at install time                                                                                                  |
+| Delta SQL + wrapper                        | `django_absurd/migrations/`                                                                                                                                                                                    | nothing ships                                                                                                                                       |
+| `ABSURD_SCHEMA_VERSION`                    | `django_absurd/__init__.py`                                                                                                                                                                                    | adopting-an-existing-DB guidance lies                                                                                                               |
+| Root lockfile                              | `uv.lock`                                                                                                                                                                                                      | `--locked` fails in CI                                                                                                                              |
+| **Example lockfiles**                      | `examples/*/uv.lock` (three)                                                                                                                                                                                   | **`uv sync --locked` fails all three example jobs**                                                                                                 |
+| SDK bounds in comments                     | anything naming an SDK range                                                                                                                                                                                   | a stale bound reads as a verified one                                                                                                               |
+| Admin surfaces reading Absurd's own tables | `admin_views.py`, its entity specs, the admin tests                                                                                                                                                            | a renamed or added column 500s the admin at runtime and no migration test notices                                                                   |
+| Anything naming the migration by filename  | its dependency in `django_absurd/pg_cron/migrations/0001_initial.py`, the scratch-schema loader in `tests/pg_cron/utils.py`, line-number citations in `admin_views.py` and `tests/core/test_admin/test_run.py` | a renamed initial breaks the migration graph, and the pg_cron suite fails in SETUP (455 errors, `NodeNotFoundError`) — nothing points at the rename |
 
 Sweep for those with `grep -rn`, not `ag`: in a worktree checkout `ag` silently missed
 two of the four above.
@@ -85,9 +90,10 @@ depends on django-absurd by path. Any root dependency change invalidates all thr
    That constant IS the fresh install (`absurd.sql`), bundled — the printed target
    version must be the one you are moving to. **`migrate --dump-sql` cannot produce a
    fresh install:** it only emits ranges, `--from` is mandatory, and `--from 0.0.0`
-   silently starts at an early delta with no schema bootstrap at all. Keep the initial's
-   other operations (the psycopg check, the `Queue` state-only model) when rewriting its
-   wrapper.
+   silently starts at an early delta with no schema bootstrap at all. Carry the
+   initial's other operations over when rewriting its wrapper — the psycopg check, and
+   the `Queue` state-only model, which mirrors `absurd.queues` and must be updated
+   together with `django_absurd/models.py` if the release touched that table.
 
    For a delta instead:
 
@@ -102,9 +108,11 @@ depends on django-absurd by path. Any root dependency change invalidates all thr
 
 3. **Read the delta's own comments before writing any wrapper.** Upstream states what a
    release changes at the top of each bundled migration, and that is your list of
-   downstream work. A release that drops an extension dependency, changes a function
-   signature, or renames a column has consequences in this package's code and in user
-   docs that no test will find for you.
+   downstream work. **Regenerating leaves you no delta to read** — the install SQL's
+   header describes the whole system, not the release — so generate one into the
+   scratchpad anyway, purely to read its comments, then discard it. A release that drops
+   an extension dependency, changes a function signature, or renames a column has
+   consequences in this package's code and in user docs that no test will find for you.
 
 4. **Wrap it** as `000N_absurd_<version>.py`, mirroring `0001`: read the `.sql` with
    `importlib.resources`, depend on the previous migration.
@@ -120,35 +128,39 @@ depends on django-absurd by path. Any root dependency change invalidates all thr
      schema absent" below.
    - Set `atomic = False` **only** if the delta contains non-transactional DDL. Grep for
      `concurrently` as a statement, not as a word — it appears inside error-message
-     strings, and a false positive here costs you transactional safety for nothing.
+     strings, and a false positive here costs you transactional safety for nothing. If
+     it genuinely does contain `CONCURRENTLY`, do not flip the whole migration: split
+     the SQL so only the non-transactional part is non-atomic, and ask the maintainer.
+     No release has needed this yet — treat it as unexercised ground.
 
 5. **Update the remaining artifacts** from the table above.
 
-6. **Verify against a real database**, not just the suite:
+6. **Verify against a real database, rebuilt:**
 
    ```bash
-   uv run pytest tests/core tests/pg_cron -q --no-cov        # both suites
+   uv run pytest tests/core tests/pg_cron tests/multidb --create-db -q --no-cov
    ```
 
-   Then prove the migration actually applies from empty and the schema reports the new
-   version:
+   `--create-db` is not optional here. Every suite bakes in `--reuse-db`, so without it
+   a schema change never reaches the test database and green means nothing. With it,
+   `tests/core/test_migrations.py` IS the from-empty check: the version the database
+   reports equals `ABSURD_SCHEMA_VERSION`, and no extension was created. A file left
+   over from an older pin fails that version assertion; a hand-edit that keeps
+   `get_schema_version()` intact is caught by nobody, which is why the red flags forbid
+   touching the SQL at all. Do not hand-roll a `migrate` against the dev database
+   instead — it is not empty on the second bump, and `create schema if not exists` sails
+   straight over a half-applied leftover.
 
-   ```bash
-   uv run python -c "
-   import django, os
-   os.environ['DJANGO_SETTINGS_MODULE']='tests.settings'
-   django.setup()
-   from django.core.management import call_command
-   call_command('migrate', 'django_absurd')
-   from django.db import connection
-   with connection.cursor() as c:
-       c.execute('select absurd.get_schema_version()')
-       print('schema reports:', c.fetchone()[0])
-   "
-   ```
+   Set `ABSURD_SCHEMA_VERSION` from the version upstream ANNOUNCES, never from
+   `absurdctl.ABSURD_SCHEMA_TARGET_VERSION` — taking both sides from the same wheel
+   makes that assertion compare the wheel to itself, so a stale pin passes.
 
-   That printed version must equal `ABSURD_SCHEMA_VERSION`. This is the one check that
-   catches a wrapper reading the wrong file, a stale pin, and a half-applied delta.
+   **Then sweep for the old filename** if anything was renamed:
+   `grep -rn '<old stem>' .` from the repo root (e.g. `0001_initial_0_4_0`), repeated
+   until it returns nothing. Not `ag`, which silently missed two of four in a worktree
+   checkout. A stale name in another app's migration dependency fails every `migrate`
+   with `NodeNotFoundError`, surfacing as hundreds of SETUP errors that name neither the
+   rename nor the file.
 
 7. **Run `sync-docs`.** A schema change is a user-facing change: privileges, extensions,
    and supported syntax all live in `AGENTS.md` and `docs/web/`.
@@ -186,7 +198,7 @@ Two neighbouring cases are different, and conflating them is what previously mad
 | Mistake                                                              | Why it happens                                                       | Do instead                                                                                                                                                                                         |
 | -------------------------------------------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Hand-writing a reverse migration                                     | `absurdctl` refuses downgrades, so it looks like your job            | Omit `reverse_sql` — see step 4                                                                                                                                                                    |
-| Adding `reverse_sql` so a test can reach zero                        | 13 tests once used migrate-zero to mean "schema absent"              | Rename the schema instead — see above                                                                                                                                                              |
+| Adding `reverse_sql` to a DELTA so a test can reach zero             | tests once used migrate-zero to mean "schema absent"                 | Rename the schema instead — see above. The initial legitimately has a reverse; a delta never does                                                                                                  |
 | Committing without the example lockfiles                             | `git status` shows them, `git commit -am` on named paths misses them | `uv lock --project examples/<name>` ×3, and stage them                                                                                                                                             |
 | Trusting a `concurrently` grep                                       | The word appears in error strings                                    | Read the match before setting `atomic = False`                                                                                                                                                     |
 | Reaching for a one-off `--exclude-newer-package` on the command line | The release looks blocked by a cooloff                               | It is not: Absurd is exempt from both cooloffs, in `pyproject.toml` and `renovate.json`. A command-line override instead records a dated one in the lockfile, which fails `uv sync --locked` in CI |
@@ -195,9 +207,10 @@ Two neighbouring cases are different, and conflating them is what previously mad
 
 ## Red flags
 
-- You are typing SQL rather than redirecting `--dump-sql` into a file
-- You are copying function bodies out of `0001` for any reason
-- You edited `0001` — it is frozen; deltas only
-- You are adding `reverse_sql` so that a test can migrate to zero — fix the test
+- You are typing SQL by hand rather than extracting it from the wheel
+- You are copying function bodies out of the initial migration for any reason
+- You edited the initial migration while on the DELTA path — there it is frozen
+- You are regenerating without the maintainer having said to in this session
+- You are adding `reverse_sql` to a delta so a test can migrate to zero — fix the test
 - `git status` shows `examples/*/uv.lock` at commit time
 - You cannot say what the release changed in one sentence (you skipped step 3)

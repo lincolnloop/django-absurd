@@ -43,15 +43,18 @@ Once it does, deltas resume, and a delta is left irreversible: upstream publishe
 downgrade SQL, so the alternatives are a hand-written reverse nobody can verify, or a
 no-op reverse that reports a successful rollback while leaving the database at the newer
 schema. An unapply chain is only as reversible as its least reversible step, so one such
-operation means the schema cannot be migrated backwards at all. Nothing in the package
-may therefore depend on unapplying migrations, and a test that needs the schema out of
-reach renames it instead, which destroys nothing.
+operation means the schema cannot be migrated backwards at all. From that point nothing
+in the package may depend on unapplying migrations — which is why a test needing the
+schema out of reach renames it instead, a choice that costs nothing before the first
+delta and keeps costing nothing after it.
 
 The schema lives in a fixed, non-relocatable namespace, so applying it needs a role
-allowed to create that namespace — and nothing beyond that. It needs no extension: the
-one the earliest schema depended on was replaced upstream by a function that falls back
-to what Postgres has built in, which is what makes the package installable by an
-ordinary application role on a locked-down deployment.
+allowed to create a namespace in that database — a privilege checked before the
+namespace is found to exist already, so pre-creating it grants no exemption — and
+nothing beyond that. It needs no extension: the one the earliest schema depended on was
+replaced upstream by a function that falls back to what Postgres has built in, which is
+what makes the package installable by an ordinary application role on a locked-down
+deployment.
 
 ## Tasks, enqueue & the worker
 

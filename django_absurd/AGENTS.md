@@ -1022,9 +1022,12 @@ Neither logger is the complete record. Postgres is:
 
 - **Database privileges.** `migrate` runs `CREATE SCHEMA IF NOT EXISTS absurd` and needs
   nothing beyond the rights to do that — **no extension, and so no superuser and no
-  managed-Postgres allow-list entry**. Pre-create the schema and grant the migrating
-  role `CREATE` on it if creating a schema is itself off-limits. The schema name
-  `absurd` is fixed.
+  managed-Postgres allow-list entry**. What it does need is
+  `GRANT CREATE ON DATABASE <db>`: `CREATE SCHEMA IF NOT EXISTS` checks that privilege
+  **before** it checks whether the schema exists, so pre-creating `absurd` yourself does
+  not avoid the grant (verified on PostgreSQL 18 — without it the role is refused with
+  `permission denied for database` even while it can create functions inside that
+  schema). The schema name `absurd` is fixed.
 - **At-least-once delivery.** A task may run more than once (e.g. a crash between the
   handler committing and Absurd's bookkeeping). Keep handlers idempotent; use
   `idempotency_key` where it helps.
