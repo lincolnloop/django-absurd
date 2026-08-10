@@ -61,9 +61,6 @@ class Migration(migrations.Migration):
     dependencies = [
         # absurd.spawn_task (used by the wrapper function) is installed by the
         # core django_absurd schema migration.
-        # __first__ rather than the filename: the schema migration is regenerated and
-        # renamed when the pinned Absurd version moves, and a stale name here fails every
-        # migrate in the project with NodeNotFoundError.
         ("django_absurd", "__first__"),
     ]
 
