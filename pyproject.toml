@@ -180,3 +180,10 @@ max-args = 6
 [tool.uv]
 # Mirror Renovate's minimumReleaseAge cooloff for local/CI resolution.
 exclude-newer = "7 days"
+
+# Absurd itself is exempt, in both places (see renovate.json). The schema this package
+# ships comes from the pinned absurdctl wheel, so a cooloff on it only delays adopting a
+# schema we intend to adopt deliberately anyway.
+[tool.uv.exclude-newer-package]
+absurd-sdk = "0 days"
+absurdctl = "0 days"
