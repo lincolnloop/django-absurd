@@ -231,7 +231,7 @@ def build_producer_jobname(target: str) -> str:
 def read_absurd_schema_sql() -> str:
     return (
         importlib.resources.files("django_absurd.migrations")
-        .joinpath("0001_initial_0_4_0.sql")
+        .joinpath("0001_initial_0_5_0.sql")
         .read_text(encoding="utf-8")
     )
 

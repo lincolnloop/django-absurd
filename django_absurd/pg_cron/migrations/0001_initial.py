@@ -61,7 +61,7 @@ class Migration(migrations.Migration):
     dependencies = [
         # absurd.spawn_task (used by the wrapper function) is installed by the
         # core django_absurd schema migration.
-        ("django_absurd", "0001_initial_0_4_0"),
+        ("django_absurd", "__first__"),
     ]
 
     operations = [

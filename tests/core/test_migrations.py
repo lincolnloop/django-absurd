@@ -3,7 +3,6 @@ import typing as t
 import pytest
 from django.core.management import call_command
 from django.db import connection
-from django.db.migrations.exceptions import IrreversibleError
 
 from django_absurd import ABSURD_SCHEMA_VERSION
 
@@ -21,12 +20,20 @@ def test_migrate_installs_absurd_schema_at_pinned_version() -> None:
     assert fetch_scalar("SELECT absurd.get_schema_version()") == ABSURD_SCHEMA_VERSION
 
 
+@pytest.mark.django_db
+def test_migrate_installs_no_extension() -> None:
+    # Migrating must need no privilege beyond creating the schema, which holds only
+    # while nothing here creates an extension: Absurd generates uuidv7 in PL/pgSQL,
+    # falling back to pg_catalog on a server without it.
+    installed = fetch_scalar(
+        "SELECT array_agg(extname ORDER BY extname) FROM pg_extension"
+    )
+    assert installed == ["plpgsql"]
+
+
 @pytest.mark.django_db(transaction=True)
-def test_unapplying_a_delta_migration_is_refused() -> None:
-    # Absurd publishes no downgrade SQL, so the SQL each delta applies is irreversible
-    # and no unapply reaches past it. Nothing in this package may reach for
-    # `migrate django_absurd zero`; a test wanting the schema gone renames it
-    # (tests.utils.hide_absurd_schema) instead.
-    with pytest.raises(IrreversibleError):
-        call_command("migrate", "django_absurd", "0001", verbosity=0)
+def test_reverse_drops_absurd_schema() -> None:
+    call_command("migrate", "django_absurd", "zero", verbosity=0)
+    assert fetch_scalar("SELECT to_regnamespace('absurd') IS NULL") is True
+    call_command("migrate", verbosity=0)  # restore absurd schema
     assert fetch_scalar("SELECT absurd.get_schema_version()") == ABSURD_SCHEMA_VERSION

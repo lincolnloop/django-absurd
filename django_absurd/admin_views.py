@@ -426,7 +426,7 @@ def compose_column_expr(spec: EntitySpec, col: str) -> psycopg.sql.Composable:
     # An indefinite await_event (no timeout) writes Postgres's 'infinity' sentinel
     # into runs.available_at — absurd.await_event, upstream source:
     # https://github.com/earendil-works/absurd/blob/9b77b356963c65ff9b183fdb4044c2dff2392f6e/sql/absurd.sql#L1662
-    # vendored at django_absurd/migrations/0001_initial_0_4_0.sql:1664
+    # vendored at django_absurd/migrations/0001_initial_0_5_0.sql:1729
     # (`coalesce(v_timeout_at, 'infinity'::timestamptz)`). This is a Python/psycopg
     # limitation, not a Postgres one — psycopg cannot decode a literal infinity
     # into a Python datetime, so an un-guarded read crashes. NULLIF converts it to
