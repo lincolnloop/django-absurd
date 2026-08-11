@@ -50,17 +50,12 @@ footer = ""
 # one copy without the other and every release prepends a second "# Changelog"
 # block, right where the release-notes slice would swallow it.
 header = """
-<!-- Prepend-only. Reword or re-wrap this header and cliff.toml's must be changed to match byte for byte, or every --prepend duplicates it. -->
+<!-- Prepend-only. Reword or re-wrap this header and cliff.toml's must be changed to match byte for byte, or every --prepend duplicates it.
+Never `git cliff -o`: it discards every hand edit, and no regeneration can reproduce the 0.1.0a2, 0.1.0a3 and 0.1.0a4 sections — they predate conventional commits and exist only as hand-written text. -->
 
 # Changelog
 
 Notable changes to django-absurd, for the people who depend on it.
-
-Generated with [git-cliff](https://git-cliff.org) from the conventional-commit history,
-then hand-edited at release time. Each release is prepended; the file is never
-regenerated. Regenerating it would discard every hand edit, and no regeneration can
-reproduce the 0.1.0a2, 0.1.0a3 and 0.1.0a4 sections: they predate conventional commits
-and exist only as hand-written text.
 
 """
 trim = true
