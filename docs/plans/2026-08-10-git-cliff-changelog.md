@@ -71,7 +71,7 @@ wheel — stop and report, do not work around it.
 
 ```bash
 git add pyproject.toml uv.lock
-git commit -m "build(deps): add git-cliff for changelog generation"
+git commit -m "chore(deps): add git-cliff for changelog generation"
 ```
 
 ---
@@ -127,7 +127,7 @@ Run: `uv run git-cliff | grep -E '^## '` Expected: a heading per tag `v0.1.0a1` 
 
 ```bash
 git add cliff.toml
-git commit -m "build: configure git-cliff"
+git commit -m "chore: configure git-cliff"
 ```
 
 ---
