@@ -24,9 +24,13 @@ landing in the changelog PR, no step changes.
 `release` skill. No CI, no bot token, no branch-protection bypass. Fits existing three
 gates.
 
-**Backfill.** One-time full generation over `a1..a5`. Those sections are mechanical
-commit subjects, poorer than the curated GitHub notes for `a5`. Accepted — the GitHub
-releases keep their prose, changelog is the mechanical spine.
+**Backfill, then hand-fix once.** Conventional Commits only became mandatory around
+`#131`; earlier titles are plain prose (`Events`, `Cleanup & retention`,
+`Read-only admin + ORM access for Absurd queue tables (#17)`) and parse into no type.
+Generate over `a1..a5` anyway, then rewrite the unparsed entries into the right sections
+as part of building this — a one-time pass over five releases, and the first exercise of
+the hand-editing the whole design is built around. Drawn from each release's curated
+GitHub notes, reviewed by the maintainer in the PR like any other content.
 
 **Renovate dropped entirely.** `chore(deps)` is ~60% of commits and, by construction,
 100% dev/CI tooling — pre-commit hooks, GitHub actions, docker tags, the pinned dev
@@ -48,9 +52,23 @@ Sections, in order:
 - `Bug fixes` (`fix`)
 - `Performance` (`perf`)
 - `Documentation` (`docs`)
+- `Requirements` (`build`) — see below
 
-Dropped entirely: `chore` (including all of `chore(deps)`), `ci`, `build`, `test`,
-`style`, `refactor`.
+Dropped entirely: `chore` (including all of `chore(deps)`), `ci`, `test`, `style`,
+`refactor`.
+
+### Floor changes stay visible
+
+Raising a supported floor (`Django`, `absurd-sdk`, `croniter`, Python) is user-visible
+and must appear. Two layers:
+
+- **Convention.** A floor change is titled `feat` or `feat!` with the floor named in the
+  subject, never `chore(deps)`. Already the practice — the `absurd-sdk` move landed as
+  `feat!: regenerate the schema as a single 0.5.0 install (#169)`.
+- **Safety net.** The `build` type is kept, as `Requirements`. Renovate's
+  `semanticCommitType` is pinned to `chore` in `renovate.json`, so a `build(...)` commit
+  can only be human-authored — nothing automated can leak in, and a floor bump titled
+  `build(deps):` is caught rather than silently dropped.
 
 Each entry carries its PR link. Each release heading links the `compare/<prev>...<this>`
 range.
@@ -80,12 +98,14 @@ Step 2 also replaces the skill's current "summarize what changed" step —
 - A changelog page on the docs site.
 - Any record of dependency updates. If a runtime floor ever needs surfacing, it is a
   hand-authored commit and gets a `feat`/`fix` title like any other change.
-- Retro-fitting curated prose into backfilled `a1..a5` sections.
 
 ## Verification
 
 - Backfill over `a1..a5` renders each release, no crash.
 - No Renovate subject appears anywhere in the output.
+- No unparsed prose subject survives in the final file — every `a1..a5` entry sits under
+  a real section.
+- The `absurd-sdk` 0.5.0 floor move appears under Breaking changes.
 - A breaking commit (`feat(pg_cron)!:`, `feat!:`) lands under Breaking changes, not
   Features.
 - Slicing the top section from `CHANGELOG.md` yields exactly one release's content, no
