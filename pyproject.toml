@@ -106,7 +106,7 @@ django_settings_module = "tests.pg_cron.settings"
 [tool.hatch.build.targets.sdist]
 # Allowlist — only the package ships in the sdist (plus the always-included
 # pyproject.toml, README, and LICENSE). No git-tracked-file sweep.
-include = ["django_absurd"]
+include = ["django_absurd", "CHANGELOG.md"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["django_absurd"]
