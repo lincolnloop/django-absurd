@@ -103,15 +103,6 @@ headings in `CHANGELOG.md`.
    the new section at the top and **leaves every existing section untouched** — see the
    invariant below.
 
-   **Check the file for a duplicated `# Changelog` header and delete the second one.**
-   `--prepend` writes `cliff.toml`'s `header` along with the new section, and only drops
-   it again when the top of `CHANGELOG.md` matches that header byte-for-byte. Prettier
-   has re-wrapped the file's copy, so today it does not match and you get a second
-   header block sitting between the new section and the previous one — where the
-   release-body slice (step 5) would swallow it. The durable fix is to make
-   `cliff.toml`'s `header` text identical to the prettier-wrapped version in
-   `CHANGELOG.md`; until then, check every time.
-
    **This PR is where the hand-written prose goes.** git-cliff gives you the commit
    subjects; a release usually wants more — a "Highlights" lead, "Upgrade notes" for
    anything breaking, better wording on a terse subject. Edit the new section in the
@@ -141,8 +132,7 @@ headings in `CHANGELOG.md`.
    The counter increments on each release heading and the line prints only while the
    count is 1, so you get the newest heading plus its body and nothing of the release
    below it. Read the file before showing it: it must start with the `## [<version>]`
-   heading and end with that section's last bullet — no next-release heading, no stray
-   `# Changelog` block.
+   heading and end with that section's last bullet, with no trace of the release below.
 
 6. **GATE 2 — cut approval.** Show the final version + pre-release flag + the contents
    of `/tmp/release-notes.md`. STOP for an explicit "yes." Cutting is outward and

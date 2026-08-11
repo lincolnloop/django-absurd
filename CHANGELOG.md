@@ -2,10 +2,11 @@
 
 Notable changes to django-absurd, for the people who depend on it.
 
-Generated with [git-cliff](https://git-cliff.org) from the conventional-commit history
-and then hand-edited at release time, so regenerating a release that has already shipped
-will discard those edits — re-apply them, or render only the unreleased range and paste
-it on top.
+Generated with [git-cliff](https://git-cliff.org) from the conventional-commit history,
+then hand-edited at release time. Each release is prepended; the file is never
+regenerated. Regenerating it would destroy every hand edit, and the 0.1.0a2, 0.1.0a3 and
+0.1.0a4 sections — which predate conventional commits and exist only as hand-written
+text — could not be recovered at all.
 
 ## [0.1.0a5](https://github.com/lincolnloop/django-absurd/compare/v0.1.0a4...v0.1.0a5) - 2026-07-23
 
