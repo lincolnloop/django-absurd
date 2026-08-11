@@ -120,8 +120,13 @@ Run: `uv run git-cliff --unreleased --tag v0.1.0a6` Expected, against `v0.1.0a5.
 
 - [ ] **Step 3: Render the full history and confirm five releases exist**
 
-Run: `uv run git-cliff | grep -E '^## '` Expected: a heading per tag `v0.1.0a1` …
-`v0.1.0a5`. A missing tag means `tag_pattern` is wrong — fix before continuing.
+Run: `uv run git-cliff | grep -E '^## '`
+
+Expected, and verified during implementation: **three** headings, not five. `v0.1.0a2`,
+`a3` and `a4` contain only pre-convention prose subjects plus `ci:`/`chore(deps):`, so
+their commit lists are empty after filtering and git-cliff omits the release entirely.
+This is not a `tag_pattern` fault — all five tags are detected, and `render_always` does
+not change it. Task 4 creates those three sections from scratch.
 
 - [ ] **Step 4: Commit**
 
@@ -167,8 +172,16 @@ own diff.
 **Files:** modify `CHANGELOG.md`.
 
 Conventional titles only became mandatory around `#131`, so most of `a1..a4` is prose
-that Task 2's config drops on the floor. Those releases are currently near-empty and
-must be filled in by hand.
+that Task 2's config drops on the floor.
+
+**`v0.1.0a2`, `a3` and `a4` have no section at all** — git-cliff omits a release whose
+filtered commit list is empty. Write those three headings yourself, in the same format
+the generated ones use (heading text, date, compare link), in the correct position in
+the file. `a3` and `a4` carry real user-visible work — the native-async worker,
+auto-created queues — that no generator can recover.
+
+Also fix the one `upper_first` artifact: `feat(test): dj_absurd fixture…` renders as
+`Dj_absurd fixture…`.
 
 - [ ] **Step 1: List what was dropped, per release**
 
