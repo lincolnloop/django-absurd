@@ -1,0 +1,87 @@
+# git-cliff configuration — https://git-cliff.org/docs/configuration
+#
+# Renders CHANGELOG.md from the conventional-commit history. The audience is people
+# who DEPEND on django-absurd, so anything that only moves dev/CI tooling is dropped
+# (see commit_parsers below).
+
+[changelog]
+body = """
+{% if version -%}
+{% if previous.version -%}
+## [{{ version | trim_start_matches(pat="v") }}](https://github.com/{{ remote.github.owner }}/{{ remote.github.repo }}/compare/{{ previous.version }}...{{ version }}) - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else -%}
+## [{{ version | trim_start_matches(pat="v") }}](https://github.com/{{ remote.github.owner }}/{{ remote.github.repo }}/releases/tag/{{ version }}) - {{ timestamp | date(format="%Y-%m-%d") }}
+{% endif -%}
+{% else -%}
+## Unreleased
+{% endif -%}
+
+{% set breaking = commits | filter(attribute="breaking", value=true) -%}
+{% if breaking | length > 0 %}
+### Breaking changes
+{% for commit in breaking %}
+- {% if commit.scope %}**{{ commit.scope }}:** {% endif %}{{ commit.message | upper_first }}
+{%- endfor %}
+{% endif -%}
+
+{% for group, group_commits in commits | filter(attribute="breaking", value=false) | group_by(attribute="group") %}
+### {{ group | split(pat=" -- ") | last }}
+{% for commit in group_commits %}
+- {% if commit.scope %}**{{ commit.scope }}:** {% endif %}{{ commit.message | upper_first }}
+{%- endfor %}
+{% endfor %}
+"""
+footer = ""
+header = """
+# Changelog
+
+Notable changes to django-absurd, for the people who depend on it.
+
+Generated with [git-cliff](https://git-cliff.org) from the conventional-commit
+history and then hand-edited at release time, so regenerating a release that has
+already shipped will discard those edits — re-apply them, or render only the
+unreleased range and paste it on top.
+
+"""
+trim = true
+
+[git]
+# Kept types carry a numeric sort prefix; the template strips everything up to
+# " -- " before printing the heading. Breaking changes are a template-level
+# section (git-cliff sets commit.breaking from "!" and the BREAKING CHANGE
+# footer), rendered above these and excluded from them.
+commit_parsers = [
+  {message = "^feat", group = "0 -- Features"},
+  {message = "^fix", group = "1 -- Bug fixes"},
+  {message = "^perf", group = "2 -- Performance"},
+  {message = "^docs", group = "3 -- Documentation"},
+  {message = "^build", group = "4 -- Requirements"},
+  # chore covers every Renovate commit: renovate.json pins semanticCommitType to
+  # chore, and rangeStrategy=update-lockfile means it never moves a runtime floor.
+  # A user-visible dependency change is authored by hand as build:.
+  {message = "^chore", skip = true},
+  {message = "^ci", skip = true},
+  {message = "^test", skip = true},
+  {message = "^style", skip = true},
+  {message = "^refactor", skip = true},
+]
+# Squash-merge subjects already end in "(#N)". Turn that number into the PR link
+# instead of rendering it a second time.
+commit_preprocessors = [
+  {pattern = '\(#(\d+)\)', replace = "([#${1}](https://github.com/lincolnloop/django-absurd/pull/${1}))"},
+]
+conventional_commits = true
+filter_commits = true
+filter_unconventional = true
+sort_commits = "newest"
+tag_pattern = "v[0-9]*"
+
+[remote]
+# String-substitution only. Without this, merely setting owner/repo below makes
+# git-cliff call the GitHub REST API for every commit at generation time, which
+# needs a token and breaks offline generation.
+offline = true
+
+[remote.github]
+owner = "lincolnloop"
+repo = "django-absurd"
