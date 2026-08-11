@@ -139,9 +139,30 @@ git commit -m "chore: configure git-cliff"
 
 ### Task 3: Backfill CHANGELOG.md
 
-**Files:** create `CHANGELOG.md`; modify `pyproject.toml`.
+**Files:** create `CHANGELOG.md`; modify `pyproject.toml`, `cliff.toml`.
 
 This is the ONLY task that may use `-o`. Every later write is `--prepend`.
+
+- [ ] **Step 0: Two config corrections, before generating**
+
+Both came out of Task 2's review and must land first, or the generated file carries
+them.
+
+1. CI work must not reach a consumer changelog by borrowing another type.
+   `fix(ci): scope the Pages lock to the deploy job (#168)` currently renders under
+   **Bug fixes**. Skip `ci`-scoped commits regardless of type, keeping the existing `ci`
+   type skip.
+2. `tag_pattern = "v[0-9]*"` is an unanchored regex — it matches any tag merely
+   containing a `v`. Anchor it so it can only match a leading `v` followed by a digit,
+   and confirm the same three release headings still render afterward.
+
+Commit these as their own commit before Step 1, so the generated file's diff stays
+clean:
+
+```bash
+git add cliff.toml
+git commit -m "chore: keep CI work out of the changelog"
+```
 
 - [ ] **Step 1: Generate**
 
