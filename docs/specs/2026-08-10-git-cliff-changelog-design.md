@@ -24,6 +24,11 @@ landing in the changelog PR, no step changes.
 `release` skill. No CI, no bot token, no branch-protection bypass. Fits existing three
 gates.
 
+**Released sections only.** The checked-in file never carries an `Unreleased` heading. A
+section appears when a version is cut, via `--unreleased --tag <version> --prepend`, and
+not before. Rendering unreleased work into the file would bake in whatever WIP commits
+happened to be on the branch that day — commits that squash-merge collapses anyway.
+
 **Backfill, then hand-fix once.** Conventional Commits only became mandatory around
 `#131`; earlier titles are plain prose (`Events`, `Cleanup & retention`,
 `Read-only admin + ORM access for Absurd queue tables (#17)`) and parse into no type.

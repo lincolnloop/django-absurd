@@ -27,6 +27,9 @@ Spec:
   commit. Never hand-wrap; let the hook do it. `git add` before running, untracked files
   are skipped.
 - No new CI workflow. No changelog page on the docs site.
+- The checked-in `CHANGELOG.md` carries **released sections only** — never an
+  `Unreleased` heading. Sections arrive at release time via
+  `--unreleased --tag <version> --prepend`.
 - Never `git commit --amend`. New commits only. Stay local — no push, no PR, until
   asked.
 - Conventional Commit titles on every commit here.
