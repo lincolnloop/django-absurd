@@ -81,7 +81,7 @@ it on top.
 ### Documentation
 
 - README is a quickstart; AGENTS.md is the full integration guide
-  ([#15](https://github.com/lincolnloop/django-absurd/pull/15))
+  ([#13](https://github.com/lincolnloop/django-absurd/pull/13))
 
 ## [0.1.0a3](https://github.com/lincolnloop/django-absurd/compare/v0.1.0a2...v0.1.0a3) - 2026-06-24
 
