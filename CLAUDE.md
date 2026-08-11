@@ -175,6 +175,12 @@ commit title IS the changelog entry. Cutting a release:
   `chore(deps)`, which would silently vanish from the changelog.
 - `build` is kept as a **Requirements** section: the safety net for a hand-authored
   dependency change. Renovate cannot emit `build`, so a `build:` commit is always ours.
+- **A breaking change is titled `feat!` or `fix!`** — never `refactor!`/`chore!`.
+  Skipping happens before the Breaking-changes section is assembled, so a `!` on a
+  dropped type takes the breaking change down with it, and it also goes missing from the
+  `git-cliff --unreleased` summary the version decision is made from.
+- **`revert:` renders**, in its own Reverts section — it is an allowed PR-title type,
+  and taking a shipped feature back away is exactly what a user needs told.
 - Only ever **prepend** to `CHANGELOG.md`. Regenerating it (`git-cliff -o`) destroys the
   hand-written history, `v0.1.0a2`–`a4` included.
 

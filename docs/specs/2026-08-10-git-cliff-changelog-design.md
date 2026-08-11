@@ -55,6 +55,9 @@ Sections, in order:
 - `Breaking changes` — any `!` marker or `BREAKING CHANGE:` footer, regardless of type
 - `Features` (`feat`)
 - `Bug fixes` (`fix`)
+- `Reverts` (`revert`) — its own section; folding it into `Bug fixes` would misreport
+  what happened, and it is an allowed PR-title type, so without a parser it drops
+  silently
 - `Performance` (`perf`)
 - `Documentation` (`docs`)
 - `Requirements` (`build`) — see below
@@ -78,8 +81,10 @@ and must appear. Two layers:
 Each entry carries its PR link. Each release heading links the `compare/<prev>...<this>`
 range.
 
-A release containing only dropped types renders an empty section. Acceptable — a release
-with no user-visible change should say so.
+A release whose commits all drop out renders nothing at all — git-cliff omits the
+release outright rather than emitting an empty section. So a shipped version can go
+missing from the changelog: `a2`, `a3` and `a4` do, and are hand-written into the
+backfill, `a2` as an explicit "no user-visible changes".
 
 ## Release flow
 
@@ -106,7 +111,10 @@ Step 2 also replaces the skill's current "summarize what changed" step —
 
 ## Verification
 
-- Backfill over `a1..a5` renders each release, no crash.
+- Backfill over `a1..a5` renders `a1` and `a5`, no crash. `a2`, `a3` and `a4` render
+  nothing — every commit in those ranges is either a dropped type (`ci`, `chore`) or a
+  pre-conventional subject git-cliff cannot parse — so git-cliff omits the three
+  releases outright and they are written by hand.
 - No Renovate subject appears anywhere in the output.
 - No unparsed prose subject survives in the final file — every `a1..a5` entry sits under
   a real section.

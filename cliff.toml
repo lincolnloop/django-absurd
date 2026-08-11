@@ -12,8 +12,8 @@
 # CHANGELOG.md`, never generated into the backfill or left sitting in the file.
 #
 # Prepending is the ONLY way CHANGELOG.md may be written. Regenerating it (`-o`,
-# `--output`, or a redirect) would destroy every hand edit, and the 0.1.0a2, 0.1.0a3
-# and 0.1.0a4 sections could not be recovered at all: they predate conventional
+# `--output`, or a redirect) would discard every hand edit, and no regeneration can
+# reproduce the 0.1.0a2, 0.1.0a3 and 0.1.0a4 sections: they predate conventional
 # commits and exist only as hand-written text. See .claude/skills/release/SKILL.md.
 
 [changelog]
@@ -58,9 +58,9 @@ Notable changes to django-absurd, for the people who depend on it.
 
 Generated with [git-cliff](https://git-cliff.org) from the conventional-commit history,
 then hand-edited at release time. Each release is prepended; the file is never
-regenerated. Regenerating it would destroy every hand edit, and the 0.1.0a2, 0.1.0a3 and
-0.1.0a4 sections — which predate conventional commits and exist only as hand-written
-text — could not be recovered at all.
+regenerated. Regenerating it would discard every hand edit, and no regeneration can
+reproduce the 0.1.0a2, 0.1.0a3 and 0.1.0a4 sections: they predate conventional commits
+and exist only as hand-written text.
 
 """
 trim = true
@@ -69,7 +69,10 @@ trim = true
 # Kept types carry a numeric sort prefix; the template strips everything up to
 # " -- " before printing the heading. Breaking changes are a template-level
 # section (git-cliff sets commit.breaking from "!" and the BREAKING CHANGE
-# footer), rendered above these and excluded from them.
+# footer), rendered above these and excluded from them. Skipping happens BEFORE the
+# template runs, so a breaking commit of a skipped type (`refactor!:`, `chore!:`)
+# takes its breaking change down with it — breaking changes are titled `feat!`/`fix!`
+# (CLAUDE.md, "Changelog").
 commit_parsers = [
   # Parsers match in order and the first hit wins, so this must sit ahead of the
   # type rules below: a ci-scoped commit is CI work borrowing another type
@@ -79,9 +82,14 @@ commit_parsers = [
   {field = "scope", pattern = "^ci$", skip = true},
   {message = "^feat", group = "0 -- Features"},
   {message = "^fix", group = "1 -- Bug fixes"},
-  {message = "^perf", group = "2 -- Performance"},
-  {message = "^docs", group = "3 -- Documentation"},
-  {message = "^build", group = "4 -- Requirements"},
+  # Its own section: folding a revert into Bug fixes would misreport what happened.
+  # `revert` is in the pr-title workflow's default allowed types, so without this it
+  # would be dropped silently — a release that takes a shipped feature back away
+  # would say nothing about it.
+  {message = "^revert", group = "2 -- Reverts"},
+  {message = "^perf", group = "3 -- Performance"},
+  {message = "^docs", group = "4 -- Documentation"},
+  {message = "^build", group = "5 -- Requirements"},
   # chore covers every Renovate commit: renovate.json pins semanticCommitType to
   # chore, and rangeStrategy=update-lockfile means it never moves a runtime floor.
   # A user-visible dependency change is authored by hand as build:.

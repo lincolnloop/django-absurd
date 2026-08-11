@@ -6,9 +6,9 @@ Notable changes to django-absurd, for the people who depend on it.
 
 Generated with [git-cliff](https://git-cliff.org) from the conventional-commit history,
 then hand-edited at release time. Each release is prepended; the file is never
-regenerated. Regenerating it would destroy every hand edit, and the 0.1.0a2, 0.1.0a3 and
-0.1.0a4 sections — which predate conventional commits and exist only as hand-written
-text — could not be recovered at all.
+regenerated. Regenerating it would discard every hand edit, and no regeneration can
+reproduce the 0.1.0a2, 0.1.0a3 and 0.1.0a4 sections: they predate conventional commits
+and exist only as hand-written text.
 
 ## [0.1.0a5](https://github.com/lincolnloop/django-absurd/compare/v0.1.0a4...v0.1.0a5) - 2026-07-23
 
@@ -58,8 +58,6 @@ text — could not be recovered at all.
 
 ### Documentation
 
-- Dream — capture admin/ORM + admin-lane why, retire 18 shipped specs/plans
-  ([#47](https://github.com/lincolnloop/django-absurd/pull/47))
 - Add Zensical documentation site
   ([#30](https://github.com/lincolnloop/django-absurd/pull/30))
 
