@@ -1,3 +1,5 @@
+<!-- Prepend-only. Reword or re-wrap this header and cliff.toml's must be changed to match byte for byte, or every --prepend duplicates it. -->
+
 # Changelog
 
 Notable changes to django-absurd, for the people who depend on it.

@@ -115,9 +115,14 @@ headings in `CHANGELOG.md`.
 
    ```bash
    uv run pre-commit run --all-files
-   git commit -am "docs: changelog for v0.1.0aN"
+   git commit -am "chore: changelog for v0.1.0aN"
    git push -u origin changelog-v0.1.0aN && gh pr create --fill
    ```
+
+   `chore:` is deliberate — `--fill` makes this subject the PR title, squash-merge makes
+   the PR title the commit subject, and `cliff.toml` drops `chore` wholesale. Title it
+   `docs:` and this PR comes back as a Documentation bullet in the NEXT release, every
+   release, forever.
 
    Merge it before continuing. Nothing outward has happened yet — this is still an
    ordinary, revertible PR.

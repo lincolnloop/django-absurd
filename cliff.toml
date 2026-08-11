@@ -50,6 +50,8 @@ footer = ""
 # one copy without the other and every release prepends a second "# Changelog"
 # block, right where the release-notes slice would swallow it.
 header = """
+<!-- Prepend-only. Reword or re-wrap this header and cliff.toml's must be changed to match byte for byte, or every --prepend duplicates it. -->
+
 # Changelog
 
 Notable changes to django-absurd, for the people who depend on it.
