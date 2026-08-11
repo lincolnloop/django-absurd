@@ -3,6 +3,13 @@
 # Renders CHANGELOG.md from the conventional-commit history. The audience is people
 # who DEPEND on django-absurd, so anything that only moves dev/CI tooling is dropped
 # (see commit_parsers below).
+#
+# The checked-in CHANGELOG.md carries released sections only — never an "Unreleased"
+# heading. A release cuts a range that stops at the last tag (e.g.
+# `git-cliff <last-tag-commit-sha>`, since git-cliff's range syntax needs a resolved
+# commit, not a bare tag name or an unbounded "..<tag>"); the "Unreleased" section is
+# added at release time via `git cliff --unreleased --tag <version> --prepend
+# CHANGELOG.md`, never generated into the backfill or left sitting in the file.
 
 [changelog]
 body = """
