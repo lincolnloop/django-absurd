@@ -91,7 +91,7 @@ it on top.
   of configuration, usage and deployment
   ([#8](https://github.com/lincolnloop/django-absurd/pull/8))
 
-## [0.1.0a2](https://github.com/lincolnloop/django-absurd/compare/v0.1.0a1...v0.1.0a2) - 2026-06-23
+## [0.1.0a2](https://github.com/lincolnloop/django-absurd/compare/v0.1.0a1...v0.1.0a2) - 2026-06-24
 
 _No user-visible changes._
 
