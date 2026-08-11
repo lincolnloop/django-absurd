@@ -51,6 +51,12 @@ trim = true
 # section (git-cliff sets commit.breaking from "!" and the BREAKING CHANGE
 # footer), rendered above these and excluded from them.
 commit_parsers = [
+  # Parsers match in order and the first hit wins, so this must sit ahead of the
+  # type rules below: a ci-scoped commit is CI work borrowing another type
+  # (fix(ci): ..., feat(ci): ...) and must be skipped regardless of that type, same
+  # as the ci type skip further down. Checking scope only after `^fix`/`^feat` had
+  # already claimed the commit first.
+  {field = "scope", pattern = "^ci$", skip = true},
   {message = "^feat", group = "0 -- Features"},
   {message = "^fix", group = "1 -- Bug fixes"},
   {message = "^perf", group = "2 -- Performance"},
@@ -74,7 +80,9 @@ conventional_commits = true
 filter_commits = true
 filter_unconventional = true
 sort_commits = "newest"
-tag_pattern = "v[0-9]*"
+# Anchored: unanchored "v[0-9]*" matches any tag merely containing a "v" (the "*"
+# permits zero digits, so a bare "v" is a match anywhere in the string).
+tag_pattern = "^v[0-9]"
 
 [remote]
 # String-substitution only. Without this, merely setting owner/repo below makes
