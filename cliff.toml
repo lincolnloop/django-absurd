@@ -55,8 +55,6 @@ Never `git cliff -o`: it discards every hand edit, and no regeneration can repro
 
 # Changelog
 
-Notable changes to django-absurd, for the people who depend on it.
-
 """
 trim = true
 

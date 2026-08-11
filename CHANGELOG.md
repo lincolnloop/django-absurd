@@ -3,8 +3,6 @@ Never `git cliff -o`: it discards every hand edit, and no regeneration can repro
 
 # Changelog
 
-Notable changes to django-absurd, for the people who depend on it.
-
 ## [0.1.0a5](https://github.com/lincolnloop/django-absurd/compare/v0.1.0a4...v0.1.0a5) - 2026-07-23
 
 ### Breaking changes
