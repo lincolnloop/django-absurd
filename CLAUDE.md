@@ -161,6 +161,23 @@ writing or editing any test file. Running the suites:
 - No network at migrate time; Absurd SQL comes only from the pinned `absurdctl` wheel
   (dev dep).
 
+## Changelog
+
+`CHANGELOG.md` is rendered from the conventional-commit subjects by git-cliff
+(`cliff.toml`), and the GitHub Release body is a slice of its top section — so the
+commit title IS the changelog entry. Cutting a release:
+`.claude/skills/release/SKILL.md`.
+
+- `chore`, `ci`, `test`, `style` and `refactor` are dropped wholesale — including every
+  Renovate commit, which is always `chore` (`renovate.json` pins `semanticCommitType`).
+- **Raising a supported floor** (Django, Python, `absurd-sdk`, `croniter`) is
+  user-facing: title it `feat` (or `feat!`) with the floor named in the subject — never
+  `chore(deps)`, which would silently vanish from the changelog.
+- `build` is kept as a **Requirements** section: the safety net for a hand-authored
+  dependency change. Renovate cannot emit `build`, so a `build:` commit is always ours.
+- Only ever **prepend** to `CHANGELOG.md`. Regenerating it (`git-cliff -o`) destroys the
+  hand-written history, `v0.1.0a2`–`a4` included.
+
 ## Workflow
 
 - `superpowers:brainstorming` → `writing-plans` →
