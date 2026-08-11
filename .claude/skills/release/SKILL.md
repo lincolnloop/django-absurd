@@ -178,7 +178,10 @@ headings in `CHANGELOG.md`.
    type, and so is anything ci-scoped (`fix(ci):`, `feat(ci):`) whatever its type. A
    `feat`, `fix`, `perf`, `docs`, `build` or `revert` outside that set is a real miss —
    **hand-edit it into the existing top section** in a fresh PR (per step 4: the prepend
-   does not run again), merge, then re-run this check from that new merge commit.
+   does not run again), merge, then **redo this whole step from that new merge commit**
+   — pull, check, and re-slice. Re-running only the check would leave
+   `/tmp/release-notes.md` as the stale pre-correction slice, so the fix you just merged
+   would be missing from what GATE 2 shows and from what gets published.
 
    The counter increments on each release heading and the line prints only while the
    count is 1, so you get the newest heading plus its body and nothing of the release
