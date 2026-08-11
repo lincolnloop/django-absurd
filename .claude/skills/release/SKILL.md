@@ -150,19 +150,35 @@ headings in `CHANGELOG.md`.
    Merge it before continuing. Nothing outward has happened yet — this is still an
    ordinary, revertible PR.
 
+   **That merge is the last time `--prepend` runs for this version.** Everything after
+   it — a missed commit found in step 5, a wording change asked for at GATE 2 — is a
+   hand-edit PR against the top section of `CHANGELOG.md`. Re-running the prepend would
+   render the identical range a second time and stack a duplicate `## [v0.1.0aN]`
+   section above the merged one, because the tag still does not exist and the range has
+   not moved. Steps 5 and 6 both send you back here; both mean the hand edit, neither
+   means the command.
+
 5. **Slice the release body** out of the merged changelog — the top section only:
 
    ```bash
    git fetch origin && git checkout main && git pull
-   git log --oneline <changelog-merge-commit>..origin/main   # must be empty of kept types
+   git log --oneline <changelog-pr-merge>..origin/main   # must be empty of kept types
    awk '/^## \[/ {n++} n == 1' CHANGELOG.md > /tmp/release-notes.md
    ```
 
-   **That first check is not optional.** The section was generated before the changelog
-   PR merged, but the tag lands on `main`'s HEAD at cut time — so anything merged in
-   between falls in neither range and is lost for good. If that log shows a `feat`,
-   `fix`, `perf`, `docs`, `build` or `revert`, go back to step 4 for another pass (a
-   `chore`/`ci`/`test`/`style`/`refactor` is fine, it would not have rendered anyway).
+   `<changelog-pr-merge>` is the merge commit of the **most recent** changelog PR for
+   this version — if GATE 2 sent you back for a correction, that later merge is the
+   boundary, not the original one. Anything already in the section has been accounted
+   for.
+
+   **That check is not optional.** The section was generated before the changelog PR
+   merged, but the tag lands on `main`'s HEAD at cut time — so anything merged in
+   between falls in neither range and is lost for good. It is clean when nothing listed
+   would have rendered: `chore`, `ci`, `test`, `style` and `refactor` are dropped by
+   type, and so is anything ci-scoped (`fix(ci):`, `feat(ci):`) whatever its type. A
+   `feat`, `fix`, `perf`, `docs`, `build` or `revert` outside that set is a real miss —
+   **hand-edit it into the existing top section** in a fresh PR (per step 4: the prepend
+   does not run again), merge, then re-run this check from that new merge commit.
 
    The counter increments on each release heading and the line prints only while the
    count is 1, so you get the newest heading plus its body and nothing of the release
@@ -174,9 +190,9 @@ headings in `CHANGELOG.md`.
    effectively irreversible — a published PyPI version can never be reused.
 
    If the notes need changing, that is another PR against `CHANGELOG.md` — **hand-edit
-   the existing top section; do not re-run the prepend.** The tag still does not exist,
-   so `--tag` would render the identical range a second time and stack a duplicate
-   section above the merged one. Then re-slice (step 5) and come back to this gate.
+   the existing top section; do not re-run the prepend** (step 4: the merge closed it,
+   and a second run would stack a duplicate section). Same move as a step-5 miss. Then
+   re-slice (step 5, from that new merge commit) and come back to this gate.
 
 7. **Create the release** (creates the tag AND triggers `publish.yml`):
 
