@@ -4,8 +4,13 @@ Scope: `django_absurd/AGENTS.md` only. Completes deferred half of
 `2026-08-08-docs-howto-rewrite-design.md` (that spec rewrote `docs/web/`, left AGENTS.md
 and README out).
 
-Goal: 1327 lines → ~900, carrying MORE facts than today. Cut maintainer internals, fold
-duplicated sections, backfill facts the site gained in the rewrite.
+Goal: cut maintainer internals, fold duplicated sections, backfill facts the site gained
+in the rewrite. Carry MORE facts than before while getting smaller.
+
+Measured outcome (tiktoken `o200k_base`, a proxy — Anthropic publishes no tokenizer):
+16,492 → 14,703 tokens, −10.8%, with 16 facts added. Line count barely moved (1327 →
+~1310): the file got denser, not shorter. A line target was the wrong instrument, and
+~900 lines was never reachable alongside standalone — see Size below.
 
 ## Constraints
 
@@ -32,22 +37,53 @@ reader comes for, so the right section is pickable without opening it. Section o
 mirrors site nav (Django surface before Absurd-specifics; Configuration last as
 reference, since Quickstart already covers minimal setup).
 
-| §             | Content                                                                                                                  | Today's lines           | Target |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------ | ----------------------- | ------ |
-| Opener        | what it is, ≤2 sentences, pointers to docs site + `examples/`                                                            | 1-15                    | 8      |
-| What's here   | TOC table                                                                                                                | —                       | 15     |
-| Requirements  | Python 3.12+, Django 6.0+, psycopg3                                                                                      | 17-22                   | 6      |
-| Quickstart    | `TASKS` → `migrate` → `@task` → `enqueue` → worker                                                                       | implicit in 24-79       | 30     |
-| Tasks         | enqueue · read result · run later · retries & spawn options · idempotency keys                                           | 167-251, 708-724        | 100    |
-| Workflows     | steps · `run_step` · long steps/heartbeat · sleep · events · emit from a view · timeout · API table · gotchas            | 1058-1320               | 150    |
-| Cron jobs     | declare `SCHEDULE` · beat · pg_cron · reconcile · admin authoring · test databases · uninstall · operator setup · Docker | 283-629                 | 170    |
-| Workers       | command · full flag table · runs & retries                                                                               | 253-281                 | 45     |
-| Cleanup       | on demand · scheduled · retention knobs · `absurd_flush`                                                                 | 631-706                 | 60     |
-| Monitoring    | logging · query queue state (keep `queue=` pruning rule) · admin                                                         | 81-129, 985-1019        | 70     |
-| Testing       | `dj_absurd` · durable time · fixture API + field/state tables · auto-cleanup · `manage.py test` · SCHEDULE in a test     | 757-981                 | 120    |
-| Configuration | one settings block · both queue-declaration forms · full `OPTIONS` table · router · `check` + ID table · exceptions      | 24-65, 131-165, 726-755 | 100    |
-| Deployment    | privileges · at-least-once · queue creation additive · adopting an existing Absurd DB                                    | 1021-1056               | 40     |
-| Notes         | offline migrations, alpha                                                                                                | 1322-1327               | 5      |
+| §              | Content                                                                                                                               | Today's lines           | Target |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | ------ |
+| Opener         | what it is, ≤2 sentences, pointers to docs site + `examples/`                                                                         | 1-15                    | 8      |
+| What's here    | TOC table                                                                                                                             | —                       | 15     |
+| Requirements   | Python 3.12+, Django 6.0+, psycopg3                                                                                                   | 17-22                   | 6      |
+| Quickstart     | `TASKS` → `migrate` → `@task` → `enqueue` → worker                                                                                    | implicit in 24-79       | 30     |
+| Tasks          | enqueue · read result · run later · retries & spawn options · idempotency keys                                                        | 167-251, 708-724        | 100    |
+| Workflows      | steps · `run_step` · long steps/heartbeat · sleep · events · emit from a view · timeout · API table · gotchas                         | 1058-1320               | 150    |
+| Cron jobs      | declare `SCHEDULE` · beat · pg_cron · reconcile · admin authoring · test databases · uninstall · operator setup · Docker              | 283-629                 | 170    |
+| Workers        | command · full flag table · runs & retries                                                                                            | 253-281                 | 45     |
+| Cleanup        | on demand · scheduled · retention knobs · `absurd_flush`                                                                              | 631-706                 | 60     |
+| Monitoring     | logging · query queue state (keep `queue=` pruning rule) · admin                                                                      | 81-129, 985-1019        | 70     |
+| Testing        | `dj_absurd` · durable time · fixture API + field/state tables · auto-cleanup · `manage.py test` · SCHEDULE in a test                  | 757-981                 | 120    |
+| Configuration  | one settings block · both queue-declaration forms · full `OPTIONS` table · router · `check` + ID table · exceptions                   | 24-65, 131-165, 726-755 | 100    |
+| Database setup | the `GRANT CREATE ON DATABASE` rule · pointers to pg_cron operator setup and what `migrate` installs · adopting an existing Absurd DB | 1021-1056               | 25     |
+| Notes          | offline migrations, alpha                                                                                                             | 1322-1327               | 5      |
+
+**"Deployment" was the wrong name and mostly a restatement.** Of its five items, three
+already appeared elsewhere: at-least-once under Tasks (and now Workers, which owns runs
+and retries), additive provisioning under Workers and Configuration, offline migrations
+under Workers. What survived — the privilege `migrate` needs, and adopting an existing
+database — is database setup, so the section says that. pg_cron's extension and grants
+stay under Cron jobs, conditional on a scheduler choice made there, with Database setup
+pointing at them so one privileged role's whole job is reachable from either end.
+
+## Size
+
+Density comes from cutting content, not from cutting words. Measured on this file:
+
+- The structural work — internals out, duplicates folded, tables instead of reference
+  prose — bought ~1,700 tokens.
+- A light prose-compression pass over the whole file afterwards bought **120 tokens
+  (0.8%)**, and most of that was the Deployment fold rather than the wording. Once prose
+  is example-first and tight, there is nothing lexical left to take. Don't spend a pass
+  on it again.
+- What remains is genuine reference: Cron jobs 3,327 · Testing 2,541 · Workflows 2,079 ·
+  Configuration 1,669 · Tasks 1,603. Two schedulers, four durable primitives, a fixture
+  with three snapshot vocabularies.
+- Standalone costs ~1,500 tokens against the site, concentrated in Cron jobs (+1,110,
+  mostly the embedded Dockerfile and compose flags the site links out to) and Monitoring
+  (+334, the ORM performance rule and non-default-`DATABASE` admin caveat the site cut).
+  Deployment/database setup has no site page at all.
+
+Cutting further means dropping user-facing facts. The costed levers, if ever wanted:
+Testing's snapshot field tables (~1,200, at the price of sending a venv reader to
+`django_absurd/test.py`), the Docker block (~250, trades standalone), admin-authoring
+bullets (~200).
 
 ## Cut — internals and maintainer material
 
