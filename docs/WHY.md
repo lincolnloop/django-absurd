@@ -356,6 +356,12 @@ no injection path — the cron command is a literal of the schedule name only, a
 name is charset-restricted by a static check. (`format('%L')` is used, but only over
 source and name — fixed-charset identifiers, never free-form task data.)
 
+Both the projection table and that fire-time function live in the namespace Django's own
+app tables occupy, not in the engine's. The engine's namespace is dropped wholesale when
+its migration reverses, which would take the function with it while the table feeding it
+survived — leaving scheduled jobs that call something no longer there. Keeping the pair
+together in the app's own namespace removes that failure mode instead of documenting it.
+
 The wrapper is defined `SET search_path = pg_catalog` and fully schema-qualifies every
 object it touches. `pg_cron` fires each job as the stored role with that role's default
 search path, not the reconcile session's — an unqualified reference would fail silently
@@ -437,6 +443,14 @@ silently.
 
 Sub-minute cadence (down to one second) stays allowed — an author choosing it accepts
 the run-history growth that follows.
+
+Because croniter owns the contents of those five fields, its version is part of the rule
+rather than an implementation detail. An older release of it refuses an inverted range
+that the extension accepts and runs — a rejection in the forbidden direction, blocking a
+legal schedule — so the supported floor is set by grammar agreement, not by API
+compatibility. Lowering that floor to widen install compatibility would reopen the hole
+silently, and a future release tightening further would reopen it again; the parity
+suite resolved against the floor is what catches either.
 
 ### The extension never lives on the app database (cross-database scheduling)
 
@@ -703,6 +717,31 @@ and the SDK's own exceptions share no base that would anchor the shorter name.
 Honest limit: catching the base is not universal. Several configuration, connection, and
 test-guard paths still raise plain framework or stdlib errors, so the docs must not
 promise otherwise.
+
+## Release notes are generated from commit titles
+
+The changelog is rendered from commit subjects, and the newest section is also the
+release body. A commit title is therefore not a note to other maintainers — it is the
+line a user reads, which is why titles are gated and why the type a change is given
+decides whether it reaches anyone at all. A type that renders nothing takes its own
+breaking-change marker down with it.
+
+Every commit from the dependency bot is dropped wholesale, and that is safe by
+construction rather than by review: runtime dependencies are declared as ranges and the
+bot is configured to move only the lockfile, so it cannot raise a supported floor.
+Raising a floor is hand-authored and titled as user-facing work — which is the one
+dependency change a consumer does need told, kept out of the dropped pile by convention
+rather than by the tool.
+
+The file is only ever prepended to. Three early pre-release sections cannot be generated
+at all — every commit in them either carries a dropped type or predates the title
+convention, so the generator omits those releases outright — and they are written by
+hand. Regenerating the whole file deletes them, so the hand-written past is load-bearing
+content, and generation stays append-only from here.
+
+The release body is sliced out of the checked-in file rather than out of the generator's
+output, so there is one artifact to edit and hand-written prose reaches the published
+notes without a second step.
 
 ## Deliberately not doing (yet)
 

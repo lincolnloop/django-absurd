@@ -101,6 +101,17 @@ commit where it last lived — recoverable from git any time.
   DB via `schedule_in_database` with db-namespaced jobnames (upsert-steal defense), and
   a seam that stays inert under tests unless opted in →
   [view @4dde493](https://github.com/lincolnloop/django-absurd/blob/4dde493f4a6981f5146ba5feaf5f973ce76103ab/docs/specs/2026-07-23-pg-cron-test-inert-design.md)
+- 2026-08-08 — docs-howto-rewrite: the example-first rewrite of the docs site — house
+  style, caveat tiers, per-page plan, and dissolving the how-it-works page (style now
+  lives in the `sync-docs` skill) →
+  [view @b33abe6](https://github.com/lincolnloop/django-absurd/blob/b33abe6ee44454adaa27225cad2310a5fc72a988/docs/specs/2026-08-08-docs-howto-rewrite-design.md)
+- 2026-08-08 — static-pg-cron-grammar: replace the live `cron.*` probe with a Python
+  grammar matcher, with the measured pg_cron acceptance table behind the deliberate
+  divergence →
+  [view @b33abe6](https://github.com/lincolnloop/django-absurd/blob/b33abe6ee44454adaa27225cad2310a5fc72a988/docs/specs/2026-08-08-static-pg-cron-grammar.md)
+- 2026-08-10 — git-cliff-changelog: generate `CHANGELOG.md` from commit subjects —
+  section set, dropping every Renovate commit, the one-time backfill, prepend-only →
+  [view @b33abe6](https://github.com/lincolnloop/django-absurd/blob/b33abe6ee44454adaa27225cad2310a5fc72a988/docs/specs/2026-08-10-git-cliff-changelog-design.md)
 
 ## Plans
 
@@ -204,3 +215,6 @@ commit where it last lived — recoverable from git any time.
   semantics, the ~50-site test migration off `--burst`, the signal-driven command
   helper, the removal itself, and the docs sweep) →
   [view @8bd0a54](https://github.com/lincolnloop/django-absurd/blob/8bd0a54ace32b774ea708ef9cc6a91588a805c6f/docs/plans/2026-08-06-worker-concurrency.md)
+- 2026-08-10 — git-cliff-changelog implementation plan (cliff.toml, backfill over
+  `a1..a5`, the release-skill step, and slicing the release body out of the file) →
+  [view @b33abe6](https://github.com/lincolnloop/django-absurd/blob/b33abe6ee44454adaa27225cad2310a5fc72a988/docs/plans/2026-08-10-git-cliff-changelog.md)

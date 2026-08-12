@@ -29,11 +29,53 @@ the site may expand on AGENTS.md but must not contradict it.
 | File                               | Audience                                       | Role / altitude                                                                                                                                                                                                                                                                                                                                                                                             |
 | ---------------------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `README.md`                        | repo landing                                   | **Trim.** The tl;dr happy path only: one-liner + alpha note, `pip install`, a ~10-line quickstart (TASKS snippet → `migrate` → `absurd_worker`; the `"default"` queue is declared for you), then a short **Documentation** section linking out. **Never grow it** — new detail goes to AGENTS.md, not here.                                                                                                 |
-| `django_absurd/AGENTS.md`          | **end users / coding agents** (in the package) | The **full reference**: requirements, configuration + every `OPTIONS` key, run, validate (`check`), workers, enqueue + params, scheduling, retrieving results, deployment, adopting an existing DB. Ships inside the installed package — discoverable from a project's venv. The **in-package / agent** canonical; mirror its facts into the site below.                                                    |
+| `django_absurd/AGENTS.md`          | **end users / coding agents** (in the package) | The **full, standalone reference**, opening with a **What's here** map: quickstart, tasks, workflows, cron jobs, workers, cleanup, monitoring, testing, configuration (every `OPTIONS` key, `check` IDs, exceptions), database setup. Ships inside the installed package — discoverable from a project's venv. The **in-package / agent** canonical; mirror its facts into the site below.                  |
 | `docs/web/` (Zensical site)        | **end users** (public docs site)               | The public **documentation site**: `docs/web/*.md` → built to `site/` (PR #30 / GitHub Pages). Navigable pages — **Home / Tasks / Workflows / Cron Jobs / Workers / Cleanup / Monitoring / Testing / Configuration** — presenting AGENTS.md's material for humans (may add examples/links; must not contradict it). On a user-facing change, update the relevant page **and** the `nav` in `zensical.toml`. |
 | `examples/README.md` + `examples/` | runnable demo                                  | A working dockerized nanodjango project (`app.py`). Keep the **flow accurate**: `Dockerfile` CMD, `compose.yaml`, `app.py` (config / task / views / admin), and the "Run it" steps must match real behavior.                                                                                                                                                                                                |
 | `CLAUDE.md`                        | **contributors / coding agents**               | Project **maintenance** only: naming, imports, testing conventions, runtime floor (Django / Python), tooling. NOT how-to — it _references_ `AGENTS.md` for usage/integration and must not duplicate it. Changes on convention / tooling / test-setup / runtime shifts (a different trigger from the user docs above; only the runtime floor is shared).                                                     |
 | `docs/specs/`, `docs/plans/`       | design history                                 | NOT user docs. Design intent / decisions. Leave to `capture-why` / `archive-specs`; don't treat as the place to document features.                                                                                                                                                                                                                                                                          |
+
+## House style — both docs homes
+
+Applies to `AGENTS.md` and every `docs/web/` page; a new section must follow it.
+
+1. **Example first.** Every concept heading opens with a code block ≤10 lines — nothing
+   between the heading and the code.
+2. **Then ≤3 sentences.** Prose explains only what the example cannot show. Never
+   restate code in English.
+3. **One example per concept.** On the site, sync/async twins collapse into `=== "Sync"`
+   / `=== "Async"` tabs. `AGENTS.md` has no tabs, so it gets one example plus a one-line
+   note on the difference.
+4. **Opener ≤2 sentences**, then straight into the first concept.
+5. **Cut internals** — anything the reader never types or reads back: job-name
+   namespacing schemes, wrapper mechanics beyond what shows in the admin, "mirrors the
+   SDK's signatures" tours, which module a logger child comes from.
+6. **Admonitions only for damage** — data loss or destructive commands. The site has
+   `!!!` / `???`; `AGENTS.md` has neither, so a warning there is bold prose.
+7. **Django surface before Absurd-specifics.** Where a page covers both, the plain
+   Django API comes first and finishes before any django-absurd-only surface starts — a
+   reader who only needs Django's API can stop partway down having missed nothing.
+
+**Caveat tiers.** Length decides location, not topic:
+
+| Tier | Test                                  | Where                                                       |
+| ---- | ------------------------------------- | ----------------------------------------------------------- |
+| 1    | one line, belongs to one concept      | bullet directly under that concept                          |
+| 2    | page-wide, owned by no single concept | short bullet list at the bottom                             |
+| 3    | needs paragraphs                      | not a caveat — promote to a concept with an example, or cut |
+
+Hard cap: more than two lines and it cannot be a bullet → promote or delete. Most
+convoluted blocks are concepts wearing a warning costume, and a page ending in a
+warnings dump reads unfinished.
+
+**Sizing.** Measure in tokens, not lines — a pass that adds facts while cutting prose
+barely moves the line count. Two things that look like savings and are not: converting a
+table into an example is token-neutral (do it for the form — an agent copies an example
+and translates a table — never for the size), and replacing embedded code with prose
+plus links can come out **larger** than the code it replaced, while also costing
+AGENTS.md its standalone property. Real reduction comes from deleting content, not
+reshaping it; a light prose-compression pass over already-tight prose buys under 1%, so
+don't spend one.
 
 ## When to act
 
@@ -55,17 +97,27 @@ A change triggers a doc pass if it touches any of:
 1. **README.md** — does the quickstart still reflect the happy path? If a step changed
    (e.g. a command became optional), fix it. If you're tempted to _add_ explanation, put
    it in AGENTS.md and link instead.
-2. **AGENTS.md** — update the relevant section (Configure / Run / Validate / Enqueue /
-   Workers / Scheduling / Results / Deployment / Adopting). This is where completeness
-   lives.
+2. **AGENTS.md** — update the relevant section (Tasks / Workflows / Cron jobs / Workers
+   / Cleanup / Monitoring / Testing / Configuration / Database setup). This is where
+   completeness lives, and it must **stand alone**: it ships inside the installed
+   package, so every fact a user needs is in the file. Mention that the docs site
+   exists; never let it be the only place a fact lives. Three rules a change must
+   respect:
+   - **The [house style](#house-style--both-docs-homes) above**, the same one the site
+     follows: concept heading → code block → ≤3 sentences → tier-1 bullets.
+   - **No internals.** No maintainer rationale, no repo-internal paths (`tests/…`), no
+     column layouts or wrapper mechanics — that reasoning belongs in `docs/WHY.md` (step
+     6). Document what a user types or reads back, nothing else.
+   - **Keep the map and the anchors true.** A new `##` section needs a row in the
+     **What's here** table at the top of the file; a renamed heading needs every in-file
+     `#anchor` link repointed (`grep -oE "\(#[a-z0-9-]+\)"` over the file).
 3. **docs/web/ (site)** — update the matching page (`tasks.md` / `workflows.md` /
    `cron-jobs.md` / `workers.md` / `cleanup.md` / `monitoring.md` / `testing.md` /
    `configuration.md`, or `index.md` for the quickstart) so the site tracks AGENTS.md.
-   Every page is **example-first** — see
-   `docs/specs/2026-08-08-docs-howto-rewrite-design.md` for the house style a new
-   section must follow. A new top-level topic also needs a `nav` entry in
-   `zensical.toml`. Build to confirm: `uvx zensical build` (expect "No issues found");
-   the output `site/` is gitignored.
+   Every page is **example-first** — a new section follows the
+   [house style](#house-style--both-docs-homes) above. A new top-level topic also needs
+   a `nav` entry in `zensical.toml`. Build to confirm: `uvx zensical build` (expect "No
+   issues found"); the output `site/` is gitignored.
 4. **examples/** — always check the example when the run flow or a demonstrated
    capability changes. Update `examples/README.md` AND the runnable bits it documents
    (`Dockerfile` CMD, `compose.yaml`, `app.py`), kept to the simplest happy path. If the
