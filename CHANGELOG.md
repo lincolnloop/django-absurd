@@ -3,6 +3,50 @@ Never `git cliff -o`: it discards every hand edit, and no regeneration can repro
 
 # Changelog
 
+## [0.1.0a6](https://github.com/lincolnloop/django-absurd/compare/v0.1.0a5...v0.1.0a6) - 2026-08-12
+
+**Start from an empty database.** The Absurd migrations were reset to a single 0.5.0
+install ([#169](https://github.com/lincolnloop/django-absurd/pull/169)), so there is no
+upgrade path from an earlier alpha — drop your database and migrate from scratch.
+
+### Breaking changes
+
+- Regenerate the schema as a single 0.5.0 install
+  ([#169](https://github.com/lincolnloop/django-absurd/pull/169))
+- **pg_cron:** Validate schedule grammar in Python, not by probing the database
+  ([#163](https://github.com/lincolnloop/django-absurd/pull/163))
+- One worker mode, with working concurrency
+  ([#156](https://github.com/lincolnloop/django-absurd/pull/156))
+- Replace absurd_default_params and absurd_spawn_params with absurd_params
+  ([#123](https://github.com/lincolnloop/django-absurd/pull/123))
+
+### Features
+
+- Move to Absurd 0.5.0 ([#167](https://github.com/lincolnloop/django-absurd/pull/167))
+- **pg_cron:** Report a scheduler app with no backend
+  ([#164](https://github.com/lincolnloop/django-absurd/pull/164))
+- Log steps, replays, sleeps and event waits
+  ([#154](https://github.com/lincolnloop/django-absurd/pull/154))
+- Log Absurd's own lifecycle on django_absurd loggers
+  ([#146](https://github.com/lincolnloop/django-absurd/pull/146))
+- Send Django's task signals from AbsurdBackend
+  ([#143](https://github.com/lincolnloop/django-absurd/pull/143))
+- Support run_after by deferring on a durable sleep
+  ([#135](https://github.com/lincolnloop/django-absurd/pull/135))
+- **test:** `dj_absurd` fixture — freeze durable time, drain, emit, read
+  ([#134](https://github.com/lincolnloop/django-absurd/pull/134))
+- **pg_cron:** Schedule across databases, so Absurd need not live in
+  `cron.database_name` ([#107](https://github.com/lincolnloop/django-absurd/pull/107))
+
+### Documentation
+
+- Rewrite the documentation site as an example-first how-to
+  ([#161](https://github.com/lincolnloop/django-absurd/pull/161))
+- Stop naming a pg_cron cleanup job that does not exist
+  ([#141](https://github.com/lincolnloop/django-absurd/pull/141))
+- Favour uv install with prerelease flag
+  ([#105](https://github.com/lincolnloop/django-absurd/pull/105))
+
 ## [0.1.0a5](https://github.com/lincolnloop/django-absurd/compare/v0.1.0a4...v0.1.0a5) - 2026-07-23
 
 ### Breaking changes
