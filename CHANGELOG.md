@@ -5,9 +5,12 @@ Never `git cliff -o`: it discards every hand edit, and no regeneration can repro
 
 ## [0.1.0a6](https://github.com/lincolnloop/django-absurd/compare/v0.1.0a5...v0.1.0a6) - 2026-08-12
 
-**Start from an empty database.** The Absurd migrations were reset to a single 0.5.0
-install ([#169](https://github.com/lincolnloop/django-absurd/pull/169)), so there is no
-upgrade path from an earlier alpha — drop your database and migrate from scratch.
+**Start from an empty database.** Absurd 0.5.0 no longer depends on a UUID extension.
+Carrying that forward would have meant a migration that creates the extension purely to
+tear it down again, so — nothing being released yet — the migrations were reset to a
+single 0.5.0 install instead
+([#169](https://github.com/lincolnloop/django-absurd/pull/169)). There is no upgrade
+path from an earlier alpha: drop your database and migrate from scratch.
 
 ### Breaking changes
 
