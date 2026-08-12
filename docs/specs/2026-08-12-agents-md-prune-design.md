@@ -8,9 +8,9 @@ Goal: cut maintainer internals, fold duplicated sections, backfill facts the sit
 in the rewrite. Carry MORE facts than before while getting smaller.
 
 Measured outcome (tiktoken `o200k_base`, a proxy — Anthropic publishes no tokenizer):
-16,492 → 14,703 tokens, −10.8%, with 16 facts added. Line count barely moved (1327 →
-~1310): the file got denser, not shorter. A line target was the wrong instrument, and
-~900 lines was never reachable alongside standalone — see Size below.
+16,492 → 14,562 tokens, −11.7%, with 16 facts added. Line count barely moved: the file
+got denser, not shorter. A line target was the wrong instrument, and ~900 lines was
+never reachable alongside standalone — see Size below.
 
 ## Constraints
 
@@ -80,10 +80,27 @@ Density comes from cutting content, not from cutting words. Measured on this fil
   (+334, the ORM performance rule and non-default-`DATABASE` admin caveat the site cut).
   Deployment/database setup has no site page at all.
 
-Cutting further means dropping user-facing facts. The costed levers, if ever wanted:
-Testing's snapshot field tables (~1,200, at the price of sending a venv reader to
-`django_absurd/test.py`), the Docker block (~250, trades standalone), admin-authoring
-bullets (~200).
+Three further cuts were then tried, and the estimates for them were wrong. Recorded so
+nobody re-costs them the same way:
+
+| Attempt                                                                   | Estimated | Actual   | Kept?                          |
+| ------------------------------------------------------------------------- | --------- | -------- | ------------------------------ |
+| Snapshot field tables → annotated example attribute reads                 | −1,200    | **−118** | yes, for the form not the size |
+| Embedded pg_cron `Dockerfile` + `compose.yaml` → prose and two repo links | −250      | **+18**  | **no — reverted**              |
+| Admin-authoring caveats, 5 bullets → 3                                    | −200      | **−23**  | yes                            |
+
+What the misses teach:
+
+- **A table converted to an example is token-neutral.** The −1,200 assumed deleting the
+  field documentation; converting it instead keeps every field, which is the right call
+  for an agent (it copies an example, it translates a table) but buys nothing in size.
+  Judge such a change on form, not on tokens.
+- **Prose plus links can be larger than the code it replaces.** Two Markdown link
+  targets and the sentences needed to describe a Dockerfile outweighed the eight-line
+  Dockerfile and compose stanza — and lost standalone at the same time. Reverted.
+  Embedded code that a reader would otherwise have to be told about in words is already
+  the compact form.
+- Real size reduction from here means dropping user-facing facts, not reshaping them.
 
 ## Cut — internals and maintainer material
 
