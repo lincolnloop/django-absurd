@@ -179,7 +179,7 @@ class AsyncAbsurdTaskContext:
     checkpoint. Events follow the same shape: awaiting one logs on suspension and
     received on the attempt that returns the payload; emitting one logs once it has
     been recorded, past tense. ``await_task_result`` is deliberately absent — see
-    ``AGENTS.md``'s "await_task_result is not provided".
+    ``AGENTS.md``'s "Context API".
     """
 
     absurd_ctx: AsyncTaskContext
