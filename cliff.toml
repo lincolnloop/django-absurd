@@ -1,0 +1,116 @@
+# git-cliff configuration — https://git-cliff.org/docs/configuration
+#
+# Renders CHANGELOG.md from the conventional-commit history. The audience is people
+# who DEPEND on django-absurd, so anything that only moves dev/CI tooling is dropped
+# (see commit_parsers below).
+#
+# The checked-in CHANGELOG.md carries released sections only — never an "Unreleased"
+# heading. A release cuts a range that stops at the last tag (e.g.
+# `git-cliff <last-tag-commit-sha>`, since git-cliff's range syntax needs a resolved
+# commit, not a bare tag name or an unbounded "..<tag>"); the "Unreleased" section is
+# added at release time via `git cliff --unreleased --tag <version> --prepend
+# CHANGELOG.md`, never generated into the backfill or left sitting in the file.
+#
+# Prepending is the ONLY way CHANGELOG.md may be written. Regenerating it (`-o`,
+# `--output`, or a redirect) would discard every hand edit, and no regeneration can
+# reproduce the 0.1.0a2, 0.1.0a3 and 0.1.0a4 sections: they predate conventional
+# commits and exist only as hand-written text. See .claude/skills/release/SKILL.md.
+
+[changelog]
+body = """
+{% if version -%}
+{% if previous.version -%}
+## [{{ version | trim_start_matches(pat="v") }}](https://github.com/{{ remote.github.owner }}/{{ remote.github.repo }}/compare/{{ previous.version }}...{{ version }}) - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else -%}
+## [{{ version | trim_start_matches(pat="v") }}](https://github.com/{{ remote.github.owner }}/{{ remote.github.repo }}/releases/tag/{{ version }}) - {{ timestamp | date(format="%Y-%m-%d") }}
+{% endif -%}
+{% else -%}
+## Unreleased
+{% endif -%}
+
+{% set breaking = commits | filter(attribute="breaking", value=true) -%}
+{% if breaking | length > 0 %}
+### Breaking changes
+{% for commit in breaking %}
+- {% if commit.scope %}**{{ commit.scope }}:** {% endif %}{{ commit.message | upper_first }}
+{%- endfor %}
+{% endif -%}
+
+{% for group, group_commits in commits | filter(attribute="breaking", value=false) | group_by(attribute="group") %}
+### {{ group | split(pat=" -- ") | last }}
+{% for commit in group_commits %}
+- {% if commit.scope %}**{{ commit.scope }}:** {% endif %}{{ commit.message | upper_first }}
+{%- endfor %}
+{% endfor %}
+"""
+footer = ""
+# Wrapped exactly as prettier wraps it in CHANGELOG.md (printWidth 88, proseWrap
+# always) — and it must stay that way. `--prepend` re-renders this header and only
+# drops it again when the top of the target file matches it byte for byte; re-wrap
+# one copy without the other and every release prepends a second "# Changelog"
+# block, right where the release-notes slice would swallow it.
+header = """
+<!-- Prepend-only. Reword or re-wrap this header and cliff.toml's must be changed to match byte for byte, or every --prepend duplicates it.
+Never `git cliff -o`: it discards every hand edit, and no regeneration can reproduce the 0.1.0a2, 0.1.0a3 and 0.1.0a4 sections — they predate conventional commits and exist only as hand-written text. -->
+
+# Changelog
+
+"""
+trim = true
+
+[git]
+# Kept types carry a numeric sort prefix; the template strips everything up to
+# " -- " before printing the heading. Breaking changes are a template-level
+# section (git-cliff sets commit.breaking from "!" and the BREAKING CHANGE
+# footer), rendered above these and excluded from them. Skipping happens BEFORE the
+# template runs, so a breaking commit of a skipped type (`refactor!:`, `chore!:`)
+# takes its breaking change down with it — breaking changes are titled `feat!`/`fix!`
+# (CLAUDE.md, "Changelog").
+commit_parsers = [
+  # Parsers match in order and the first hit wins, so this must sit ahead of the
+  # type rules below: a ci-scoped commit is CI work borrowing another type
+  # (fix(ci): ..., feat(ci): ...) and must be skipped regardless of that type, same
+  # as the ci type skip further down. Checking scope only after `^fix`/`^feat` had
+  # already claimed the commit first.
+  {field = "scope", pattern = "^ci$", skip = true},
+  {message = "^feat", group = "0 -- Features"},
+  {message = "^fix", group = "1 -- Bug fixes"},
+  # Its own section: folding a revert into Bug fixes would misreport what happened.
+  # `revert` is in the pr-title workflow's default allowed types, so without this it
+  # would be dropped silently — a release that takes a shipped feature back away
+  # would say nothing about it.
+  {message = "^revert", group = "2 -- Reverts"},
+  {message = "^perf", group = "3 -- Performance"},
+  {message = "^docs", group = "4 -- Documentation"},
+  {message = "^build", group = "5 -- Requirements"},
+  # chore covers every Renovate commit: renovate.json pins semanticCommitType to
+  # chore, and rangeStrategy=update-lockfile means it never moves a runtime floor.
+  # A user-visible dependency change is authored by hand as build:.
+  {message = "^chore", skip = true},
+  {message = "^ci", skip = true},
+  {message = "^test", skip = true},
+  {message = "^style", skip = true},
+  {message = "^refactor", skip = true},
+]
+# Squash-merge subjects already end in "(#N)". Turn that number into the PR link
+# instead of rendering it a second time.
+commit_preprocessors = [
+  {pattern = '\(#(\d+)\)', replace = "([#${1}](https://github.com/lincolnloop/django-absurd/pull/${1}))"},
+]
+conventional_commits = true
+filter_commits = true
+filter_unconventional = true
+sort_commits = "newest"
+# Anchored: unanchored "v[0-9]*" matches any tag merely containing a "v" (the "*"
+# permits zero digits, so a bare "v" is a match anywhere in the string).
+tag_pattern = "^v[0-9]"
+
+[remote]
+# String-substitution only. Without this, merely setting owner/repo below makes
+# git-cliff call the GitHub REST API for every commit at generation time, which
+# needs a token and breaks offline generation.
+offline = true
+
+[remote.github]
+owner = "lincolnloop"
+repo = "django-absurd"

@@ -22,6 +22,7 @@ pytestmark = pytest.mark.packaging
 # CLAUDE.md, dev configs) would be a leak. (.gitignore is force-added by hatchling.)
 EXPECTED_SDIST_TOP = {
     ".gitignore",
+    "CHANGELOG.md",
     "LICENSE",
     "PKG-INFO",
     "README.md",
