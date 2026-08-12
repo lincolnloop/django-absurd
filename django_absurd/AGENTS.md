@@ -594,21 +594,18 @@ author their own (`Source.ADMIN`) in two steps:
    immediately (un)schedules its pg_cron job.
 
 - `name` is immutable — it forms the job identity — and the resolved options are frozen
-  at create, so later decorator edits do not change existing rows.
-- The cron expression is validated at save time against the same grammar `check` applies
-  to settings schedules, with no database round-trip.
-- `max_attempts` defaults to `5` and must be `>= 1`; clearing it stores NULL, which
-  Absurd treats as **retry forever** — a deliberate opt-in, so a mistyped schedule
-  cannot loop unbounded by accident.
+  at create, so later decorator edits do not change existing rows. The cron expression
+  is validated at save time against the grammar `check` applies to settings schedules,
+  with no database round-trip. `max_attempts` defaults to `5` and must be `>= 1`;
+  clearing it stores NULL, which Absurd treats as **retry forever**.
 - The row is the source of truth: editing `args`, `kwargs`, or options takes effect on
   the next firing without touching `cron.job`, and any write that persists the row keeps
   pg_cron in step. Writes that bypass `.save()` — a data migration, `bulk_create`,
   `QuerySet.update`, raw SQL — emit on the next reconcile.
 - `loaddata` bypasses the router, so pass `--database=<alias>` when Absurd is on a
-  non-default database. A write forced onto a different database raises
-  `NotImplementedError`: schedules live only on the Absurd database.
-- A settings schedule and an admin schedule may share a name; they are distinct,
-  source-namespaced jobs.
+  non-default database; a write forced onto a different database raises
+  `NotImplementedError`, since schedules live only on the Absurd database. A settings
+  schedule and an admin schedule may share a name — distinct, source-namespaced jobs.
 
 #### Test databases
 
@@ -1034,24 +1031,23 @@ leaves a test database ready, but a queue a single test declares by overriding `
 has no table, so call `sync_queues()` first or `drain()` raises
 `QueueNotProvisionedError`. An undeclared queue raises `QueueNotDeclaredError`.
 
-| `RunSnapshot` field | Meaning                                                                          |
-| ------------------- | -------------------------------------------------------------------------------- |
-| `queue`, `task_id`  | Which task this run belongs to                                                   |
-| `run_id`            | This run's id — the same value appears twice for a re-armed `await_event` waiter |
-| `task_name`         | Dotted task path                                                                 |
-| `args`, `kwargs`    | Decoded from the enqueued params                                                 |
-| `attempt`           | 1-based attempt number                                                           |
-| `state`             | See the state vocabulary below                                                   |
-| `result`            | The task's return value, once `completed`                                        |
-| `failure`           | `{"message": str, "name"?: str, "traceback"?: str}`, once `failed`               |
+```python
+(run,) = dj_absurd.drain()  # one RunSnapshot per run, in claim order
 
-| State       | Meaning                                                                                             |
-| ----------- | --------------------------------------------------------------------------------------------------- |
-| `pending`   | Claimable, not yet run                                                                              |
-| `sleeping`  | Suspended — a durable [sleep](#sleep), an `await_event` wait, or a retry backoff, indistinguishable |
-| `completed` | Finished successfully                                                                               |
-| `failed`    | Raised, and out of retries                                                                          |
-| `cancelled` | Cancelled before or during execution                                                                |
+run.queue, run.task_id  # which task this run belongs to
+run.run_id  # this run's id; the same value twice for a re-armed await_event waiter
+run.task_name  # dotted task path
+run.args, run.kwargs  # decoded from the enqueued params
+run.attempt  # 1-based
+run.state  # pending | sleeping | completed | failed | cancelled
+run.result  # the return value, once completed
+run.failure  # {"message": str, "name"?: str, "traceback"?: str}, once failed
+```
+
+- `pending` is claimable and not yet run; `completed` finished; `failed` raised and is
+  out of retries; `cancelled` was cancelled before or during execution. **`sleeping`
+  covers a durable [sleep](#sleep), an `await_event` wait, and a retry backoff alike** —
+  indistinguishable from one snapshot.
 
 **`get_result()`** returns a `TaskSnapshot` or raises `TaskNotFoundError`. Unlike
 [`my_task.get_result()`](#read-a-result) it reads Absurd's own states directly —
@@ -1060,19 +1056,17 @@ round-trip.
 
 ```python
 result = reports_task.enqueue()  # id is "reports:<uuid>"
-dj_absurd.get_result(result.id)  # queries the "reports" queue
-```
+snapshot = dj_absurd.get_result(result.id)  # queries the "reports" queue
 
-| `TaskSnapshot` field | Meaning                                           |
-| -------------------- | ------------------------------------------------- |
-| `queue`, `task_id`   | Which task this is (no queue prefix on `task_id`) |
-| `task_name`          | Dotted task path                                  |
-| `args`, `kwargs`     | Decoded from the enqueued params                  |
-| `state`              | See the state vocabulary above                    |
-| `attempts`           | Attempts CREATED, not completed — see below       |
-| `enqueued_at`        | When `enqueue()` ran                              |
-| `result`             | The task's return value, once `completed`         |
-| `failure`            | `None` except on a terminal failure — see below   |
+snapshot.queue, snapshot.task_id  # no queue prefix on task_id
+snapshot.task_name
+snapshot.args, snapshot.kwargs
+snapshot.state  # same vocabulary as a RunSnapshot
+snapshot.attempts  # attempts CREATED, not completed
+snapshot.enqueued_at  # when enqueue() ran
+snapshot.result  # once completed
+snapshot.failure  # None except on a terminal failure
+```
 
 - `task_id` takes a bare uuid or Django's own prefixed `TaskResult.id`. The prefix wins
   over `queue`'s default; a `queue=` that disagrees with it raises
