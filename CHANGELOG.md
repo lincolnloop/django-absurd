@@ -8,13 +8,13 @@ Never `git cliff -o`: it discards every hand edit, and no regeneration can repro
 **Start from an empty database.** Absurd 0.5.0 no longer depends on a UUID extension.
 Carrying that forward would have meant a migration that creates the extension purely to
 tear it down again, so — nothing being released yet — the migrations were reset to a
-clean 0.5.0 install instead
+clean migration starting at 0.5.0 instead
 ([#169](https://github.com/lincolnloop/django-absurd/pull/169)). There is no upgrade
 path from an earlier alpha: drop your database and migrate from scratch.
 
 ### Breaking changes
 
-- Regenerate the schema as a clean 0.5.0 install
+- Regenerate the schema as a clean migration starting at 0.5.0
   ([#169](https://github.com/lincolnloop/django-absurd/pull/169))
 - **pg_cron:** Validate schedule grammar in Python, not by probing the database
   ([#163](https://github.com/lincolnloop/django-absurd/pull/163))
