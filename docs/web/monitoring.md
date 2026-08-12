@@ -53,10 +53,19 @@ Task.objects.filter(queue="reports", state="failed")
 Tasks, Runs, Checkpoints, Events, Waits, and the Queues catalog are public models,
 spanning every queue.
 
+- **Filter by `queue=` whenever you can.** The views carry no cross-queue index, so
+  `queue=` prunes to a single per-queue table, while an unfiltered query — ordering by
+  `enqueue_at`, or filtering only on `state` — scans every queue's table.
+- They are read-only: `save()` / `delete()` raise `QueueReadOnlyError`.
+
 ## Browse in the admin
 
 With `django.contrib.admin` installed, django-absurd registers **read-only** admin pages
 for the same models, filterable by queue. Turn them off with
 [`ENABLE_ADMIN`](configuration.md#backend-options).
+
+- **Non-default [`DATABASE`](configuration.md#backend-options):** these models read from
+  the Absurd database, but Django's own `LogEntry`, session, and `ContentType` tables
+  must still exist in `"default"` — run `migrate` there too.
 
 → [Django: the admin site](https://docs.djangoproject.com/en/6.0/ref/contrib/admin/).
