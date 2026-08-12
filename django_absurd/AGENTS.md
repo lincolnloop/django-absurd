@@ -2,39 +2,39 @@
 
 django-absurd plugs [Absurd](https://earendil-works.github.io/absurd/), a
 Postgres-native workflow engine, into Django's
-[Tasks framework](https://docs.djangoproject.com/en/6.0/topics/tasks/). It reuses
-Django's database connection and ships Absurd's schema as Django migrations — no
-separate broker.
+[Tasks framework](https://docs.djangoproject.com/en/6.0/topics/tasks/), reusing Django's
+database connection and shipping Absurd's schema as Django migrations — no separate
+broker.
 
-This file ships inside the installed package (`site-packages/django_absurd/AGENTS.md`)
-and is complete on its own. The same material is published with navigation at
-<https://lincolnloop.github.io/django-absurd/>, and
-[`examples/`](https://github.com/lincolnloop/django-absurd/tree/main/examples) holds
-three single-file [nanodjango](https://github.com/radiac/nanodjango) demos, each
-`docker compose up`: `web` (enqueue + result), `beat`, and `pg_cron`.
+Ships inside the installed package (`site-packages/django_absurd/AGENTS.md`), complete
+on its own. Same material with navigation:
+<https://lincolnloop.github.io/django-absurd/>. Runnable demos:
+[`examples/`](https://github.com/lincolnloop/django-absurd/tree/main/examples) — three
+single-file [nanodjango](https://github.com/radiac/nanodjango) projects, each
+`docker compose up`: `web` (enqueue + result), `beat`, `pg_cron`.
 
 ## What's here
 
-| Section                         | Go here for                                                           |
-| ------------------------------- | --------------------------------------------------------------------- |
-| [Requirements](#requirements)   | Python, Django, and driver versions                                   |
-| [Quickstart](#quickstart)       | a minimal working setup, start to finish                              |
-| [Tasks](#tasks)                 | enqueue, read a result, run later, retries, idempotency keys          |
-| [Workflows](#workflows)         | checkpointed steps, durable sleep, events, heartbeat                  |
-| [Cron jobs](#cron-jobs)         | recurring schedules — beat or pg_cron — and operator setup            |
-| [Workers](#workers)             | running a worker, every flag, runs and retries                        |
-| [Cleanup](#cleanup)             | retention, scheduled cleanup, dropping every queue                    |
-| [Monitoring](#monitoring)       | logging, querying queue state, the admin                              |
-| [Testing](#testing)             | the `dj_absurd` fixture, durable time, automatic cleanup              |
-| [Configuration](#configuration) | every setting and `OPTIONS` key, `check` IDs, exception types         |
-| [Deployment](#deployment)       | privileges, delivery guarantees, adopting an existing Absurd database |
+| Section                           | Go here for                                                         |
+| --------------------------------- | ------------------------------------------------------------------- |
+| [Requirements](#requirements)     | Python, Django, and driver versions                                 |
+| [Quickstart](#quickstart)         | a minimal working setup, start to finish                            |
+| [Tasks](#tasks)                   | enqueue, read a result, run later, retries, idempotency keys        |
+| [Workflows](#workflows)           | checkpointed steps, durable sleep, events, heartbeat                |
+| [Cron jobs](#cron-jobs)           | recurring schedules — beat or pg_cron — and operator setup          |
+| [Workers](#workers)               | running a worker, every flag, runs and retries                      |
+| [Cleanup](#cleanup)               | retention, scheduled cleanup, dropping every queue                  |
+| [Monitoring](#monitoring)         | logging, querying queue state, the admin                            |
+| [Testing](#testing)               | the `dj_absurd` fixture, durable time, automatic cleanup            |
+| [Configuration](#configuration)   | every setting and `OPTIONS` key, `check` IDs, exception types       |
+| [Database setup](#database-setup) | the privilege `migrate` needs, adopting an existing Absurd database |
 
 ## Requirements
 
 - **Python 3.12+**, **Django 6.0+**.
 - **PostgreSQL through the psycopg (v3) Django backend** —
-  `django.db.backends.postgresql` with psycopg3 installed. The Absurd SDK reuses
-  Django's connection; psycopg2 will not work, and the package asserts this at runtime.
+  `django.db.backends.postgresql` with psycopg3 installed. The SDK reuses Django's
+  connection, so psycopg2 will not work; the package asserts this at runtime.
 
 ## Quickstart
 
@@ -68,9 +68,8 @@ def add(a: int, b: int) -> int:
 result = add.enqueue(2, 3)  # a worker runs it; read it back with add.get_result(result.id)
 ```
 
-That is the whole loop. The `"default"` queue is declared for you; see
-[Configuration](#configuration) to declare more, set per-queue policy, or move Absurd to
-another database.
+The whole loop. `"default"` is declared for you; see [Configuration](#configuration) to
+add queues, set per-queue policy, or move Absurd to another database.
 
 ## Tasks
 
@@ -88,8 +87,8 @@ result = send_report.enqueue(42)
 ```
 
 A [`@task`](https://docs.djangoproject.com/en/6.0/topics/tasks/) lives in any importable
-module — there is no `tasks.py` requirement, because tasks resolve by import path. Tasks
-may be sync (`def`) or async (`async def`), and one worker runs both.
+module: tasks resolve by import path, so no `tasks.py` is required. Tasks may be sync
+(`def`) or async (`async def`); one worker runs both.
 
 - `async def` enqueues with `await send_report.aenqueue(42)`.
 - Enqueuing rides the surrounding transaction, so an `atomic()` rollback drops the task.
@@ -111,7 +110,7 @@ await send_report.aget_result(result.id)  # async variant
 ```
 
 Every id has the shape `"<queue>:<uuid>"`, including `context.task_result.id` inside a
-`takes_context` task, so either can go straight back to `get_result`.
+`takes_context` task — either goes straight back to `get_result`.
 
 → [Django: task results](https://docs.djangoproject.com/en/6.0/ref/tasks/#task-results).
 
@@ -123,21 +122,19 @@ send_report.using(run_after=timezone.now() + dt.timedelta(hours=1)).enqueue(42)
 
 Django's
 [`run_after`](https://docs.djangoproject.com/en/6.0/ref/tasks/#django.tasks.Task.run_after)
-defers one enqueue and takes a timezone-aware `datetime`. For a repeating schedule use
-[Cron jobs](#cron-jobs) instead.
+defers one enqueue, taking a timezone-aware `datetime`. For a repeating schedule use
+[Cron jobs](#cron-jobs).
 
-- Absurd's spawn has no `available_at`, so a second row named
-  `<your task's path>:run_after` waits and then enqueues yours. Both appear in the
-  admin, filterable by that name.
+- Absurd's spawn has no `available_at`, so a second row, `<your task's path>:run_after`,
+  waits then enqueues yours. Both appear in the admin, filterable by that name.
 - The id you got back keeps working: `READY` while the wrapper waits, then your task's
-  own status and return value. A wrapper that cannot launch stays `READY` with no
-  visible error until it exhausts its attempts, then `FAILED`.
+  own status and return value. A wrapper that cannot launch stays `READY`, no visible
+  error, until it exhausts its attempts — then `FAILED`.
 
 ### Retries and spawn options
 
 Absurd's spawn options attach through one factory, `absurd_params`, at two call sites.
-It is exported from the package root; its home module, `django_absurd.params`, also
-works.
+Exported from the package root; its home module, `django_absurd.params`, also works.
 
 ```python
 from django.tasks import task
@@ -231,20 +228,19 @@ named **event** arrives, so a retry or resume never redoes completed work.
 
 → [Absurd: Concepts](https://earendil-works.github.io/absurd/concepts/).
 
-Reach the primitives with an accessor called **inside** a running task. Pick it by task
-kind; each returns one concrete, fully-typed context, so there is no cast and no union
-to narrow:
+Reach the primitives with an accessor called **inside** a running task. Pick by task
+kind; each returns one concrete, fully-typed context — no cast, no union to narrow:
 
 - **Sync task → `get_absurd_context()`** returns `django_absurd.AbsurdTaskContext`,
-  mirroring the SDK's sync signatures. It also carries `run_step`.
+  mirroring the SDK's sync signatures, plus `run_step`.
 - **Async task → `aget_absurd_context()`** returns
   `django_absurd.AsyncAbsurdTaskContext`, whose methods are awaited. `.absurd_ctx`
   reaches the raw SDK context for anything the wrapper doesn't mirror.
 
 Neither needs Django's own
 [`takes_context`](https://docs.djangoproject.com/en/6.0/ref/tasks/#task-context) — add
-that only if you also want `context.task_result` or `.attempt`. Called outside a running
-Absurd task, either accessor raises `RuntimeError`.
+that only for `context.task_result` or `.attempt`. Outside a running Absurd task, either
+accessor raises `RuntimeError`.
 
 ### Steps
 
@@ -268,8 +264,8 @@ replay.
   the task and add a new one instead.
 - Results go through `json.dumps`: no sets, custom classes, or `datetime`, and a `tuple`
   comes back a `list`.
-- On the async context, `fn` must return an awaitable — an `async def`, not a sync
-  lambda, which raises `TypeError`:
+- On the async context, `fn` must return an awaitable — an `async def`; a sync lambda
+  raises `TypeError`:
 
   ```python
   @task
@@ -301,7 +297,7 @@ def process_order(order_id: int) -> None:
         return ship(order_id)
 ```
 
-A decorator wrapping `step`, for cases where a lambda is awkward. Sync only.
+Wraps `step` where a lambda is awkward. Sync only.
 
 #### Long steps
 
@@ -317,7 +313,7 @@ context.step("process", process)
 
 A run must make progress within `claim_timeout` seconds (default `120`) or it is
 re-claimed and replayed from its last checkpoint. Keep steps short, or heartbeat;
-`heartbeat(seconds)` extends by a specific amount.
+`heartbeat(seconds)` extends by a set amount.
 
 ### Sleep
 
@@ -333,12 +329,12 @@ def process_order(order_id: int) -> None:
 The worker wakes and resumes the task — no external scheduler.
 `sleep_until("wake-up", wake_at)` does the same against a fixed moment.
 
-- Sleeps are checkpointed steps, and their names share the namespace and counter with
+- Sleeps are checkpointed steps; their names share the namespace and counter with
   `step`, so they must be stable across replays too.
 - A wake-up is **not a retry**: the original run is re-claimed and `attempt` does not
   increment.
 - `sleep_until` takes a timezone-aware `datetime` or a Unix timestamp (`int`/`float`); a
-  naive `datetime` raises when compared against Absurd's timezone-aware clock.
+  naive `datetime` raises against Absurd's timezone-aware clock.
 
 → [Absurd: Concepts — Sleep](https://earendil-works.github.io/absurd/concepts/#sleep).
 
@@ -361,8 +357,8 @@ task's own queue, replay-safe — a re-emit after a retry is a no-op.
   like `"warehouse.packed:order-42"` targets exactly one waiter.
 - **Events are queue-scoped.** One emitted on queue X only wakes a waiter on queue X.
 - An event emitted long before its `await_event` can be swept by the queue's
-  `cleanup_ttl` first, and the waiter then never wakes. Keep the TTL generous relative
-  to how long a waiter might sleep.
+  `cleanup_ttl` first, and the waiter never wakes. Keep the TTL generous relative to how
+  long a waiter might sleep.
 
 → [Absurd: Concepts — Events](https://earendil-works.github.io/absurd/concepts/#events).
 
@@ -380,16 +376,16 @@ def warehouse_webhook(request, order):
     return HttpResponse(status=204)
 ```
 
-`context.emit_event` only reaches code running inside a task. The real signal that wakes
-a waiter — a webhook, a view, an API handler — is ordinary Django code, so it uses the
-top-level `django_absurd.emit_event` instead.
+`context.emit_event` only reaches code inside a task. The real signal that wakes a
+waiter — a webhook, a view, an API handler — is ordinary Django code, so it uses the
+top-level `django_absurd.emit_event`.
 
-- `queue` must name the queue the waiting task runs on. It is a queue name, not a
-  database alias.
+- `queue` must name the queue the waiting task runs on — a queue name, not a database
+  alias.
 - An undeclared queue raises `QueueNotDeclaredError`; a declared but unprovisioned one
   raises `QueueNotProvisionedError` naming `manage.py absurd_sync_queues`. See
   [Exceptions](#exceptions).
-- It is sync — wrap it in `sync_to_async` from an async view.
+- Sync — wrap it in `sync_to_async` from an async view.
 
 #### Timeout
 
@@ -414,8 +410,8 @@ def process_order(order_id: int) -> str:
 
 ### Context API
 
-Everything below is on both contexts; on the async one, `await` the methods. `headers`
-is a property, and `run_step` is sync-only.
+All of it is on both contexts; on the async one, `await` the methods. `headers` is a
+property, `run_step` sync-only.
 
 | Method / property                                       | What it does                                              |
 | ------------------------------------------------------- | --------------------------------------------------------- |
@@ -428,8 +424,8 @@ is a property, and `run_step` is sync-only.
 | `headers`                                               | Read-only mapping of the headers passed at enqueue time   |
 | `run_step([name])`                                      | Decorator wrapping `step`; derives the name from `fn`     |
 
-- There is no `await_task_result`. The SDK's version polls and heartbeats inside a step
-  rather than suspending, and is cross-queue only; use Django's
+- No `await_task_result`: the SDK's version polls and heartbeats inside a step rather
+  than suspending, and is cross-queue only. Use Django's
   [`get_result()` / `aget_result()`](#read-a-result) for a child task's result.
 - Checkpoints and waits are visible in the admin, inline under a task alongside its
   runs.
@@ -452,7 +448,7 @@ is a property, and `run_step` is sync-only.
 Run tasks on a recurring cadence. **Pick one scheduler** — application-side
 [beat](#application-side-beat), or Postgres-side [pg_cron](#postgres-side-pg_cron),
 selected by whether `"django_absurd.pg_cron"` is in `INSTALLED_APPS`. Both read the same
-`SCHEDULE`. Installing the pg_cron app makes `absurd_beat` and `absurd_worker --beat`
+`SCHEDULE`; installing the pg_cron app makes `absurd_beat` and `absurd_worker --beat`
 raise `CommandError`.
 
 → [Absurd's cron patterns](https://earendil-works.github.io/absurd/patterns/cron/).
@@ -510,12 +506,12 @@ python manage.py absurd_worker --beat   # or co-located with a worker
 Beat evaluates cron in-process and enqueues each task when its slot comes due; a
 [worker](#workers) then runs it like any other.
 
-- **Run exactly one beat process.** There is no leader election, and two beats each fire
-  every slot. Per-slot idempotency (a `cron:`-prefixed hash of name, expression, and
-  slot time, following the
-  [Absurd cron pattern](https://earendil-works.github.io/absurd/patterns/cron/))
+- **Run exactly one beat process.** No leader election, and two beats each fire every
+  slot. Per-slot idempotency — a `cron:`-prefixed hash of name, expression, and slot
+  time, following the
+  [Absurd cron pattern](https://earendil-works.github.io/absurd/patterns/cron/) —
   collapses duplicates from a brief overlap or a restart re-firing a slot, so each slot
-  fires at most once — but it does not replace single-instance supervision.
+  fires at most once. It does not replace single-instance supervision.
 - **Never backfills.** A slot that passes while beat is down is skipped; the next one
   proceeds on schedule.
 - Grammar is [croniter](https://pypi.org/project/croniter/): standard 5-field
@@ -539,10 +535,10 @@ INSTALLED_APPS = [
 python manage.py migrate
 ```
 
-Postgres fires the schedule directly, so no beat process runs. `migrate` reconciles
-`SCHEDULE` into [pg_cron](https://github.com/citusdata/pg_cron) jobs on `post_migrate`
-and your existing workers run the tasks — a settings-only change needs no new migration
-file, so "migrate on deploy" covers it. The extension itself is one-time
+Postgres fires the schedule directly — no beat process. `migrate` reconciles `SCHEDULE`
+into [pg_cron](https://github.com/citusdata/pg_cron) jobs on `post_migrate`, and your
+existing workers run the tasks; a settings-only change needs no new migration file, so
+"migrate on deploy" covers it. The extension itself is one-time
 [operator setup](#operator-setup).
 
 - **Grammar is pg_cron's own**, validated in Python by `manage.py check` for settings
@@ -562,13 +558,13 @@ file, so "migrate on deploy" covers it. The extension itself is one-time
   `post_migrate` reconcile before queue provisioning. `absurd.E013` if the app is
   installed with no `AbsurdBackend` configured, so schedules would save and never fire.
 
-pg_cron is a **cluster-wide** extension: only the database named by
+pg_cron is **cluster-wide**: only the database named by
 [`cron.database_name`](https://github.com/citusdata/pg_cron#configuring-pg_cron) may
 hold it, and yours probably is not it. django-absurd never installs the extension on the
 Absurd database and never touches `cron.*` there — it discovers that central database
-itself (`current_setting('cron.database_name')`) and schedules each job
+(`current_setting('cron.database_name')`) and schedules each job
 [cross-database](https://github.com/citusdata/pg_cron#cross-database-scheduling).
-Nothing to configure either way.
+Nothing to configure.
 
 #### Reconcile without migrating
 
@@ -577,7 +573,7 @@ python manage.py absurd_sync_crons
 ```
 
 The backstop for pipelines that skip `migrate` when no migration files changed. Reports
-synced and pruned counts, and exits non-zero on error.
+synced and pruned counts; exits non-zero on error.
 
 - **Always connect as the same role.** pg_cron keys jobs on `(jobname, username)` and
   runs each as its scheduling role, so mixing roles duplicates jobs and breaks pruning.
@@ -597,18 +593,17 @@ author their own (`Source.ADMIN`) in two steps:
    needs them, and tick **Enabled**. From then on, saving or deleting the row
    immediately (un)schedules its pg_cron job.
 
-- `name` and the resolved options are frozen at create; later decorator edits do not
-  change existing rows. `name` is immutable because it forms the job identity.
+- `name` is immutable — it forms the job identity — and the resolved options are frozen
+  at create, so later decorator edits do not change existing rows.
 - The cron expression is validated at save time against the same grammar `check` applies
   to settings schedules, with no database round-trip.
 - `max_attempts` defaults to `5` and must be `>= 1`; clearing it stores NULL, which
   Absurd treats as **retry forever** — a deliberate opt-in, so a mistyped schedule
   cannot loop unbounded by accident.
-- Editing `args`, `kwargs`, or options takes effect on the next firing without touching
-  `cron.job`.
-- The row is the source of truth: any write that persists it keeps pg_cron in step.
-  Writes that bypass `.save()` — a data migration, `bulk_create`, `QuerySet.update`, raw
-  SQL — emit on the next reconcile rather than immediately.
+- The row is the source of truth: editing `args`, `kwargs`, or options takes effect on
+  the next firing without touching `cron.job`, and any write that persists the row keeps
+  pg_cron in step. Writes that bypass `.save()` — a data migration, `bulk_create`,
+  `QuerySet.update`, raw SQL — emit on the next reconcile.
 - `loaddata` bypasses the router, so pass `--database=<alias>` when Absurd is on a
   non-default database. A write forced onto a different database raises
   `NotImplementedError`: schedules live only on the Absurd database.
@@ -621,11 +616,10 @@ author their own (`Source.ADMIN`) in two steps:
 "OPTIONS": {"PG_CRON_ON_TEST_DB": True}  # opt in; off by default
 ```
 
-Every `cron.*` write is inert on a test database or during an active test run, detected
-automatically with nothing to configure. A plain test database carries no `pg_cron`
-extension, so the write would fail outright — and where it would not fail, pg_cron's
-launcher runs independently of pytest and Django, so a schedule left behind fires for
-real, on cadence, against test data.
+Every `cron.*` write is inert on a test database or during a test run, detected
+automatically. A plain test database carries no `pg_cron` extension, so the write would
+fail outright — and where it would not, pg_cron's launcher runs independently of pytest
+and Django, so a leftover schedule fires for real, on cadence, against test data.
 
 | Option                      | Default | Effect                                                                                      |
 | --------------------------- | ------- | ------------------------------------------------------------------------------------------- |
@@ -633,10 +627,9 @@ real, on cadence, against test data.
 | `SYNC_SCHEDULES_ON_MIGRATE` | `True`  | `migrate`'s automatic reconcile against a real database                                     |
 | `SYNC_SCHEDULES_ON_TEST_DB` | `False` | The same, against a test database. Setting it without `PG_CRON_ON_TEST_DB` is `absurd.E011` |
 
-`absurd_sync_crons` is never gated by either sync key — it is an explicit invocation,
-not an automatic side effect of `migrate` — but it is gated by `PG_CRON_ON_TEST_DB` like
-every other `cron.*` write, and refuses with a `CommandError` rather than silently doing
-nothing. See
+`absurd_sync_crons` is never gated by either sync key — it is explicit, not a side
+effect of `migrate` — but `PG_CRON_ON_TEST_DB` gates it like every other `cron.*` write,
+and it refuses with a `CommandError` rather than silently doing nothing. See
 [getting a `SCHEDULE` into pg_cron for a test](#getting-a-schedule-into-pg_cron-for-a-test).
 
 #### Uninstall
@@ -651,11 +644,10 @@ with nothing left to clean them up.
 
 - It unschedules every owned job for the backend and deletes its `ScheduledTask` row,
   **admin-authored ones included** — otherwise the next `migrate` re-emits a job for
-  every surviving admin row and resurrects what teardown just killed. Because it
-  destroys admin-authored schedules, it prompts for confirmation.
-- Migrate-time teardown, when a backend switches off pg_cron, is narrower: it clears
-  settings jobs and rows only, never admin ones. It is not a substitute for this
-  command.
+  every surviving admin row and resurrects what teardown just killed. It prompts for
+  confirmation because it destroys admin-authored schedules.
+- Migrate-time teardown (a backend switching off pg_cron) is narrower: settings jobs and
+  rows only, never admin ones. Not a substitute for this command.
 
 #### Operator setup
 
@@ -688,9 +680,9 @@ the Absurd one. A migration cannot do any of it.
 
 - Managed Postgres (RDS, Cloud SQL, Azure) exposes these as parameter-group flags.
 - `python manage.py check --database default` reports `absurd.E012` when that central
-  database is unreachable or missing the extension. It is a deploy-time check: it runs
-  on `migrate` and any `check --database` invocation, never on a plain DB-free `check`,
-  and stays quiet under a test suite.
+  database is unreachable or missing the extension. A deploy-time check: it runs on
+  `migrate` and any `check --database` invocation, never on a plain DB-free `check`, and
+  stays quiet under a test suite.
 - **Also worth scheduling: a
   [`cron.job_run_details`](https://github.com/citusdata/pg_cron#viewing-job-run-details)
   purge.** It is the only place fire-time failures show up, and it grows unbounded.
@@ -716,7 +708,7 @@ services:
 `cron.database_name` defaults to `postgres`; pass `-c cron.database_name=<db>` to point
 it elsewhere. Either way, run the `CREATE EXTENSION` and grants above once against
 whichever database it names — an initdb script (`\connect postgres` then
-`CREATE EXTENSION`) is the usual way.
+`CREATE EXTENSION`) does it.
 
 ## Workers
 
@@ -725,11 +717,11 @@ python manage.py absurd_worker                     # consumes the "default" queu
 python manage.py absurd_worker --queue reports --concurrency 4
 ```
 
-A single worker runs **both** sync and async tasks: `async def` tasks on an event loop
-(true concurrency for I/O-bound work), sync `def` tasks in a thread pool. On start it
-reconciles every declared queue — creating missing ones, applying declared policy
-changes — and rebuilds the admin views so they reflect the whole catalog, not just the
-served queue, reporting to stdout. It then polls until `SIGINT`/`SIGTERM`.
+A single worker runs **both** sync and async tasks: `async def` on an event loop (true
+concurrency for I/O-bound work), sync `def` in a thread pool. On start it reconciles
+every declared queue — creating missing ones, applying declared policy changes — and
+rebuilds the admin views to reflect the whole catalog, not just the served queue,
+reporting to stdout. Then it polls until `SIGINT`/`SIGTERM`.
 
 | Flag              | Default         | What it does                                          |
 | ----------------- | --------------- | ----------------------------------------------------- |
@@ -756,6 +748,10 @@ Each attempt at a task is a **run**. A failed task retries up to its
 [`max_attempts`](#retries-and-spawn-options), and work wrapped in a [step](#steps) is
 checkpointed, so retries never redo completed work. A run that makes no progress within
 `--claim-timeout` is re-claimed and replayed from its last checkpoint.
+
+Delivery is **at-least-once**: a task may run more than once — say after a crash between
+a handler committing and Absurd's bookkeeping — so keep handlers idempotent and use
+[`idempotency_key`](#idempotency-keys) where it helps.
 
 →
 [Absurd: Concepts — Retries](https://earendil-works.github.io/absurd/concepts/#retries).
@@ -810,10 +806,10 @@ TASKS = {
 }
 ```
 
-Runs on cadence under **either** [scheduler](#cron-jobs), with no user code: beat runs
-it in-process, and pg_cron calls Absurd's own `absurd.cleanup_all_queues` from a job
-django-absurd owns outright — scheduling it from `OPTIONS["CLEANUP"]` and removing it
-otherwise, including at migrate teardown or a scheduler flip.
+Runs on cadence under **either** [scheduler](#cron-jobs), no user code: beat in-process,
+pg_cron through Absurd's own `absurd.cleanup_all_queues`. django-absurd owns that job
+outright — scheduling it from `OPTIONS["CLEANUP"]`, removing it otherwise, including at
+migrate teardown or a scheduler flip.
 
 - `absurd.E010` for a malformed `CLEANUP`, including a cron expression the configured
   scheduler cannot run; `check` validates both grammars.
@@ -924,8 +920,8 @@ synthesized `queue` column. `Queue` is the queue catalog, keyed by `queue_name`.
 
 With `django.contrib.admin` installed, django-absurd registers six read-only admin
 entries — **Tasks**, **Runs**, **Checkpoints**, **Events**, **Waits** (each spanning all
-queues, filterable by queue) and the **Queues** catalog. No configuration required; the
-list views stay in sync with the live queue catalog. Turn them off with
+queues, filterable by queue) and the **Queues** catalog. No configuration; the list
+views stay in sync with the live queue catalog. Turn them off with
 [`ENABLE_ADMIN`](#backend-options), or register elsewhere with `ADMIN_SITE`.
 
 - A queue created only by an enqueue, with no worker started and no sync run, is not yet
@@ -956,8 +952,8 @@ def test_add_completes(dj_absurd):
 
 Installing django-absurd registers a
 [`pytest11` entry point](https://docs.pytest.org/en/stable/how-to/writing_plugins.html#making-your-plugin-installable-by-others)
-automatically, so there is nothing to configure. The plugin builds on
-[pytest-django](https://pytest-django.readthedocs.io/) — install that in your test
+automatically — nothing to configure. The plugin builds on
+[pytest-django](https://pytest-django.readthedocs.io/); install that in your test
 environment.
 
 - **`transaction=True` is required.** Absurd works on its own connection, so under a
@@ -1004,10 +1000,10 @@ entry). Its `FrozenTime` handle carries the only two movers, `move_to(datetime)`
 - Blocks do not nest — two frozen instants cannot both be "now" — and a `FrozenTime`
   raises once its block has exited rather than silently re-freezing. Sequential blocks
   are fine.
-- **Install [time-machine](https://github.com/adamchainz/time-machine) yourself**: it is
-  a test dependency of your project, not bundled and not an extra. Only `freeze_time`
-  imports it, lazily, and raises `ImproperlyConfigured` naming the install command if it
-  is missing. A test that never freezes pays nothing.
+- **Install [time-machine](https://github.com/adamchainz/time-machine) yourself** — a
+  test dependency of your project, not bundled and not an extra. Only `freeze_time`
+  imports it, lazily, raising `ImproperlyConfigured` with the install command if
+  missing. A test that never freezes pays nothing.
 - **Don't enqueue across a savepoint rollback.** The rollback reverts Django's session
   clock, so a later `enqueue()` stamps real time and will not look claimable.
 - **A freeze does not reach [pg_cron](#postgres-side-pg_cron)**, whose launcher runs in
@@ -1140,8 +1136,8 @@ class MyTestRunner(DiscoverRunner):
 
 Django's own
 [`DiscoverRunner`](https://docs.djangoproject.com/en/6.0/topics/testing/advanced/#django.test.runner.DiscoverRunner)
-has no equivalent auto-hook, since pytest is django-absurd's primary test surface. Wire
-the same public hook yourself and point `TEST_RUNNER` at your subclass.
+has no equivalent auto-hook — pytest is django-absurd's primary test surface. Wire the
+same public hook yourself and point `TEST_RUNNER` at your subclass;
 `install_absurd_cleanup()` is idempotent, so calling it where pytest's plugin already
 did is a no-op.
 
@@ -1274,22 +1270,23 @@ except DjangoAbsurdError:
   errors; other failures — schema not installed, config validation, clock misuse — still
   raise plain `ImproperlyConfigured` / `RuntimeError` / `TypeError`.
 
-## Deployment
+## Database setup
 
-- **Database privileges.** `migrate` runs `CREATE SCHEMA IF NOT EXISTS absurd` and needs
-  nothing beyond the rights to do that: **no extension, so no superuser and no
-  managed-Postgres allow-list entry**. It does need `GRANT CREATE ON DATABASE <db>`,
-  because `CREATE SCHEMA IF NOT EXISTS` checks that privilege _before_ it checks whether
-  the schema exists — pre-creating `absurd` yourself does not avoid the grant. The
-  schema name is fixed.
-- **At-least-once delivery.** A task may run more than once, for instance after a crash
-  between a handler committing and Absurd's bookkeeping. Keep handlers idempotent and
-  use [`idempotency_key`](#idempotency-keys) where it helps.
-- **Provisioning is additive.** Declared queues are created at `migrate`, on worker
-  start, by `absurd_sync_queues`, and on first enqueue, and provisioning also reconciles
-  mutable policy. Nothing is ever dropped for you.
-- **Migrations are offline.** The schema comes only from the pinned Absurd version
-  shipped with this package; nothing is fetched at migrate time.
+```bash
+python manage.py migrate
+```
+
+`migrate` runs `CREATE SCHEMA IF NOT EXISTS absurd` and needs nothing beyond the rights
+to do that — **no extension, so no superuser and no managed-Postgres allow-list entry.**
+It does need `GRANT CREATE ON DATABASE <db>`: `CREATE SCHEMA IF NOT EXISTS` checks that
+privilege _before_ it checks whether the schema exists, so pre-creating `absurd`
+yourself does not avoid the grant. The schema name is fixed.
+
+- Choosing [pg_cron](#postgres-side-pg_cron) gives that privileged role more to do,
+  once, on the central `cron.database_name` database — see
+  [operator setup](#operator-setup).
+- What the migration installs and provisions:
+  [What `migrate` installs](#what-migrate-installs).
 
 ### Adopting an existing Absurd database
 
