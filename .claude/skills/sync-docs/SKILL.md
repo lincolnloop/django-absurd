@@ -29,7 +29,7 @@ the site may expand on AGENTS.md but must not contradict it.
 | File                               | Audience                                       | Role / altitude                                                                                                                                                                                                                                                                                                                                                                                             |
 | ---------------------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `README.md`                        | repo landing                                   | **Trim.** The tl;dr happy path only: one-liner + alpha note, `pip install`, a ~10-line quickstart (TASKS snippet → `migrate` → `absurd_worker`; the `"default"` queue is declared for you), then a short **Documentation** section linking out. **Never grow it** — new detail goes to AGENTS.md, not here.                                                                                                 |
-| `django_absurd/AGENTS.md`          | **end users / coding agents** (in the package) | The **full reference**: requirements, configuration + every `OPTIONS` key, run, validate (`check`), workers, enqueue + params, scheduling, retrieving results, deployment, adopting an existing DB. Ships inside the installed package — discoverable from a project's venv. The **in-package / agent** canonical; mirror its facts into the site below.                                                    |
+| `django_absurd/AGENTS.md`          | **end users / coding agents** (in the package) | The **full, standalone reference**, opening with a **What's here** map: quickstart, tasks, workflows, cron jobs, workers, cleanup, monitoring, testing, configuration (every `OPTIONS` key, `check` IDs, exceptions), deployment. Ships inside the installed package — discoverable from a project's venv. The **in-package / agent** canonical; mirror its facts into the site below.                      |
 | `docs/web/` (Zensical site)        | **end users** (public docs site)               | The public **documentation site**: `docs/web/*.md` → built to `site/` (PR #30 / GitHub Pages). Navigable pages — **Home / Tasks / Workflows / Cron Jobs / Workers / Cleanup / Monitoring / Testing / Configuration** — presenting AGENTS.md's material for humans (may add examples/links; must not contradict it). On a user-facing change, update the relevant page **and** the `nav` in `zensical.toml`. |
 | `examples/README.md` + `examples/` | runnable demo                                  | A working dockerized nanodjango project (`app.py`). Keep the **flow accurate**: `Dockerfile` CMD, `compose.yaml`, `app.py` (config / task / views / admin), and the "Run it" steps must match real behavior.                                                                                                                                                                                                |
 | `CLAUDE.md`                        | **contributors / coding agents**               | Project **maintenance** only: naming, imports, testing conventions, runtime floor (Django / Python), tooling. NOT how-to — it _references_ `AGENTS.md` for usage/integration and must not duplicate it. Changes on convention / tooling / test-setup / runtime shifts (a different trigger from the user docs above; only the runtime floor is shared).                                                     |
@@ -55,9 +55,21 @@ A change triggers a doc pass if it touches any of:
 1. **README.md** — does the quickstart still reflect the happy path? If a step changed
    (e.g. a command became optional), fix it. If you're tempted to _add_ explanation, put
    it in AGENTS.md and link instead.
-2. **AGENTS.md** — update the relevant section (Configure / Run / Validate / Enqueue /
-   Workers / Scheduling / Results / Deployment / Adopting). This is where completeness
-   lives.
+2. **AGENTS.md** — update the relevant section (Tasks / Workflows / Cron jobs / Workers
+   / Cleanup / Monitoring / Testing / Configuration / Deployment). This is where
+   completeness lives, and it must **stand alone**: it ships inside the installed
+   package, so every fact a user needs is in the file. Mention that the docs site
+   exists; never let it be the only place a fact lives. Three rules a change must
+   respect:
+   - **Example-first house style**, the same one the site follows
+     (`docs/specs/2026-08-08-docs-howto-rewrite-design.md`): concept heading → code
+     block → ≤3 sentences → tier-1 bullets.
+   - **No internals.** No maintainer rationale, no repo-internal paths (`tests/…`), no
+     column layouts or wrapper mechanics — that reasoning belongs in `docs/WHY.md` (step
+     6). Document what a user types or reads back, nothing else.
+   - **Keep the map and the anchors true.** A new `##` section needs a row in the
+     **What's here** table at the top of the file; a renamed heading needs every in-file
+     `#anchor` link repointed (`grep -oE "\(#[a-z0-9-]+\)"` over the file).
 3. **docs/web/ (site)** — update the matching page (`tasks.md` / `workflows.md` /
    `cron-jobs.md` / `workers.md` / `cleanup.md` / `monitoring.md` / `testing.md` /
    `configuration.md`, or `index.md` for the quickstart) so the site tracks AGENTS.md.
