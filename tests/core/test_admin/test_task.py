@@ -8,7 +8,7 @@ from django.core.management import call_command
 from django.db import connections
 from django.test import Client
 from django.urls import reverse, reverse_lazy
-from pytest_django.fixtures import SettingsWrapper
+from pytest_django.fixtures import Settings
 
 from django_absurd.admin_views import ADMIN_ENTITY_SPECS, build_admin_model
 from django_absurd.queues import get_absurd_client
@@ -313,7 +313,7 @@ def test_partitioned_queue_appears_in_changelist(
     admin_user: User,
     client: Client,
     dj_absurd: AbsurdTestRuntime,
-    settings: SettingsWrapper,
+    settings: Settings,
 ) -> None:
     settings.TASKS = {
         "default": {

@@ -2,7 +2,7 @@ import io
 
 import pytest
 from django.core.management import call_command
-from pytest_django.fixtures import SettingsWrapper
+from pytest_django.fixtures import Settings
 
 from django_absurd.test import AbsurdTestRuntime
 from tests import utils
@@ -13,7 +13,7 @@ pytestmark = [
 ]
 
 
-def test_sync_queues_decorates_its_console_output(settings: SettingsWrapper) -> None:
+def test_sync_queues_decorates_its_console_output(settings: Settings) -> None:
     settings.TASKS = utils.make_tasks_settings(queues={"freshemoji": {}})
     out = io.StringIO()
     call_command("absurd_sync_queues", stdout=out)
@@ -66,7 +66,7 @@ def test_worker_banner_drops_the_elephant_on_a_stream_that_cannot_encode_it(
 
 
 def test_sync_queues_drops_the_crate_on_a_stream_that_cannot_encode_it(
-    settings: SettingsWrapper,
+    settings: Settings,
 ) -> None:
     settings.TASKS = utils.make_tasks_settings(queues={"freshemojicp1252": {}})
     buffer = io.BytesIO()
@@ -78,7 +78,7 @@ def test_sync_queues_drops_the_crate_on_a_stream_that_cannot_encode_it(
 
 
 def test_sync_queues_probes_the_warning_glyph_against_stderr_not_stdout(
-    settings: SettingsWrapper,
+    settings: Settings,
 ) -> None:
     settings.TASKS = utils.make_tasks_settings(queues={"driftcp1252": {}})
     call_command("absurd_sync_queues")  # create 'driftcp1252' unpartitioned
@@ -101,7 +101,7 @@ def test_sync_queues_probes_the_warning_glyph_against_stderr_not_stdout(
 
 
 def test_sync_queues_prefixes_each_alias_when_multiple_backends_are_configured(
-    settings: SettingsWrapper,
+    settings: Settings,
 ) -> None:
     settings.TASKS = {
         "one": {

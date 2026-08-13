@@ -11,7 +11,7 @@ from tests.pg_cron import utils
 
 @pytest.mark.django_db(transaction=True)
 def test_producing_schedule_never_fires_into_this_test_db(
-    settings: pytest_django.fixtures.SettingsWrapper,
+    settings: pytest_django.fixtures.Settings,
 ) -> None:
     settings.TASKS = utils.build_pg_cron_tasks({}, pg_cron_on_test_db=True)
     test_db = str(connections["default"].settings_dict["NAME"])

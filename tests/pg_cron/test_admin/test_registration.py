@@ -46,7 +46,7 @@ def test_staff_user_with_view_permission_sees_scheduledtask_in_index(
 
 
 def test_custom_admin_site_registration(
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
 ) -> None:
     settings.TASKS = {
         "default": {
@@ -59,7 +59,7 @@ def test_custom_admin_site_registration(
 
 
 def test_autoregister_skips_when_enable_admin_false(
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
 ) -> None:
     gated_site._registry.pop(ScheduledTask, None)
     settings.TASKS = {
@@ -76,7 +76,7 @@ def test_autoregister_skips_when_enable_admin_false(
 
 
 def test_register_is_idempotent(
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
 ) -> None:
     other_site._registry.pop(ScheduledTask, None)
     register_scheduled_task_admin([other_site])
@@ -87,7 +87,7 @@ def test_register_is_idempotent(
 
 
 def test_autoregister_skips_when_no_absurd_backend(
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
 ) -> None:
     gated_site._registry.pop(ScheduledTask, None)
     settings.TASKS = {}
@@ -96,7 +96,7 @@ def test_autoregister_skips_when_no_absurd_backend(
 
 
 def test_autoregister_registers_when_enable_admin_true(
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
 ) -> None:
     other_site._registry.pop(ScheduledTask, None)
     settings.TASKS = {

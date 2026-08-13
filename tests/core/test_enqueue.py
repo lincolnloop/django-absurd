@@ -8,7 +8,7 @@ from django.core.management import call_command
 from django.db import connections, transaction
 from django.tasks import TaskResultStatus, task
 from django.tasks.exceptions import InvalidTask
-from pytest_django.fixtures import SettingsWrapper
+from pytest_django.fixtures import Settings
 
 from django_absurd import absurd_params
 from django_absurd.connection import register_jsonb_loader
@@ -126,7 +126,7 @@ def test_enqueue_to_undeclared_queue_raises() -> None:
 
 
 def test_enqueue_with_empty_queues_reports_undeclared(
-    settings: SettingsWrapper,
+    settings: Settings,
 ) -> None:
     # Empty QUEUES makes validate_task skip its queue check, reaching the backend guard.
     settings.TASKS = {
@@ -170,7 +170,7 @@ def test_max_attempts_uses_backend_default_when_unset() -> None:
     assert claimed[0]["max_attempts"] == 5
 
 
-def test_max_attempts_uses_custom_backend_default(settings: SettingsWrapper) -> None:
+def test_max_attempts_uses_custom_backend_default(settings: Settings) -> None:
     # 7 is our own DEFAULT_MAX_ATTEMPTS, not absurd_sdk's own client-level fallback
     # of 5 — pins backends.py's setdefault("max_attempts", self.default_max_attempts).
     settings.TASKS = utils.make_tasks_settings(default_max_attempts=7)

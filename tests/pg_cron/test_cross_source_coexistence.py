@@ -10,7 +10,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 
 def test_settings_and_admin_schedule_may_share_a_name(
-    settings: pytest_django.fixtures.SettingsWrapper,
+    settings: pytest_django.fixtures.Settings,
 ) -> None:
     """Namespaced by source, a settings and an admin schedule with the same
     name coexist as two distinct pg_cron jobs — no clash, no double-fire."""
@@ -39,7 +39,7 @@ def test_settings_and_admin_schedule_may_share_a_name(
 
 
 def test_revalidating_a_saved_admin_schedule_does_not_self_clash(
-    settings: pytest_django.fixtures.SettingsWrapper,
+    settings: pytest_django.fixtures.Settings,
 ) -> None:
     """full_clean's uniqueness check excludes the row's own pk, so re-validating an
     existing admin schedule (e.g. after editing a field) does not clash with itself."""

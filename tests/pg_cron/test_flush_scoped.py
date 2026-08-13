@@ -1,6 +1,6 @@
 import pytest
 from django.db import connections
-from pytest_django.fixtures import SettingsWrapper
+from pytest_django.fixtures import Settings
 
 from django_absurd.flush import flush_absurd_state
 from django_absurd.pg_cron import catalog
@@ -10,7 +10,7 @@ from tests.pg_cron import utils
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
-def test_flush_only_removes_this_database_jobs(settings: SettingsWrapper) -> None:
+def test_flush_only_removes_this_database_jobs(settings: Settings) -> None:
     settings.TASKS = utils.build_pg_cron_tasks({}, pg_cron_on_test_db=True)
     live_db = str(connections["default"].settings_dict["NAME"])
     catalog.schedule_job(

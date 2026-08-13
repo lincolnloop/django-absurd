@@ -103,7 +103,7 @@ def test_migrate_skips_sync_on_a_real_database_when_explicitly_disabled(
 
 
 def test_migrate_skips_sync_by_default_on_a_test_database(
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
 ) -> None:
     settings.TASKS = utils.build_pg_cron_tasks(
         {"nightly": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
@@ -120,7 +120,7 @@ def test_migrate_skips_sync_by_default_on_a_test_database(
 
 
 def test_migrate_syncs_on_a_test_database_when_explicitly_enabled(
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
 ) -> None:
     settings.TASKS = utils.build_pg_cron_tasks(
         {"nightly": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
@@ -136,7 +136,7 @@ def test_migrate_syncs_on_a_test_database_when_explicitly_enabled(
 
 
 def test_scheduled_task_create_and_delete_are_unaffected_by_either_setting(
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
 ) -> None:
     settings.TASKS = utils.build_pg_cron_tasks({})
     settings.TASKS["default"]["OPTIONS"]["SYNC_SCHEDULES_ON_TEST_DB"] = False

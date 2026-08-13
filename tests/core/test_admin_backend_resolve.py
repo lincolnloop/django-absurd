@@ -1,4 +1,4 @@
-from pytest_django.fixtures import SettingsWrapper
+from pytest_django.fixtures import Settings
 
 from django_absurd.backends import AbsurdBackend
 from django_absurd.queues import get_absurd_backend
@@ -11,7 +11,7 @@ def test_returns_single_backend() -> None:
     assert isinstance(be, AbsurdBackend)
 
 
-def test_first_in_order_wins_when_sharing_db(settings: SettingsWrapper) -> None:
+def test_first_in_order_wins_when_sharing_db(settings: Settings) -> None:
     settings.TASKS = {
         "a": {
             "BACKEND": BACKEND,
@@ -26,12 +26,12 @@ def test_first_in_order_wins_when_sharing_db(settings: SettingsWrapper) -> None:
     assert be.options.get("ENABLE_ADMIN") is False
 
 
-def test_returns_none_without_absurd_backend(settings: SettingsWrapper) -> None:
+def test_returns_none_without_absurd_backend(settings: Settings) -> None:
     settings.TASKS = {"x": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}}
     assert get_absurd_backend() is None
 
 
-def test_skips_backend_not_on_resolved_database(settings: SettingsWrapper) -> None:
+def test_skips_backend_not_on_resolved_database(settings: Settings) -> None:
     settings.TASKS = {
         "a": {
             "BACKEND": BACKEND,

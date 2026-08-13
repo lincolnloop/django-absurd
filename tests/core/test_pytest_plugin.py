@@ -53,7 +53,7 @@ def test_flush_absurd_state_truncates_rows_by_default() -> None:
 
 
 def test_flush_absurd_state_truncates_a_partitioned_queues_idempotency_table(
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
 ) -> None:
     # `i_<queue>` only exists for a `partitioned` queue — exercise that branch of
     # truncate_queue_tables (the unpartitioned "default" queue used elsewhere in this
@@ -83,7 +83,7 @@ def test_flush_absurd_state_drops_schema_when_requested() -> None:
 
 
 def test_flush_absurd_state_is_a_noop_on_an_unmigrated_schema(
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
 ) -> None:
     # Mirrors tests/core/test_checks.py::test_db_unreachable_is_silent's real
     # unreachable-DB technique: mutating settings.DATABASES alone is not enough — the
@@ -139,7 +139,7 @@ def test_post_teardown_hook_skips_undeclared_absurd_alias() -> None:
 
 
 def test_post_teardown_hook_skips_without_an_absurd_backend(
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
 ) -> None:
     # Seed under the real Absurd backend, then swap TASKS to a non-Absurd backend so
     # the hook's unconfigured-backend guard (no AbsurdBackend) fires and skips flushing.

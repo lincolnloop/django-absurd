@@ -12,7 +12,7 @@ from django.core.management import call_command
 from django.core.management.base import SystemCheckError
 from django.test import Client
 from django.urls import reverse
-from pytest_django.fixtures import SettingsWrapper
+from pytest_django.fixtures import Settings
 
 from django_absurd.pg_cron.models import ScheduledTask
 
@@ -50,7 +50,7 @@ VALID: dict[str, t.Any] = {
 
 
 def configure_pg_cron_backend(
-    settings: SettingsWrapper,
+    settings: Settings,
     schedule: dict[str, dict[str, object]] | None = None,
 ) -> None:
     """A pg_cron 'default' backend so model clean() resolves it (declared queues),
@@ -78,7 +78,7 @@ def clean_scheduled_task(**kwargs: t.Any) -> str | None:
 
 
 def validate_from_model(
-    settings: SettingsWrapper,
+    settings: Settings,
     **kwargs: t.Any,
 ) -> str | None:
     """Subject: ScheduledTask.full_clean(). Return joined error text or None."""
@@ -87,7 +87,7 @@ def validate_from_model(
 
 
 def validate_from_system_check(
-    settings: SettingsWrapper,
+    settings: Settings,
     capsys: pytest.CaptureFixture[str],
     **kwargs: t.Any,
 ) -> str | None:
@@ -117,7 +117,7 @@ def validate_from_system_check(
 def validate_from_admin_post(
     client: Client,
     admin_user: User,
-    settings: SettingsWrapper,
+    settings: Settings,
     **kwargs: t.Any,
 ) -> str | None:
     """Subject: the admin change-form POST over a pre-seeded admin row. Return the

@@ -1,7 +1,7 @@
 import pytest
 from django.core.management import call_command
 from django.core.management.base import SystemCheckError
-from pytest_django.fixtures import SettingsWrapper
+from pytest_django.fixtures import Settings
 
 BACKEND = "django_absurd.backends.AbsurdBackend"
 IMMEDIATE = "django.tasks.backends.immediate.ImmediateBackend"
@@ -23,7 +23,7 @@ def run_check(capsys: pytest.CaptureFixture[str]) -> str:
 
 
 def test_bad_admin_site_path_emits_e006(
-    capsys: pytest.CaptureFixture[str], settings: SettingsWrapper
+    capsys: pytest.CaptureFixture[str], settings: Settings
 ) -> None:
     settings.TASKS = {
         "default": {
@@ -39,7 +39,7 @@ def test_bad_admin_site_path_emits_e006(
 
 
 def test_non_bool_enable_admin_emits_e006(
-    capsys: pytest.CaptureFixture[str], settings: SettingsWrapper
+    capsys: pytest.CaptureFixture[str], settings: Settings
 ) -> None:
     settings.TASKS = {
         "default": {
@@ -55,7 +55,7 @@ def test_non_bool_enable_admin_emits_e006(
 
 
 def test_valid_admin_config_no_e006(
-    capsys: pytest.CaptureFixture[str], settings: SettingsWrapper
+    capsys: pytest.CaptureFixture[str], settings: Settings
 ) -> None:
     settings.TASKS = {
         "default": {
@@ -71,7 +71,7 @@ def test_valid_admin_config_no_e006(
 
 
 def test_no_absurd_backend_emits_no_e006(
-    capsys: pytest.CaptureFixture[str], settings: SettingsWrapper
+    capsys: pytest.CaptureFixture[str], settings: Settings
 ) -> None:
     settings.TASKS = {"default": {"BACKEND": IMMEDIATE}}
     out = run_check(capsys)
@@ -79,7 +79,7 @@ def test_no_absurd_backend_emits_no_e006(
 
 
 def test_admin_site_not_a_sequence_emits_e006(
-    capsys: pytest.CaptureFixture[str], settings: SettingsWrapper
+    capsys: pytest.CaptureFixture[str], settings: Settings
 ) -> None:
     settings.TASKS = {
         "default": {
@@ -97,7 +97,7 @@ def test_admin_site_not_a_sequence_emits_e006(
 
 
 def test_admin_site_not_an_adminsite_emits_e006(
-    capsys: pytest.CaptureFixture[str], settings: SettingsWrapper
+    capsys: pytest.CaptureFixture[str], settings: Settings
 ) -> None:
     settings.TASKS = {
         "default": {

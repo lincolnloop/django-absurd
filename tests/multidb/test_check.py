@@ -1,6 +1,6 @@
 import pytest
 from django.core.management import call_command
-from pytest_django.fixtures import SettingsWrapper
+from pytest_django.fixtures import Settings
 
 pytestmark = pytest.mark.django_db(databases=["default", "absurd"])
 
@@ -9,7 +9,7 @@ ABSURD = "django_absurd.backends.AbsurdBackend"
 
 def test_storage_mode_drift_detected_on_non_default_alias(
     capsys: pytest.CaptureFixture[str],
-    settings: SettingsWrapper,
+    settings: Settings,
 ) -> None:
     # W002 now fires only on storage_mode drift (immutable; never self-heals). This
     # locks the alias threading through query_queue_state on a non-default database.

@@ -2,7 +2,7 @@ import typing as t
 
 import pytest
 from django.db import connections
-from pytest_django.fixtures import SettingsWrapper
+from pytest_django.fixtures import Settings
 
 from django_absurd.pg_cron import detection
 from tests.pg_cron import utils
@@ -42,19 +42,19 @@ def test_is_test_database_false_when_live_name_matches_snapshot() -> None:
 
 
 def test_is_pg_cron_inert_true_under_tests_without_opt_in(
-    settings: SettingsWrapper,
+    settings: Settings,
 ) -> None:
     settings.TASKS = utils.build_pg_cron_tasks({}, pg_cron_on_test_db=False)
     assert detection.is_pg_cron_inert("default") is True
 
 
-def test_is_pg_cron_inert_false_when_opt_in(settings: SettingsWrapper) -> None:
+def test_is_pg_cron_inert_false_when_opt_in(settings: Settings) -> None:
     settings.TASKS = utils.build_pg_cron_tasks({}, pg_cron_on_test_db=True)
     assert detection.is_pg_cron_inert("default") is False
 
 
 def test_is_pg_cron_inert_true_for_alias_without_a_backend_even_when_opted_in(
-    settings: SettingsWrapper,
+    settings: Settings,
 ) -> None:
     # "replica" has no configured backend of its own (only "default" does), so its
     # opt-in never applies — it stays inert regardless of "default"'s setting.

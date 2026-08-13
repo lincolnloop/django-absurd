@@ -3,7 +3,7 @@ import typing as t
 import pytest
 from django.core.management import call_command
 from django.core.management.base import SystemCheckError
-from pytest_django.fixtures import SettingsWrapper
+from pytest_django.fixtures import Settings
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -15,7 +15,7 @@ E007_MSG = "django-absurd: invalid SCHEDULE entry."
 @pytest.fixture
 def run_check(
     capsys: pytest.CaptureFixture[str],
-    settings: SettingsWrapper,
+    settings: Settings,
 ) -> t.Callable[[t.Any], str]:
     def _run(schedule: t.Any) -> str:
         settings.TASKS = {
