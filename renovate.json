@@ -34,6 +34,23 @@
       "groupName": "dev dependencies"
     },
     {
+      "description": "The examples depend on django-absurd by path, so each examples/*/uv.lock records the ROOT manifest's requires-dev. Any root dependency bump makes all three stale, their Dockerfiles run `uv sync --locked`, and the PR fails CI. Renovate's uv manager only refreshes the lockfile beside the manifest it edited, so re-lock the examples in the same branch.",
+      "matchFileNames": ["pyproject.toml"],
+      "postUpgradeTasks": {
+        "commands": [
+          "uv lock --project examples/beat",
+          "uv lock --project examples/pg_cron",
+          "uv lock --project examples/web"
+        ],
+        "fileFilters": ["examples/*/uv.lock"],
+        "executionMode": "branch",
+        "installTools": {
+          "python": {},
+          "uv": {}
+        }
+      }
+    },
+    {
       "matchPackageNames": ["hatch*"],
       "groupName": "hatch"
     },
