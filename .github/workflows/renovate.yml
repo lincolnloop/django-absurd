@@ -54,3 +54,8 @@ jobs:
           LOG_LEVEL: debug
           RENOVATE_TOKEN: ${{ steps.get_token.outputs.token }}
           RENOVATE_REPOSITORIES: '["${{ github.repository }}"]'
+          # Allow-list for the postUpgradeTasks in renovate.json that re-lock
+          # the examples. Self-hosted-only option, so it cannot live in the
+          # repo config; without it the tasks are silently skipped.
+          # yamllint disable-line rule:line-length
+          RENOVATE_ALLOWED_COMMANDS: '["^uv lock --project examples/(beat|pg_cron|web)$"]'
