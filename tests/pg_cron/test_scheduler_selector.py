@@ -17,14 +17,14 @@ SINGLE_QUEUE: dict[str, CreateQueueOptions] = {"default": {}}
 
 
 def test_scheduler_is_pg_cron_when_app_installed(
-    settings: pytest_django.fixtures.SettingsWrapper,
+    settings: pytest_django.fixtures.Settings,
 ) -> None:
     settings.TASKS = make_tasks_settings(queues=SINGLE_QUEUE)
     assert get_absurd_backends()["default"].scheduler == "pg_cron"
 
 
 def test_beat_command_refuses_under_pg_cron(
-    settings: pytest_django.fixtures.SettingsWrapper,
+    settings: pytest_django.fixtures.Settings,
 ) -> None:
     settings.TASKS = make_tasks_settings(queues=SINGLE_QUEUE)
     with pytest.raises(CommandError, match=re.escape(BEAT_DISABLED_UNDER_PG_CRON)):
@@ -32,7 +32,7 @@ def test_beat_command_refuses_under_pg_cron(
 
 
 def test_worker_beat_flag_refuses_under_pg_cron(
-    settings: pytest_django.fixtures.SettingsWrapper,
+    settings: pytest_django.fixtures.Settings,
 ) -> None:
     settings.TASKS = make_tasks_settings(queues=SINGLE_QUEUE)
     with pytest.raises(CommandError, match=re.escape(BEAT_DISABLED_UNDER_PG_CRON)):

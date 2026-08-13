@@ -5,7 +5,7 @@ import psycopg.errors
 import pytest
 from django.db import connections, transaction
 from django.db.utils import ProgrammingError
-from pytest_django.fixtures import SettingsWrapper
+from pytest_django.fixtures import Settings
 
 from django_absurd.exceptions import (
     BackendNotConfiguredError,
@@ -97,7 +97,7 @@ def test_get_result_raises_for_an_unknown_task(
 
 
 def test_get_result_raises_queue_not_provisioned_for_the_queues_own_missing_table(
-    dj_absurd: AbsurdTestRuntime, settings: SettingsWrapper
+    dj_absurd: AbsurdTestRuntime, settings: Settings
 ) -> None:
     """Same facade ``drain()`` and ``emit()`` give this condition — Django's own
     ``ProgrammingError`` (chained from the psycopg ``UndefinedTable`` on
@@ -417,7 +417,7 @@ def test_sync_queues_provisions_the_declared_queues(
 
 
 def test_sync_queues_with_no_absurd_backend_raises(
-    dj_absurd: AbsurdTestRuntime, settings: SettingsWrapper
+    dj_absurd: AbsurdTestRuntime, settings: Settings
 ) -> None:
     settings.TASKS = {"x": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}}
 

@@ -4,7 +4,7 @@ import pytest
 from django.db import connections
 from django.tasks import TaskResultStatus, task_backends
 from django.utils import timezone
-from pytest_django.fixtures import SettingsWrapper
+from pytest_django.fixtures import Settings
 
 from django_absurd import absurd_params
 from django_absurd.connection import register_jsonb_loader
@@ -102,7 +102,7 @@ def test_a_deferred_task_runs_its_own_steps_exactly_once(
 
 
 def test_a_deferred_task_survives_a_project_that_disables_use_tz(
-    dj_absurd: AbsurdTestRuntime, settings: SettingsWrapper
+    dj_absurd: AbsurdTestRuntime, settings: Settings
 ) -> None:
     # Django only rejects a naive run_after when USE_TZ is on, and timezone.now() is
     # itself naive when it is off — so normalize_to_utc is what keeps the instant the

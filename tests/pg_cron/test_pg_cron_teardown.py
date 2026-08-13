@@ -3,7 +3,7 @@ import typing as t
 import pytest
 
 if t.TYPE_CHECKING:
-    from pytest_django.fixtures import SettingsWrapper
+    from pytest_django.fixtures import Settings
 
 from django_absurd.backends import get_absurd_backends
 from django_absurd.pg_cron.models import ScheduledTask
@@ -14,7 +14,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 
 def test_teardown_removes_all_owned_cron_jobs_and_settings_rows(
-    settings: "SettingsWrapper",
+    settings: "Settings",
 ) -> None:
     settings.TASKS = utils.build_pg_cron_tasks(
         {
@@ -35,7 +35,7 @@ def test_teardown_removes_all_owned_cron_jobs_and_settings_rows(
 
 
 def test_teardown_leaves_admin_rows_intact(
-    settings: "SettingsWrapper",
+    settings: "Settings",
 ) -> None:
     ScheduledTask.objects.create(
         name="admin-job",
@@ -54,7 +54,7 @@ def test_teardown_leaves_admin_rows_intact(
     assert ScheduledTask.objects.filter(source="a", name="admin-job").exists()
 
 
-def test_teardown_is_idempotent(settings: "SettingsWrapper") -> None:
+def test_teardown_is_idempotent(settings: "Settings") -> None:
     settings.TASKS = utils.build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )

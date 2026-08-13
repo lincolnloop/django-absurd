@@ -3,7 +3,7 @@ import logging
 import pytest
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
-from pytest_django.fixtures import SettingsWrapper
+from pytest_django.fixtures import Settings
 
 from django_absurd.pg_cron.choices import Source
 from django_absurd.pg_cron.models import ScheduledTask
@@ -11,7 +11,7 @@ from tests.pg_cron import utils
 
 
 @pytest.mark.django_db(transaction=True)
-def test_long_schedule_name_passes_full_clean(settings: SettingsWrapper) -> None:
+def test_long_schedule_name_passes_full_clean(settings: Settings) -> None:
     settings.TASKS = utils.build_pg_cron_tasks({}, pg_cron_on_test_db=True)
     task = ScheduledTask(
         name="n" * 300,
@@ -24,7 +24,7 @@ def test_long_schedule_name_passes_full_clean(settings: SettingsWrapper) -> None
 
 
 def test_full_clean_skips_backend_validation_when_no_backend_configured(
-    settings: SettingsWrapper,
+    settings: Settings,
 ) -> None:
     # With no Absurd backend there is nothing to validate the QUEUE against, so that
     # rule is skipped rather than rejecting an otherwise-valid row. The cron is still
@@ -84,7 +84,7 @@ def test_scheduledtask_option_columns_default_empty() -> None:
 
 
 def test_scheduledtask_max_attempts_default_bubbles_from_backend(
-    settings: SettingsWrapper,
+    settings: Settings,
 ) -> None:
     # the field default is the backend's DEFAULT_MAX_ATTEMPTS, not a hardcoded 5
     settings.TASKS = {
@@ -162,7 +162,7 @@ def test_scheduledtask_unique_per_source_name() -> None:
 
 @pytest.mark.django_db(transaction=True)
 def test_cron_is_validated_even_with_no_backend_configured(
-    settings: SettingsWrapper,
+    settings: Settings,
 ) -> None:
     # The queue rule needs a backend to know what is declared; the grammar rule needs
     # nothing, so a misconfigured TASKS must not buy a row a free pass on its cron.
@@ -186,7 +186,7 @@ def test_cron_is_validated_even_with_no_backend_configured(
 @pytest.mark.django_db(transaction=True)
 def test_saving_with_no_backend_says_why_no_job_was_scheduled(
     caplog: pytest.LogCaptureFixture,
-    settings: SettingsWrapper,
+    settings: Settings,
 ) -> None:
     # The emission path is best-effort by design, so it returns early rather than
     # raising — but a row that saves and never gets a job must not be silent.
@@ -210,7 +210,7 @@ def test_saving_with_no_backend_says_why_no_job_was_scheduled(
 @pytest.mark.django_db(transaction=True)
 def test_deleting_with_no_backend_says_the_job_keeps_firing(
     caplog: pytest.LogCaptureFixture,
-    settings: SettingsWrapper,
+    settings: Settings,
 ) -> None:
     # The worse half of the silence: the row goes, its job does not, and it fires on
     # against a row that no longer exists.

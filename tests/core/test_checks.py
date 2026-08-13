@@ -40,7 +40,7 @@ def run_absurd_check(
 
 def test_in_sync_no_warning(
     capsys: pytest.CaptureFixture[str],
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
 ) -> None:
     settings.TASKS = build_tasks_setting({"synced": {}})
     call_command("absurd_sync_queues")
@@ -52,7 +52,7 @@ def test_in_sync_no_warning(
 
 def test_db_unreachable_is_silent(
     capsys: pytest.CaptureFixture[str],
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
 ) -> None:
     settings.TASKS = build_tasks_setting({"a": {}})
     real_name = settings.DATABASES["default"]["NAME"]
@@ -80,7 +80,7 @@ def test_db_unreachable_is_silent(
 )
 def test_self_healing_drift_no_longer_warns(
     capsys: pytest.CaptureFixture[str],
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
     after: dict[str, CreateQueueOptions],
 ) -> None:
     settings.TASKS = build_tasks_setting({"synced": {}})
@@ -92,7 +92,7 @@ def test_self_healing_drift_no_longer_warns(
 
 def test_storage_mode_drift_warns(
     capsys: pytest.CaptureFixture[str],
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
 ) -> None:
     settings.TASKS = build_tasks_setting({"q": {}})
     call_command("absurd_sync_queues")  # 'q' created unpartitioned
@@ -105,7 +105,7 @@ def test_storage_mode_drift_warns(
 
 def test_invalid_policy_modes_error(
     capsys: pytest.CaptureFixture[str],
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
 ) -> None:
     # Deliberately invalid values, to exercise the check's own rejection at
     # runtime — CreateQueueOptions' Literal fields don't allow this statically.
@@ -127,7 +127,7 @@ def test_invalid_policy_modes_error(
 
 def test_schema_absent_check_is_silent(
     capsys: pytest.CaptureFixture[str],
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
 ) -> None:
     settings.TASKS = build_tasks_setting({"a": {}})
     with utils.hide_absurd_schema():
@@ -139,7 +139,7 @@ def test_schema_absent_check_is_silent(
 @pytest.mark.django_db(databases=["default", "sqlite"])
 def test_check_errors_on_wrong_backend(
     capsys: pytest.CaptureFixture[str],
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
 ) -> None:
     settings.TASKS = build_tasks_setting({"x": {}}, database="sqlite")
     out = run_absurd_check(capsys)
@@ -152,7 +152,7 @@ def test_check_errors_on_wrong_backend(
 
 def test_check_errors_when_router_missing(
     capsys: pytest.CaptureFixture[str],
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
 ) -> None:
     settings.TASKS = build_tasks_setting({"x": {}}, database="absurd")
     settings.DATABASE_ROUTERS = []
@@ -166,7 +166,7 @@ def test_check_errors_when_router_missing(
 
 def test_both_queue_forms_set_errors(
     capsys: pytest.CaptureFixture[str],
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
 ) -> None:
     settings.TASKS = {
         "default": {
@@ -185,7 +185,7 @@ def test_both_queue_forms_set_errors(
 
 def test_pure_options_queues_no_e002(
     capsys: pytest.CaptureFixture[str],
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
 ) -> None:
     settings.TASKS = {"default": {"BACKEND": ABSURD, "OPTIONS": {"QUEUES": {"a": {}}}}}
     out = run_absurd_check(capsys)
@@ -194,7 +194,7 @@ def test_pure_options_queues_no_e002(
 
 def test_invalid_policy_key_errors(
     capsys: pytest.CaptureFixture[str],
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
 ) -> None:
     settings.TASKS = {
         "default": {
@@ -210,7 +210,7 @@ def test_invalid_policy_key_errors(
 
 def test_invalid_storage_mode_literal_errors(
     capsys: pytest.CaptureFixture[str],
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
 ) -> None:
     settings.TASKS = {
         "default": {
@@ -225,7 +225,7 @@ def test_invalid_storage_mode_literal_errors(
 
 def test_single_absurd_backend_no_e004(
     capsys: pytest.CaptureFixture[str],
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
 ) -> None:
     settings.TASKS = build_tasks_setting({"q": {}})
     assert "more than one Absurd backend" not in run_absurd_check(
@@ -235,7 +235,7 @@ def test_single_absurd_backend_no_e004(
 
 def test_two_absurd_backends_distinct_db_error(
     capsys: pytest.CaptureFixture[str],
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
 ) -> None:
     settings.TASKS = {
         "default": {
@@ -258,7 +258,7 @@ def test_two_absurd_backends_distinct_db_error(
 
 def test_two_absurd_backends_same_db_error(
     capsys: pytest.CaptureFixture[str],
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
 ) -> None:
     # https://github.com/lincolnloop/django-absurd/issues/63
     settings.TASKS = {
@@ -276,7 +276,7 @@ def test_two_absurd_backends_same_db_error(
 
 def test_plain_check_skips_db_state(
     capsys: pytest.CaptureFixture[str],
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
 ) -> None:
     settings.TASKS = build_tasks_setting({"synced": {}})
     call_command("absurd_sync_queues")
@@ -287,7 +287,7 @@ def test_plain_check_skips_db_state(
 
 def test_check_with_database_runs_db_state(
     capsys: pytest.CaptureFixture[str],
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
 ) -> None:
     settings.TASKS = build_tasks_setting({"synced": {}})
     call_command("absurd_sync_queues")
@@ -302,7 +302,7 @@ E009_MSG = "django-absurd: OPTIONS['DEFAULT_MAX_ATTEMPTS'] must be an integer >=
 @pytest.mark.parametrize("value", [-1, 0, 1.5, "3", True])
 def test_default_max_attempts_invalid_is_error(
     capsys: pytest.CaptureFixture[str],
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
     value: float | str | bool,
 ) -> None:
     # A DEFAULT_MAX_ATTEMPTS < 1 (or a non-int) would feed 0/garbage into every
@@ -321,7 +321,7 @@ def test_default_max_attempts_invalid_is_error(
 
 def test_default_max_attempts_valid_no_error(
     capsys: pytest.CaptureFixture[str],
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
 ) -> None:
     settings.TASKS = {
         "default": {
@@ -352,7 +352,7 @@ E010_HINT = (
 )
 def test_invalid_cleanup_errors(
     capsys: pytest.CaptureFixture[str],
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
     cleanup: str | dict[str, t.Any],
 ) -> None:
     settings.TASKS = {
@@ -371,7 +371,7 @@ def test_invalid_cleanup_errors(
 
 
 def test_scheduler_defaults_to_beat(
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
 ) -> None:
     settings.TASKS = {
         "default": {"BACKEND": ABSURD, "OPTIONS": {"QUEUES": {"default": {}}}}
@@ -381,7 +381,7 @@ def test_scheduler_defaults_to_beat(
 
 def test_valid_cleanup_no_error(
     capsys: pytest.CaptureFixture[str],
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
 ) -> None:
     settings.TASKS = {
         "default": {

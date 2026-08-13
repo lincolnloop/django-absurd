@@ -10,7 +10,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 
 def test_max_attempts_from_decorator(
-    settings: pytest_django.fixtures.SettingsWrapper,
+    settings: pytest_django.fixtures.Settings,
 ) -> None:
     settings.TASKS = make_tasks_settings()
     be = get_absurd_backends()["default"]
@@ -20,7 +20,7 @@ def test_max_attempts_from_decorator(
 
 
 def test_max_attempts_falls_back_to_backend_default(
-    settings: pytest_django.fixtures.SettingsWrapper,
+    settings: pytest_django.fixtures.Settings,
 ) -> None:
     settings.TASKS = make_tasks_settings(default_max_attempts=7)
     be = get_absurd_backends()["default"]

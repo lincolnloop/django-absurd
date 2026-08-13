@@ -35,7 +35,7 @@ TASKS_PG_CRON = {
 
 def test_e2e_sync_fire_worker_assert_payload(
     dj_absurd: AbsurdTestRuntime,
-    settings: pytest_django.fixtures.SettingsWrapper,
+    settings: pytest_django.fixtures.Settings,
 ) -> None:
     """Sync schedule into pg_cron, fire wrapper directly, drain queue, assert row."""
     settings.TASKS = TASKS_PG_CRON

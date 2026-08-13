@@ -1,6 +1,6 @@
 import pytest
 from django.core.management import call_command
-from pytest_django.fixtures import SettingsWrapper
+from pytest_django.fixtures import Settings
 
 from django_absurd.connection import open_central_connection
 from django_absurd.flush import flush_absurd_state
@@ -13,7 +13,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 
 def test_flush_absurd_state_drop_schema_true_scopes_to_this_database(
-    settings: SettingsWrapper,
+    settings: Settings,
 ) -> None:
     settings.TASKS = utils.build_pg_cron_tasks({})
     ScheduledTask.objects.create(
@@ -54,7 +54,7 @@ def test_flush_absurd_state_drop_schema_true_scopes_to_this_database(
 
 
 def test_flush_absurd_state_drop_schema_false_scopes_to_owned_jobs_only(
-    settings: SettingsWrapper,
+    settings: Settings,
 ) -> None:
     settings.TASKS = utils.build_pg_cron_tasks({})
     ScheduledTask.objects.create(

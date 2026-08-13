@@ -58,7 +58,7 @@ def test_db_for_read_write_route_django_absurd() -> None:
 
 
 def test_sync_command_honors_alias(
-    settings: "pytest_django.fixtures.SettingsWrapper",
+    settings: "pytest_django.fixtures.Settings",
 ) -> None:
     settings.TASKS = {
         "default": {

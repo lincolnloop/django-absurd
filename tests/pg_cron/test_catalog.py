@@ -1,6 +1,6 @@
 import psycopg
 import pytest
-from pytest_django.fixtures import SettingsWrapper
+from pytest_django.fixtures import Settings
 
 from django_absurd.connection import open_central_connection
 from django_absurd.pg_cron import catalog
@@ -20,12 +20,12 @@ def test_build_jobname_without_name_is_the_prefix() -> None:
 
 
 @pytest.fixture
-def _opt_in(settings: SettingsWrapper) -> None:
+def _opt_in(settings: Settings) -> None:
     settings.TASKS = utils.build_pg_cron_tasks({}, pg_cron_on_test_db=True)
 
 
 @pytest.fixture
-def _inert(settings: SettingsWrapper) -> None:
+def _inert(settings: Settings) -> None:
     settings.TASKS = utils.build_pg_cron_tasks({}, pg_cron_on_test_db=False)
 
 
@@ -49,7 +49,7 @@ def test_schedule_job_binds_to_app_database() -> None:
 
 
 @pytest.mark.django_db(transaction=True)
-def test_schedule_job_is_noop_when_inert(settings: SettingsWrapper) -> None:
+def test_schedule_job_is_noop_when_inert(settings: Settings) -> None:
     settings.TASKS = utils.build_pg_cron_tasks({}, pg_cron_on_test_db=False)
     live_db = utils.fetch_live_database()
     catalog.schedule_job(

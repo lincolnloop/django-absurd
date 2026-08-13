@@ -1,7 +1,7 @@
 import pytest
 from django.core.management import call_command
 from django.db import connection
-from pytest_django.fixtures import SettingsWrapper
+from pytest_django.fixtures import Settings
 
 from django_absurd.backends import get_absurd_backends
 from django_absurd.connection import open_central_connection
@@ -14,7 +14,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 
 def test_creates_job_with_schedule_and_constant_command(
-    settings: SettingsWrapper,
+    settings: Settings,
 ) -> None:
     settings.TASKS = utils.build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
@@ -31,7 +31,7 @@ def test_creates_job_with_schedule_and_constant_command(
     assert active is True
 
 
-def test_sync_is_idempotent(settings: SettingsWrapper) -> None:
+def test_sync_is_idempotent(settings: Settings) -> None:
     settings.TASKS = utils.build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
@@ -45,7 +45,7 @@ def test_sync_is_idempotent(settings: SettingsWrapper) -> None:
 
 
 def test_prune_removes_undeclared_job_but_keeps_foreign(
-    settings: SettingsWrapper,
+    settings: Settings,
 ) -> None:
     with open_central_connection("default") as cur:
         cur.execute(
@@ -80,7 +80,7 @@ def test_prune_removes_undeclared_job_but_keeps_foreign(
 
 
 def test_prune_tolerates_already_unscheduled_job(
-    settings: SettingsWrapper,
+    settings: Settings,
 ) -> None:
     settings.TASKS = utils.build_pg_cron_tasks(
         {
@@ -113,7 +113,7 @@ def test_prune_tolerates_already_unscheduled_job(
     }
 
 
-def test_rearm_reenables_disabled_job(settings: SettingsWrapper) -> None:
+def test_rearm_reenables_disabled_job(settings: Settings) -> None:
     settings.TASKS = utils.build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
     )
@@ -138,7 +138,7 @@ def test_rearm_reenables_disabled_job(settings: SettingsWrapper) -> None:
 
 
 def test_injection_args_are_quoted_and_schema_survives(
-    settings: SettingsWrapper,
+    settings: Settings,
 ) -> None:
     call_command("absurd_sync_queues")
     with connection.cursor() as cur:

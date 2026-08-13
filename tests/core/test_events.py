@@ -2,7 +2,7 @@ import psycopg.errors
 import pytest
 from django.core.management import call_command
 from django.db import connection
-from pytest_django.fixtures import SettingsWrapper
+from pytest_django.fixtures import Settings
 
 from django_absurd import emit_event
 from django_absurd.exceptions import (
@@ -30,7 +30,7 @@ def test_top_level_emit_event_unknown_queue_raises() -> None:
 
 
 def test_top_level_emit_event_no_backend_configured_raises(
-    settings: SettingsWrapper,
+    settings: Settings,
 ) -> None:
     settings.TASKS = {"x": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}}
     with pytest.raises(BackendNotConfiguredError) as exc:
@@ -42,7 +42,7 @@ def test_top_level_emit_event_no_backend_configured_raises(
 
 
 def test_top_level_emit_event_unsynced_queue_raises(
-    settings: SettingsWrapper,
+    settings: Settings,
 ) -> None:
     settings.TASKS = {
         "default": {

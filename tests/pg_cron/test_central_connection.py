@@ -11,7 +11,7 @@ from tests.pg_cron import utils
 
 @pytest.mark.django_db(transaction=True)
 def test_open_central_connection_reaches_central_db(
-    settings: pytest_django.fixtures.SettingsWrapper,
+    settings: pytest_django.fixtures.Settings,
 ) -> None:
     settings.TASKS = utils.build_pg_cron_tasks({})
     with connection.open_central_connection("default") as cur:
@@ -22,7 +22,7 @@ def test_open_central_connection_reaches_central_db(
 
 @pytest.mark.django_db(transaction=True)
 def test_open_central_connection_translates_psycopg_errors(
-    settings: pytest_django.fixtures.SettingsWrapper,
+    settings: pytest_django.fixtures.Settings,
 ) -> None:
     settings.TASKS = utils.build_pg_cron_tasks({})
     with (

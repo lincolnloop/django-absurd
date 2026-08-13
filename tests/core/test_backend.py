@@ -1,7 +1,7 @@
 import typing as t
 
 from django.tasks import task_backends
-from pytest_django.fixtures import SettingsWrapper
+from pytest_django.fixtures import Settings
 
 from django_absurd.backends import (
     AbsurdBackend,
@@ -18,7 +18,7 @@ def test_default_alias_is_absurd_backend() -> None:
     assert isinstance(task_backends["default"], AbsurdBackend)
 
 
-def test_form_a_names_only(settings: SettingsWrapper) -> None:
+def test_form_a_names_only(settings: Settings) -> None:
     settings.TASKS = {"default": {"BACKEND": ABSURD, "QUEUES": ["emails", "retained"]}}
     backend = t.cast("AbsurdBackend", task_backends["default"])
     assert t.cast("set[str]", backend.queues) == {"emails", "retained"}
@@ -27,7 +27,7 @@ def test_form_a_names_only(settings: SettingsWrapper) -> None:
 
 
 def test_form_b_pushes_keys_up_and_reads_options(
-    settings: SettingsWrapper,
+    settings: Settings,
 ) -> None:
     settings.TASKS = {
         "default": {
@@ -52,7 +52,7 @@ def test_get_absurd_backends_finds_default() -> None:
 
 
 def test_get_absurd_backends_matches_subclasses(
-    settings: SettingsWrapper,
+    settings: Settings,
 ) -> None:
     # ExtendedAbsurdBackend lives in an importable module so TASKS can name it by
     # path; the resolver must find it via isinstance, not class identity.
@@ -64,7 +64,7 @@ def test_get_absurd_backends_matches_subclasses(
 
 
 def test_get_declared_queues_form_a_defaults_policy(
-    settings: SettingsWrapper,
+    settings: Settings,
 ) -> None:
     settings.TASKS = {"default": {"BACKEND": ABSURD, "QUEUES": ["a", "b"]}}
     backend = get_absurd_backends()["default"]
@@ -72,7 +72,7 @@ def test_get_declared_queues_form_a_defaults_policy(
 
 
 def test_get_declared_queues_form_b_preserves_policy(
-    settings: SettingsWrapper,
+    settings: Settings,
 ) -> None:
     settings.TASKS = {
         "default": {
@@ -84,7 +84,7 @@ def test_get_declared_queues_form_b_preserves_policy(
     assert get_declared_queues(backend) == {"a": {}, "b": {"cleanup_limit": 50}}
 
 
-def test_resolve_absurd_database_single(settings: SettingsWrapper) -> None:
+def test_resolve_absurd_database_single(settings: Settings) -> None:
     settings.TASKS = {
         "default": {"BACKEND": ABSURD, "OPTIONS": {"DATABASE": "default"}}
     }
@@ -92,7 +92,7 @@ def test_resolve_absurd_database_single(settings: SettingsWrapper) -> None:
 
 
 def test_resolve_absurd_database_ambiguous_degrades_to_default(
-    settings: SettingsWrapper,
+    settings: Settings,
 ) -> None:
     settings.TASKS = {
         "default": {"BACKEND": ABSURD, "OPTIONS": {"DATABASE": "default"}},

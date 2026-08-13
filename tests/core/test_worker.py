@@ -15,7 +15,7 @@ from django.core.management import call_command, load_command_class
 from django.core.management.base import CommandError
 from django.db import connection
 from django.tasks import task
-from pytest_django.fixtures import SettingsWrapper
+from pytest_django.fixtures import Settings
 
 from django_absurd.backends import AbsurdBackend, get_absurd_backends
 from django_absurd.exceptions import (
@@ -58,7 +58,7 @@ def test_worker_client_uses_dedicated_connection() -> None:
 
 
 @pytest.mark.django_db(databases=["default", "sqlite"], transaction=True)
-def test_worker_client_rejects_non_psycopg3(settings: SettingsWrapper) -> None:
+def test_worker_client_rejects_non_psycopg3(settings: Settings) -> None:
     settings.TASKS = {
         "default": {
             "BACKEND": "django_absurd.backends.AbsurdBackend",
@@ -170,7 +170,7 @@ def test_task_outside_tasks_py_runs(dj_absurd: AbsurdTestRuntime) -> None:
 
 
 def test_queue_defaults_to_default(
-    capsys: pytest.CaptureFixture[str], settings: SettingsWrapper
+    capsys: pytest.CaptureFixture[str], settings: Settings
 ) -> None:
     settings.TASKS = {
         "default": {
@@ -191,7 +191,7 @@ def test_queue_defaults_to_default(
     assert Group.objects.filter(name="dflt").exists()
 
 
-def test_unknown_queue_errors_listing_valid(settings: SettingsWrapper) -> None:
+def test_unknown_queue_errors_listing_valid(settings: Settings) -> None:
     with pytest.raises(CommandError) as exc:
         call_command("absurd_worker", queue="nope")
     message = str(exc.value)
@@ -200,13 +200,13 @@ def test_unknown_queue_errors_listing_valid(settings: SettingsWrapper) -> None:
     assert "default" in message
 
 
-def test_worker_rejects_alias_flag(settings: SettingsWrapper) -> None:
+def test_worker_rejects_alias_flag(settings: Settings) -> None:
     with pytest.raises(CommandError):
         call_command("absurd_worker", "--alias", "default")
 
 
 def test_worker_uses_single_backend_at_nondefault_alias(
-    capsys: pytest.CaptureFixture[str], settings: SettingsWrapper
+    capsys: pytest.CaptureFixture[str], settings: Settings
 ) -> None:
     settings.TASKS = {
         "myabsurd": {
@@ -218,7 +218,7 @@ def test_worker_uses_single_backend_at_nondefault_alias(
     assert "Started worker on queue 'default'." in capsys.readouterr().out
 
 
-def test_worker_no_backend_errors(settings: SettingsWrapper) -> None:
+def test_worker_no_backend_errors(settings: Settings) -> None:
     settings.TASKS = {
         "default": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}
     }
@@ -232,7 +232,7 @@ def test_worker_no_backend_errors(settings: SettingsWrapper) -> None:
         call_command("absurd_worker")
 
 
-def test_worker_multiple_backends_errors(settings: SettingsWrapper) -> None:
+def test_worker_multiple_backends_errors(settings: Settings) -> None:
     # absurd.E004 is a system check, not a runtime guard, so a command run with
     # two Absurd backends still reaches resolve_backend's defensive branch.
     settings.TASKS = {
@@ -299,7 +299,7 @@ def test_worker_start_provisions_all_declared_queues(
 
 
 def test_worker_command_reconciles_changed_mutable_option(
-    capsys: pytest.CaptureFixture[str], settings: SettingsWrapper
+    capsys: pytest.CaptureFixture[str], settings: Settings
 ) -> None:
     settings.TASKS = {
         "default": {
@@ -327,7 +327,7 @@ def test_worker_command_reconciles_changed_mutable_option(
 
 
 def test_worker_command_reconciles_changed_interval_option(
-    capsys: pytest.CaptureFixture[str], settings: SettingsWrapper
+    capsys: pytest.CaptureFixture[str], settings: Settings
 ) -> None:
     # Two mutable opts: cleanup_limit unchanged (loop continues), cleanup_ttl changed
     # (interval drift via parse_interval).
@@ -361,7 +361,7 @@ def test_worker_command_reconciles_changed_interval_option(
 
 
 def test_worker_command_no_reconcile_when_unchanged(
-    capsys: pytest.CaptureFixture[str], settings: SettingsWrapper
+    capsys: pytest.CaptureFixture[str], settings: Settings
 ) -> None:
     settings.TASKS = {
         "default": {
@@ -385,7 +385,7 @@ def test_worker_command_no_reconcile_when_unchanged(
 
 
 def test_worker_command_warns_on_storage_mode_drift(
-    capsys: pytest.CaptureFixture[str], settings: SettingsWrapper
+    capsys: pytest.CaptureFixture[str], settings: Settings
 ) -> None:
     settings.TASKS = {
         "default": {
