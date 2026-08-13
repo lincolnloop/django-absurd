@@ -10,9 +10,15 @@ from django_absurd.queues import get_absurd_client
 from django_absurd.test import AbsurdTestRuntime
 from tests import tasks, utils
 
+# Overriding LOGGING in a test hands the dict to dictConfig for real (Django 6.1's
+# django.test.signals.update_logging_config), so every config below has to be valid
+# input: "version" is mandatory, and leaving disable_existing_loggers to its True
+# default disables every logger already in the hierarchy — django.tasks included — for
+# the rest of the session.
+DICTCONFIG_HEADER = {"version": 1, "disable_existing_loggers": False}
+
 CONSOLE_LOGGING = {
-    "version": 1,
-    "disable_existing_loggers": False,
+    **DICTCONFIG_HEADER,
     "handlers": {"console": {"class": "logging.StreamHandler"}},
     "loggers": {"django_absurd": {"handlers": ["console"], "level": "INFO"}},
 }
@@ -48,8 +54,10 @@ def test_the_worker_defers_to_a_project_that_configured_this_package(
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     settings.LOGGING = CONSOLE_LOGGING
+    logger = logging.getLogger("django_absurd")
+    configured_by_the_project = list(logger.handlers)
     utils.start_worker(queue="default")
-    assert logging.getLogger("django_absurd").handlers == []
+    assert logger.handlers == configured_by_the_project
 
 
 def test_a_configured_child_logger_is_left_alone(
@@ -58,14 +66,22 @@ def test_a_configured_child_logger_is_left_alone(
     """Configuring django_absurd.worker says what you want from the worker; a handler
     on the parent would print those lines twice.
     """
-    settings.LOGGING = {"loggers": {"django_absurd.worker": {"level": "DEBUG"}}}
+    settings.LOGGING = {
+        **DICTCONFIG_HEADER,
+        "loggers": {"django_absurd.worker": {"level": "DEBUG"}},
+    }
     absurd_logging.attach_console_handler()
     assert logging.getLogger("django_absurd").handlers == []
 
 
 @pytest.mark.parametrize(
     "config",
-    [None, {}, {"loggers": None}, {"loggers": {}}, {"loggers": {"django": {}}}],
+    [
+        None,
+        {},
+        {**DICTCONFIG_HEADER, "loggers": {}},
+        {**DICTCONFIG_HEADER, "loggers": {"django": {}}},
+    ],
 )
 def test_a_logging_config_that_names_someone_else_still_gets_the_default(
     config: object, settings: pytest_django.fixtures.SettingsWrapper
@@ -104,8 +120,7 @@ def test_the_worker_defers_the_handler_to_a_root_only_logging_config(
     print every line twice — once bare, once through the project's handler.
     """
     settings.LOGGING = {
-        "version": 1,
-        "disable_existing_loggers": False,
+        **DICTCONFIG_HEADER,
         "handlers": {"console": {"class": "logging.StreamHandler"}},
         "root": {"handlers": ["console"], "level": "WARNING"},
     }
@@ -121,7 +136,7 @@ def test_a_root_entry_spelled_under_loggers_counts_too(
     settings: pytest_django.fixtures.SettingsWrapper,
 ) -> None:
     settings.LOGGING = {
-        "version": 1,
+        **DICTCONFIG_HEADER,
         "handlers": {"console": {"class": "logging.StreamHandler"}},
         "loggers": {"": {"handlers": ["console"]}},
     }
