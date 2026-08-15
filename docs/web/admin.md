@@ -4,8 +4,9 @@ icon: lucide/table-2
 
 # Admin
 
-[![The Tasks changelist, filtered by queue and state](assets/admin-task-list.png)](assets/admin-task-list.png){target="_blank"
-title="Open full size"}
+<a href="assets/admin-task-list.png" target="_blank" title="Open full size">
+  <img src="assets/admin-task-list.png" alt="The Tasks changelist, filtered by queue and state">
+</a>
 
 With `django.contrib.admin` installed, every queue's tasks land in one changelist,
 filterable by queue and state. Runs, Checkpoints, Events, Waits, and the Queues catalog
@@ -20,8 +21,9 @@ get their own alongside it.
 
 ## Trace a task
 
-[![A task's page, with its runs, checkpoints, and waits inline](assets/admin-task-change.png)](assets/admin-task-change.png){target="_blank"
-title="Open full size"}
+<a href="assets/admin-task-change.png" target="_blank" title="Open full size">
+  <img src="assets/admin-task-change.png" alt="A task's page, with its runs, checkpoints, and waits inline">
+</a>
 
 A task's own page carries the whole history inline: **Runs** is every attempt,
 **Checkpoints** every committed [step](workflows.md#steps) — including a `$awaitEvent:`
@@ -32,8 +34,9 @@ right now.
 
 ## Register schedules
 
-[![Scheduled tasks: one declared in settings, one authored in the admin](assets/pg-cron-scheduled-list.png)](assets/pg-cron-scheduled-list.png){target="_blank"
-title="Open full size"}
+<a href="assets/pg-cron-scheduled-list.png" target="_blank" title="Open full size">
+  <img src="assets/pg-cron-scheduled-list.png" alt="Scheduled tasks: one declared in settings, one authored in the admin">
+</a>
 
 [pg_cron](cron-jobs.md#postgres-side-pg_cron) schedules are the one writable surface.
 Add one (name, task, cron — the rest resolves from the task's
