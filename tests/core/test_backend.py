@@ -21,7 +21,7 @@ def test_default_alias_is_absurd_backend() -> None:
 def test_form_a_names_only(settings: Settings) -> None:
     settings.TASKS = {"default": {"BACKEND": ABSURD, "QUEUES": ["emails", "retained"]}}
     backend = t.cast("AbsurdBackend", task_backends["default"])
-    assert t.cast("set[str]", backend.queues) == {"emails", "retained"}
+    assert backend.queues == {"emails", "retained"}
     assert backend.database == "default"
     assert backend.default_max_attempts == 5
 
@@ -40,7 +40,7 @@ def test_form_b_pushes_keys_up_and_reads_options(
         }
     }
     backend = t.cast("AbsurdBackend", task_backends["default"])
-    assert t.cast("set[str]", backend.queues) == {"emails", "retained"}
+    assert backend.queues == {"emails", "retained"}
     assert backend.database == "absurd"
     assert backend.default_max_attempts == 9
 
