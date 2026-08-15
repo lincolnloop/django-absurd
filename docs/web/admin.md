@@ -30,14 +30,15 @@ right now.
 
 ## Register schedules
 
-![The ScheduledTask add form](assets/admin-schedule.png)
+![Scheduled tasks: one declared in settings, one authored in the admin](assets/pg-cron-scheduled-list.png)
 
 [pg_cron](cron-jobs.md#postgres-side-pg_cron) schedules are the one writable surface.
 Add one (name, task, cron — the rest resolves from the task's
 [decorators](tasks.md#retries-spawn-options)), then change it to fill `args` / `kwargs`
 and tick **Enabled**. Saving or deleting an enabled row (un)schedules its job at once.
 
-- Rows declared in `SCHEDULE` are read-only; settings own those.
+- **Source** separates the two: `Settings` rows come from `SCHEDULE` and are read-only,
+  `Admin` rows are yours to edit.
 - `name` and the resolved options are frozen at create.
 - `max_attempts` defaults to `5`; clearing it means retry forever.
 - Writes bypassing `.save()` (data migrations, `bulk_create`, `update`, raw SQL) emit on
