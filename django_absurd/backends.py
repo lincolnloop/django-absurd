@@ -114,7 +114,7 @@ class AbsurdBackend(BaseTaskBackend):
         self.has_top_level_queues: bool = "QUEUES" in params
         super().__init__(alias, params)
         if "QUEUES" in self.options:
-            self.queues = set(self.options["QUEUES"])  # type: ignore[assignment]
+            self.queues = set(self.options["QUEUES"])
         self.database: str = self.options.get("DATABASE", "default")
         self.default_max_attempts: int = self.options.get("DEFAULT_MAX_ATTEMPTS", 5)
         self.scheduler: str = (
