@@ -582,16 +582,11 @@ synced and pruned counts; exits non-zero on error.
 
 Each schedule is materialised as a `ScheduledTask` row. Settings-declared rows
 (`Source.SETTINGS`) are **read-only** — `SCHEDULE` is their source of truth. Admins
-author their own (`Source.ADMIN`) in two steps:
-
-1. **Add form** — fill only **Name**, **Task** (dotted path), **Cron**, and **Queue**,
-   which is required. On save the remaining spawn options (`max_attempts`, retry
-   strategy, cancellation, `headers`, `idempotency_key`) are resolved from the task's
-   `@task` / `@absurd_params` decorators and stored, and the row is created **disabled**
-   so it does not fire yet.
-2. **Change form** — review the resolved values, fill `args` / `kwargs` if the task
-   needs them, and tick **Enabled**. From then on, saving or deleting the row
-   immediately (un)schedules its pg_cron job.
+author their own (`Source.ADMIN`) from `name`, `task` and `cron`; the remaining spawn
+options (`queue`, `max_attempts`, retry strategy, cancellation, `headers`,
+`idempotency_key`) resolve from the task's `@task` / `@absurd_params` decorators, and
+the row is created **disabled** so it does not fire until someone enables it. Saving or
+deleting an enabled row immediately (un)schedules its pg_cron job.
 
 - `name` is immutable — it forms the job identity — and the resolved options are frozen
   at create, so later decorator edits do not change existing rows. The cron expression
