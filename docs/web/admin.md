@@ -39,7 +39,8 @@ and tick **Enabled**. Saving or deleting an enabled row (un)schedules its job at
 
 - **Source** separates the two: `Settings` rows come from `SCHEDULE` and are read-only,
   `Admin` rows are yours to edit.
-- `name` and the resolved options are frozen at create.
+- `name` is immutable — it forms the job identity. The options resolve once at create,
+  so editing a task's decorators later leaves existing rows alone.
 - `max_attempts` defaults to `5`; clearing it means retry forever.
 - Writes bypassing `.save()` (data migrations, `bulk_create`, `update`, raw SQL) emit on
   the next [reconcile](cron-jobs.md#reconcile-without-migrating), not immediately.
