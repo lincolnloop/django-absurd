@@ -4,20 +4,29 @@ icon: lucide/table-2
 
 # Admin
 
-![A task's admin page, with its runs, checkpoints, and waits inline](assets/admin-task.png)
+![The Tasks changelist, filtered by queue and state](assets/admin-task-list.png)
 
-One page per task, showing everything that happened to it: every attempt under **Runs**,
-every completed step under **Checkpoints**, and anything it blocked on under **Waits**.
-Registered automatically with `django.contrib.admin` installed.
+With `django.contrib.admin` installed, every queue's tasks land in one changelist,
+filterable by queue and state. Runs, Checkpoints, Events, Waits, and the Queues catalog
+get their own alongside it.
 
 - Read-only. There is no retry or cancel — the admin reports, it does not drive.
-- Runs, Checkpoints, Events, Waits, and the Queues catalog get their own changelists
-  too, each spanning every queue with a queue filter.
 - A queue created only by an enqueue is not in the views yet, so its tasks do not
   appear. The changelist says so and names the queues — run
   `manage.py absurd_sync_queues` or start a worker on them.
 - Toggle with `ENABLE_ADMIN`, or register on your own site with `ADMIN_SITE`
   ([Configuration](configuration.md#backend-options)).
+
+## Trace a task
+
+![A task's page, with its runs, checkpoints, and waits inline](assets/admin-task-change.png)
+
+A task's own page carries the whole history inline: **Runs** is every attempt,
+**Checkpoints** every committed [step](workflows.md#steps) — including a `$awaitEvent:`
+entry per [event](workflows.md#events) awaited — and **Waits** whatever it is blocked on
+right now.
+
+- Each inline row links through to that run, checkpoint, or wait in full.
 
 ## Register schedules
 
