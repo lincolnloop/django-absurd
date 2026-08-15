@@ -60,12 +60,8 @@ spanning every queue.
 
 ## Browse in the admin
 
-With `django.contrib.admin` installed, django-absurd registers **read-only** admin pages
-for the same models, filterable by queue. Turn them off with
-[`ENABLE_ADMIN`](configuration.md#backend-options).
+The same models are registered as read-only admin pages — see [Admin](admin.md).
 
 - **Non-default [`DATABASE`](configuration.md#backend-options):** these models read from
   the Absurd database, but Django's own `LogEntry`, session, and `ContentType` tables
   must still exist in `"default"` — run `migrate` there too.
-
-→ [Django: the admin site](https://docs.djangoproject.com/en/6.0/ref/contrib/admin/).
