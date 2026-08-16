@@ -52,15 +52,6 @@ def test_sync_command_screams_on_non_postgres_backend(
     )
 
 
-def test_sync_command_names_the_missing_schema(settings: Settings) -> None:
-    settings.TASKS = build_tasks_setting({"x": {}})
-    with utils.hide_absurd_schema(), pytest.raises(CommandError) as excinfo:
-        call_command("absurd_sync_queues")
-    assert (
-        str(excinfo.value) == "Absurd schema is not installed. Run: manage.py migrate"
-    )
-
-
 @pytest.mark.django_db(databases=["default", "sqlite"], transaction=True)
 def test_migrate_screams_on_non_postgres_backend(
     settings: Settings,

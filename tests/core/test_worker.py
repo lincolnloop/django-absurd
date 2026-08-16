@@ -432,11 +432,11 @@ def test_worker_command_schema_absent_errors_migrate() -> None:
     # that helper exists to send must never go out — pytest installs no SIGTERM
     # handler of its own, so a stray kill would hit Python's default (SIG_DFL) and
     # take the session down with it.
-    with (
-        utils.hide_absurd_schema(),
-        pytest.raises(CommandError, match="migrate"),
-    ):
+    with utils.hide_absurd_schema(), pytest.raises(CommandError) as excinfo:
         utils.start_worker(queue="default")
+    assert (
+        str(excinfo.value) == "Absurd schema is not installed. Run: manage.py migrate"
+    )
 
 
 def test_start_worker_drains_concurrently() -> None:

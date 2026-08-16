@@ -81,9 +81,7 @@ class Command(AbsurdReportCommand):
         )
 
         if queue not in backend.queues:
-            raise CommandError(
-                str(QueueNotDeclaredError(queue, backend.alias, backend.queues))
-            )
+            raise QueueNotDeclaredError(queue, backend.alias, backend.queues)
 
         # Full provision on start so the admin views reflect every declared queue,
         # not just the one this worker serves.
