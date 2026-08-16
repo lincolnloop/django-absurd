@@ -100,6 +100,15 @@ def test_flush_absurd_state_is_a_noop_on_an_unmigrated_schema(
         connections["default"].close()
 
 
+def test_flush_absurd_state_is_a_noop_on_a_hidden_schema() -> None:
+    # A schema that is present-but-unreachable (renamed, as an operator's own DDL or a
+    # mid-migration state would leave it) is a different shape than the unmigrated-DB
+    # case above: it raises SchemaNotInstalledError, not OperationalError/
+    # ProgrammingError, so clear_queues must tolerate it on its own terms.
+    with utils.hide_absurd_schema():
+        flush_absurd_state()  # must not raise
+
+
 def test_flush_absurd_state_resets_a_stranded_fake_now() -> None:
     utils.set_database_fake_now("2036-01-01T00:00:00+00:00")
     try:

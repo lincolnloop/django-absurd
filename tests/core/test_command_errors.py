@@ -3,6 +3,7 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 from pytest_django.fixtures import Settings
 
+from django_absurd.exceptions import BackendNotConfiguredError, SchemaNotInstalledError
 from tests import utils
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -20,8 +21,9 @@ def test_a_command_names_the_missing_schema_without_a_traceback(
 ) -> None:
     settings.TASKS = utils.make_tasks_settings(queues={"default": {}})
     with utils.hide_absurd_schema(), pytest.raises(CommandError) as excinfo:
-        call_command(command, *(["--noinput"] if command == "absurd_flush" else []))
+        call_command(command)
     assert str(excinfo.value) == SCHEMA_ABSENT
+    assert isinstance(excinfo.value.__cause__, SchemaNotInstalledError)
 
 
 def test_beat_reports_a_missing_backend_without_a_traceback(
@@ -36,3 +38,4 @@ def test_beat_reports_a_missing_backend_without_a_traceback(
         "No Absurd backend configured. Add a "
         "django_absurd.backends.AbsurdBackend entry to TASKS."
     )
+    assert isinstance(excinfo.value.__cause__, BackendNotConfiguredError)

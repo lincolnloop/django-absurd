@@ -9,6 +9,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.db import connection
+from django.db.utils import ProgrammingError
 from pytest_django.fixtures import Settings
 
 from django_absurd.models import Queue
@@ -66,6 +67,47 @@ def test_migrate_provisions_declared_queue(settings: Settings) -> None:
     settings.TASKS = build_tasks_setting({"alpha": {}})
     call_command("migrate", "django_absurd", verbosity=0)
     assert Queue.objects.filter(queue_name="alpha").exists()
+
+
+def test_reconcile_does_not_relabel_an_unrelated_missing_column(
+    settings: Settings,
+) -> None:
+    """A ``ProgrammingError`` from ``reconcile_queue``'s own catalog query that
+    isn't the schema-absent shape (``InvalidSchemaName``/``UndefinedTable``)
+    surfaces as itself. Relabeling it "run migrate" would send the reader to the
+    wrong door.
+
+    Driven the way it could happen in production: an operator alters the catalog
+    table's own column out from under ``reconcile_queue``, e.g. mid-migration — a
+    case ``reconcile_queue`` never classifies as schema-absent, since the
+    exception is a plain ``UndefinedColumn``, not
+    ``InvalidSchemaName``/``UndefinedTable``.
+    """
+    settings.TASKS = build_tasks_setting({"probe": {}})
+    call_command("absurd_sync_queues")
+    with connection.cursor() as cur:
+        cur.execute(
+            "alter table absurd.queues rename column queue_name to queue_name_probe"
+        )
+    try:
+        with pytest.raises(ProgrammingError) as excinfo:
+            call_command("absurd_sync_queues")
+        cause = excinfo.value.__cause__
+        assert isinstance(cause, psycopg.errors.UndefinedColumn)
+    finally:
+        with connection.cursor() as cur:
+            cur.execute(
+                "alter table absurd.queues rename column queue_name_probe to queue_name"
+            )
+
+
+def test_migrate_tolerates_an_absent_schema(settings: Settings) -> None:
+    # The migration is already recorded as applied, so `migrate` replays no DDL
+    # but still fires `post_migrate` — which must swallow SchemaNotInstalledError
+    # from provisioning rather than blowing up `migrate` itself.
+    settings.TASKS = build_tasks_setting({"alpha": {}})
+    with utils.hide_absurd_schema():
+        call_command("migrate", "django_absurd", verbosity=0)
 
 
 def test_sync_creates_with_options_and_model_maps(settings: Settings) -> None:
