@@ -26,9 +26,10 @@ class AbsurdCommand(BaseCommand):
     """Base for every ``absurd_*`` command: translates configuration failures into
     a clean ``CommandError`` instead of a raw traceback.
 
-    Overrides ``execute()`` rather than ``handle()``: ``execute()`` also wraps
-    Django's system-check phase, no command needs to rename its own ``handle``, and
-    ``--traceback`` still prints the original chain via ``from exc``.
+    Overrides ``execute()`` rather than ``handle()``: no command needs to rename its
+    own ``handle``, ``call_command`` and ``run_from_argv`` both route through
+    ``execute()`` so both get the same contract, and ``--traceback`` still prints the
+    original chain via ``from exc``.
     """
 
     def execute(self, *args: t.Any, **options: t.Any) -> t.Any:

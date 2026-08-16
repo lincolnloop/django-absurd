@@ -105,6 +105,10 @@ class SchemaNotInstalledError(DjangoAbsurdError):
     cleanup, and flush whenever a query hits a missing Absurd relation.
     ``migrate``'s ``post_migrate`` hook is what provisions declared queues, so
     the message names ``migrate`` alone — not ``absurd_sync_queues`` after it.
+
+    Each raising call site classifies with its own psycopg exception tuple, not a
+    shared one — the tuple is chosen for what that site's own statement can
+    actually hit, so the tuples differing from each other is by design, not drift.
     """
 
     def __init__(self) -> None:
