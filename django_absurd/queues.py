@@ -121,6 +121,12 @@ def reconcile_queue(backend: backends.AbsurdBackend, queue_name: str) -> SyncRes
     try:
         existing = Queue.objects.using(db).filter(queue_name=queue_name).first()
     except ProgrammingError as exc:
+        cause = exc.__cause__
+        if not isinstance(
+            cause,
+            (psycopg.errors.InvalidSchemaName, psycopg.errors.UndefinedTable),
+        ):
+            raise
         raise SchemaNotInstalledError from exc
     if existing is None:
         client.create_queue(queue_name, **opts)
