@@ -7,8 +7,8 @@ import pytest_django.fixtures
 from django.core.management import call_command
 from django.core.management.base import SystemCheckError
 
+from tests.utils import ABSURD_BACKEND, make_tasks_settings
 from tests.utils import DECLARED_QUEUES as BASE_QUEUES
-from tests.utils import make_tasks_settings
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -438,3 +438,24 @@ def test_pg_cron_schedule_defers_an_empty_cron_to_core(
         },
     )
     assert out.count("absurd.E007") == 1
+
+
+def test_queues_option_as_a_list_errors_without_crashing_the_schedule_check(
+    settings: pytest_django.fixtures.Settings,
+) -> None:
+    settings.TASKS = {
+        "default": {
+            "BACKEND": ABSURD_BACKEND,
+            "OPTIONS": {
+                "QUEUES": ["default"],
+                "SCHEDULE": {"s": {"task": "tests.tasks.add", "cron": "0 3 * * *"}},
+            },
+        }
+    }
+    with pytest.raises(SystemCheckError) as excinfo:
+        call_command("check", "django_absurd")
+    assert "absurd.E014" in str(excinfo.value)
+    assert (
+        "django-absurd: OPTIONS['QUEUES'] must be a mapping of queue name to"
+        " policy options." in str(excinfo.value)
+    )

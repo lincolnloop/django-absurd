@@ -102,6 +102,7 @@ check's own hint says otherwise:
 | `absurd.E011` | `SYNC_SCHEDULES_ON_TEST_DB` is `True` without `PG_CRON_ON_TEST_DB` (see [Cron Jobs](cron-jobs.md#test-databases)).                                                                            |
 | `absurd.E012` | The central `cron.database_name` database is unreachable or missing the `pg_cron` extension — a deploy-time check (see [Cron Jobs](cron-jobs.md#operator-setup)).                             |
 | `absurd.E013` | `"django_absurd.pg_cron"` is installed but no `AbsurdBackend` is configured — schedules would save and never fire (see [Cron Jobs](cron-jobs.md#postgres-side-pg_cron)).                      |
+| `absurd.E014` | `OPTIONS["QUEUES"]` is not a mapping of queue name to policy options — the bare name list belongs at the top level, as `QUEUES`.                                                              |
 | `absurd.W002` | (Warning) A queue's declared `storage_mode` differs from the database; `storage_mode` is immutable once the queue exists.                                                                     |
 | `absurd.W003` | (Warning) `django_absurd.pg_cron` is ordered before `django_absurd` in `INSTALLED_APPS` (see [Cron Jobs](cron-jobs.md)).                                                                      |
 

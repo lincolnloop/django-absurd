@@ -15,6 +15,7 @@ from django.utils.module_loading import import_string
 
 from django_absurd.backends import (
     PG_CRON_APP_NAME,
+    AbsurdBackend,
     get_absurd_backends,
     get_declared_queues,
 )
@@ -50,6 +51,9 @@ E003_MSG = "django-absurd: invalid per-queue policy options."
 E003_HINT = (
     "Remove unknown keys and ensure storage_mode/detach_mode values"
     " are valid SDK literals."
+)
+E003_HINT_MAPPING = (
+    "Map each queue name to its policy dict — {} for the Absurd defaults."
 )
 E004_MSG = "django-absurd: more than one Absurd backend is configured."
 E004_HINT = (
@@ -96,6 +100,15 @@ E010_MSG = "django-absurd: invalid CLEANUP option."
 E010_HINT = (
     "Set CLEANUP to a dict with a single 'schedule' key:"
     ' OPTIONS["CLEANUP"] = {"schedule": "<cron>"}.'
+)
+
+E014_MSG = (
+    "django-absurd: OPTIONS['QUEUES'] must be a mapping of queue name to policy"
+    " options."
+)
+E014_HINT = (
+    "Write OPTIONS['QUEUES'] = {'a': {}}, or declare names only with the top-level"
+    " QUEUES list."
 )
 
 W003_MSG = (
@@ -404,8 +417,10 @@ def check_absurd_config(
         if backend.has_top_level_queues and "QUEUES" in backend.options:
             errors.append(Error(E002_MSG, hint=E002_HINT, id="absurd.E002"))
 
-        declared = get_declared_queues(backend)
-        for queue_name, policy in declared.items():
+        if not declares_queues_as_a_mapping(backend):
+            errors.append(Error(E014_MSG, hint=E014_HINT, id="absurd.E014"))
+
+        for queue_name, policy in get_declared_queues(backend).items():
             errors.extend(validate_queue_policy(queue_name, policy))
 
         if db != "default" and not router_installed() and not e005_emitted:
@@ -449,10 +464,23 @@ def check_absurd_queue_state(
     return errors
 
 
+def declares_queues_as_a_mapping(backend: AbsurdBackend) -> bool:
+    return isinstance(backend.options.get("QUEUES", {}), Mapping)
+
+
 def validate_queue_policy(
     queue_name: str,
     policy: CreateQueueOptions,
 ) -> list[CheckMessage]:
+    if not isinstance(policy, Mapping):
+        return [
+            Error(
+                f"{E003_MSG} Queue '{queue_name}': policy options must be a mapping,"
+                f" got {type(policy).__name__}.",
+                hint=E003_HINT_MAPPING,
+                id="absurd.E003",
+            )
+        ]
     errors: list[CheckMessage] = [
         Error(
             f"{E003_MSG} Queue '{queue_name}': unknown key '{key}'.",

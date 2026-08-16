@@ -1231,6 +1231,7 @@ than silencing it.
 | `absurd.E011` | `SYNC_SCHEDULES_ON_TEST_DB` is `True` without `PG_CRON_ON_TEST_DB`                                                    |
 | `absurd.E012` | The central `cron.database_name` database is unreachable or missing `pg_cron` — see [operator setup](#operator-setup) |
 | `absurd.E013` | `"django_absurd.pg_cron"` installed with no `AbsurdBackend` configured                                                |
+| `absurd.E014` | `OPTIONS["QUEUES"]` is not a mapping of queue name to policy options                                                  |
 | `absurd.W002` | (Warning) A queue's declared `storage_mode` differs from the database                                                 |
 | `absurd.W003` | (Warning) `django_absurd.pg_cron` ordered before `django_absurd` in `INSTALLED_APPS`                                  |
 
