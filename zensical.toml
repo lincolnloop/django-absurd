@@ -10,6 +10,7 @@ nav = [
   {"Workers" = "workers.md"},
   {"Cleanup" = "cleanup.md"},
   {"Monitoring" = "monitoring.md"},
+  {"Admin" = "admin.md"},
   {"Testing" = "testing.md"},
   {"Configuration" = "configuration.md"},
 ]

@@ -126,7 +126,7 @@ defers one enqueue, taking a timezone-aware `datetime`. For a repeating schedule
 [Cron jobs](#cron-jobs).
 
 - Absurd's spawn has no `available_at`, so a second row, `<your task's path>:run_after`,
-  waits then enqueues yours. Both appear in the admin, filterable by that name.
+  waits then enqueues yours. Both are real task rows, findable by that name.
 - The id you got back keeps working: `READY` while the wrapper waits, then your task's
   own status and return value. A wrapper that cannot launch stays `READY`, no visible
   error, until it exhausts its attempts — then `FAILED`.
@@ -427,8 +427,8 @@ property, `run_step` sync-only.
 - No `await_task_result`: the SDK's version polls and heartbeats inside a step rather
   than suspending, and is cross-queue only. Use Django's
   [`get_result()` / `aget_result()`](#read-a-result) for a child task's result.
-- Checkpoints and waits are visible in the admin, inline under a task alongside its
-  runs.
+- Checkpoints and waits are rows like any other — query them through
+  [the models](#query-queue-state), or read them off a task in the admin.
 
 ### Gotchas
 
@@ -582,16 +582,11 @@ synced and pruned counts; exits non-zero on error.
 
 Each schedule is materialised as a `ScheduledTask` row. Settings-declared rows
 (`Source.SETTINGS`) are **read-only** — `SCHEDULE` is their source of truth. Admins
-author their own (`Source.ADMIN`) in two steps:
-
-1. **Add form** — fill only **Name**, **Task** (dotted path), **Cron**, and **Queue**,
-   which is required. On save the remaining spawn options (`max_attempts`, retry
-   strategy, cancellation, `headers`, `idempotency_key`) are resolved from the task's
-   `@task` / `@absurd_params` decorators and stored, and the row is created **disabled**
-   so it does not fire yet.
-2. **Change form** — review the resolved values, fill `args` / `kwargs` if the task
-   needs them, and tick **Enabled**. From then on, saving or deleting the row
-   immediately (un)schedules its pg_cron job.
+author their own (`Source.ADMIN`) from `name`, `task` and `cron`; the remaining spawn
+options (`queue`, `max_attempts`, retry strategy, cancellation, `headers`,
+`idempotency_key`) resolve from the task's `@task` / `@absurd_params` decorators, and
+the row is created **disabled** so it does not fire until someone enables it. Saving or
+deleting an enabled row immediately (un)schedules its pg_cron job.
 
 - `name` is immutable — it forms the job identity — and the resolved options are frozen
   at create, so later decorator edits do not change existing rows. The cron expression
@@ -915,20 +910,18 @@ synthesized `queue` column. `Queue` is the queue catalog, keyed by `queue_name`.
 
 ### The admin
 
-With `django.contrib.admin` installed, django-absurd registers six read-only admin
-entries — **Tasks**, **Runs**, **Checkpoints**, **Events**, **Waits** (each spanning all
-queues, filterable by queue) and the **Queues** catalog. No configuration; the list
-views stay in sync with the live queue catalog. Turn them off with
-[`ENABLE_ADMIN`](#backend-options), or register elsewhere with `ADMIN_SITE`.
+With `django.contrib.admin` installed, django-absurd registers read-only pages for the
+models above. No configuration. Turn them off with [`ENABLE_ADMIN`](#backend-options),
+or register elsewhere with `ADMIN_SITE`.
 
 - A queue created only by an enqueue, with no worker started and no sync run, is not yet
-  in the views, so its tasks do not appear. The changelist detects this and warns,
-  naming the unindexed queues and pointing at `absurd_sync_queues`.
+  in the views, so its tasks do not appear — run `absurd_sync_queues`.
 - **Non-default `DATABASE`:** the synthesized models read from the Absurd database, but
   Django's own `LogEntry`, session, and `ContentType` tables must still exist in
   `"default"` — run `migrate` on it too.
 
-→ [Django: the admin site](https://docs.djangoproject.com/en/6.0/ref/contrib/admin/).
+→ What each page shows, with screenshots:
+<https://lincolnloop.github.io/django-absurd/admin/>.
 
 ## Testing
 

@@ -120,18 +120,8 @@ counts, non-zero exit on error.
 
 ### Author schedules in the admin
 
-Settings-declared `ScheduledTask` rows are read-only. Admins author their own in two
-steps: **add** (name, task, cron — the rest resolves from the task's
-[decorators](tasks.md#retries-spawn-options), row created disabled), then **change**
-(fill `args` / `kwargs`, tick **Enabled**). Saving or deleting an enabled row
-(un)schedules its job immediately.
-
-- `name` and the resolved options are frozen at create.
-- `max_attempts` defaults to `5`; clearing it means retry forever.
-- Writes bypassing `.save()` (data migrations, `bulk_create`, `update`, raw SQL) emit on
-  the next reconcile, not immediately.
-- `loaddata` bypasses the router — pass `--database=<alias>`. Another database raises
-  `NotImplementedError`.
+Admins author their own schedules alongside the settings-declared ones — see
+[Admin](admin.md#register-schedules).
 
 ### Test databases
 
