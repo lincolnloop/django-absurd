@@ -3,7 +3,7 @@ from django.core.management.base import CommandParser
 from django_absurd.backends import get_absurd_backends
 from django_absurd.flush import clear_queues
 from django_absurd.management.base import AbsurdCommand
-from django_absurd.queues import get_absurd_client
+from django_absurd.queues import list_provisioned_queues
 
 
 class Command(AbsurdCommand):
@@ -25,8 +25,7 @@ class Command(AbsurdCommand):
         if not get_absurd_backends():
             self.stdout.write("No Absurd task backends configured.")
             return
-        client = get_absurd_client()
-        queues = sorted(client.list_queues())
+        queues = list_provisioned_queues()
         if not queues:
             self.stdout.write("No queues to flush.")
             return

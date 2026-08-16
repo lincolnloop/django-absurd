@@ -68,6 +68,18 @@ def get_absurd_client(using: str | None = None) -> Absurd:
     return build_absurd_client(using or resolve_absurd_database())
 
 
+def list_provisioned_queues(using: str | None = None) -> list[str]:
+    client = get_absurd_client(using)
+    try:
+        return sorted(client.list_queues())
+    except (
+        psycopg.errors.InvalidSchemaName,
+        psycopg.errors.UndefinedFunction,
+        psycopg.errors.UndefinedTable,
+    ) as exc:
+        raise SchemaNotInstalledError from exc
+
+
 def names_a_queue_table(exc: psycopg.errors.UndefinedTable, queue: str) -> bool:
     """Report whether ``exc`` is about one of ``queue``'s own Absurd tables.
 

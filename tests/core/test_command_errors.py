@@ -10,14 +10,17 @@ pytestmark = pytest.mark.django_db(transaction=True)
 SCHEMA_ABSENT = "Absurd schema is not installed. Run: manage.py migrate"
 
 
-@pytest.mark.parametrize("command", ["absurd_sync_queues", "absurd_worker"])
+@pytest.mark.parametrize(
+    "command",
+    ["absurd_cleanup", "absurd_flush", "absurd_sync_queues", "absurd_worker"],
+)
 def test_a_command_names_the_missing_schema_without_a_traceback(
     command: str,
     settings: Settings,
 ) -> None:
     settings.TASKS = utils.make_tasks_settings(queues={"default": {}})
     with utils.hide_absurd_schema(), pytest.raises(CommandError) as excinfo:
-        call_command(command)
+        call_command(command, *(["--noinput"] if command == "absurd_flush" else []))
     assert str(excinfo.value) == SCHEMA_ABSENT
 
 
