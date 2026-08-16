@@ -223,6 +223,50 @@ def test_invalid_storage_mode_literal_errors(
     assert "absurd.E003" in out
 
 
+def test_queues_option_as_a_list_errors(
+    capsys: pytest.CaptureFixture[str],
+    settings: "pytest_django.fixtures.Settings",
+) -> None:
+    settings.TASKS = {
+        "default": {
+            "BACKEND": ABSURD,
+            "OPTIONS": {"QUEUES": ["a"]},
+        }
+    }
+    out = run_absurd_check(capsys, databases=["default"])
+    assert "absurd.E014" in out
+    assert (
+        "django-absurd: OPTIONS['QUEUES'] must be a mapping of queue name to"
+        " policy options." in out
+    )
+    assert (
+        "HINT: Write OPTIONS['QUEUES'] = {'a': {}}, or declare names only with the"
+        " top-level QUEUES list." in out
+    )
+
+
+def test_queues_option_with_a_non_mapping_policy_errors(
+    capsys: pytest.CaptureFixture[str],
+    settings: "pytest_django.fixtures.Settings",
+) -> None:
+    settings.TASKS = {
+        "default": {
+            "BACKEND": ABSURD,
+            "OPTIONS": {"QUEUES": {"a": "cleanup_ttl"}},
+        }
+    }
+    out = run_absurd_check(capsys)
+    assert "absurd.E014" not in out
+    assert (
+        "django-absurd: invalid per-queue policy options. Queue 'a': policy options"
+        " must be a mapping, got str." in out
+    )
+    assert (
+        "HINT: Map each queue name to its policy dict — {} for the Absurd defaults."
+        in out
+    )
+
+
 def test_single_absurd_backend_no_e004(
     capsys: pytest.CaptureFixture[str],
     settings: "pytest_django.fixtures.Settings",

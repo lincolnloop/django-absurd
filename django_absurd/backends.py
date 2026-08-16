@@ -1,6 +1,7 @@
 import datetime as dt
 import typing as t
 import uuid
+from collections.abc import Mapping
 
 import psycopg.errors
 from absurd_sdk import CreateQueueOptions, JsonObject, JsonValue
@@ -392,7 +393,11 @@ def normalize_to_utc(moment: dt.datetime) -> dt.datetime:
 
 def get_declared_queues(backend: "AbsurdBackend") -> dict[str, CreateQueueOptions]:
     if "QUEUES" in backend.options:
-        return dict(backend.options["QUEUES"])
+        declared = backend.options["QUEUES"]
+        # A malformed OPTIONS['QUEUES'] declares nothing, and absurd.E014 reports it.
+        # Returning {} keeps every caller — checks, the pg_cron models, provisioning —
+        # off a dict() TypeError/ValueError that names neither the setting nor the fix.
+        return dict(declared) if isinstance(declared, Mapping) else {}
     return {name: CreateQueueOptions() for name in backend.queues}
 
 
