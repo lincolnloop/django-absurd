@@ -125,8 +125,10 @@ Absurd schema itself isn't installed — run `manage.py migrate`).
 
 - `enqueue` raises `QueueNotDeclaredError` only when `QUEUES` is empty or unset. With
   `QUEUES` configured, a typo is rejected earlier as Django's own `InvalidTask`.
-- Every `absurd_*` management command turns a configuration failure —
-  `ImproperlyConfigured` or any `DjangoAbsurdError` — into a `CommandError`;
-  `--traceback` still shows the original.
+- Every `absurd_*` management command turns a fixed set of configuration failures —
+  `ImproperlyConfigured`, `BackendNotConfiguredError`, `SchemaNotInstalledError`,
+  `QueueNotDeclaredError`, `QueueNotProvisionedError` — into a `CommandError`;
+  `--traceback` still shows the original. Every other error, including any other
+  `DjangoAbsurdError` subclass, keeps its own type and full traceback.
 - The hierarchy isn't total — other failures still raise plain `ImproperlyConfigured` /
   `RuntimeError` / `TypeError`.

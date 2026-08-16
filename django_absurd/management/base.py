@@ -4,8 +4,26 @@ from django.core.exceptions import ImproperlyConfigured
 from django.core.management.base import BaseCommand, CommandError
 
 from django_absurd.backends import AbsurdBackend, get_absurd_backends
-from django_absurd.exceptions import BackendNotConfiguredError, DjangoAbsurdError
+from django_absurd.exceptions import (
+    BackendNotConfiguredError,
+    QueueNotDeclaredError,
+    QueueNotProvisionedError,
+    SchemaNotInstalledError,
+)
 from django_absurd.queues import SyncResult
+
+# Each of these five owns a message that already names the fix (an add/run/configure
+# instruction), so translating it into an untyped CommandError with no traceback loses
+# nothing an operator needs. Any other DjangoAbsurdError subclass — and anything
+# unforeseen — signals a bug, not a configuration mistake, and keeps its own type and
+# full traceback.
+CONFIGURATION_ERRORS: tuple[type[Exception], ...] = (
+    ImproperlyConfigured,
+    BackendNotConfiguredError,
+    SchemaNotInstalledError,
+    QueueNotDeclaredError,
+    QueueNotProvisionedError,
+)
 
 BEAT_DISABLED_UNDER_PG_CRON = (
     "the pg_cron app is installed: schedules run in the database via pg_cron,"
@@ -35,7 +53,7 @@ class AbsurdCommand(BaseCommand):
     def execute(self, *args: t.Any, **options: t.Any) -> t.Any:
         try:
             return super().execute(*args, **options)
-        except (ImproperlyConfigured, DjangoAbsurdError) as exc:
+        except CONFIGURATION_ERRORS as exc:
             raise CommandError(str(exc)) from exc
 
 

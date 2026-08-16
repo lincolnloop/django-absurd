@@ -3,7 +3,11 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 from pytest_django.fixtures import Settings
 
-from django_absurd.exceptions import BackendNotConfiguredError, SchemaNotInstalledError
+from django_absurd.exceptions import (
+    BackendNotConfiguredError,
+    QueueReadOnlyError,
+    SchemaNotInstalledError,
+)
 from tests import utils
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -39,3 +43,8 @@ def test_beat_reports_a_missing_backend_without_a_traceback(
         "django_absurd.backends.AbsurdBackend entry to TASKS."
     )
     assert isinstance(excinfo.value.__cause__, BackendNotConfiguredError)
+
+
+def test_a_non_configuration_error_escapes_untranslated() -> None:
+    with pytest.raises(QueueReadOnlyError):
+        call_command("raises_uncaught_error")

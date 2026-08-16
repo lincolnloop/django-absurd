@@ -48,9 +48,13 @@ AbsurdCommand(BaseCommand)               # overrides execute()
 └── AbsurdReportCommand(AbsurdCommand)   # keeps report_sync_result
 ```
 
-`AbsurdCommand.execute` wraps `super().execute()`, catches `ImproperlyConfigured` and
-`DjangoAbsurdError`, re-raises `CommandError` chained `from exc`. All six commands
-inherit it; the four hand-rolled translations go.
+`AbsurdCommand.execute` wraps `super().execute()`, catches a named tuple of
+configuration conditions — `ImproperlyConfigured`, `BackendNotConfiguredError`,
+`SchemaNotInstalledError`, `QueueNotDeclaredError`, `QueueNotProvisionedError` — and
+re-raises `CommandError` chained `from exc`. Any other `DjangoAbsurdError` subclass, and
+anything unforeseen, keeps its own type and full traceback: it signals a bug, not a
+configuration mistake. All six commands inherit the base; the four hand-rolled
+translations go.
 
 Overriding `execute` rather than `handle`: one override, no command renames its
 `handle`, and the system-check phase is covered too. Nothing is lost — Django's
