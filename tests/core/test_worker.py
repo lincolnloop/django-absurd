@@ -426,7 +426,7 @@ def test_worker_command_warns_on_storage_mode_drift(
 
 
 def test_worker_command_schema_absent_errors_migrate() -> None:
-    # The provision_backend/ImproperlyConfigured translation errors before ever
+    # The provision_backend error translation errors before ever
     # reaching the blocking worker loop. Driven through the live-worker helper: a
     # command that fails this early installs no signal handler, so the stop signal
     # that helper exists to send must never go out — pytest installs no SIGTERM
