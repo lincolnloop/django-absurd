@@ -8,7 +8,11 @@ if t.TYPE_CHECKING:
 
 from django_absurd import console
 from django_absurd import logging as absurd_logging
-from django_absurd.exceptions import BackendNotConfiguredError, QueueNotDeclaredError
+from django_absurd.exceptions import (
+    BackendNotConfiguredError,
+    QueueNotDeclaredError,
+    SchemaNotInstalledError,
+)
 from django_absurd.management.base import (
     BEAT_DISABLED_UNDER_PG_CRON,
     AbsurdReportCommand,
@@ -93,7 +97,7 @@ class Command(AbsurdReportCommand):
             # Full provision on start so the admin views reflect every declared
             # queue, not just the one this worker serves.
             result = provision_backend(backend)
-        except ImproperlyConfigured as exc:
+        except (ImproperlyConfigured, SchemaNotInstalledError) as exc:
             raise CommandError(str(exc)) from exc
         self.report_sync_result(result)
 
