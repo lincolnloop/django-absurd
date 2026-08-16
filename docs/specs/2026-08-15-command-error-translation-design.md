@@ -57,9 +57,8 @@ configuration mistake. All six commands inherit the base; the four hand-rolled
 translations go.
 
 Overriding `execute` rather than `handle`: one override, no command renames its
-`handle`, and the system-check phase is covered too. Nothing is lost — Django's
-`--traceback` still prints the original chain, and `CommandError` is what Django's own
-commands raise.
+`handle`. Nothing is lost — Django's `--traceback` still prints the original chain, and
+`CommandError` is what Django's own commands raise.
 
 `call_command` runs through `execute` as well, so programmatic callers see
 `CommandError` too. That is the same contract Django's built-in commands offer, and
