@@ -229,17 +229,14 @@ pytestmark = pytest.mark.django_db(transaction=True)
 SCHEMA_ABSENT = "Absurd schema is not installed. Run: manage.py migrate"
 
 
-@pytest.mark.parametrize(
-    "command",
-    ["absurd_cleanup", "absurd_flush", "absurd_sync_queues", "absurd_worker"],
-)
+@pytest.mark.parametrize("command", ["absurd_sync_queues", "absurd_worker"])
 def test_a_command_names_the_missing_schema_without_a_traceback(
     command: str,
     settings: Settings,
 ) -> None:
     settings.TASKS = utils.make_tasks_settings(queues={"default": {}})
     with utils.hide_absurd_schema(), pytest.raises(CommandError) as excinfo:
-        call_command(command, *(["--noinput"] if command == "absurd_flush" else []))
+        call_command(command)
     assert str(excinfo.value) == SCHEMA_ABSENT
 
 
@@ -257,9 +254,9 @@ def test_beat_reports_a_missing_backend_without_a_traceback(
     )
 ```
 
-`absurd_cleanup` and `absurd_flush` fail this run for a second reason — their probes
-land in Task 3. Expect them to stay red until then and say so in the commit; do NOT
-weaken the assertion to get them green here.
+`absurd_cleanup` and `absurd_flush` are deliberately absent from the parametrize list —
+their probes land in Task 3, which adds their cases to this same file. Never commit a
+test this task cannot turn green.
 
 In `tests/pg_cron/test_absurd_sync_crons_command.py`, add the same no-backend case for
 `absurd_sync_crons`, asserting the identical complete message.
@@ -270,10 +267,8 @@ In `tests/pg_cron/test_absurd_sync_crons_command.py`, add the same no-backend ca
 uv run pytest tests/core/test_command_errors.py -q --no-cov
 ```
 
-Expected: the four schema cases FAIL — two with `SchemaNotInstalledError` escaping
-uncaught (`absurd_sync_queues`, `absurd_worker`), two with raw psycopg /
-`ProgrammingError` (`absurd_cleanup`, `absurd_flush`). The beat case passes already; it
-is a regression guard for the handler this task deletes.
+Expected: both schema cases FAIL with `SchemaNotInstalledError` escaping uncaught. The
+beat case passes already; it is a regression guard for the handler this task deletes.
 
 - [ ] **Step 3: Add the base**
 
@@ -309,8 +304,7 @@ Then re-parent `AbsurdReportCommand` onto `AbsurdCommand`. Its body does not cha
 uv run pytest tests/core/test_command_errors.py tests/pg_cron/test_absurd_sync_crons_command.py -q --no-cov
 ```
 
-Expected: every case PASSES except `absurd_cleanup` and `absurd_flush`, which Task 3
-fixes.
+Expected: every case PASSES.
 
 - [ ] **Step 6: Run the command-driving tests**
 
@@ -331,8 +325,6 @@ git add django_absurd/management django_absurd/pg_cron/management \
 git commit -m 'feat: translate configuration failures to CommandError in one command base'
 ```
 
-Note in the commit body that two parametrized cases stay red until the next commit.
-
 ---
 
 ### Task 3: cleanup and flush stop leaking raw psycopg errors
@@ -342,7 +334,7 @@ Note in the commit body that two parametrized cases stay red until the next comm
 - Modify: `django_absurd/cleanup.py`
 - Modify: `django_absurd/queues.py`
 - Modify: `django_absurd/management/commands/absurd_flush.py`
-- Test: `tests/core/test_command_errors.py` (already written in Task 2)
+- Test: `tests/core/test_command_errors.py` (extend Task 2's parametrize list)
 
 **Interfaces:**
 
@@ -351,16 +343,34 @@ Note in the commit body that two parametrized cases stay red until the next comm
   `django_absurd.queues.list_provisioned_queues(using: str | None = None) -> list[str]`,
   used by `absurd_flush`.
 
-- [ ] **Step 1: Confirm the two cases are still red**
+- [ ] **Step 1: Add the two cases (RED)**
+
+In `tests/core/test_command_errors.py`, extend the existing parametrize list to
+`["absurd_cleanup", "absurd_flush", "absurd_sync_queues", "absurd_worker"]`
+(alphabetical, per the conventions) and pass `absurd_flush` its non-interactive flag,
+since the command prompts before dropping anything:
+
+```python
+@pytest.mark.parametrize(
+    "command",
+    ["absurd_cleanup", "absurd_flush", "absurd_sync_queues", "absurd_worker"],
+)
+def test_a_command_names_the_missing_schema_without_a_traceback(
+    command: str,
+    settings: Settings,
+) -> None:
+    settings.TASKS = utils.make_tasks_settings(queues={"default": {}})
+    with utils.hide_absurd_schema(), pytest.raises(CommandError) as excinfo:
+        call_command(command, *(["--noinput"] if command == "absurd_flush" else []))
+    assert str(excinfo.value) == SCHEMA_ABSENT
+```
 
 ```bash
-uv run pytest tests/core/test_command_errors.py -q --no-cov \
-  -k "cleanup or flush"
+uv run pytest tests/core/test_command_errors.py -q --no-cov -k "cleanup or flush"
 ```
 
 Expected: FAIL — `django.db.utils.ProgrammingError: schema "absurd" does not exist` from
-cleanup, `psycopg.errors.InvalidSchemaName` from flush. These are the RED for this task;
-no new test is needed.
+cleanup, `psycopg.errors.InvalidSchemaName` from flush.
 
 - [ ] **Step 2: Classify in the cleanup path**
 
@@ -411,7 +421,8 @@ would break every suite's teardown, so treat a failure here as this task's own b
 
 ```bash
 git add django_absurd/cleanup.py django_absurd/queues.py \
-        django_absurd/management/commands/absurd_flush.py
+        django_absurd/management/commands/absurd_flush.py \
+        tests/core/test_command_errors.py
 git commit -m 'fix: report an unmigrated database from absurd_cleanup and absurd_flush'
 ```
 
