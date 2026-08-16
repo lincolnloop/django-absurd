@@ -1,9 +1,8 @@
 import typing as t
 
-from django.core.management.base import BaseCommand, CommandError
+from django.core.management.base import CommandError
 
-from django_absurd.exceptions import BackendNotConfiguredError
-from django_absurd.management.base import resolve_backend
+from django_absurd.management.base import AbsurdCommand, resolve_backend
 from django_absurd.pg_cron.detection import is_pg_cron_inert
 from django_absurd.pg_cron.reconcile import (
     sync_admin_crons,
@@ -15,7 +14,7 @@ if t.TYPE_CHECKING:
     from django.core.management.base import CommandParser
 
 
-class Command(BaseCommand):
+class Command(AbsurdCommand):
     help = "Reconcile pg_cron jobs for all declared SCHEDULE entries."
 
     def add_arguments(self, parser: "CommandParser") -> None:
@@ -33,10 +32,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args: t.Any, **options: t.Any) -> str | None:
-        try:
-            backend = resolve_backend()
-        except BackendNotConfiguredError as exc:
-            raise CommandError(str(exc)) from exc
+        backend = resolve_backend()
 
         if is_pg_cron_inert(backend.database):
             msg = (

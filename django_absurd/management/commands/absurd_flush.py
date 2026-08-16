@@ -1,11 +1,12 @@
-from django.core.management.base import BaseCommand, CommandParser
+from django.core.management.base import CommandParser
 
 from django_absurd.backends import get_absurd_backends
 from django_absurd.flush import clear_queues
+from django_absurd.management.base import AbsurdCommand
 from django_absurd.queues import get_absurd_client
 
 
-class Command(BaseCommand):
+class Command(AbsurdCommand):
     help = (
         "Drop ALL Absurd queues and their data (the schema and functions are kept)."
         " Destructive."

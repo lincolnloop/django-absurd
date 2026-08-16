@@ -1,7 +1,10 @@
-from django.core.management.base import BaseCommand
+import typing as t
+
+from django.core.exceptions import ImproperlyConfigured
+from django.core.management.base import BaseCommand, CommandError
 
 from django_absurd.backends import AbsurdBackend, get_absurd_backends
-from django_absurd.exceptions import BackendNotConfiguredError
+from django_absurd.exceptions import BackendNotConfiguredError, DjangoAbsurdError
 from django_absurd.queues import SyncResult
 
 BEAT_DISABLED_UNDER_PG_CRON = (
@@ -19,7 +22,23 @@ def resolve_backend() -> AbsurdBackend:
     raise BackendNotConfiguredError(len(backends))
 
 
-class AbsurdReportCommand(BaseCommand):
+class AbsurdCommand(BaseCommand):
+    """Base for every ``absurd_*`` command: translates configuration failures into
+    a clean ``CommandError`` instead of a raw traceback.
+
+    Overrides ``execute()`` rather than ``handle()``: ``execute()`` also wraps
+    Django's system-check phase, no command needs to rename its own ``handle``, and
+    ``--traceback`` still prints the original chain via ``from exc``.
+    """
+
+    def execute(self, *args: t.Any, **options: t.Any) -> t.Any:
+        try:
+            return super().execute(*args, **options)
+        except (ImproperlyConfigured, DjangoAbsurdError) as exc:
+            raise CommandError(str(exc)) from exc
+
+
+class AbsurdReportCommand(AbsurdCommand):
     """Base for commands that report a queue SyncResult to stdout/stderr."""
 
     def report_sync_result(
