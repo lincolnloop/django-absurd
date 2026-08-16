@@ -55,8 +55,7 @@ duplicate that material here.
   the short name reads as the SDK's.
 - Be honest about coverage: `except DjangoAbsurdError` catches the typed errors, not
   every error the package can raise — plain `ImproperlyConfigured`/`RuntimeError`/
-  `TypeError` remain in `checks.py`, `connection.py`, `queues.py`, and `test.py`'s
-  guards for now.
+  `TypeError` remain in `checks.py`, `connection.py`, and `test.py`'s guards for now.
 
 ## Exception chaining
 

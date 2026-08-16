@@ -7,9 +7,12 @@ import re
 import sys
 import typing as t
 
+import psycopg.errors
 import pytest
 from django.contrib.auth.models import Group
 from django.core.management import call_command
+from django.db import connection
+from django.db.utils import ProgrammingError
 from django.utils import timezone
 
 from django_absurd import worker
@@ -181,6 +184,35 @@ def test_cleanup_command_reports_per_queue_counts(
     capsys.readouterr()  # discard sync/worker output
     call_command("absurd_cleanup")
     assert capsys.readouterr().out == "default: 1 tasks, 0 events deleted\n"
+
+
+def test_cleanup_does_not_relabel_an_unrelated_missing_relation(
+    settings: "pytest_django.fixtures.Settings",
+) -> None:
+    """A missing relation inside ``absurd.cleanup_all_queues`` that is not the
+    schema-absent shape (``InvalidSchemaName``/``UndefinedFunction``) surfaces as
+    itself. Relabeling it "run migrate" would send the reader to the wrong door, and
+    dropping the cause would hide which relation is actually missing.
+
+    Driven the way it happens in production: a queue's own table renamed out from
+    under the cleanup RPC, e.g. mid-migration or by an operator error — a case
+    ``cleanup_queues`` never classifies as schema-absent, since the exception is a
+    plain ``UndefinedTable``, not ``InvalidSchemaName``/``UndefinedFunction``.
+    """
+    sync_queue(settings)
+    with connection.cursor() as cur:
+        cur.execute("alter table absurd.t_default rename to t_default_probe")
+    try:
+        with pytest.raises(ProgrammingError) as excinfo:
+            call_command("absurd_cleanup")
+        cause = excinfo.value.__cause__
+        assert isinstance(cause, psycopg.errors.UndefinedTable)
+        assert (
+            cause.diag.message_primary == 'relation "absurd.t_default" does not exist'
+        )
+    finally:
+        with connection.cursor() as cur:
+            cur.execute("alter table absurd.t_default_probe rename to t_default")
 
 
 def test_cleanup_command_reports_no_backends(

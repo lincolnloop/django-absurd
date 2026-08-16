@@ -1,8 +1,29 @@
-from django.core.management.base import BaseCommand
+import typing as t
+
+from django.core.exceptions import ImproperlyConfigured
+from django.core.management.base import BaseCommand, CommandError
 
 from django_absurd.backends import AbsurdBackend, get_absurd_backends
-from django_absurd.exceptions import BackendNotConfiguredError
+from django_absurd.exceptions import (
+    BackendNotConfiguredError,
+    QueueNotDeclaredError,
+    QueueNotProvisionedError,
+    SchemaNotInstalledError,
+)
 from django_absurd.queues import SyncResult
+
+# Each of these five owns a message that already names the fix (an add/run/configure
+# instruction), so translating it into an untyped CommandError with no traceback loses
+# nothing an operator needs. Any other DjangoAbsurdError subclass — and anything
+# unforeseen — signals a bug, not a configuration mistake, and keeps its own type and
+# full traceback.
+CONFIGURATION_ERRORS: tuple[type[Exception], ...] = (
+    ImproperlyConfigured,
+    BackendNotConfiguredError,
+    SchemaNotInstalledError,
+    QueueNotDeclaredError,
+    QueueNotProvisionedError,
+)
 
 BEAT_DISABLED_UNDER_PG_CRON = (
     "the pg_cron app is installed: schedules run in the database via pg_cron,"
@@ -19,7 +40,24 @@ def resolve_backend() -> AbsurdBackend:
     raise BackendNotConfiguredError(len(backends))
 
 
-class AbsurdReportCommand(BaseCommand):
+class AbsurdCommand(BaseCommand):
+    """Base for every ``absurd_*`` command: translates configuration failures into
+    a clean ``CommandError`` instead of a raw traceback.
+
+    Overrides ``execute()`` rather than ``handle()``: no command needs to rename its
+    own ``handle``, ``call_command`` and ``run_from_argv`` both route through
+    ``execute()`` so both get the same contract, and ``--traceback`` still prints the
+    original chain via ``from exc``.
+    """
+
+    def execute(self, *args: t.Any, **options: t.Any) -> t.Any:
+        try:
+            return super().execute(*args, **options)
+        except CONFIGURATION_ERRORS as exc:
+            raise CommandError(str(exc)) from exc
+
+
+class AbsurdReportCommand(AbsurdCommand):
     """Base for commands that report a queue SyncResult to stdout/stderr."""
 
     def report_sync_result(

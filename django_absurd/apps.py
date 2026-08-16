@@ -8,6 +8,7 @@ from django.db.utils import OperationalError, ProgrammingError
 
 from django_absurd.admin_views import PRIVATE_ADMIN_APPS
 from django_absurd.backends import get_absurd_backends
+from django_absurd.exceptions import SchemaNotInstalledError
 from django_absurd.queues import provision_backend
 
 
@@ -42,9 +43,16 @@ def provision_queues_after_migrate(
     for alias, backend in get_absurd_backends().items():
         try:
             result = provision_backend(backend)
-        except (ImproperlyConfigured, OperationalError, ProgrammingError):
+        except (
+            ImproperlyConfigured,
+            OperationalError,
+            ProgrammingError,
+            SchemaNotInstalledError,
+        ):
             # Best-effort: skip when the schema isn't installed on the target DB
-            # (e.g. a faked/adopted migration, or a non-Absurd database).
+            # (e.g. a faked/adopted migration, or a non-Absurd database). This is
+            # a signal receiver, not a command — it never runs through the
+            # command base, so this except tuple is permanent, not a stopgap.
             continue
         lines = [f"  Created {name!r}" for name in result.created]
         lines += [f"  Reconciled {name!r}" for name in result.reconciled]

@@ -1,12 +1,13 @@
 import typing as t
 
-from django.core.management.base import BaseCommand, CommandParser
+from django.core.management.base import CommandParser
 
 from django_absurd.backends import get_absurd_backends
 from django_absurd.cleanup import cleanup_queues
+from django_absurd.management.base import AbsurdCommand
 
 
-class Command(BaseCommand):
+class Command(AbsurdCommand):
     help = "Delete expired task and event history per each queue's retention policy."
 
     def add_arguments(self, parser: CommandParser) -> None:

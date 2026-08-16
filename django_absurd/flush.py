@@ -21,9 +21,11 @@ from django.db import connections
 from django.db.utils import OperationalError, ProgrammingError
 
 from django_absurd.backends import PG_CRON_APP_NAME
+from django_absurd.exceptions import SchemaNotInstalledError
 from django_absurd.queues import (
     QUEUE_TABLE_PREFIXES,
     get_absurd_client,
+    list_provisioned_queues,
     resolve_absurd_database,
 )
 
@@ -90,17 +92,25 @@ def reset_fake_now(alias: str) -> None:
 
 def clear_queues(*, drop_schema: bool) -> None:
     """Drop (``drop_schema=True``) or truncate (``drop_schema=False``) every queue's
-    tables. Queue-only — never touches pg_cron. No-op on an unmigrated/absent schema.
+    tables. Queue-only — never touches pg_cron. No-op on an unreachable database, an
+    unmigrated/absent schema, or a partial one — a queue whose catalog row survives
+    but one of its own tables does not.
     """
     try:
+        names = list_provisioned_queues()
         client = get_absurd_client()
-        for name in client.list_queues():
+        for name in names:
             if drop_schema:
                 client.drop_queue(name)
             else:
                 truncate_queue_tables(name)
-    except (OperationalError, ProgrammingError, ImproperlyConfigured):
-        pass  # absurd schema not present (unmigrated / schema-absent)
+    except (
+        OperationalError,
+        ProgrammingError,
+        ImproperlyConfigured,
+        SchemaNotInstalledError,
+    ):
+        return  # absurd schema not present (unmigrated / schema-absent)
 
 
 def teardown_owned_pg_cron_jobs() -> None:

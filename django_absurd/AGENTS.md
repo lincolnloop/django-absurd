@@ -1241,6 +1241,7 @@ except DjangoAbsurdError:
 
 | Type                        | Raised when                                                                                         |
 | --------------------------- | --------------------------------------------------------------------------------------------------- |
+| `SchemaNotInstalledError`   | The Absurd Postgres schema itself isn't installed — run `manage.py migrate`                         |
 | `QueueNotDeclaredError`     | A queue name matches no queue declared for the backend                                              |
 | `QueueNotProvisionedError`  | A queue is declared but its Absurd table isn't provisioned yet — run `manage.py absurd_sync_queues` |
 | `BackendNotConfiguredError` | No `AbsurdBackend`, or more than one, is configured in `TASKS`                                      |
@@ -1252,11 +1253,16 @@ except DjangoAbsurdError:
 - `enqueue` raises `QueueNotDeclaredError` only when the backend's `QUEUES` is empty or
   unset; with `QUEUES` configured, a typo'd name is rejected earlier as Django's own
   `InvalidTask`.
-- The `absurd_worker` / `absurd_beat` / `absurd_sync_crons` commands translate
-  `BackendNotConfiguredError` into a `CommandError`.
+- Every `absurd_*` management command inherits `AbsurdCommand` (or its
+  `AbsurdReportCommand` subclass), which turns a fixed set of configuration failures —
+  `ImproperlyConfigured`, `BackendNotConfiguredError`, `SchemaNotInstalledError`,
+  `QueueNotDeclaredError`, `QueueNotProvisionedError` — into a clean `CommandError`;
+  `--traceback` still shows the original chain. Every other error, including any other
+  `DjangoAbsurdError` subclass, keeps its own type and full traceback — it signals a
+  bug, not a configuration mistake.
 - The hierarchy is not total. Catch `DjangoAbsurdError` for django-absurd's own typed
-  errors; other failures — schema not installed, config validation, clock misuse — still
-  raise plain `ImproperlyConfigured` / `RuntimeError` / `TypeError`.
+  errors; other failures — config validation, clock misuse — still raise plain
+  `ImproperlyConfigured` / `RuntimeError` / `TypeError`.
 
 ## Database setup
 

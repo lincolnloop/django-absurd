@@ -1,8 +1,11 @@
 import logging
 import typing as t
 
+import psycopg.errors
 from django.db import connections
+from django.db.utils import ProgrammingError
 
+from django_absurd.exceptions import SchemaNotInstalledError
 from django_absurd.queues import resolve_absurd_database
 
 logger = logging.getLogger(__name__)
@@ -20,19 +23,30 @@ def cleanup_queues(queues: list[str] | None = None) -> list[QueueCleanup]:
     targets: list[str | None] = list(queues) if queues is not None else [None]
     using = resolve_absurd_database()
     rows: list[QueueCleanup] = []
-    with connections[using].cursor() as cur:
-        for target in targets:
-            cur.execute(
-                "select queue_name, tasks_deleted, events_deleted "
-                "from absurd.cleanup_all_queues(%s)",
-                [target],
-            )
-            rows.extend(
-                QueueCleanup(
-                    queue_name=queue_name, tasks_deleted=tasks, events_deleted=events
+    try:
+        with connections[using].cursor() as cur:
+            for target in targets:
+                cur.execute(
+                    "select queue_name, tasks_deleted, events_deleted "
+                    "from absurd.cleanup_all_queues(%s)",
+                    [target],
                 )
-                for queue_name, tasks, events in cur.fetchall()
-            )
+                rows.extend(
+                    QueueCleanup(
+                        queue_name=queue_name,
+                        tasks_deleted=tasks,
+                        events_deleted=events,
+                    )
+                    for queue_name, tasks, events in cur.fetchall()
+                )
+    except ProgrammingError as exc:
+        cause = exc.__cause__
+        if not isinstance(
+            cause,
+            (psycopg.errors.InvalidSchemaName, psycopg.errors.UndefinedFunction),
+        ):
+            raise
+        raise SchemaNotInstalledError from exc
     log_cleanup_result(rows)
     return rows
 

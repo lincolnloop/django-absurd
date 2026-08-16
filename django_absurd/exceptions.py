@@ -98,6 +98,24 @@ class TaskNotFoundError(DjangoAbsurdError):
         super().__init__(msg)
 
 
+class SchemaNotInstalledError(DjangoAbsurdError):
+    """The Absurd Postgres schema is not installed on the target database.
+
+    Raised by queue reconcile, the enqueue path, the worker's client probe,
+    cleanup, and flush whenever a query hits a missing Absurd relation.
+    ``migrate``'s ``post_migrate`` hook is what provisions declared queues, so
+    the message names ``migrate`` alone — not ``absurd_sync_queues`` after it.
+
+    Each raising call site classifies with its own psycopg exception tuple, not a
+    shared one — the tuple is chosen for what that site's own statement can
+    actually hit, so the tuples differing from each other is by design, not drift.
+    """
+
+    def __init__(self) -> None:
+        msg = "Absurd schema is not installed. Run: manage.py migrate"
+        super().__init__(msg)
+
+
 class BackendNotConfiguredError(DjangoAbsurdError):
     """No single Absurd backend could be resolved — zero or several configured. One
     type for both counts: the package supports exactly one Absurd backend per

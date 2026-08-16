@@ -1,6 +1,5 @@
 import typing as t
 
-from django.core.exceptions import ImproperlyConfigured
 from django.core.management.base import CommandError
 
 if t.TYPE_CHECKING:
@@ -8,7 +7,7 @@ if t.TYPE_CHECKING:
 
 from django_absurd import console
 from django_absurd import logging as absurd_logging
-from django_absurd.exceptions import BackendNotConfiguredError, QueueNotDeclaredError
+from django_absurd.exceptions import QueueNotDeclaredError
 from django_absurd.management.base import (
     BEAT_DISABLED_UNDER_PG_CRON,
     AbsurdReportCommand,
@@ -67,10 +66,7 @@ class Command(AbsurdReportCommand):
 
     def handle(self, *args: t.Any, **options: t.Any) -> None:
         absurd_logging.attach_console_handler()
-        try:
-            backend = resolve_backend()
-        except BackendNotConfiguredError as exc:
-            raise CommandError(str(exc)) from exc
+        backend = resolve_backend()
         queue = options["queue"]
 
         if options["beat"] and backend.scheduler == "pg_cron":
@@ -85,16 +81,11 @@ class Command(AbsurdReportCommand):
         )
 
         if queue not in backend.queues:
-            raise CommandError(
-                str(QueueNotDeclaredError(queue, backend.alias, backend.queues))
-            )
+            raise QueueNotDeclaredError(queue, backend.alias, backend.queues)
 
-        try:
-            # Full provision on start so the admin views reflect every declared
-            # queue, not just the one this worker serves.
-            result = provision_backend(backend)
-        except ImproperlyConfigured as exc:
-            raise CommandError(str(exc)) from exc
+        # Full provision on start so the admin views reflect every declared queue,
+        # not just the one this worker serves.
+        result = provision_backend(backend)
         self.report_sync_result(result)
 
         elephant = console.build_glyph_prefix(self.stdout, "🐘")

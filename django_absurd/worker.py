@@ -26,7 +26,6 @@ from absurd_sdk import (
     SuspendTask,
 )
 from asgiref.sync import sync_to_async
-from django.core.exceptions import ImproperlyConfigured
 from django.db import close_old_connections, connections
 from django.tasks import Task, TaskContext, TaskResult, TaskResultStatus
 from django.tasks.base import TaskError
@@ -40,7 +39,11 @@ from django_absurd.backends import AbsurdBackend, RunModel, TaskParams
 from django_absurd.connection import register_jsonb_loader, validate_backend
 from django_absurd.context import WORKER_LOOP
 from django_absurd.deferred import DEFER_NAME_SUFFIX, build_deferred_handler
-from django_absurd.exceptions import QueueNotDeclaredError, QueueNotProvisionedError
+from django_absurd.exceptions import (
+    QueueNotDeclaredError,
+    QueueNotProvisionedError,
+    SchemaNotInstalledError,
+)
 from django_absurd.hooks import (
     log_before_spawn,
     log_task_execution,
@@ -290,11 +293,7 @@ async def aworker_client(
             psycopg.errors.UndefinedTable,
             psycopg.errors.UndefinedFunction,
         ) as err:
-            msg = (
-                "Absurd schema is not installed."
-                " Run: manage.py migrate then manage.py absurd_sync_queues"
-            )
-            raise ImproperlyConfigured(msg) from err
+            raise SchemaNotInstalledError from err
         yield client
     finally:
         await conn.close()
