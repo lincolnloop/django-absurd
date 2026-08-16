@@ -119,10 +119,14 @@ except DjangoAbsurdError:
 
 Typed errors under `DjangoAbsurdError`: `QueueNotDeclaredError` (never declared) and
 `QueueNotProvisionedError` (declared, no table yet — run
-`manage.py absurd_sync_queues`). Raised by [`emit_event`](workflows.md#emit-from-a-view)
-and the test fixture's [`drain()`](testing.md#drain).
+`manage.py absurd_sync_queues`), raised by [`emit_event`](workflows.md#emit-from-a-view)
+and the test fixture's [`drain()`](testing.md#drain); and `SchemaNotInstalledError` (the
+Absurd schema itself isn't installed — run `manage.py migrate`).
 
 - `enqueue` raises `QueueNotDeclaredError` only when `QUEUES` is empty or unset. With
   `QUEUES` configured, a typo is rejected earlier as Django's own `InvalidTask`.
+- Every `absurd_*` management command turns a configuration failure —
+  `ImproperlyConfigured` or any `DjangoAbsurdError` — into a `CommandError`;
+  `--traceback` still shows the original.
 - The hierarchy isn't total — other failures still raise plain `ImproperlyConfigured` /
   `RuntimeError` / `TypeError`.
