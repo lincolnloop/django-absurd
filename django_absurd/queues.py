@@ -6,13 +6,13 @@ from dataclasses import dataclass, field
 
 import psycopg.errors
 from absurd_sdk import Absurd, QueuePolicyOptions
-from django.core.exceptions import ImproperlyConfigured
 from django.db import connections
 from django.db.utils import ProgrammingError
 
 from django_absurd import backends
 from django_absurd.admin_views import rebuild_views
 from django_absurd.connection import build_absurd_client, validate_backend
+from django_absurd.exceptions import SchemaNotInstalledError
 
 if t.TYPE_CHECKING:
     from django_absurd.models import Queue
@@ -109,8 +109,7 @@ def reconcile_queue(backend: backends.AbsurdBackend, queue_name: str) -> SyncRes
     try:
         existing = Queue.objects.using(db).filter(queue_name=queue_name).first()
     except ProgrammingError as exc:
-        msg = "Absurd schema is not installed. Run: manage.py migrate"
-        raise ImproperlyConfigured(msg) from exc
+        raise SchemaNotInstalledError from exc
     if existing is None:
         client.create_queue(queue_name, **opts)
         result.created.append(queue_name)

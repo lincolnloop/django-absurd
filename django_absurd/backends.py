@@ -21,7 +21,7 @@ from django_absurd import dispatch
 from django_absurd.admin_views import ADMIN_ENTITY_SPECS, build_queue_table_model
 from django_absurd.connection import build_absurd_client
 from django_absurd.deferred import DEFER_NAME_SUFFIX
-from django_absurd.exceptions import QueueNotDeclaredError
+from django_absurd.exceptions import QueueNotDeclaredError, SchemaNotInstalledError
 from django_absurd.tasks import AbsurdTask, SpawnKwargs, build_merged_spawn_options
 
 if t.TYPE_CHECKING:
@@ -197,8 +197,7 @@ class AbsurdBackend(BaseTaskBackend):
                 psycopg.errors.UndefinedFunction,
                 psycopg.errors.InvalidSchemaName,
             ) as exc:
-                msg = "Absurd schema is not installed. Run: manage.py migrate"
-                raise ImproperlyConfigured(msg) from exc
+                raise SchemaNotInstalledError from exc
             with transaction.atomic(using=self.database, savepoint=True):
                 spawn_result = client.spawn(
                     spawn_name,

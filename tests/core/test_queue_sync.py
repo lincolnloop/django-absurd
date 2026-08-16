@@ -10,8 +10,10 @@ from django.core.management import call_command
 from django.db import connection
 from pytest_django.fixtures import Settings
 
+from django_absurd.exceptions import SchemaNotInstalledError
 from django_absurd.models import Queue
 from django_absurd.queues import get_absurd_client, resolve_absurd_database
+from tests import utils
 from tests.utils import make_tasks_settings
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -44,6 +46,18 @@ def test_sync_command_screams_on_non_postgres_backend(
 ) -> None:
     settings.TASKS = build_tasks_setting({"x": {}}, database="sqlite")
     with pytest.raises(ImproperlyConfigured):
+        call_command("absurd_sync_queues")
+
+
+def test_sync_command_names_the_missing_schema(settings: Settings) -> None:
+    settings.TASKS = build_tasks_setting({"x": {}})
+    with (
+        utils.hide_absurd_schema(),
+        pytest.raises(
+            SchemaNotInstalledError,
+            match=r"^Absurd schema is not installed\. Run: manage\.py migrate$",
+        ),
+    ):
         call_command("absurd_sync_queues")
 
 

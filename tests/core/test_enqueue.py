@@ -3,7 +3,6 @@ import typing as t
 
 import pytest
 from django.contrib.auth.models import Group
-from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command
 from django.db import connections, transaction
 from django.tasks import TaskResultStatus, task
@@ -12,7 +11,7 @@ from pytest_django.fixtures import Settings
 
 from django_absurd import absurd_params
 from django_absurd.connection import register_jsonb_loader
-from django_absurd.exceptions import QueueNotDeclaredError
+from django_absurd.exceptions import QueueNotDeclaredError, SchemaNotInstalledError
 from django_absurd.queues import get_absurd_client
 from django_absurd.tasks import AbsurdTask
 from django_absurd.test import AbsurdTestRuntime
@@ -157,7 +156,10 @@ def test_enqueue_auto_create_survives_outer_atomic(
 def test_enqueue_with_absent_schema_raises_clear_error() -> None:
     with (
         utils.hide_absurd_schema(),
-        pytest.raises(ImproperlyConfigured, match="migrate"),
+        pytest.raises(
+            SchemaNotInstalledError,
+            match=r"^Absurd schema is not installed\. Run: manage\.py migrate$",
+        ),
     ):
         tasks.add.enqueue(1, 2)
 

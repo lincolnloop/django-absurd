@@ -10,7 +10,6 @@ import time
 import psycopg.errors
 import pytest
 from django.contrib.auth.models import Group
-from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command, load_command_class
 from django.core.management.base import CommandError
 from django.db import connection
@@ -22,6 +21,7 @@ from django_absurd.exceptions import (
     DjangoAbsurdError,
     QueueNotDeclaredError,
     QueueNotProvisionedError,
+    SchemaNotInstalledError,
 )
 from django_absurd.models import Queue
 from django_absurd.queues import get_absurd_client
@@ -89,7 +89,10 @@ def test_worker_client_absent_schema_errors() -> None:
 
     with (
         utils.hide_absurd_schema(),
-        pytest.raises(ImproperlyConfigured, match="migrate"),
+        pytest.raises(
+            SchemaNotInstalledError,
+            match=r"^Absurd schema is not installed\. Run: manage\.py migrate$",
+        ),
     ):
         asyncio.run(_enter())
 
