@@ -109,6 +109,23 @@ def test_flush_absurd_state_is_a_noop_on_a_hidden_schema() -> None:
         flush_absurd_state()  # must not raise
 
 
+@pytest.mark.usefixtures("_isolate_queues")
+def test_flush_absurd_state_tolerates_a_missing_queue_table() -> None:
+    # A catalog row can outlive one of its own queue's tables — exactly what
+    # test_results.py::test_get_result_inside_atomic_does_not_poison_txn leaves behind
+    # by dropping t_other without restoring it. get_absurd_client() and the per-queue
+    # drop/truncate loop must tolerate a missing table the same way the listing probe
+    # already does; _isolate_queues drops what remains of "other" afterwards so later
+    # tests provision it fresh.
+    call_command("absurd_sync_queues")
+    with connections["default"].cursor() as cur:
+        cur.execute("DROP TABLE absurd.t_other CASCADE")
+
+    flush_absurd_state()  # must not raise
+
+    assert Queue.objects.filter(queue_name="other").exists()  # catalog row untouched
+
+
 def test_flush_absurd_state_resets_a_stranded_fake_now() -> None:
     utils.set_database_fake_now("2036-01-01T00:00:00+00:00")
     try:

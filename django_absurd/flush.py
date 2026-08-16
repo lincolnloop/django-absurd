@@ -92,10 +92,18 @@ def reset_fake_now(alias: str) -> None:
 
 def clear_queues(*, drop_schema: bool) -> None:
     """Drop (``drop_schema=True``) or truncate (``drop_schema=False``) every queue's
-    tables. Queue-only — never touches pg_cron. No-op on an unmigrated/absent schema.
+    tables. Queue-only — never touches pg_cron. No-op on an unreachable database, an
+    unmigrated/absent schema, or a partial one — a queue whose catalog row survives
+    but one of its own tables does not.
     """
     try:
         names = list_provisioned_queues()
+        client = get_absurd_client()
+        for name in names:
+            if drop_schema:
+                client.drop_queue(name)
+            else:
+                truncate_queue_tables(name)
     except (
         OperationalError,
         ProgrammingError,
@@ -103,12 +111,6 @@ def clear_queues(*, drop_schema: bool) -> None:
         SchemaNotInstalledError,
     ):
         return  # absurd schema not present (unmigrated / schema-absent)
-    client = get_absurd_client()
-    for name in names:
-        if drop_schema:
-            client.drop_queue(name)
-        else:
-            truncate_queue_tables(name)
 
 
 def teardown_owned_pg_cron_jobs() -> None:
