@@ -35,9 +35,13 @@ Issue: [#128](https://github.com/lincolnloop/django-absurd/issues/128).
   `_enable_db` gives DB access — add `@pytest.mark.django_db(transaction=True)` only for
   commits/DDL. Alphabetize fixture params and parametrize values.
 - 100% statement + branch coverage on lines this plan adds or changes.
-- Gates before each commit: `uv run pytest <path> -q --no-cov` while iterating; the
-  coordinator owns `uvx --with tox-uv tox -e dev` and
-  `uv run pre-commit run --all-files`. Never invoke ruff/mypy directly.
+- **Test runs are targeted, never the full matrix.** While iterating, run the single
+  test under change: `uv run pytest <path>::<test> -q --no-cov`. When several fail at
+  once, close the gap with `uv run pytest <path> -q --no-cov --lf` rather than widening
+  to a suite. Before a commit, the touched files only. `uvx --with tox-uv tox -e dev` is
+  the coordinator's, run once at the end — never between commits, and never the bare
+  `tox` matrix. Never invoke ruff/mypy directly; `uv run pre-commit run --files <paths>`
+  covers them.
 - `docker compose up -d db db_pg_cron` must be running.
 - Commit titles are the changelog. The type-switch commit is `feat!`.
 
@@ -130,10 +134,11 @@ assert the whole message rather than `match="migrate"`:
 - [ ] **Step 2: Run them and watch them fail**
 
 ```bash
-uv run pytest tests/core/test_queue_sync.py tests/core/test_worker.py tests/core/test_enqueue.py -q --no-cov
+uv run pytest tests/core/test_queue_sync.py::test_sync_command_names_the_missing_schema -q --no-cov
 ```
 
-Expected: `ImportError` on `SchemaNotInstalledError` — the name does not exist yet.
+Expected: `ImportError` on `SchemaNotInstalledError` — the name does not exist yet. Same
+for the other two amended tests; run each by node id rather than the whole file.
 
 - [ ] **Step 3: Add the exception**
 
@@ -159,10 +164,11 @@ its text now.
 - [ ] **Step 5: Run the three files again**
 
 ```bash
-uv run pytest tests/core/test_queue_sync.py tests/core/test_worker.py tests/core/test_enqueue.py -q --no-cov
+uv run pytest tests/core/test_queue_sync.py tests/core/test_worker.py tests/core/test_enqueue.py -q --no-cov --lf
 ```
 
-Expected: PASS.
+Expected: PASS. `--lf` re-runs only what failed in the previous step; drop it for the
+final pre-commit pass over the three touched files.
 
 - [ ] **Step 6: Sweep for stale references**
 
@@ -306,11 +312,10 @@ uv run pytest tests/core/test_command_errors.py tests/pg_cron/test_absurd_sync_c
 Expected: every case PASSES except `absurd_cleanup` and `absurd_flush`, which Task 3
 fixes.
 
-- [ ] **Step 6: Run everything that drives a command**
+- [ ] **Step 6: Run the command-driving tests**
 
 ```bash
-uv run pytest tests/core/test_worker.py tests/core/test_queue_sync.py \
-              tests/core/test_command_output.py tests/core/test_scheduler.py \
+uv run pytest tests/core/test_worker.py tests/core/test_command_output.py \
               tests/pg_cron/test_absurd_sync_crons_command.py -q --no-cov
 ```
 
@@ -458,7 +463,7 @@ git commit -m 'docs: document the command-error contract and SchemaNotInstalledE
 ## Final gate (coordinator)
 
 ```bash
-uvx --with tox-uv tox -e dev
+uvx --with tox-uv tox -e dev   # once, here only
 uv run pre-commit run --all-files
 ```
 
