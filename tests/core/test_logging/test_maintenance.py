@@ -54,11 +54,11 @@ def test_the_worker_logs_when_it_stops(
         r.getMessage() for r in caplog.records if r.name == "django_absurd.worker"
     ]
     started = (
-        f"worker started: alias={backend.alias} queue=default"
-        f" database={backend.database} concurrency=1"
+        f'worker started: alias="{backend.alias}" queue="default"'
+        f' database="{backend.database}" concurrency=1'
     )
     stopped = (
-        f"worker stopped: alias={backend.alias} queue=default"
-        f" database={backend.database} runs=0"
+        f'worker stopped: alias="{backend.alias}" queue="default"'
+        f' database="{backend.database}" runs=0'
     )
     assert messages == [started, stopped]

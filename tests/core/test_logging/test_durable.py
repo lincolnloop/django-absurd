@@ -31,7 +31,7 @@ def test_an_async_step_logs_completed_with_a_duration(
     messages = read_context_messages(caplog)
     assert len(messages) == 1
     assert re.fullmatch(
-        rf"step completed: name=echo task_id={task_id} duration={DURATION}",
+        rf"step completed: name=\"echo\" task_id=\"{task_id}\" duration={DURATION}",
         messages[0],
     )
 
@@ -55,10 +55,10 @@ def test_an_async_replayed_step_logs_replayed_not_completed(
     completed = [m for m in messages if m.startswith("step completed: ")]
     assert len(completed) == 1
     assert re.fullmatch(
-        rf"step completed: name=charge task_id={task_id} duration={DURATION}",
+        rf"step completed: name=\"charge\" task_id=\"{task_id}\" duration={DURATION}",
         completed[0],
     )
-    assert messages.count(f"step replayed: name=charge task_id={task_id}") == 1
+    assert messages.count(f'step replayed: name="charge" task_id="{task_id}"') == 1
     assert len(messages) == 2
 
 
@@ -76,7 +76,7 @@ def test_a_sync_step_logs_completed_with_a_duration(
     messages = read_context_messages(caplog)
     assert len(messages) == 1
     assert re.fullmatch(
-        rf"step completed: name=echo task_id={task_id} duration={DURATION}",
+        rf"step completed: name=\"echo\" task_id=\"{task_id}\" duration={DURATION}",
         messages[0],
     )
 
@@ -96,7 +96,7 @@ def test_a_sync_replayed_step_logs_replayed_not_completed(
 
     task_id = result.id.rsplit(":", 1)[-1]
     messages = read_context_messages(caplog)
-    assert messages.count(f"step replayed: name=charge task_id={task_id}") == 1
+    assert messages.count(f'step replayed: name="charge" task_id="{task_id}"') == 1
     assert len([m for m in messages if m.startswith("step completed: ")]) == 1
     assert len(messages) == 2
 
@@ -117,11 +117,11 @@ def test_an_async_sleep_logs_suspended_then_resumed(
     messages = read_context_messages(caplog)
     assert (
         messages.count(
-            f"sleep suspended: step=nap task_id={task_id} for={tasks.WEEK_SECONDS}s"
+            f'sleep suspended: step="nap" task_id="{task_id}" for={tasks.WEEK_SECONDS}s'
         )
         == 1
     )
-    assert messages.count(f"sleep resumed: step=nap task_id={task_id}") == 1
+    assert messages.count(f'sleep resumed: step="nap" task_id="{task_id}"') == 1
 
 
 def test_a_sync_sleep_logs_suspended_then_resumed(
@@ -140,11 +140,11 @@ def test_a_sync_sleep_logs_suspended_then_resumed(
     messages = read_context_messages(caplog)
     assert (
         messages.count(
-            f"sleep suspended: step=nap task_id={task_id} for={tasks.WEEK_SECONDS}s"
+            f'sleep suspended: step="nap" task_id="{task_id}" for={tasks.WEEK_SECONDS}s'
         )
         == 1
     )
-    assert messages.count(f"sleep resumed: step=nap task_id={task_id}") == 1
+    assert messages.count(f'sleep resumed: step="nap" task_id="{task_id}"') == 1
 
 
 def test_an_async_sleep_until_reports_its_wake_time(
@@ -164,9 +164,9 @@ def test_an_async_sleep_until_reports_its_wake_time(
     suspended = [m for m in messages if m.startswith("sleep suspended: ")]
     assert len(suspended) == 1
     assert re.fullmatch(
-        rf"sleep suspended: step=nap task_id={task_id} until=\S+", suspended[0]
+        rf"sleep suspended: step=\"nap\" task_id=\"{task_id}\" until=\S+", suspended[0]
     )
-    assert messages.count(f"sleep resumed: step=nap task_id={task_id}") == 1
+    assert messages.count(f'sleep resumed: step="nap" task_id="{task_id}"') == 1
 
 
 def test_a_sleep_until_reports_its_wake_time(
@@ -186,9 +186,9 @@ def test_a_sleep_until_reports_its_wake_time(
     suspended = [m for m in messages if m.startswith("sleep suspended: ")]
     assert len(suspended) == 1
     assert re.fullmatch(
-        rf"sleep suspended: step=nap task_id={task_id} until=\S+", suspended[0]
+        rf"sleep suspended: step=\"nap\" task_id=\"{task_id}\" until=\S+", suspended[0]
     )
-    assert messages.count(f"sleep resumed: step=nap task_id={task_id}") == 1
+    assert messages.count(f'sleep resumed: step="nap" task_id="{task_id}"') == 1
 
 
 def test_an_async_event_wait_logs_awaiting_then_received(
@@ -208,13 +208,15 @@ def test_an_async_event_wait_logs_awaiting_then_received(
     emitter_task_id = emitter_result.id.rsplit(":", 1)[-1]
     messages = read_context_messages(caplog)
     assert (
-        messages.count(f"event awaiting: name=probe.go task_id={task_id} timeout=3600")
+        messages.count(
+            f'event awaiting: name="probe.go" task_id="{task_id}" timeout=3600'
+        )
         == 1
     )
-    assert messages.count(f"event received: name=probe.go task_id={task_id}") == 1
+    assert messages.count(f'event received: name="probe.go" task_id="{task_id}"') == 1
     emitted = [m for m in messages if m.startswith("event emitted: ")]
     assert len(emitted) == 1
-    assert emitted[0] == f"event emitted: name=probe.go task_id={emitter_task_id}"
+    assert emitted[0] == f'event emitted: name="probe.go" task_id="{emitter_task_id}"'
 
 
 def test_a_sync_event_wait_logs_awaiting_then_received(
@@ -234,13 +236,15 @@ def test_a_sync_event_wait_logs_awaiting_then_received(
     emitter_task_id = emitter_result.id.rsplit(":", 1)[-1]
     messages = read_context_messages(caplog)
     assert (
-        messages.count(f"event awaiting: name=probe.go task_id={task_id} timeout=3600")
+        messages.count(
+            f'event awaiting: name="probe.go" task_id="{task_id}" timeout=3600'
+        )
         == 1
     )
-    assert messages.count(f"event received: name=probe.go task_id={task_id}") == 1
+    assert messages.count(f'event received: name="probe.go" task_id="{task_id}"') == 1
     emitted = [m for m in messages if m.startswith("event emitted: ")]
     assert len(emitted) == 1
-    assert emitted[0] == f"event emitted: name=probe.go task_id={emitter_task_id}"
+    assert emitted[0] == f'event emitted: name="probe.go" task_id="{emitter_task_id}"'
 
 
 def test_no_durable_primitive_log_record_contains_a_non_ascii_character(

@@ -101,7 +101,7 @@ def run_beat(
         return
 
     logger.info(
-        "beat started: schedules=%d cleanup=%s",
+        'beat started: schedules=%d cleanup="%s"',
         len(schedules),
         cleanup_cron or "off",
     )
@@ -166,7 +166,7 @@ def fire_cleanup(backend: AbsurdBackend, slot: dt.datetime) -> None:
         logger.exception("cleanup failed")
     else:
         logger.info(
-            "cleanup ran: slot=%s",
+            'cleanup ran: slot="%s"',
             slot.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         )
     finally:
@@ -177,10 +177,10 @@ def fire_schedule(schedule: Schedule, slot: dt.datetime) -> None:
     try:
         spawn_scheduled(schedule, slot)
     except Exception:
-        logger.exception("schedule failed: name=%s", schedule.name)
+        logger.exception('schedule failed: name="%s"', schedule.name)
     else:
         logger.info(
-            "schedule enqueued: name=%s slot=%s",
+            'schedule enqueued: name="%s" slot="%s"',
             schedule.name,
             slot.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         )

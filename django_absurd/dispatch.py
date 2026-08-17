@@ -38,7 +38,7 @@ def send_task_signal(
         # A missing name degrades to the generic word: a KeyError raised here would
         # escape the containment and reach the task.
         logger.exception(
-            "%s receiver failed for task result id=%s",
+            '%s receiver failed for task result id="%s"',
             SIGNAL_NAMES.get(signal, "signal"),
             task_result.id,
         )

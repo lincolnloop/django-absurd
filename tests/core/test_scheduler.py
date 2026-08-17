@@ -251,7 +251,7 @@ def test_beat_started_logs_schedule_count_and_cleanup(
     records = [r for r in caplog.records if r.name == "django_absurd.scheduler"]
     started = [r for r in records if r.getMessage().startswith("beat started")]
     assert len(started) == 1
-    assert started[0].getMessage() == "beat started: schedules=1 cleanup=17 * * * *"
+    assert started[0].getMessage() == 'beat started: schedules=1 cleanup="17 * * * *"'
 
 
 def test_beat_isolates_failing_schedule(
@@ -286,11 +286,11 @@ def test_beat_isolates_failing_schedule(
     failed = [r for r in records if r.getMessage().startswith("schedule failed")]
     enqueued = [r for r in records if r.getMessage().startswith("schedule enqueued")]
     assert len(failed) == 1
-    assert failed[0].getMessage() == "schedule failed: name=bad"
+    assert failed[0].getMessage() == 'schedule failed: name="bad"'
     assert len(enqueued) == 1
     assert (
         enqueued[0].getMessage()
-        == "schedule enqueued: name=good slot=2026-01-01T00:01:00Z"
+        == 'schedule enqueued: name="good" slot="2026-01-01T00:01:00Z"'
     )
 
 
@@ -801,7 +801,7 @@ def test_plain_worker_runs_blocking_worker(
         and r.getMessage().startswith("worker stopped")
     ]
     expected = (
-        f"worker stopped: alias={backend.alias} queue=default"
-        f" database={backend.database}"
+        f'worker stopped: alias="{backend.alias}" queue="default"'
+        f' database="{backend.database}"'
     )
     assert stopped == [expected]
