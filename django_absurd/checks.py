@@ -445,7 +445,10 @@ def check_absurd_queue_state(
     databases: Sequence[str] | None,
     **kwargs: t.Any,
 ) -> list[CheckMessage]:
-    assert databases, "Validated by Tags.database"  # noqa: S101
+    # Django 6.0 runs a Tags.database check with databases=None; 6.1 skips it
+    # instead. Either way there is nothing to check against.
+    if not databases:
+        return []
     backends = get_absurd_backends()
     if not backends:
         return []
