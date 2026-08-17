@@ -10,6 +10,7 @@ if t.TYPE_CHECKING:
     import pytest_django.fixtures
 
 from django_absurd.backends import get_absurd_backends
+from django_absurd.routers import AbsurdRouter
 from tests import utils
 from tests.utils import make_tasks_settings
 
@@ -148,6 +149,27 @@ def test_check_errors_on_wrong_backend(
         "django-absurd requires the psycopg (v3) PostgreSQL backend. See https://www.psycopg.org/psycopg3/docs/"
         in out
     )
+
+
+def test_a_router_instance_satisfies_the_router_check(
+    capsys: pytest.CaptureFixture[str],
+    settings: "pytest_django.fixtures.Settings",
+) -> None:
+    # DATABASE_ROUTERS accepts instances as well as dotted paths, so E005 must not fire
+    # on a project that builds its routers itself.
+    settings.TASKS = build_tasks_setting({"x": {}}, database="absurd")
+    settings.DATABASE_ROUTERS = [AbsurdRouter()]
+    assert "absurd.E005" not in run_absurd_check(capsys)
+
+
+def test_queue_state_check_is_quiet_without_an_absurd_backend(
+    capsys: pytest.CaptureFixture[str],
+    settings: "pytest_django.fixtures.Settings",
+) -> None:
+    settings.TASKS = {
+        "default": {"BACKEND": "django.tasks.backends.immediate.ImmediateBackend"}
+    }
+    assert "absurd.W002" not in run_absurd_check(capsys, databases=["default"])
 
 
 def test_check_errors_when_router_missing(

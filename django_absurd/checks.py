@@ -444,9 +444,9 @@ def check_absurd_queue_state(
     databases: Sequence[str] | None,
     **kwargs: t.Any,
 ) -> list[CheckMessage]:
-    if not databases:
-        return []
-
+    # Django runs a Tags.database check only for a requested database. The
+    # annotation stays Optional because @register's TypeVar pins the signature.
+    assert databases  # noqa: S101
     backends = get_absurd_backends()
     if not backends:
         return []

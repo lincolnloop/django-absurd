@@ -232,3 +232,14 @@ def test_deleting_with_no_backend_says_the_job_keeps_firing(
         " it keeps firing until the next reconcile"
     )
     assert [record.getMessage() for record in caplog.records] == [expected]
+
+
+def test_queue_choices_fall_back_when_no_absurd_backend_is_configured(
+    settings: Settings,
+) -> None:
+    # The field's choices are read at form-render and validation time, so they must
+    # resolve even with nothing to read declared queues from.
+    settings.TASKS = {
+        "default": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}
+    }
+    assert ScheduledTask._meta.get_field("queue").choices == [("default", "default")]

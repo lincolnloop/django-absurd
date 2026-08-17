@@ -214,9 +214,9 @@ def check_pg_cron_central_extension(
     databases: Sequence[str] | None,
     **kwargs: t.Any,
 ) -> list[CheckMessage]:
-    if not databases:
-        return []  # plain `check` (no migrate / --database) stays DB-free
-
+    # Django runs a Tags.database check only for a requested database. The
+    # annotation stays Optional because @register's TypeVar pins the signature.
+    assert databases  # noqa: S101
     errors: list[CheckMessage] = []
     for backend in get_absurd_backends().values():
         if backend.database not in databases:
