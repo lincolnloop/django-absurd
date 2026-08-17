@@ -36,6 +36,20 @@ duplicate that material here.
 - **Absolute imports only** — no relative imports. Enforced by ruff
   (`ban-relative-imports = "all"`).
 
+## Comments
+
+- **A comment answers "why this, not the obvious alternative" — in ≤2 lines.** Longer
+  reasoning goes in the commit message (why we changed it), `docs/WHY.md` (why the
+  design is this shape), or a spec.
+- **Delete-test:** if removing it costs a reader nothing the code already tells them,
+  delete it. Never restate what the code does, narrate rejected alternatives, or
+  describe what the code used to be.
+- **Exception: write it out when the reason lives outside the code.**
+  `names_a_queue_table` in `queues.py` explains that Postgres populates no
+  `diag.table_name` for that error, which is why the match reads `message_primary`.
+  Nothing in the code says that, so deleting the comment invites the next edit to undo
+  it.
+
 ## Django system-check messages
 
 - `msg` states the PROBLEM only; `hint` states the RESOLUTION. Never duplicate fix text
@@ -97,10 +111,14 @@ writing or editing any test file. Running the suites:
     prettier. Never invoke `ruff` or `mypy` directly; pre-commit already runs them, and
     a hand-rolled invocation drifts from the hook's flags and exclusions.
   - Iterating on one file is still `uv run pytest <path> -v`.
-- `pytest-xdist` is a dev dependency; every suite — including `tests/pg_cron`, now that
-  its test DB is ordinary and cross-DB — runs safely under `-n<N>` (e.g.
-  `uv run pytest tests/pg_cron -n4`). Pass `-n` directly; it isn't baked into any
-  suite's `addopts`.
+- **Every tox test env runs the suites under `pytest-xdist`** (`-n auto` on each
+  `pytest` command line, mypy envs excluded), so parallel safety is exercised on every
+  push instead of only when someone remembers to pass `-n`. Worker count is xdist's own
+  `PYTEST_XDIST_AUTO_NUM_WORKERS`, which applies to `auto` only: CI pins it to 2 in
+  `test.yml`, a workstation sets it in a git-ignored `.envrc`, and unset takes every
+  core. `tox -e dev -- -n0` gives a serial baseline for telling a real failure from an
+  xdist-only one. A bare `uv run pytest <path>` is unaffected — `-n` is in no suite's
+  `addopts`, so pass it there yourself.
 - Each suite runs with `--reuse-db` (addopts); add `--create-db` to rebuild after a
   migration change — including `tests/pg_cron`: its test DB is an ordinary one that
   pg_cron's launcher holds no session on (the launcher only ever connects to the central
