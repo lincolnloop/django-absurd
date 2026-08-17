@@ -84,22 +84,27 @@ remaining provisioners rebuild the full catalog.
 Note the worker seam had already drifted past what #13 authorized — spec said reconcile
 the SERVED queue only; #17 widened it to the whole catalog plus views.
 
-### Queue-state check restored
+### No queue-state check
 
-`query_queue_state` already loads the provisioned set to compute W002 drift. Add a
-second branch: declared names absent from that set → one `Warning` naming them.
+The founding spec paired explicit-only provisioning with "a system check tells you when
+to run the command", and #13 deleted that check. Not restoring it, deliberately:
 
-- **New id `absurd.W004`.** W001 is retired and meant "schema not migrated"; recycling
-  an id for a different condition churns anyone matching on ids.
-- **Warning, not Error.** DB-dependent checks run before `migrate` executes, so an Error
-  would block the very command that fixes the condition. This is exactly why the
-  original W001 was called noisy — it nagged you to run the command in progress.
-- **Known noise window, accepted:** declaring a new queue and running `migrate` emits
-  W004 once, immediately before `post_migrate` provisions it. After this change
-  `post_migrate` and `absurd_sync_queues` are the only provisioners, so a W004 that
-  persists means the deploy runs neither — precisely what needs surfacing.
-- `except (OperationalError, ProgrammingError) → []` stays, so an unmigrated database
-  says nothing.
+- DB-dependent checks run BEFORE the command that would fix the condition. Verified:
+  `migrate` injects `databases=[options["database"]]` into its check kwargs
+  (`migrate.py:95`) and `BaseCommand.execute` runs `self.check()` ahead of `handle()`.
+  So a "declared queue not provisioned" check fires on every `migrate` that follows
+  declaring a queue — moments before `post_migrate` provisions it. An Error would block
+  that `migrate`; a Warning cries wolf. This is the same complaint that retired W001.
+- A warning that routinely fires when nothing is wrong gets added to
+  `SILENCED_SYSTEM_CHECKS`, and is then dead in the case it exists for.
+- The condition is already loud at runtime, from three entrypoints, with a message
+  naming the command. A check only buys earliness, and only for projects that run
+  `check --database` rather than the bare `check`.
+- The founding spec wrote that requirement when NOTHING provisioned automatically —
+  `post_migrate` did not exist. It carries the ergonomic load now, so the gap the check
+  covered is far narrower than it was.
+
+`query_queue_state` therefore keeps reporting W002 storage-mode drift only, unchanged.
 
 ### Unchanged
 
@@ -130,9 +135,8 @@ RED first, through real entrypoints.
   refusal (replaces the existing auto-create-under-atomic test).
 - `absurd_worker` against an unprovisioned declared queue exits with `CommandError`
   carrying the typed message, and creates neither the queue nor the views.
-- `check --database` emits `absurd.W004` naming the missing queue; emits nothing once
-  provisioned; emits nothing at all against an unmigrated database.
-- Existing `post_migrate` / `absurd_sync_queues` tests must keep passing untouched.
+- Existing `post_migrate` / `absurd_sync_queues` and system-check tests must keep
+  passing untouched — no check changes ship here.
 
 Tests that assert the removed behaviour and must go or be rewritten:
 `tests/core/test_enqueue.py::test_enqueue_auto_creates_declared_queue_and_runs`,
@@ -143,10 +147,12 @@ the two `tests/core/test_worker.py` sites whose comments lean on enqueue auto-cr
 
 ## Docs
 
-- `README.md` + `django_absurd/AGENTS.md`: queues no longer materialize on first use.
-  `migrate` provisions; `absurd_sync_queues` is the explicit path. Run it in the release
-  step if the deploy does not run `migrate`.
-- `docs/web/`: same, plus W004 in the checks reference.
+- `django_absurd/AGENTS.md:757-759` states the removed behaviour outright ("on worker
+  start, by `absurd_sync_queues`, and on first enqueue") — rewrite. `README.md` and the
+  rest of AGENTS.md: `migrate` provisions, `absurd_sync_queues` is the explicit path,
+  run it in the release step if the deploy does not run `migrate`.
+- `docs/web/`: same claim wherever it recurs (`configuration.md`, `admin.md`,
+  `cleanup.md`, `testing.md` all mention `sync_queues`).
 - `examples/`: worker services rely on the app service's `migrate`; confirm each compose
   still converges (worker restarts until provisioned) and fix the flow docs if they
   promise auto-create.
