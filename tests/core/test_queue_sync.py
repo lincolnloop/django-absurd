@@ -217,25 +217,6 @@ def test_sync_command_reports_nothing_when_no_absurd_backend(
     assert "No Absurd task backends configured." in capsys.readouterr().out
 
 
-PROVISIONERS = 4
-CONCURRENT_ROUNDS = 3
-
-# Absurd's own install SQL creates no views, so django-absurd's five admin views are
-# the whole population of the schema — count_absurd_views() below fails loudly if a
-# rename or an addition ever makes this statement drop less than all of them.
-DROP_ADMIN_VIEWS = (
-    "DROP VIEW IF EXISTS absurd.tasks_view, absurd.runs_view, "
-    "absurd.checkpoints_view, absurd.waits_view, absurd.events_view CASCADE"
-)
-
-
-def count_absurd_views() -> int:
-    with connection.cursor() as cur:
-        cur.execute("SELECT count(*) FROM pg_views WHERE schemaname = 'absurd'")
-        row = t.cast("tuple[int]", cur.fetchone())
-        return row[0]
-
-
 def test_sync_command_waits_for_a_concurrent_provisioner(settings: Settings) -> None:
     # The lock is taken before any provisioning work, not just around the view
     # rebuild: the command dies waiting for it with its queue still uncreated.
@@ -261,7 +242,21 @@ def test_concurrent_sync_survives_the_admin_views_being_absent() -> None:
     # https://github.com/lincolnloop/django-absurd/issues/195 — DROP VIEW IF EXISTS
     # takes no lock on a view that isn't there, so unserialized provisioners reach
     # CREATE VIEW together and the losers collide on the catalog's unique index.
-    barrier = threading.Barrier(PROVISIONERS)
+    provisioners = 4
+    rounds = 3
+    # Absurd's own install SQL creates no views, so these five are the whole population
+    # of the schema — the counts below fail loudly if that stops holding.
+    drop_admin_views = (
+        "DROP VIEW IF EXISTS absurd.tasks_view, absurd.runs_view, "
+        "absurd.checkpoints_view, absurd.waits_view, absurd.events_view CASCADE"
+    )
+    barrier = threading.Barrier(provisioners)
+
+    def count_absurd_views() -> int:
+        with connection.cursor() as cur:
+            cur.execute("SELECT count(*) FROM pg_views WHERE schemaname = 'absurd'")
+            row = t.cast("tuple[int]", cur.fetchone())
+            return row[0]
 
     def sync_queues_concurrently() -> None:
         try:
@@ -270,15 +265,15 @@ def test_concurrent_sync_survives_the_admin_views_being_absent() -> None:
         finally:
             connections.close_all()  # this thread's own connection
 
-    for _ in range(CONCURRENT_ROUNDS):
+    for _ in range(rounds):
         with connection.cursor() as cur:
-            cur.execute(DROP_ADMIN_VIEWS)
+            cur.execute(drop_admin_views)
         assert count_absurd_views() == 0
-        with futures.ThreadPoolExecutor(PROVISIONERS) as pool:
+        with futures.ThreadPoolExecutor(provisioners) as pool:
             # .result() re-raises in this thread: an exception inside a bare Thread
             # target only prints, leaving the test green.
             for future in [
-                pool.submit(sync_queues_concurrently) for _ in range(PROVISIONERS)
+                pool.submit(sync_queues_concurrently) for _ in range(provisioners)
             ]:
                 future.result()
 
