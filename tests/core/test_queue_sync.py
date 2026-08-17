@@ -1,6 +1,9 @@
 import datetime as dt
+import io
 import logging
+import threading
 import typing as t
+from concurrent import futures
 
 import psycopg
 import pytest
@@ -8,12 +11,16 @@ from absurd_sdk import CreateQueueOptions
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.db import connection
-from django.db.utils import ProgrammingError
+from django.db import connection, connections
+from django.db.utils import OperationalError, ProgrammingError
 from pytest_django.fixtures import Settings
 
 from django_absurd.models import Queue
-from django_absurd.queues import get_absurd_client, resolve_absurd_database
+from django_absurd.queues import (
+    PROVISION_LOCK_KEY,
+    get_absurd_client,
+    resolve_absurd_database,
+)
 from tests import utils
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -208,3 +215,71 @@ def test_sync_command_reports_nothing_when_no_absurd_backend(
     }
     call_command("absurd_sync_queues")
     assert "No Absurd task backends configured." in capsys.readouterr().out
+
+
+PROVISIONERS = 4
+CONCURRENT_ROUNDS = 3
+
+# Absurd's own install SQL creates no views, so django-absurd's five admin views are
+# the whole population of the schema — count_absurd_views() below fails loudly if a
+# rename or an addition ever makes this statement drop less than all of them.
+DROP_ADMIN_VIEWS = (
+    "DROP VIEW IF EXISTS absurd.tasks_view, absurd.runs_view, "
+    "absurd.checkpoints_view, absurd.waits_view, absurd.events_view CASCADE"
+)
+
+
+def count_absurd_views() -> int:
+    with connection.cursor() as cur:
+        cur.execute("SELECT count(*) FROM pg_views WHERE schemaname = 'absurd'")
+        row = t.cast("tuple[int]", cur.fetchone())
+        return row[0]
+
+
+def test_sync_command_waits_for_a_concurrent_provisioner(settings: Settings) -> None:
+    # The lock is taken before any provisioning work, not just around the view
+    # rebuild: the command dies waiting for it with its queue still uncreated.
+    settings.TASKS = build_tasks_setting({"locked": {}})
+    holder = psycopg.connect(**utils.get_absurd_connection_params(), autocommit=True)
+    try:
+        holder.execute("SELECT pg_advisory_lock(%s)", [PROVISION_LOCK_KEY])
+        with connection.cursor() as cur:
+            cur.execute("SET lock_timeout = '250ms'")
+        try:
+            with pytest.raises(OperationalError) as excinfo:
+                call_command("absurd_sync_queues", stdout=io.StringIO())
+        finally:
+            with connection.cursor() as cur:
+                cur.execute("RESET lock_timeout")
+    finally:
+        holder.close()
+    assert str(excinfo.value) == "canceling statement due to lock timeout"
+    assert not Queue.objects.filter(queue_name="locked").exists()
+
+
+def test_concurrent_sync_survives_the_admin_views_being_absent() -> None:
+    # https://github.com/lincolnloop/django-absurd/issues/195 — DROP VIEW IF EXISTS
+    # takes no lock on a view that isn't there, so unserialized provisioners reach
+    # CREATE VIEW together and the losers collide on the catalog's unique index.
+    barrier = threading.Barrier(PROVISIONERS)
+
+    def sync_queues_concurrently() -> None:
+        try:
+            barrier.wait()
+            call_command("absurd_sync_queues", stdout=io.StringIO())
+        finally:
+            connections.close_all()  # this thread's own connection
+
+    for _ in range(CONCURRENT_ROUNDS):
+        with connection.cursor() as cur:
+            cur.execute(DROP_ADMIN_VIEWS)
+        assert count_absurd_views() == 0
+        with futures.ThreadPoolExecutor(PROVISIONERS) as pool:
+            # .result() re-raises in this thread: an exception inside a bare Thread
+            # target only prints, leaving the test green.
+            for future in [
+                pool.submit(sync_queues_concurrently) for _ in range(PROVISIONERS)
+            ]:
+                future.result()
+
+    assert count_absurd_views() == 5

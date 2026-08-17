@@ -2,11 +2,12 @@ import datetime as dt
 import logging
 import re
 import typing as t
+import zlib
 from dataclasses import dataclass, field
 
 import psycopg.errors
 from absurd_sdk import Absurd, QueuePolicyOptions
-from django.db import connections
+from django.db import connections, transaction
 from django.db.utils import ProgrammingError
 
 from django_absurd import backends
@@ -36,6 +37,11 @@ MUTABLE_OPTION_KEYS = (
 INTERVAL_OPTION_KEYS = frozenset(
     ("partition_lookahead", "partition_lookback", "cleanup_ttl", "detach_min_age")
 )
+
+# Advisory-lock key for provision_backend. Derived from a name rather than written as a
+# literal so it reads as ours; concurrent sessions only have to agree with each other,
+# never across servers or versions.
+PROVISION_LOCK_KEY = zlib.crc32(b"django_absurd.provision")
 
 
 @dataclass
@@ -176,8 +182,16 @@ def provision_backend(backend: backends.AbsurdBackend) -> SyncResult:
     # The single integral provisioning step (used by post_migrate, the sync command,
     # and worker start): reconcile every declared queue, then rebuild all admin views
     # so they reflect the full catalog — not just the queue a worker happens to serve.
-    result = sync_queues(backend)
-    rebuild_views(backend.database)
+    #
+    # Serialized: an absent object gets created by name under no lock (CREATE TABLE IF
+    # NOT EXISTS, CREATE VIEW after a no-op DROP), so provisioners racing a first boot
+    # collide on a catalog unique index. Held to commit, released on a crash.
+    validate_backend(backend.database)  # the lock below is Postgres-only SQL
+    with transaction.atomic(using=backend.database):
+        with connections[backend.database].cursor() as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(%s)", [PROVISION_LOCK_KEY])
+        result = sync_queues(backend)
+        rebuild_views(backend.database)
     return result
 
 
