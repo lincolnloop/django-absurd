@@ -23,22 +23,28 @@ def test_long_schedule_name_passes_full_clean(settings: Settings) -> None:
     task.full_clean()  # no ValidationError — length is unbounded
 
 
-def test_full_clean_skips_backend_validation_when_no_backend_configured(
+def test_no_backend_rejects_on_the_field_choices_not_on_the_queue_rule(
     settings: Settings,
 ) -> None:
-    # With no Absurd backend there is nothing to validate the QUEUE against, so that
-    # rule is skipped rather than rejecting an otherwise-valid row. The cron is still
-    # checked — see test_cron_is_validated_even_with_no_backend_configured.
+    # Our queue rule needs a backend to validate against, so it is still skipped (see
+    # validate_queue_against_backend). What rejects the row is the field itself: nothing
+    # declares queues, so choices are empty and no value is selectable. The message is
+    # Django's, NOT our "queue '...' is not declared." — the cron is checked either way,
+    # see test_cron_is_validated_even_with_no_backend_configured.
     settings.TASKS = {
         "default": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}
     }
-    ScheduledTask(
-        source="a",
-        name="beatrow",
-        task="tests.pg_cron.tasks.add",
-        queue="default",
-        cron="0 2 * * *",
-    ).full_clean()
+    with pytest.raises(ValidationError) as exc_info:
+        ScheduledTask(
+            source="a",
+            name="beatrow",
+            task="tests.pg_cron.tasks.add",
+            queue="default",
+            cron="0 2 * * *",
+        ).full_clean()
+    assert exc_info.value.message_dict == {
+        "queue": ["Value 'default' is not a valid choice."]
+    }
 
 
 def test_scheduledtask_has_explicit_option_columns() -> None:
@@ -232,23 +238,3 @@ def test_deleting_with_no_backend_says_the_job_keeps_firing(
         " it keeps firing until the next reconcile"
     )
     assert [record.getMessage() for record in caplog.records] == [expected]
-
-
-def test_queue_choices_fall_back_when_no_absurd_backend_is_configured(
-    settings: Settings,
-) -> None:
-    # The field's choices are read at form-render and validation time, so they must
-    # resolve even with nothing to read declared queues from.
-    settings.TASKS = {
-        "default": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}
-    }
-    assert ScheduledTask._meta.get_field("queue").choices == [("default", "default")]
-
-
-def test_no_queue_is_offered_when_the_backend_declares_none(
-    settings: Settings,
-) -> None:
-    # Validation rejects every name in this config, so the field must not advertise one.
-    settings.TASKS = utils.build_pg_cron_tasks({})
-    settings.TASKS["default"]["OPTIONS"]["QUEUES"] = {}
-    assert ScheduledTask._meta.get_field("queue").choices == []

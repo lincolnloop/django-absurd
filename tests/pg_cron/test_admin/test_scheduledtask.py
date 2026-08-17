@@ -670,6 +670,46 @@ def test_change_view_queue_is_a_dropdown_of_declared_queues(
     assert values == ["", "default", "other", "reports"]
 
 
+def test_change_view_offers_no_queue_when_the_backend_declares_none(
+    admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.Settings",
+) -> None:
+    # Validation rejects every name in this config, so the dropdown must not advertise
+    # one: only the empty choice remains. A fresh dict — mutating TASKS in place would
+    # leak the empty QUEUES into every later test in this module.
+    seed(settings)
+    client.force_login(admin_user)
+    pk = create_scheduled_task(client, name="noqueues")
+    settings.TASKS = {
+        "default": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {"PG_CRON_ON_TEST_DB": True, "QUEUES": {}},
+        }
+    }
+    soup = BeautifulSoup(client.get(get_change_url(pk)).content, "html.parser")
+    values = [o.get("value") for o in soup.select('select[name="queue"] option')]
+    assert values == [""]
+
+
+def test_change_view_offers_no_queue_with_no_absurd_backend(
+    admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.Settings",
+) -> None:
+    # Nothing declares queues, so the field names none: a stand-in choice would claim a
+    # queue no backend declares.
+    seed(settings)
+    client.force_login(admin_user)
+    pk = create_scheduled_task(client, name="nobackendqueue")
+    settings.TASKS = {
+        "default": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}
+    }
+    soup = BeautifulSoup(client.get(get_change_url(pk)).content, "html.parser")
+    values = [o.get("value") for o in soup.select('select[name="queue"] option')]
+    assert values == [""]
+
+
 def test_change_view_retry_kind_is_a_dropdown(
     admin_user: User,
     client: Client,

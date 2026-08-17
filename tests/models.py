@@ -1,7 +1,7 @@
 from django.db import models
 
 
-class Payload(models.Model):  # noqa: DJ008 — a fixture; nothing renders it
+class Payload(models.Model):  # noqa: DJ008
     data = models.JSONField()
 
     class Meta:

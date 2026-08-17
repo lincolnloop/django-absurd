@@ -47,15 +47,13 @@ def get_default_max_attempts() -> int:
 
 def get_declared_queue_choices() -> list[tuple[str, str]]:
     """Declared queues for the configured Absurd backend, sorted, for use as field
-    choices. Called at form-render / validation / migration-state time — import-safe.
-
-    With no backend at all the queue is unvalidated (see ScheduledTask.clean), so offer
-    'default'. A backend declaring no queues is the other way round — validation rejects
-    every name — so offer nothing rather than a choice that cannot be saved.
+    choices. Called at form-render / validation / migration-state time, so it returns an
+    empty list rather than raising when there is nothing to read — never a stand-in
+    queue, which would name one no backend declares.
     """
     backend = get_absurd_backend()
     if backend is None:
-        return [("default", "default")]
+        return []
     return [(q, q) for q in sorted(get_declared_queues(backend))]
 
 
