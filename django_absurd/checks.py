@@ -9,6 +9,7 @@ from django.contrib.admin.sites import AdminSite
 from django.core.checks import CheckMessage, Error, Tags, register
 from django.core.checks import Warning as DjangoWarning
 from django.core.exceptions import ImproperlyConfigured, ValidationError
+from django.db import router as db_router
 from django.db.utils import OperationalError, ProgrammingError
 from django.utils.connection import ConnectionDoesNotExist
 from django.utils.module_loading import import_string
@@ -444,9 +445,10 @@ def check_absurd_queue_state(
     databases: Sequence[str] | None,
     **kwargs: t.Any,
 ) -> list[CheckMessage]:
+    # Django 6.0 runs a Tags.database check with databases=None; 6.1 skips it
+    # instead. Either way there is nothing to check against.
     if not databases:
         return []
-
     backends = get_absurd_backends()
     if not backends:
         return []
@@ -514,12 +516,7 @@ def validate_queue_policy(
 
 
 def router_installed() -> bool:
-    for router in settings.DATABASE_ROUTERS:
-        if router == "django_absurd.routers.AbsurdRouter":
-            return True
-        if isinstance(router, AbsurdRouter):
-            return True
-    return False
+    return any(isinstance(router, AbsurdRouter) for router in db_router.routers)
 
 
 def query_queue_state(

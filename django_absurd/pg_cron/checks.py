@@ -214,9 +214,10 @@ def check_pg_cron_central_extension(
     databases: Sequence[str] | None,
     **kwargs: t.Any,
 ) -> list[CheckMessage]:
+    # Django 6.0 runs a Tags.database check with databases=None; 6.1 skips it
+    # instead. Either way there is nothing to check against.
     if not databases:
-        return []  # plain `check` (no migrate / --database) stays DB-free
-
+        return []
     errors: list[CheckMessage] = []
     for backend in get_absurd_backends().values():
         if backend.database not in databases:

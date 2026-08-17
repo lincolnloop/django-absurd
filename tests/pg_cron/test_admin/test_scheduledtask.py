@@ -234,6 +234,51 @@ def test_create_with_undeclared_resolved_queue_is_form_error_not_created(
     assert not ScheduledTask.objects.filter(name="undeclaredq").exists()
 
 
+def test_create_with_no_declared_queues_is_form_error_not_created(
+    admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.Settings",
+) -> None:
+    # A backend declaring no queues has nothing to schedule onto, so every resolved
+    # queue is undeclared and the admin must refuse rather than save a schedule that
+    # could never fire. Distinct from the narrowed-QUEUES case above: there the list is
+    # non-empty and one name falls out of it.
+    settings.TASKS = {
+        "default": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {"PG_CRON_ON_TEST_DB": True, "QUEUES": {}},
+        }
+    }
+    client.force_login(admin_user)
+    response = client.post(
+        ADD,
+        {"name": "noqueues", "task": "tests.tasks.add", "cron": "0 2 * * *"},
+    )
+    assert response.status_code == 200
+    assert "queue 'default' is not declared." in unescape(response.content.decode())
+    assert not ScheduledTask.objects.filter(name="noqueues").exists()
+
+
+def test_create_with_no_backend_is_form_error_not_created(
+    admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.Settings",
+) -> None:
+    # With no backend nothing resolves the task's queue, and queue isn't a field on the
+    # create form, so without the model's blank check the row saved with queue="".
+    settings.TASKS = {
+        "default": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}
+    }
+    client.force_login(admin_user)
+    response = client.post(
+        ADD,
+        {"name": "nobackend", "task": "tests.pg_cron.tasks.add", "cron": "0 2 * * *"},
+    )
+    assert response.status_code == 200
+    assert "This field cannot be blank." in unescape(response.content.decode())
+    assert not ScheduledTask.objects.filter(name="nobackend").exists()
+
+
 def test_create_with_unimportable_task_is_form_error_not_created(
     admin_user: User,
     client: Client,
@@ -643,6 +688,46 @@ def test_change_view_queue_is_a_dropdown_of_declared_queues(
     soup = BeautifulSoup(client.get(get_change_url(pk)).content, "html.parser")
     values = [o.get("value") for o in soup.select('select[name="queue"] option')]
     assert values == ["", "default", "other", "reports"]
+
+
+def test_change_view_offers_no_queue_when_the_backend_declares_none(
+    admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.Settings",
+) -> None:
+    # Validation rejects every name in this config, so the dropdown must not advertise
+    # one: only the empty choice remains. A fresh dict — mutating TASKS in place would
+    # leak the empty QUEUES into every later test in this module.
+    seed(settings)
+    client.force_login(admin_user)
+    pk = create_scheduled_task(client, name="noqueues")
+    settings.TASKS = {
+        "default": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {"PG_CRON_ON_TEST_DB": True, "QUEUES": {}},
+        }
+    }
+    soup = BeautifulSoup(client.get(get_change_url(pk)).content, "html.parser")
+    values = [o.get("value") for o in soup.select('select[name="queue"] option')]
+    assert values == [""]
+
+
+def test_change_view_offers_no_queue_with_no_absurd_backend(
+    admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.Settings",
+) -> None:
+    # Nothing declares queues, so the field names none: a stand-in choice would claim a
+    # queue no backend declares.
+    seed(settings)
+    client.force_login(admin_user)
+    pk = create_scheduled_task(client, name="nobackendqueue")
+    settings.TASKS = {
+        "default": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}
+    }
+    soup = BeautifulSoup(client.get(get_change_url(pk)).content, "html.parser")
+    values = [o.get("value") for o in soup.select('select[name="queue"] option')]
+    assert values == [""]
 
 
 def test_change_view_retry_kind_is_a_dropdown(

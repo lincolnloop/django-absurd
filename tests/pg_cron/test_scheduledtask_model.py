@@ -23,24 +23,6 @@ def test_long_schedule_name_passes_full_clean(settings: Settings) -> None:
     task.full_clean()  # no ValidationError — length is unbounded
 
 
-def test_full_clean_skips_backend_validation_when_no_backend_configured(
-    settings: Settings,
-) -> None:
-    # With no Absurd backend there is nothing to validate the QUEUE against, so that
-    # rule is skipped rather than rejecting an otherwise-valid row. The cron is still
-    # checked — see test_cron_is_validated_even_with_no_backend_configured.
-    settings.TASKS = {
-        "default": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}
-    }
-    ScheduledTask(
-        source="a",
-        name="beatrow",
-        task="tests.pg_cron.tasks.add",
-        queue="default",
-        cron="0 2 * * *",
-    ).full_clean()
-
-
 def test_scheduledtask_has_explicit_option_columns() -> None:
     task = ScheduledTask.objects.create(
         name="nightly",
