@@ -18,7 +18,8 @@ def test_enqueue_logs_the_spawn_with_absurd_side_detail(
     assert len(spawns) == 1
     assert spawns[0].levelno == logging.DEBUG
     assert spawns[0].getMessage() == (
-        f"spawn requested: name={tasks.add.module_path} queue=default max_attempts=5"
+        f'spawn requested: name="{tasks.add.module_path}" queue="default"'
+        " max_attempts=5"
     )
 
 
@@ -37,8 +38,8 @@ def test_enqueue_logs_a_dedup_key_as_the_caller_wrote_it(
     spawns = [r for r in caplog.records if r.name == "django_absurd.hooks"]
     assert len(spawns) == 1
     assert spawns[0].getMessage() == (
-        f"spawn requested: name={tasks.add.module_path} queue=default"
-        " max_attempts=5 idempotency_key=café-42"
+        f'spawn requested: name="{tasks.add.module_path}" queue="default"'
+        ' max_attempts=5 idempotency_key="café-42"'
     )
 
 
@@ -85,7 +86,7 @@ def test_a_hook_that_fails_to_log_still_returns_the_options(
     ]
     assert len(failures) == 1
     assert failures[0].getMessage() == (
-        f"failed to log spawn: name={tasks.add.module_path}"
+        f'failed to log spawn: name="{tasks.add.module_path}"'
     )
 
 

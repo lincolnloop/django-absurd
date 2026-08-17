@@ -157,8 +157,8 @@ def test_suspend_logged_as_lifecycle_not_failure(
     suspended = [m for m in messages if m.startswith("task suspended: ")]
     assert len(suspended) == 1
     assert re.fullmatch(
-        rf"task suspended: name={re.escape(atasks.asleep_for_once.module_path)}"
-        rf" task_id={task_id} attempt=1 max_attempts=5 duration=\d+\.\d{{3}}s",
+        rf"task suspended: name=\"{re.escape(atasks.asleep_for_once.module_path)}\""
+        rf" task_id=\"{task_id}\" attempt=1 max_attempts=5 duration=\d+\.\d{{3}}s",
         suspended[0],
     )
     assert not [m for m in messages if m.startswith("task failed")]

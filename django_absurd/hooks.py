@@ -44,14 +44,14 @@ def log_before_spawn(
     try:
         # max_attempts/idempotency_key are absent from options entirely when the caller
         # didn't set them, so they're reported only when present.
-        detail = f"name={task_name} queue={options.get('queue')}"
+        detail = f'name="{task_name}" queue="{options.get("queue")}"'
         if "max_attempts" in options:
             detail += f" max_attempts={options['max_attempts']}"
         if "idempotency_key" in options:
-            detail += f" idempotency_key={options['idempotency_key']}"
+            detail += f' idempotency_key="{options["idempotency_key"]}"'
         logger.debug("spawn requested: %s", detail)
     except Exception:
-        logger.exception("failed to log spawn: name=%s", task_name)
+        logger.exception('failed to log spawn: name="%s"', task_name)
     return options
 
 
@@ -116,7 +116,7 @@ def report_run_event(
         # apart.
         claimed = read_sdk_claimed_task(ctx)
         detail = (
-            f"name={claimed['task_name']} task_id={ctx.task_id}"
+            f'name="{claimed["task_name"]}" task_id="{ctx.task_id}"'
             f" attempt={claimed['attempt']} max_attempts={claimed['max_attempts']}"
         )
         if started is not None:
@@ -126,7 +126,7 @@ def report_run_event(
         # Last resort: reporting the fault is itself what failed, and raising from here
         # would reach the SDK and consume the attempt.
         with contextlib.suppress(Exception):
-            logger.exception("failed to log a run lifecycle event: event=%s", event)
+            logger.exception('failed to log a run lifecycle event: event="%s"', event)
 
 
 def read_sdk_claimed_task(ctx: "TaskContext | AsyncTaskContext") -> "ClaimedTask":

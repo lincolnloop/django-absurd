@@ -62,7 +62,7 @@ def test_enqueue_survives_a_receiver_that_raises(
     assert len(errors) == 1
     assert errors[0].exc_info is not None
     assert errors[0].getMessage() == (
-        f"task_enqueued receiver failed for task result id={result.id}"
+        f'task_enqueued receiver failed for task result id="{result.id}"'
     )
 
 

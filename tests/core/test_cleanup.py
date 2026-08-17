@@ -335,7 +335,7 @@ def test_beat_fires_cleanup_on_cadence(
         for r in caplog.records
         if r.name == "django_absurd.scheduler" and r.getMessage().startswith("cleanup")
     ]
-    assert ran == ["cleanup ran: slot=2026-01-01T00:01:00Z"]
+    assert ran == ['cleanup ran: slot="2026-01-01T00:01:00Z"']
 
 
 def test_beat_isolates_failing_cleanup(

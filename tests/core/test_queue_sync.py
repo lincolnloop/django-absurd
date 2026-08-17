@@ -160,7 +160,8 @@ def test_sync_reports_no_queues_when_all_in_sync(
     records = [r for r in caplog.records if r.name == "django_absurd.queues"]
     assert len(records) == 1
     assert (
-        records[0].getMessage() == "queues provisioned: created=freshsync reconciled="
+        records[0].getMessage()
+        == 'queues provisioned: created="freshsync" reconciled=""'
     )
     capsys.readouterr()
     call_command("absurd_sync_queues")  # freshsync exists, no drift -> empty result

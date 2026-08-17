@@ -91,5 +91,5 @@ def test_a_raising_receiver_does_not_fail_the_task(
     ]
     assert len(contained) == 1
     assert contained[0].getMessage() == (
-        f"task_started receiver failed for task result id={result.id}"
+        f'task_started receiver failed for task result id="{result.id}"'
     )

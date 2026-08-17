@@ -72,7 +72,7 @@ def test_a_successful_run_logs_started_then_completed(
         for m in messages
         if m
         == (
-            f"task started: name={tasks.add.module_path} task_id={task_id}"
+            f'task started: name="{tasks.add.module_path}" task_id="{task_id}"'
             " attempt=1 max_attempts=5"
         )
     ]
@@ -80,8 +80,8 @@ def test_a_successful_run_logs_started_then_completed(
     completed = [m for m in messages if m.startswith("task completed: ")]
     assert len(completed) == 1
     assert re.fullmatch(
-        rf"task completed: name={re.escape(tasks.add.module_path)}"
-        rf" task_id={task_id} attempt=1 max_attempts=5 duration={DURATION}",
+        rf"task completed: name=\"{re.escape(tasks.add.module_path)}\""
+        rf" task_id=\"{task_id}\" attempt=1 max_attempts=5 duration={DURATION}",
         completed[0],
     )
     assert len(messages) == 2
@@ -102,22 +102,22 @@ def test_a_suspended_run_logs_suspended_and_starts_again_on_wake(
     task_id = result.id.rsplit(":", 1)[-1]
     messages = read_hook_messages(caplog)
     started_line = (
-        f"task started: name={tasks.sleep_a_week.module_path} task_id={task_id}"
+        f'task started: name="{tasks.sleep_a_week.module_path}" task_id="{task_id}"'
         " attempt=1 max_attempts=5"
     )
     assert messages.count(started_line) == 2
     suspended = [m for m in messages if m.startswith("task suspended: ")]
     assert len(suspended) == 1
     assert re.fullmatch(
-        rf"task suspended: name={re.escape(tasks.sleep_a_week.module_path)}"
-        rf" task_id={task_id} attempt=1 max_attempts=5 duration={DURATION}",
+        rf"task suspended: name=\"{re.escape(tasks.sleep_a_week.module_path)}\""
+        rf" task_id=\"{task_id}\" attempt=1 max_attempts=5 duration={DURATION}",
         suspended[0],
     )
     completed = [m for m in messages if m.startswith("task completed: ")]
     assert len(completed) == 1
     assert re.fullmatch(
-        rf"task completed: name={re.escape(tasks.sleep_a_week.module_path)}"
-        rf" task_id={task_id} attempt=1 max_attempts=5 duration={DURATION}",
+        rf"task completed: name=\"{re.escape(tasks.sleep_a_week.module_path)}\""
+        rf" task_id=\"{task_id}\" attempt=1 max_attempts=5 duration={DURATION}",
         completed[0],
     )
     assert len(messages) == 4
@@ -143,14 +143,14 @@ def test_a_retryable_failure_logs_error_with_the_attempt_count(
     assert len(failures) == 2
     assert failures[0].exc_info is not None
     assert re.fullmatch(
-        rf"task failed: name={re.escape(tasks.boom.module_path)}"
-        rf" task_id={task_id} attempt=1 max_attempts=2 duration={DURATION}",
+        rf"task failed: name=\"{re.escape(tasks.boom.module_path)}\""
+        rf" task_id=\"{task_id}\" attempt=1 max_attempts=2 duration={DURATION}",
         failures[0].getMessage(),
     )
     assert failures[1].exc_info is not None
     assert re.fullmatch(
-        rf"task failed: name={re.escape(tasks.boom.module_path)}"
-        rf" task_id={task_id} attempt=2 max_attempts=2 duration={DURATION}",
+        rf"task failed: name=\"{re.escape(tasks.boom.module_path)}\""
+        rf" task_id=\"{task_id}\" attempt=2 max_attempts=2 duration={DURATION}",
         failures[1].getMessage(),
     )
 
@@ -173,8 +173,8 @@ def test_a_cancelled_run_logs_a_warning_not_a_failure(
     ]
     assert len(warnings) == 1
     assert re.fullmatch(
-        rf"task cancelled: name={re.escape(cancel_itself_then_heartbeat.module_path)}"
-        rf" task_id={task_id} attempt=1 max_attempts=5 duration={DURATION}",
+        rf'task cancelled: name="{re.escape(cancel_itself_then_heartbeat.module_path)}"'
+        rf" task_id=\"{task_id}\" attempt=1 max_attempts=5 duration={DURATION}",
         warnings[0].getMessage(),
     )
     assert not [m for m in read_hook_messages(caplog) if m.startswith("task failed: ")]
@@ -199,8 +199,8 @@ def test_a_run_already_failed_elsewhere_logs_a_warning(
     assert len(warnings) == 1
     assert re.fullmatch(
         "run already failed elsewhere: "
-        rf"name={re.escape(fail_its_own_run_then_heartbeat.module_path)}"
-        rf" task_id={task_id} attempt=1 max_attempts=5 duration={DURATION}",
+        rf"name=\"{re.escape(fail_its_own_run_then_heartbeat.module_path)}\""
+        rf" task_id=\"{task_id}\" attempt=1 max_attempts=5 duration={DURATION}",
         warnings[0].getMessage(),
     )
 
@@ -226,18 +226,18 @@ def test_the_deferred_wrapper_is_visible_without_its_own_log_line(
         for m in messages
         if m
         == (
-            f"task started: name={wrapper_name} task_id={wrapper_task_id}"
+            f'task started: name="{wrapper_name}" task_id="{wrapper_task_id}"'
             " attempt=1 max_attempts=5"
         )
     ]
     assert len(started) == 1
     completed = [
-        m for m in messages if m.startswith(f"task completed: name={wrapper_name} ")
+        m for m in messages if m.startswith(f'task completed: name="{wrapper_name}" ')
     ]
     assert len(completed) == 1
     assert re.fullmatch(
-        rf"task completed: name={re.escape(wrapper_name)}"
-        rf" task_id={wrapper_task_id} attempt=1 max_attempts=5 duration={DURATION}",
+        rf"task completed: name=\"{re.escape(wrapper_name)}\""
+        rf" task_id=\"{wrapper_task_id}\" attempt=1 max_attempts=5 duration={DURATION}",
         completed[0],
     )
     assert not [r for r in caplog.records if r.name == "django_absurd.deferred"]
@@ -295,7 +295,7 @@ def test_a_logging_fault_in_the_hook_does_not_fail_the_task(
     assert len(faults) == 1
     assert (
         faults[0].getMessage()
-        == "failed to log a run lifecycle event: event=task completed"
+        == 'failed to log a run lifecycle event: event="task completed"'
     )
 
 

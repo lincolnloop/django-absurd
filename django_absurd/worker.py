@@ -207,7 +207,7 @@ async def arun_worker(
                 client, options, on_stop_requested=on_stop_requested
             )
         logger.info(
-            "worker stopped: alias=%s queue=%s database=%s",
+            'worker stopped: alias="%s" queue="%s" database="%s"',
             backend.alias,
             queue,
             backend.database,
@@ -226,7 +226,7 @@ async def arun_drain(
     async with open_worker_runtime(backend, queue, options) as client:
         drained = await adrain_queue(backend.database, client, queue, options)
         logger.info(
-            "worker stopped: alias=%s queue=%s database=%s runs=%d",
+            'worker stopped: alias="%s" queue="%s" database="%s" runs=%d',
             backend.alias,
             queue,
             backend.database,
@@ -251,7 +251,7 @@ async def open_worker_runtime(
         loop.set_default_executor(executor)
         async with aworker_client(backend, queue) as client:
             logger.info(
-                "worker started: alias=%s queue=%s database=%s concurrency=%d",
+                'worker started: alias="%s" queue="%s" database="%s" concurrency=%d',
                 backend.alias,
                 queue,
                 backend.database,

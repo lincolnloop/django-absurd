@@ -261,37 +261,37 @@ class AsyncAbsurdTaskContext:
 
 
 def describe_step_replayed(checkpoint_name: str, task_id: str) -> str:
-    return f"step replayed: name={checkpoint_name} task_id={task_id}"
+    return f'step replayed: name="{checkpoint_name}" task_id="{task_id}"'
 
 
 def describe_step_completed(checkpoint_name: str, task_id: str, duration: float) -> str:
     return (
-        f"step completed: name={checkpoint_name} task_id={task_id}"
+        f'step completed: name="{checkpoint_name}" task_id="{task_id}"'
         f" duration={duration:.3f}s"
     )
 
 
 def describe_sleep_for_suspended(step_name: str, task_id: str, duration: float) -> str:
-    return f"sleep suspended: step={step_name} task_id={task_id} for={duration}s"
+    return f'sleep suspended: step="{step_name}" task_id="{task_id}" for={duration}s'
 
 
 def describe_sleep_until_suspended(
     step_name: str, task_id: str, wake_at: "dt.datetime | int | float"
 ) -> str:
-    return f"sleep suspended: step={step_name} task_id={task_id} until={wake_at}"
+    return f'sleep suspended: step="{step_name}" task_id="{task_id}" until="{wake_at}"'
 
 
 def describe_sleep_resumed(step_name: str, task_id: str) -> str:
-    return f"sleep resumed: step={step_name} task_id={task_id}"
+    return f'sleep resumed: step="{step_name}" task_id="{task_id}"'
 
 
 def describe_event_awaiting(event_name: str, task_id: str, timeout: int | None) -> str:
-    return f"event awaiting: name={event_name} task_id={task_id} timeout={timeout}"
+    return f'event awaiting: name="{event_name}" task_id="{task_id}" timeout={timeout}'
 
 
 def describe_event_received(event_name: str, task_id: str) -> str:
-    return f"event received: name={event_name} task_id={task_id}"
+    return f'event received: name="{event_name}" task_id="{task_id}"'
 
 
 def describe_event_emitted(event_name: str, task_id: str) -> str:
-    return f"event emitted: name={event_name} task_id={task_id}"
+    return f'event emitted: name="{event_name}" task_id="{task_id}"'

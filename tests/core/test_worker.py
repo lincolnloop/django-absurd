@@ -418,10 +418,10 @@ def test_worker_command_warns_on_storage_mode_drift(
         "queues provisioned: no changes\n"
         "Queue 'default': storage_mode cannot be changed "
         "(existing: 'unpartitioned', declared: 'partitioned'); skipping.\n"
-        "worker started: alias=default queue=default database=default"
+        'worker started: alias="default" queue="default" database="default"'
         " concurrency=1\n"
         "worker stop requested: finishing in-flight tasks\n"
-        "worker stopped: alias=default queue=default database=default\n"
+        'worker stopped: alias="default" queue="default" database="default"\n'
     )
 
 
@@ -616,9 +616,12 @@ def test_worker_command_reports_the_stop_request_on_both_channels(
         r.getMessage() for r in caplog.records if r.name == "django_absurd.worker"
     ]
     assert messages == [
-        "worker started: alias=default queue=default database=default concurrency=1",
+        (
+            'worker started: alias="default" queue="default" database="default"'
+            " concurrency=1"
+        ),
         STOP_REQUESTED_LOG,
-        "worker stopped: alias=default queue=default database=default",
+        'worker stopped: alias="default" queue="default" database="default"',
     ]
 
 

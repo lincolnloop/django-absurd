@@ -166,7 +166,7 @@ def log_sync_result(result: SyncResult) -> None:
         logger.info("queues provisioned: no changes")
         return
     logger.info(
-        "queues provisioned: created=%s reconciled=%s",
+        'queues provisioned: created="%s" reconciled="%s"',
         ", ".join(result.created),
         ", ".join(result.reconciled),
     )
