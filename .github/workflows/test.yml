@@ -36,6 +36,9 @@ jobs:
       PGDATABASE: postgres
       PGPORT: "5432"
       PGPORT_PGCRON: "5434"
+      # Worker count for tox's `-n auto`; a runner has more cores than the suites
+      # profitably use, and 2 is enough to keep the parallel path exercised.
+      PYTEST_XDIST_AUTO_NUM_WORKERS: "2"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install uv

@@ -159,6 +159,11 @@ Measured on this repo; the point is to spend the slow gate once, not per edit.
 - **Reach for `--create-db` when failures stop making sense.** A killed frozen test can
   leave a database-level `absurd.fake_now` behind, which makes later durable tests
   unclaimable for reasons invisible in their own code. Rebuild before diagnosing.
+- **Changing the worker count needs `--create-db` once.** `--reuse-db` keys test
+  databases per worker (`…_gw0`), so going from 2 workers to 6 reuses two and builds
+  four, and the mixed state surfaces as
+  `DuplicateFunction: function "current_time" already exists` — a migration error that
+  reads like a code bug and is not one.
 - **A test asserting `Created: <queue>` needs `_isolate_queues`** or a queue name unique
   to its file. The catalog row outlives the per-test flush, so the second `--reuse-db`
   run of that file reports nothing created. Passes alone, fails on repeat.
