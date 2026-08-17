@@ -46,11 +46,6 @@ def get_default_max_attempts() -> int:
 
 
 def get_declared_queue_choices() -> list[tuple[str, str]]:
-    """Declared queues for the configured Absurd backend, sorted, for use as field
-    choices. Called at form-render / validation / migration-state time, so it returns an
-    empty list rather than raising when there is nothing to read — never a stand-in
-    queue, which would name one no backend declares.
-    """
     backend = get_absurd_backend()
     if backend is None:
         return []
@@ -134,6 +129,10 @@ class ScheduledTask(models.Model):
             validate_pg_cron_schedule(self.cron)
         except ValidationError as exc:
             errors["cron"] = exc.messages
+        # A blank queue is invalid whatever is configured: the add form excludes the
+        # field, so nothing else rejects one when no backend resolved the task's own.
+        if not self.queue:
+            errors["queue"] = ["This field cannot be blank."]
         backend = get_absurd_backend()
         if backend is not None:
             errors.update(self.validate_queue_against_backend(backend))

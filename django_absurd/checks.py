@@ -513,8 +513,6 @@ def validate_queue_policy(
 
 
 def router_installed() -> bool:
-    # Django's resolved list, so a dotted path, an instance and a subclass all read
-    # the same — and an unimportable entry raises from Django, not from a check.
     return any(isinstance(router, AbsurdRouter) for router in db_router.routers)
 
 

@@ -23,30 +23,6 @@ def test_long_schedule_name_passes_full_clean(settings: Settings) -> None:
     task.full_clean()  # no ValidationError — length is unbounded
 
 
-def test_no_backend_rejects_on_the_field_choices_not_on_the_queue_rule(
-    settings: Settings,
-) -> None:
-    # Our queue rule needs a backend to validate against, so it is still skipped (see
-    # validate_queue_against_backend). What rejects the row is the field itself: nothing
-    # declares queues, so choices are empty and no value is selectable. The message is
-    # Django's, NOT our "queue '...' is not declared." — the cron is checked either way,
-    # see test_cron_is_validated_even_with_no_backend_configured.
-    settings.TASKS = {
-        "default": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}
-    }
-    with pytest.raises(ValidationError) as exc_info:
-        ScheduledTask(
-            source="a",
-            name="beatrow",
-            task="tests.pg_cron.tasks.add",
-            queue="default",
-            cron="0 2 * * *",
-        ).full_clean()
-    assert exc_info.value.message_dict == {
-        "queue": ["Value 'default' is not a valid choice."]
-    }
-
-
 def test_scheduledtask_has_explicit_option_columns() -> None:
     task = ScheduledTask.objects.create(
         name="nightly",

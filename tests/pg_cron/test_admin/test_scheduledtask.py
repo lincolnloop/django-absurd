@@ -259,6 +259,26 @@ def test_create_with_no_declared_queues_is_form_error_not_created(
     assert not ScheduledTask.objects.filter(name="noqueues").exists()
 
 
+def test_create_with_no_backend_is_form_error_not_created(
+    admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.Settings",
+) -> None:
+    # With no backend nothing resolves the task's queue, and queue isn't a field on the
+    # create form, so without the model's blank check the row saved with queue="".
+    settings.TASKS = {
+        "default": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}
+    }
+    client.force_login(admin_user)
+    response = client.post(
+        ADD,
+        {"name": "nobackend", "task": "tests.pg_cron.tasks.add", "cron": "0 2 * * *"},
+    )
+    assert response.status_code == 200
+    assert "This field cannot be blank." in unescape(response.content.decode())
+    assert not ScheduledTask.objects.filter(name="nobackend").exists()
+
+
 def test_create_with_unimportable_task_is_form_error_not_created(
     admin_user: User,
     client: Client,
