@@ -151,6 +151,19 @@ def test_check_errors_on_wrong_backend(
     )
 
 
+class RouterSubclassedByAProject(AbsurdRouter):
+    """A project routing on top of ours, declared by dotted path."""
+
+
+def test_a_router_subclass_by_path_satisfies_the_router_check(
+    capsys: pytest.CaptureFixture[str],
+    settings: "pytest_django.fixtures.Settings",
+) -> None:
+    settings.TASKS = build_tasks_setting({"x": {}}, database="absurd")
+    settings.DATABASE_ROUTERS = ["tests.core.test_checks.RouterSubclassedByAProject"]
+    assert "absurd.E005" not in run_absurd_check(capsys)
+
+
 def test_a_router_instance_satisfies_the_router_check(
     capsys: pytest.CaptureFixture[str],
     settings: "pytest_django.fixtures.Settings",

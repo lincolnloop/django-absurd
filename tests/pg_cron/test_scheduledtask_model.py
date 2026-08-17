@@ -243,3 +243,12 @@ def test_queue_choices_fall_back_when_no_absurd_backend_is_configured(
         "default": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}
     }
     assert ScheduledTask._meta.get_field("queue").choices == [("default", "default")]
+
+
+def test_no_queue_is_offered_when_the_backend_declares_none(
+    settings: Settings,
+) -> None:
+    # Validation rejects every name in this config, so the field must not advertise one.
+    settings.TASKS = utils.build_pg_cron_tasks({})
+    settings.TASKS["default"]["OPTIONS"]["QUEUES"] = {}
+    assert ScheduledTask._meta.get_field("queue").choices == []

@@ -234,6 +234,31 @@ def test_create_with_undeclared_resolved_queue_is_form_error_not_created(
     assert not ScheduledTask.objects.filter(name="undeclaredq").exists()
 
 
+def test_create_with_no_declared_queues_is_form_error_not_created(
+    admin_user: User,
+    client: Client,
+    settings: "pytest_django.fixtures.Settings",
+) -> None:
+    # A backend declaring no queues has nothing to schedule onto, so every resolved
+    # queue is undeclared and the admin must refuse rather than save a schedule that
+    # could never fire. Distinct from the narrowed-QUEUES case above: there the list is
+    # non-empty and one name falls out of it.
+    settings.TASKS = {
+        "default": {
+            "BACKEND": "django_absurd.backends.AbsurdBackend",
+            "OPTIONS": {"PG_CRON_ON_TEST_DB": True, "QUEUES": {}},
+        }
+    }
+    client.force_login(admin_user)
+    response = client.post(
+        ADD,
+        {"name": "noqueues", "task": "tests.tasks.add", "cron": "0 2 * * *"},
+    )
+    assert response.status_code == 200
+    assert "queue 'default' is not declared." in unescape(response.content.decode())
+    assert not ScheduledTask.objects.filter(name="noqueues").exists()
+
+
 def test_create_with_unimportable_task_is_form_error_not_created(
     admin_user: User,
     client: Client,
