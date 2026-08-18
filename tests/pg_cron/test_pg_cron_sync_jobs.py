@@ -1,7 +1,7 @@
 import pytest
 from django.core.management import call_command
 from django.db import connection
-from pytest_django.fixtures import Settings
+from pytest_django import Settings
 
 from django_absurd.backends import get_absurd_backends
 from django_absurd.connection import open_central_connection

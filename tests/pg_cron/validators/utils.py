@@ -12,7 +12,7 @@ from django.core.management import call_command
 from django.core.management.base import SystemCheckError
 from django.test import Client
 from django.urls import reverse
-from pytest_django.fixtures import Settings
+from pytest_django import Settings
 
 from django_absurd.pg_cron.models import ScheduledTask
 

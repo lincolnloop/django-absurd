@@ -2,9 +2,9 @@ import io
 import sys
 
 import pytest
-import pytest_django.fixtures
 from django.core.management import call_command
 from django.core.management.base import CommandError
+from pytest_django import Settings
 
 from django_absurd.backends import get_absurd_backends
 from django_absurd.pg_cron import catalog
@@ -19,7 +19,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("kwargs", [{}, {"no_input": True, "teardown": True}])
 def test_command_errors_when_inert(
     kwargs: dict[str, bool],
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     """Both sync and --teardown refuse to run when pg_cron scheduling is inert
     (a test DB / active test run without PG_CRON_ON_TEST_DB)."""
@@ -34,7 +34,7 @@ def test_command_errors_when_inert(
 
 
 def test_sync_crons_command_malformed_schedule_raises_commanderror(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     """A SCHEDULE entry missing task/cron must surface as a clean CommandError,
     not a raw KeyError traceback."""
@@ -44,7 +44,7 @@ def test_sync_crons_command_malformed_schedule_raises_commanderror(
 
 
 def test_sync_crons_command_no_backend_errors(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = {
         "default": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}
@@ -59,7 +59,7 @@ def test_sync_crons_command_no_backend_errors(
 
 def test_sync_crons_command_creates_cron_jobs(
     capsys: pytest.CaptureFixture[str],
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = utils.build_pg_cron_tasks(
         {
@@ -81,7 +81,7 @@ def test_sync_crons_command_creates_cron_jobs(
 
 def test_sync_crons_command_writes_summary_to_stdout(
     capsys: pytest.CaptureFixture[str],
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = utils.build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
@@ -94,7 +94,7 @@ def test_sync_crons_command_writes_summary_to_stdout(
 
 def test_sync_crons_command_is_idempotent(
     capsys: pytest.CaptureFixture[str],
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = utils.build_pg_cron_tasks(
         {"a": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
@@ -107,7 +107,7 @@ def test_sync_crons_command_is_idempotent(
 
 def test_teardown_removes_owned_cron_jobs(
     capsys: pytest.CaptureFixture[str],
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = utils.build_pg_cron_tasks(
         {
@@ -132,7 +132,7 @@ def test_teardown_removes_owned_cron_jobs(
 
 
 def test_teardown_command_deletes_admin_job_and_row_after_confirmation(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = utils.build_pg_cron_tasks({})
     ScheduledTask.objects.create(
@@ -165,7 +165,7 @@ def test_teardown_command_deletes_admin_job_and_row_after_confirmation(
 
 
 def test_teardown_admin_schedule_does_not_resurrect_on_next_sync(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     """--teardown deletes the admin rows, so the next reconcile (which re-emits admin
     rows) has nothing to resurrect — the destructive teardown is terminal."""
@@ -193,7 +193,7 @@ def test_teardown_admin_schedule_does_not_resurrect_on_next_sync(
 @pytest.mark.parametrize("stdin_text", ["", "no\n"])
 def test_teardown_command_aborts_without_confirmation(
     capsys: pytest.CaptureFixture[str],
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
     stdin_text: str,
 ) -> None:
     # "no\n" declines; "" is a non-interactive EOF (CI / docker exec -T) — both abort

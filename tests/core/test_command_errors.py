@@ -1,7 +1,7 @@
 import pytest
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from pytest_django.fixtures import Settings
+from pytest_django import Settings
 
 from django_absurd.exceptions import (
     BackendNotConfiguredError,

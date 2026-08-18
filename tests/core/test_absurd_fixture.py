@@ -5,7 +5,7 @@ import psycopg.errors
 import pytest
 from django.db import connections, transaction
 from django.db.utils import ProgrammingError
-from pytest_django.fixtures import Settings
+from pytest_django import Settings
 
 from django_absurd.exceptions import (
     BackendNotConfiguredError,

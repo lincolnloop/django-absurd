@@ -1,7 +1,7 @@
 import typing as t
 
 from django.tasks import task_backends
-from pytest_django.fixtures import Settings
+from pytest_django import Settings
 
 from django_absurd.backends import (
     AbsurdBackend,

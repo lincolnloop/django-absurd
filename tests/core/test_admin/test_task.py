@@ -8,7 +8,7 @@ from django.core.management import call_command
 from django.db import connections
 from django.test import Client
 from django.urls import reverse, reverse_lazy
-from pytest_django.fixtures import Settings
+from pytest_django import Settings
 
 from django_absurd.admin_views import ADMIN_ENTITY_SPECS, build_admin_model
 from django_absurd.queues import get_absurd_client

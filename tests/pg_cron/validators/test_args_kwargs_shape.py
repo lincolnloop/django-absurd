@@ -1,7 +1,7 @@
 import typing as t
 
 import pytest
-import pytest_django.fixtures
+from pytest_django import Settings
 
 from tests.pg_cron.validators.utils import ValidateSubject, validate_from_model
 
@@ -30,7 +30,7 @@ def test_wrong_shape_rejected(
 # headers is model/admin-only (not a SCHEDULE key), so the check subject can't express
 # it — validate it through full_clean. null is allowed; any other non-object is not.
 def test_headers_wrong_shape_rejected_by_model(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     result = validate_from_model(settings, headers=[1, 2])
     assert result
@@ -38,6 +38,6 @@ def test_headers_wrong_shape_rejected_by_model(
 
 
 def test_headers_object_accepted_by_model(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     assert validate_from_model(settings, headers={"x": "y"}) is None

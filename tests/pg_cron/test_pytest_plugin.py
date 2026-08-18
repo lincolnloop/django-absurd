@@ -1,6 +1,6 @@
 import pytest
 from django.core.management import call_command
-from pytest_django.fixtures import Settings
+from pytest_django import Settings
 
 from django_absurd.connection import open_central_connection
 from django_absurd.flush import flush_absurd_state

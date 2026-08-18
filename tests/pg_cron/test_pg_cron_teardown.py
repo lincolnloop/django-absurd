@@ -3,7 +3,7 @@ import typing as t
 import pytest
 
 if t.TYPE_CHECKING:
-    from pytest_django.fixtures import Settings
+    from pytest_django import Settings
 
 from django_absurd.backends import get_absurd_backends
 from django_absurd.pg_cron.models import ScheduledTask

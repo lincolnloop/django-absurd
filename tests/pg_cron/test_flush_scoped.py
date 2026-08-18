@@ -1,6 +1,6 @@
 import pytest
 from django.db import connections
-from pytest_django.fixtures import Settings
+from pytest_django import Settings
 
 from django_absurd.flush import flush_absurd_state
 from django_absurd.pg_cron import catalog

@@ -1,5 +1,5 @@
 import pytest
-import pytest_django.fixtures
+from pytest_django import Settings
 
 from django_absurd.backends import get_absurd_backends
 from django_absurd.pg_cron.models import ScheduledTask
@@ -10,7 +10,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 
 def test_upsert_and_prune_settings_rows(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = make_tasks_settings(
         schedule={
@@ -29,7 +29,7 @@ def test_upsert_and_prune_settings_rows(
 
 
 def test_admin_rows_untouched(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     ScheduledTask.objects.create(
         name="a",
@@ -43,7 +43,7 @@ def test_admin_rows_untouched(
 
 
 def test_sync_writes_named_option_columns(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = make_tasks_settings(
         schedule={
@@ -64,7 +64,7 @@ def test_sync_writes_named_option_columns(
 
 
 def test_reconcile_splits_cancellation_into_columns(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = make_tasks_settings(
         schedule={"c": {"task": "tests.tasks.cancellable", "cron": "0 2 * * *"}}
@@ -77,7 +77,7 @@ def test_reconcile_splits_cancellation_into_columns(
 
 
 def test_reconcile_splits_retry_strategy_into_columns(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = make_tasks_settings(
         schedule={"r": {"task": "tests.tasks.retrying", "cron": "0 2 * * *"}}
@@ -90,7 +90,7 @@ def test_reconcile_splits_retry_strategy_into_columns(
 
 
 def test_sync_materializes_decorator_derived_columns(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = make_tasks_settings(
         schedule={"full": {"task": "tests.tasks.fully_specced", "cron": "0 2 * * *"}}

@@ -1,7 +1,7 @@
 import pytest
-import pytest_django.fixtures
 from django.contrib.auth.models import User
 from django.test import Client
+from pytest_django import Settings
 
 from tests.pg_cron.validators.utils import (
     ValidateSubject,
@@ -17,7 +17,7 @@ def validate(
     capsys: pytest.CaptureFixture[str],
     client: Client,
     request: pytest.FixtureRequest,
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> ValidateSubject:
     """Parametrized subject: run a case through each real enforcing entrypoint —
     the system check, the admin change-form POST, and ScheduledTask.full_clean()."""
@@ -34,7 +34,7 @@ def validate(
 def validate_check_and_model(
     capsys: pytest.CaptureFixture[str],
     request: pytest.FixtureRequest,
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> ValidateSubject:
     """Subjects for rules the admin form cannot express (e.g. a non-JSON Python
     object for args/kwargs is not a form text input): the system check + full_clean."""

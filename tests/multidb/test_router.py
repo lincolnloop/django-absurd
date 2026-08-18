@@ -6,7 +6,7 @@ from django.db import connections
 from django.tasks import task
 
 if t.TYPE_CHECKING:
-    import pytest_django.fixtures
+    from pytest_django import Settings
 
 from django_absurd.models import Queue
 from django_absurd.routers import AbsurdRouter
@@ -58,7 +58,7 @@ def test_db_for_read_write_route_django_absurd() -> None:
 
 
 def test_sync_command_honors_alias(
-    settings: "pytest_django.fixtures.Settings",
+    settings: "Settings",
 ) -> None:
     settings.TASKS = {
         "default": {

@@ -4,9 +4,9 @@ suite."""
 import typing as t
 
 import pytest
-import pytest_django.fixtures
 from django.core.management import call_command
 from django.core.management.base import SystemCheckError
+from pytest_django import Settings
 
 from tests.utils import make_tasks_settings
 
@@ -15,7 +15,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 def run_check(
     capsys: pytest.CaptureFixture[str],
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
     installed_apps: t.Sequence[str] | None = None,
     schedule: dict[str, dict[str, object]] | None = None,
 ) -> str:
@@ -32,7 +32,7 @@ def run_check(
 
 
 def build_apps_with_pg_cron_first(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> list[str]:
     apps_without = [
         app for app in settings.INSTALLED_APPS if app != "django_absurd.pg_cron"
@@ -42,7 +42,7 @@ def build_apps_with_pg_cron_first(
 
 def test_pg_cron_app_before_core_warns(
     capsys: pytest.CaptureFixture[str],
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     out = run_check(capsys, settings, build_apps_with_pg_cron_first(settings))
     assert "absurd.W003" in out
@@ -58,7 +58,7 @@ def test_pg_cron_app_before_core_warns(
 
 def test_pg_cron_app_after_core_clean(
     capsys: pytest.CaptureFixture[str],
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     out = run_check(capsys, settings)
     assert "absurd.W003" not in out
@@ -66,7 +66,7 @@ def test_pg_cron_app_after_core_clean(
 
 def test_pg_cron_schedule_error_reported(
     capsys: pytest.CaptureFixture[str],
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     out = run_check(
         capsys,
@@ -85,7 +85,7 @@ def test_pg_cron_schedule_error_reported(
 
 def test_pg_cron_app_config_path_before_core_warns(
     capsys: pytest.CaptureFixture[str],
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     """Dotted AppConfig path for pg_cron listed before core must still trigger W003."""
     apps_with_config_path_first = [
@@ -110,7 +110,7 @@ def test_pg_cron_app_config_path_before_core_warns(
 
 
 def test_pg_cron_installed_without_an_absurd_backend_is_reported(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     # A TASKS pointing somewhere other than an AbsurdBackend leaves the scheduler app
     # installed with nothing to schedule for. Every ScheduledTask then saves normally
@@ -132,6 +132,6 @@ def test_pg_cron_installed_without_an_absurd_backend_is_reported(
 
 def test_pg_cron_installed_with_a_backend_is_not_reported(
     capsys: pytest.CaptureFixture[str],
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     assert "absurd.E013" not in run_check(capsys, settings)

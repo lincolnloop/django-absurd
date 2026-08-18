@@ -3,7 +3,7 @@ import logging
 import pytest
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
-from pytest_django.fixtures import Settings
+from pytest_django import Settings
 
 from django_absurd.pg_cron.choices import Source
 from django_absurd.pg_cron.models import ScheduledTask

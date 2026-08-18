@@ -24,7 +24,7 @@ from django_absurd.test import AbsurdTestRuntime, FrozenTime
 from tests import tasks, utils
 
 if t.TYPE_CHECKING:
-    import pytest_django.fixtures
+    from pytest_django import Settings
 
     import django_absurd.backends
 
@@ -40,7 +40,7 @@ BEAT_EPOCH = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
 
 
 def sync_queue(
-    settings: "pytest_django.fixtures.Settings",
+    settings: "Settings",
     cleanup_ttl: str = "0 seconds",
     cleanup_limit: int = 1000,
     names: tuple[str, ...] = ("default",),
@@ -107,7 +107,7 @@ def answer(text: str) -> collections.abc.Iterator[None]:
 def test_cleanup_deletes_aged_terminal_tasks(
     caplog: pytest.LogCaptureFixture,
     cleanup: "CleanupCallable",
-    settings: "pytest_django.fixtures.Settings",
+    settings: "Settings",
 ) -> None:
     sync_queue(settings)
     tasks.add.enqueue(2, 3)
@@ -124,7 +124,7 @@ def test_cleanup_deletes_aged_terminal_tasks(
 
 def test_cleanup_skips_non_terminal_tasks(
     cleanup: "CleanupCallable",
-    settings: "pytest_django.fixtures.Settings",
+    settings: "Settings",
 ) -> None:
     sync_queue(settings)
     tasks.add.enqueue(2, 3)  # pending — worker not run, so not terminal
@@ -139,7 +139,7 @@ def test_cleanup_skips_non_terminal_tasks(
 
 def test_cleanup_respects_batch_limit(
     cleanup: "CleanupCallable",
-    settings: "pytest_django.fixtures.Settings",
+    settings: "Settings",
 ) -> None:
     sync_queue(settings, cleanup_limit=2)
     for _ in range(3):
@@ -158,7 +158,7 @@ def test_cleanup_respects_batch_limit(
 
 def test_cleanup_targets_specific_queue(
     cleanup: "CleanupCallable",
-    settings: "pytest_django.fixtures.Settings",
+    settings: "Settings",
 ) -> None:
     sync_queue(settings, names=("default", "other"))
     tasks.add.enqueue(2, 3)  # default
@@ -176,7 +176,7 @@ def test_cleanup_targets_specific_queue(
 
 def test_cleanup_command_reports_per_queue_counts(
     capsys: pytest.CaptureFixture[str],
-    settings: "pytest_django.fixtures.Settings",
+    settings: "Settings",
 ) -> None:
     sync_queue(settings)
     tasks.add.enqueue(2, 3)
@@ -187,7 +187,7 @@ def test_cleanup_command_reports_per_queue_counts(
 
 
 def test_cleanup_does_not_relabel_an_unrelated_missing_relation(
-    settings: "pytest_django.fixtures.Settings",
+    settings: "Settings",
 ) -> None:
     """A missing relation inside ``absurd.cleanup_all_queues`` that is not the
     schema-absent shape (``InvalidSchemaName``/``UndefinedFunction``) surfaces as
@@ -217,7 +217,7 @@ def test_cleanup_does_not_relabel_an_unrelated_missing_relation(
 
 def test_cleanup_command_reports_no_backends(
     capsys: pytest.CaptureFixture[str],
-    settings: "pytest_django.fixtures.Settings",
+    settings: "Settings",
 ) -> None:
     settings.TASKS = {}
     call_command("absurd_cleanup")
@@ -226,7 +226,7 @@ def test_cleanup_command_reports_no_backends(
 
 def test_flush_reports_no_backends(
     capsys: pytest.CaptureFixture[str],
-    settings: "pytest_django.fixtures.Settings",
+    settings: "Settings",
 ) -> None:
     settings.TASKS = {}
     call_command("absurd_flush")
@@ -240,7 +240,7 @@ def test_flush_reports_no_queues(capsys: pytest.CaptureFixture[str]) -> None:
 
 def test_flush_noinput_drops_all_queues(
     capsys: pytest.CaptureFixture[str],
-    settings: "pytest_django.fixtures.Settings",
+    settings: "Settings",
 ) -> None:
     sync_queue(settings, names=("default", "other"))
     capsys.readouterr()  # discard sync output
@@ -251,7 +251,7 @@ def test_flush_noinput_drops_all_queues(
 
 def test_flush_interactive_yes_drops_all_queues(
     capsys: pytest.CaptureFixture[str],
-    settings: "pytest_django.fixtures.Settings",
+    settings: "Settings",
 ) -> None:
     sync_queue(settings, names=("default", "other"))
     capsys.readouterr()  # discard sync output
@@ -267,7 +267,7 @@ def test_flush_interactive_yes_drops_all_queues(
 
 def test_flush_interactive_no_keeps_queues(
     capsys: pytest.CaptureFixture[str],
-    settings: "pytest_django.fixtures.Settings",
+    settings: "Settings",
 ) -> None:
     sync_queue(settings, names=("default", "other"))
     capsys.readouterr()  # discard sync output
@@ -283,7 +283,7 @@ def test_flush_interactive_no_keeps_queues(
 
 def test_flush_non_interactive_eof_keeps_queues(
     capsys: pytest.CaptureFixture[str],
-    settings: "pytest_django.fixtures.Settings",
+    settings: "Settings",
 ) -> None:
     sync_queue(settings, names=("default", "other"))
     capsys.readouterr()  # discard sync output
@@ -313,7 +313,7 @@ def test_beat_fires_cleanup_on_cadence(
     caplog: pytest.LogCaptureFixture,
     cleanup: "CleanupCallable",
     dj_absurd: AbsurdTestRuntime,
-    settings: "pytest_django.fixtures.Settings",
+    settings: "Settings",
 ) -> None:
     sync_queue(settings, cleanup={"schedule": "* * * * *"})
     backend = get_absurd_backends()["default"]
@@ -341,7 +341,7 @@ def test_beat_fires_cleanup_on_cadence(
 def test_beat_isolates_failing_cleanup(
     caplog: pytest.LogCaptureFixture,
     dj_absurd: AbsurdTestRuntime,
-    settings: "pytest_django.fixtures.Settings",
+    settings: "Settings",
 ) -> None:
     sync_queue(settings, cleanup={"schedule": "* * * * *"})
     backend = get_absurd_backends()["default"]
@@ -359,7 +359,7 @@ def test_beat_isolates_failing_cleanup(
 
 def test_beat_fires_cleanup_and_task_same_slot(
     dj_absurd: AbsurdTestRuntime,
-    settings: "pytest_django.fixtures.Settings",
+    settings: "Settings",
 ) -> None:
     # A scheduled task and CLEANUP sharing a cron slot both fire in the one tick:
     # the task enqueues (pending → survives cleanup) and cleanup deletes the aged row.
