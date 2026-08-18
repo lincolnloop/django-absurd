@@ -5,7 +5,6 @@ import pytest
 from django.contrib.auth.models import User
 
 from django_absurd.flush import flush_absurd_state
-from tests import utils
 
 
 @pytest.fixture(autouse=True)
@@ -32,22 +31,14 @@ def _restore_absurd_logger() -> t.Iterator[None]:
 
 @pytest.fixture
 def _isolate_queues(_enable_db: None) -> t.Iterator[None]:
-    """Hard-drop all Absurd queue topology before a test, restore the declared set
-    after it.
+    """Hard-drop all Absurd queue topology around a test (before AND after).
 
     The auto cleanup installed by the pytest plugin only TRUNCATEs after each DB
     test — it removes rows, not queues. Topology-varying files create/vary queues
     whose per-queue tables (DDL) and ``managed=False`` registry rows survive a
     truncate and leak across ``--reuse-db`` runs. Apply this (via a module-level
-    ``pytest.mark.usefixtures("_isolate_queues")``) only to those files, so each such
-    test starts from nothing.
-
-    Teardown drops and then RE-PROVISIONS, because ``migrate`` provisions the test
-    database once at creation and nothing re-runs it per test. Dropping on both sides
-    left the next test to enqueue on a queue that no longer existed, repaired only by
-    a runtime path that recreated it — a dependency invisible at the failing test's
-    call site, and one django-absurd is removing. A test that wants the unprovisioned
-    state drops the queue itself, where a reader can see it.
+    ``pytest.mark.usefixtures("_isolate_queues")``) only to those files to drop the
+    schema on both sides so each such test is hermetic.
 
     Naming: ``_``-prefixed but non-autouse. Outside the LETTER of CLAUDE.md's
     autouse-only underscore exception, but within its spirit — never called
@@ -56,7 +47,6 @@ def _isolate_queues(_enable_db: None) -> t.Iterator[None]:
     flush_absurd_state(drop_schema=True)
     yield
     flush_absurd_state(drop_schema=True)
-    utils.provision_declared_queues()
 
 
 @pytest.fixture
