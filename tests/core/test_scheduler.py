@@ -254,6 +254,43 @@ def test_beat_started_logs_schedule_count_and_cleanup(
     assert started[0].getMessage() == 'beat started: schedules=1 cleanup="17 * * * *"'
 
 
+def test_beat_names_the_fix_when_a_target_queue_is_unprovisioned(
+    caplog: pytest.LogCaptureFixture,
+    dj_absurd: AbsurdTestRuntime,
+    settings: Settings,
+) -> None:
+    # Nothing provisions at runtime, and the loop never revisits a firing it could not
+    # enqueue, so this line is an operator's only notice — it has to say what to run.
+    settings.TASKS = make_tasks_setting(
+        {"reporting": {"task": "tests.tasks.create_payload", "cron": "*/1 * * * *"}},
+    )
+    backend = get_absurd_backends()["default"]
+    with (
+        dj_absurd.freeze_time(BEAT_EPOCH) as frozen_time,
+        caplog.at_level(logging.INFO, logger="django_absurd"),
+    ):
+        run_beat_until(
+            frozen_time, backend, dt.datetime(2026, 1, 1, 0, 1, 30, tzinfo=dt.UTC)
+        )
+
+    failed = [
+        r
+        for r in caplog.records
+        if r.name == "django_absurd.scheduler"
+        and r.getMessage().startswith("schedule enqueue failed")
+    ]
+    assert len(failed) == 1
+    assert failed[0].getMessage() == (
+        'schedule enqueue failed: name="reporting" due="2026-01-01T00:01:00Z"'
+    )
+    assert failed[0].exc_text is not None
+    assert failed[0].exc_text.endswith(
+        "django_absurd.exceptions.QueueNotProvisionedError: Queue 'default' is "
+        "declared but its Absurd table is not provisioned. "
+        "Run: manage.py absurd_sync_queues"
+    )
+
+
 def test_beat_isolates_failing_schedule(
     caplog: pytest.LogCaptureFixture,
     dj_absurd: AbsurdTestRuntime,
@@ -283,14 +320,18 @@ def test_beat_isolates_failing_schedule(
         assert Payload.objects.count() == expected_good
 
     records = [r for r in caplog.records if r.name == "django_absurd.scheduler"]
-    failed = [r for r in records if r.getMessage().startswith("schedule failed")]
+    failed = [
+        r for r in records if r.getMessage().startswith("schedule enqueue failed")
+    ]
     enqueued = [r for r in records if r.getMessage().startswith("schedule enqueued")]
     assert len(failed) == 1
-    assert failed[0].getMessage() == 'schedule failed: name="bad"'
+    assert failed[0].getMessage() == (
+        'schedule enqueue failed: name="bad" due="2026-01-01T00:01:00Z"'
+    )
     assert len(enqueued) == 1
     assert (
         enqueued[0].getMessage()
-        == 'schedule enqueued: name="good" slot="2026-01-01T00:01:00Z"'
+        == 'schedule enqueued: name="good" due="2026-01-01T00:01:00Z"'
     )
 
 

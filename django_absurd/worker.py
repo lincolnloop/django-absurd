@@ -50,7 +50,7 @@ from django_absurd.hooks import (
     read_sdk_claimed_task,
 )
 from django_absurd.management.base import resolve_backend
-from django_absurd.queues import names_a_queue_table
+from django_absurd.queues import afind_missing_queue_tables, names_a_queue_table
 from django_absurd.scheduler import run_beat
 
 logger = logging.getLogger(__name__)
@@ -174,19 +174,35 @@ def run_worker(
     *,
     run_beat: bool = False,
     options: WorkerOptions | None = None,
+    on_started: t.Callable[[], None] | None = None,
     on_stop_requested: t.Callable[[], None] | None = None,
 ) -> None:
+    """Run the blocking worker to a stop signal — what ``absurd_worker`` calls.
+
+    The missing-relation translation wraps the whole run rather than the boot probe:
+    ``aworker_client`` refuses a queue whose tables are already gone, so what is left
+    for this one to catch is a queue dropped mid-flight, from any claim the run makes —
+    which a ``--beat`` run reaches through here too. As in ``drain_queue``, only a
+    relation of THIS queue's own earns the translation; anything else re-raises as
+    itself, chained.
+    """
     options = options or WorkerOptions()
     validate_backend(backend.database)
-    asyncio.run(
-        arun_worker(
-            backend,
-            queue,
-            run_beat=run_beat,
-            options=options,
-            on_stop_requested=on_stop_requested,
+    try:
+        asyncio.run(
+            arun_worker(
+                backend,
+                queue,
+                run_beat=run_beat,
+                options=options,
+                on_started=on_started,
+                on_stop_requested=on_stop_requested,
+            )
         )
-    )
+    except psycopg.errors.UndefinedTable as exc:
+        if not names_a_queue_table(exc, queue):
+            raise
+        raise QueueNotProvisionedError(queue) from exc
 
 
 async def arun_worker(
@@ -195,9 +211,15 @@ async def arun_worker(
     *,
     run_beat: bool = False,
     options: WorkerOptions,
+    on_started: t.Callable[[], None] | None = None,
     on_stop_requested: t.Callable[[], None] | None = None,
 ) -> None:
     async with open_worker_runtime(backend, queue, options) as client:
+        # Announce only once the runtime is up: the startup guards live inside the
+        # context manager, so a banner written before it would advertise a worker
+        # that then refuses.
+        if on_started is not None:
+            on_started()
         if run_beat:
             await run_worker_with_beat(
                 client, options, backend, on_stop_requested=on_stop_requested
@@ -287,13 +309,21 @@ async def aworker_client(
         client._registry = LazyTaskRegistry(queue, backend)  # noqa: SLF001 -- SDK has no public fallback-resolver hook; install lazy import_string resolution
         try:
             # Probes for the schema-absent guard; raises if Absurd is not migrated.
-            await client.list_queues()
+            provisioned = await client.list_queues()
         except (
             psycopg.errors.InvalidSchemaName,
             psycopg.errors.UndefinedTable,
             psycopg.errors.UndefinedFunction,
         ) as err:
             raise SchemaNotInstalledError from err
+        # Both refusals belong before the banner: this is where "may this worker start"
+        # is decided, and open_worker_runtime logs `worker started` one frame out.
+        if queue not in provisioned:
+            raise QueueNotProvisionedError(queue)
+        # The catalog row alone proves nothing — it outlives its tables after a manual
+        # drop or a partial restore, and only a claim would find out.
+        if await afind_missing_queue_tables(conn, queue):
+            raise QueueNotProvisionedError(queue)
         yield client
     finally:
         await conn.close()

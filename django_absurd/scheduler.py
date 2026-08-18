@@ -56,15 +56,15 @@ def get_settings_schedules(backend: AbsurdBackend) -> list[Schedule]:
     ]
 
 
-def derive_idempotency_key(schedule: Schedule, slot: dt.datetime) -> str:
+def derive_idempotency_key(schedule: Schedule, due: dt.datetime) -> str:
     # Dedup key, anchored on the schedule name (not task/cron) so args/queue-varying
     # entries don't collide. https://earendil-works.github.io/absurd/patterns/cron/
-    utc_slot = slot.astimezone(dt.UTC).isoformat(timespec="seconds")
-    raw = f"{schedule.backend}|{schedule.name}|{schedule.cron}|{utc_slot}"
+    utc_due = due.astimezone(dt.UTC).isoformat(timespec="seconds")
+    raw = f"{schedule.backend}|{schedule.name}|{schedule.cron}|{utc_due}"
     return "cron:" + hashlib.sha256(raw.encode()).hexdigest()[:24]
 
 
-def spawn_scheduled(schedule: Schedule, slot: dt.datetime) -> None:
+def spawn_scheduled(schedule: Schedule, due: dt.datetime) -> None:
     close_old_connections()
     try:
         task = import_string(schedule.task)
@@ -72,7 +72,7 @@ def spawn_scheduled(schedule: Schedule, slot: dt.datetime) -> None:
         if schedule.queue is not None:
             overrides["queue_name"] = schedule.queue
         task = task.using(**overrides)
-        key = derive_idempotency_key(schedule, slot)
+        key = derive_idempotency_key(schedule, due)
         absurd_params(idempotency_key=key).bind(task).enqueue(
             *schedule.args, **schedule.kwargs
         )
@@ -124,7 +124,7 @@ def run_beat(
 class BeatEntry:
     """One thing the beat loop fires on a cron cadence — a task schedule or cleanup.
 
-    Both kinds share one loop: ``fire`` is the callback for a due slot, ``next_at`` is
+    Both kinds share one loop: ``fire`` is the callback for a due time, ``next_at`` is
     advanced after each firing.
     """
 
@@ -158,7 +158,7 @@ def build_beat_entries(
     return entries
 
 
-def fire_cleanup(backend: AbsurdBackend, slot: dt.datetime) -> None:
+def fire_cleanup(backend: AbsurdBackend, due: dt.datetime) -> None:
     close_old_connections()
     try:
         cleanup_queues()
@@ -166,21 +166,25 @@ def fire_cleanup(backend: AbsurdBackend, slot: dt.datetime) -> None:
         logger.exception("cleanup failed")
     else:
         logger.info(
-            'cleanup ran: slot="%s"',
-            slot.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            'cleanup ran: due="%s"',
+            due.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         )
     finally:
         close_old_connections()
 
 
-def fire_schedule(schedule: Schedule, slot: dt.datetime) -> None:
+def fire_schedule(schedule: Schedule, due: dt.datetime) -> None:
+    due_utc = due.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     try:
-        spawn_scheduled(schedule, slot)
+        spawn_scheduled(schedule, due)
     except Exception:
-        logger.exception('schedule failed: name="%s"', schedule.name)
-    else:
-        logger.info(
-            'schedule enqueued: name="%s" slot="%s"',
+        # The loop advances past this firing and never comes back, so this is an
+        # operator's only notice of it. Our own errors name their fix in the message,
+        # which lands on the traceback's last line.
+        logger.exception(
+            'schedule enqueue failed: name="%s" due="%s"',
             schedule.name,
-            slot.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            due_utc,
         )
+    else:
+        logger.info('schedule enqueued: name="%s" due="%s"', schedule.name, due_utc)

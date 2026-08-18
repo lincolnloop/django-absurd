@@ -21,6 +21,7 @@ from django_absurd.queues import (
     get_absurd_client,
     resolve_absurd_database,
 )
+from django_absurd.test import AbsurdTestRuntime
 from tests import utils
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -40,6 +41,22 @@ def table_exists(name: str) -> bool:
         cur.execute("SELECT to_regclass(%s) IS NOT NULL", [f"absurd.{name}"])
         row = cur.fetchone()
         return bool(row[0]) if row else False
+
+
+def list_absent_queue_tables(queue_name: str) -> list[str]:
+    # Spelled out rather than imported from django_absurd.queues: a repair that puts
+    # back only the table the prefix tuple happens to start with has to fail here.
+    return [
+        name
+        for name in (
+            f"t_{queue_name}",
+            f"r_{queue_name}",
+            f"c_{queue_name}",
+            f"e_{queue_name}",
+            f"w_{queue_name}",
+        )
+        if not table_exists(name)
+    ]
 
 
 def test_get_absurd_client_uses_psycopg3_connection() -> None:
@@ -111,10 +128,113 @@ def test_reconcile_does_not_relabel_an_unrelated_missing_column(
 def test_migrate_tolerates_an_absent_schema(settings: Settings) -> None:
     # The migration is already recorded as applied, so `migrate` replays no DDL
     # but still fires `post_migrate` — which must swallow SchemaNotInstalledError
-    # from provisioning rather than blowing up `migrate` itself.
+    # from provisioning rather than blowing up `migrate` itself. This is the
+    # adoption path: `migrate --fake django_absurd` against a schema installed out
+    # of band, and the only failure `migrate` forgives.
     settings.TASKS = build_tasks_setting({"alpha": {}})
     with utils.hide_absurd_schema():
         call_command("migrate", "django_absurd", verbosity=0)
+
+
+def test_sync_check_fails_when_it_cannot_look(settings: Settings) -> None:
+    # --check must never answer "in sync" when it could not read the catalog at all.
+    settings.TASKS = build_tasks_setting({"alpha": {}})
+    with utils.hide_absurd_schema(), pytest.raises(CommandError) as excinfo:
+        call_command("absurd_sync_queues", "--check")
+    assert str(excinfo.value) == (
+        "Absurd schema is not installed. Run: manage.py migrate"
+    )
+
+
+@pytest.mark.parametrize("flags", [(), ("--check",)])
+def test_sync_reports_an_absent_schema_with_no_queues_declared(
+    flags: tuple[str, ...], settings: Settings
+) -> None:
+    # An empty QUEUES enters no per-queue loop, so absence has to be classified for the
+    # whole operation — the admin views half reads absurd.queues too.
+    settings.TASKS = build_tasks_setting({})
+    with utils.hide_absurd_schema(), pytest.raises(CommandError) as excinfo:
+        call_command("absurd_sync_queues", *flags)
+    assert str(excinfo.value) == (
+        "Absurd schema is not installed. Run: manage.py migrate"
+    )
+
+
+def test_migrate_fails_when_only_the_catalog_table_is_missing(
+    settings: Settings,
+) -> None:
+    # Damage, not absence: the schema is there, so migrate replays no DDL and advising
+    # it would loop forever — and provisioning nothing must not exit 0.
+    settings.TASKS = build_tasks_setting({"orphan": {}})
+    with connection.cursor() as cur:
+        cur.execute("alter table absurd.queues rename to queues_orphaned")
+    try:
+        with pytest.raises(ProgrammingError) as excinfo:
+            call_command("migrate", "django_absurd", verbosity=0)
+        cause = excinfo.value.__cause__
+        assert isinstance(cause, psycopg.errors.UndefinedTable)
+        assert cause.diag.message_primary == 'relation "absurd.queues" does not exist'
+    finally:
+        with connection.cursor() as cur:
+            cur.execute("alter table absurd.queues_orphaned rename to queues")
+
+
+def test_migrate_fails_when_provisioning_errors(settings: Settings) -> None:
+    # Anything other than an absent schema means this deploy provisioned nothing and
+    # nothing at runtime will fix it, so `migrate` must not report success. Driven the
+    # way it could happen for real: the catalog's own column altered out from under
+    # the receiver, which classifies as a plain UndefinedColumn rather than as
+    # schema-absent.
+    settings.TASKS = build_tasks_setting({"alpha": {}})
+    call_command("absurd_sync_queues")
+    with connection.cursor() as cur:
+        cur.execute(
+            "alter table absurd.queues rename column queue_name to queue_name_gone"
+        )
+    try:
+        with pytest.raises(ProgrammingError) as excinfo:
+            call_command("migrate", "django_absurd", verbosity=0)
+        assert isinstance(excinfo.value.__cause__, psycopg.errors.UndefinedColumn)
+    finally:
+        with connection.cursor() as cur:
+            cur.execute(
+                "alter table absurd.queues rename column queue_name_gone to queue_name"
+            )
+
+
+@pytest.mark.parametrize("queues", [{}, {"alpha": {}}])
+def test_migrate_says_so_when_it_cannot_provision(
+    queues: dict[str, CreateQueueOptions], settings: Settings
+) -> None:
+    # The receiver swallows so a faked or adopted migration still completes, but a
+    # silent swallow leaves nothing provisioned and nothing said — and no runtime
+    # path repairs that any more. It reports the condition in its OWN words rather than
+    # the exception's: `migrate` printing "Run: manage.py migrate" is advice that loops
+    # forever, since the migration is already recorded. Declaring no queues is the same
+    # report — absence is classified for the whole operation, ahead of any queue loop.
+    settings.TASKS = build_tasks_setting(queues)
+    buf = io.StringIO()
+    with utils.hide_absurd_schema():
+        call_command("migrate", "django_absurd", verbosity=1, stdout=buf)
+    assert buf.getvalue().endswith(
+        "Provisioning Absurd queues (default):\n"
+        "  Not provisioned: the Absurd schema is absent; this migrate did not "
+        "install it.\n"
+    )
+
+
+@pytest.mark.usefixtures("_isolate_queues")
+def test_migrate_reports_a_queue_it_repaired(settings: Settings) -> None:
+    settings.TASKS = build_tasks_setting({"mended": {}})
+    call_command("absurd_sync_queues")
+    with connection.cursor() as cur:
+        cur.execute(
+            "drop table absurd.t_mended, absurd.r_mended, absurd.c_mended, "
+            "absurd.e_mended, absurd.w_mended cascade"
+        )
+    buf = io.StringIO()
+    call_command("migrate", "django_absurd", verbosity=1, stdout=buf)
+    assert "  Repaired 'mended'" in buf.getvalue()
 
 
 def test_sync_creates_with_options_and_model_maps(settings: Settings) -> None:
@@ -134,14 +254,181 @@ def test_list_shorthand(settings: Settings) -> None:
     assert Queue.objects.filter(queue_name="alpha").exists()
 
 
-def test_sync_reconciles_changed_option_idempotent(settings: Settings) -> None:
-    settings.TASKS = build_tasks_setting({"q": {"cleanup_limit": 100}})
+def test_sync_reconciles_changed_option_idempotent(
+    capsys: pytest.CaptureFixture[str], settings: Settings
+) -> None:
+    # Two mutable opts, so the drift scan is exercised both ways: cleanup_limit
+    # unchanged (loop continues) and cleanup_ttl changed via parse_interval.
+    settings.TASKS = build_tasks_setting(
+        {"q": {"cleanup_limit": 100, "cleanup_ttl": "30 days"}}
+    )
     call_command("absurd_sync_queues")
-    settings.TASKS = build_tasks_setting({"q": {"cleanup_limit": 250}})
+    settings.TASKS = build_tasks_setting(
+        {"q": {"cleanup_limit": 100, "cleanup_ttl": "60 days"}}
+    )
+    capsys.readouterr()
     call_command("absurd_sync_queues")
+    assert capsys.readouterr().out == "🗃️ Reconciled: q\n"
+    assert Queue.objects.get(queue_name="q").cleanup_ttl == dt.timedelta(days=60)
+    settings.TASKS = build_tasks_setting(
+        {"q": {"cleanup_limit": 250, "cleanup_ttl": "60 days"}}
+    )
+    capsys.readouterr()
+    call_command("absurd_sync_queues")
+    assert capsys.readouterr().out == "🗃️ Reconciled: q\n"
     assert Queue.objects.get(queue_name="q").cleanup_limit == 250
+    capsys.readouterr()
     call_command("absurd_sync_queues")
+    # The report is the only witness of the no-drift direction: set_queue_policy run
+    # unconditionally would leave every column below byte-identical anyway.
+    assert capsys.readouterr().out == "🗃️ No queues to sync.\n"
     assert Queue.objects.get(queue_name="q").cleanup_limit == 250
+    assert Queue.objects.get(queue_name="q").cleanup_ttl == dt.timedelta(days=60)
+
+
+@pytest.mark.usefixtures("_isolate_queues")
+def test_sync_recreates_the_tables_of_a_surviving_catalog_row(
+    capsys: pytest.CaptureFixture[str], settings: Settings
+) -> None:
+    # The state QueueNotProvisionedError sends an operator here to fix: a manual drop
+    # or a partial restore leaves the catalog row behind, so a row-gated reconcile
+    # would report "no changes" and repair nothing.
+    settings.TASKS = build_tasks_setting({"partial": {}})
+    call_command("absurd_sync_queues")
+    with connection.cursor() as cur:
+        cur.execute(
+            "drop table absurd.t_partial, absurd.r_partial, absurd.c_partial, "
+            "absurd.e_partial, absurd.w_partial cascade"
+        )
+    assert list_absent_queue_tables("partial") == [
+        "t_partial",
+        "r_partial",
+        "c_partial",
+        "e_partial",
+        "w_partial",
+    ]
+    capsys.readouterr()
+    call_command("absurd_sync_queues")
+    assert capsys.readouterr().out == "🗃️ Repaired: partial\n"
+    assert list_absent_queue_tables("partial") == []
+
+
+@pytest.mark.usefixtures("_isolate_queues")
+def test_sync_recreates_the_tables_of_a_surviving_partitioned_catalog_row(
+    capsys: pytest.CaptureFixture[str], settings: Settings
+) -> None:
+    # Unpartitioned is the one mode where handing create_queue the existing
+    # storage_mode decides nothing, so the repair is only really proven here: dropping
+    # the mode would put t_ back as a plain table and the queue would silently stop
+    # being partitioned.
+    settings.TASKS = build_tasks_setting({"partsurv": {"storage_mode": "partitioned"}})
+    call_command("absurd_sync_queues")
+    with connection.cursor() as cur:
+        cur.execute(
+            "drop table absurd.t_partsurv, absurd.r_partsurv, absurd.c_partsurv, "
+            "absurd.e_partsurv, absurd.w_partsurv cascade"
+        )
+    # The sixth table a partitioned queue owns survives the drop here, so this repair is
+    # driven by the five; dropping it on its own is the test below.
+    assert table_exists("i_partsurv") is True
+    capsys.readouterr()
+    call_command("absurd_sync_queues")
+    assert capsys.readouterr().out == "🗃️ Repaired: partsurv\n"
+    assert list_absent_queue_tables("partsurv") == []
+    assert Queue.objects.get(queue_name="partsurv").storage_mode == "partitioned"
+    with connection.cursor() as cur:
+        cur.execute(
+            "select relkind from pg_class where oid = 'absurd.t_partsurv'::regclass"
+        )
+        assert cur.fetchone() == ("p",)
+
+
+@pytest.mark.usefixtures("_isolate_queues")
+def test_sync_repairs_a_partitioned_queues_idempotency_table_on_its_own(
+    capsys: pytest.CaptureFixture[str], settings: Settings
+) -> None:
+    # A keyed enqueue reserves i_<queue> before it touches any other table, so a probe
+    # blind to it leaves this queue refusing every keyed enqueue with nothing to repair.
+    settings.TASKS = build_tasks_setting({"partidem": {"storage_mode": "partitioned"}})
+    call_command("absurd_sync_queues")
+    with connection.cursor() as cur:
+        cur.execute("drop table absurd.i_partidem cascade")
+    capsys.readouterr()
+    with pytest.raises(CommandError) as excinfo:
+        call_command("absurd_sync_queues", "--check")
+    assert str(excinfo.value) == (
+        "Queues are not in sync. Run: manage.py absurd_sync_queues"
+    )
+    assert capsys.readouterr().out == "🗃️ Would repair: partidem\n"
+    call_command("absurd_sync_queues")
+    assert capsys.readouterr().out == "🗃️ Repaired: partidem\n"
+    assert table_exists("i_partidem") is True
+    assert Queue.objects.get(queue_name="partidem").storage_mode == "partitioned"
+
+
+@pytest.mark.usefixtures("_isolate_queues")
+def test_sync_leaves_a_provisioned_partitioned_queue_alone(
+    dj_absurd: AbsurdTestRuntime, settings: Settings
+) -> None:
+    # Once the clock passes the pre-created window, rows land in the default partition,
+    # and ensure_partitions can no longer create the weeks they belong to — Postgres
+    # refuses. Provisioning must not reach that DDL for a queue already provisioned.
+    settings.TASKS = build_tasks_setting({"parts": {"storage_mode": "partitioned"}})
+    call_command("absurd_sync_queues")
+    with dj_absurd.freeze_time() as frozen_time:
+        frozen_time.shift(dt.timedelta(days=60))
+        with connection.cursor() as cur:
+            # The partition key is a uuidv7 range over task_id, not enqueue_at.
+            cur.execute(
+                "insert into absurd.t_parts "
+                "(task_id, task_name, params, state, enqueue_at) values "
+                "(absurd.uuidv7_floor(now() + interval '60 days'), 'late', "
+                "'{}'::jsonb, 'pending', now() + interval '60 days')"
+            )
+        call_command("absurd_sync_queues")
+    assert Queue.objects.get(queue_name="parts").storage_mode == "partitioned"
+
+
+@pytest.mark.usefixtures("_isolate_queues")
+def test_sync_check_reports_pending_work_and_writes_nothing(
+    capsys: pytest.CaptureFixture[str], settings: Settings
+) -> None:
+    settings.TASKS = build_tasks_setting({"pending": {}})
+    with pytest.raises(CommandError) as excinfo:
+        call_command("absurd_sync_queues", "--check")
+    assert str(excinfo.value) == (
+        "Queues are not in sync. Run: manage.py absurd_sync_queues"
+    )
+    assert capsys.readouterr().out == "🗃️ Would create: pending\n"
+    assert Queue.objects.filter(queue_name="pending").exists() is False
+
+
+@pytest.mark.usefixtures("_isolate_queues")
+def test_sync_check_is_quiet_once_everything_is_provisioned(
+    capsys: pytest.CaptureFixture[str], settings: Settings
+) -> None:
+    settings.TASKS = build_tasks_setting({"settled": {}})
+    call_command("absurd_sync_queues")
+    capsys.readouterr()
+    call_command("absurd_sync_queues", "--check")
+    assert capsys.readouterr().out == "🗃️ No queues to sync.\n"
+
+
+@pytest.mark.usefixtures("_isolate_queues")
+def test_sync_check_names_what_the_real_run_then_does(
+    capsys: pytest.CaptureFixture[str], settings: Settings
+) -> None:
+    # The dry run reads the same three predicates the write path does; this is what
+    # keeps the two from drifting apart.
+    settings.TASKS = build_tasks_setting({"agree": {"cleanup_limit": 100}})
+    call_command("absurd_sync_queues")
+    settings.TASKS = build_tasks_setting({"agree": {"cleanup_limit": 250}})
+    capsys.readouterr()
+    with pytest.raises(CommandError):
+        call_command("absurd_sync_queues", "--check")
+    planned = capsys.readouterr().out
+    call_command("absurd_sync_queues")
+    assert planned == capsys.readouterr().out.replace("Reconciled:", "Would reconcile:")
 
 
 def test_non_destructive(settings: Settings) -> None:
@@ -168,7 +455,7 @@ def test_sync_reports_no_queues_when_all_in_sync(
     assert len(records) == 1
     assert (
         records[0].getMessage()
-        == 'queues provisioned: created="freshsync" reconciled=""'
+        == 'queues provisioned: created="freshsync" reconciled="" repaired=""'
     )
     capsys.readouterr()
     call_command("absurd_sync_queues")  # freshsync exists, no drift -> empty result
@@ -193,6 +480,27 @@ def test_sync_prefixes_the_storage_mode_warning(
     )
 
 
+def test_sync_check_warns_about_a_storage_mode_change_in_the_same_words(
+    capsys: pytest.CaptureFixture[str], settings: Settings
+) -> None:
+    # Nothing else pins the warning on the --check side, and a warning never moves the
+    # exit code, so reworded-on-one-side-only is invisible without this.
+    settings.TASKS = build_tasks_setting({"driftcheck": {}})
+    call_command("absurd_sync_queues")  # create 'driftcheck' unpartitioned
+    settings.TASKS = build_tasks_setting(
+        {"driftcheck": {"storage_mode": "partitioned"}}
+    )
+    capsys.readouterr()
+    call_command("absurd_sync_queues", "--check")
+    planned = capsys.readouterr()
+    assert planned.err == (
+        "🗃️ Queue 'driftcheck': storage_mode cannot be changed "
+        "(existing: 'unpartitioned', declared: 'partitioned'); skipping.\n"
+    )
+    call_command("absurd_sync_queues")
+    assert capsys.readouterr().err == planned.err
+
+
 def test_get_absurd_database_resolves_from_backend(settings: Settings) -> None:
     settings.TASKS = build_tasks_setting({}, database="default")
     assert resolve_absurd_database() == "default"
@@ -206,15 +514,22 @@ def test_sync_command_takes_no_database_flag(settings: Settings) -> None:
         call_command("absurd_sync_queues", database="sqlite")
 
 
-def test_sync_command_reports_nothing_when_no_absurd_backend(
-    capsys: pytest.CaptureFixture[str],
+@pytest.mark.parametrize("flags", [(), ("--check",)])
+def test_sync_command_fails_when_no_absurd_backend(
+    flags: tuple[str, ...],
     settings: Settings,
 ) -> None:
+    # --check is a release gate whose whole job is to assert, so a settings regression
+    # that leaves no Absurd backend at all must not pass as "in sync".
     settings.TASKS = {
         "default": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"}
     }
-    call_command("absurd_sync_queues")
-    assert "No Absurd task backends configured." in capsys.readouterr().out
+    with pytest.raises(CommandError) as excinfo:
+        call_command("absurd_sync_queues", *flags)
+    assert str(excinfo.value) == (
+        "No Absurd backend configured. Add a "
+        "django_absurd.backends.AbsurdBackend entry to TASKS."
+    )
 
 
 def test_sync_command_waits_for_a_concurrent_provisioner(settings: Settings) -> None:

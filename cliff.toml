@@ -32,7 +32,7 @@ body = """
 {% if breaking | length > 0 %}
 ### Breaking changes
 {% for commit in breaking %}
-- {% if commit.scope %}**{{ commit.scope }}:** {% endif %}{{ commit.message | upper_first }}
+- {% if commit.scope %}**{{ commit.scope }}:** {% endif %}{{ commit.message | upper_first }}{% if commit.breaking_description != commit.message %} — {{ commit.breaking_description | replace(from="\n", to=" ") }}{% endif %}
 {%- endfor %}
 {% endif -%}
 

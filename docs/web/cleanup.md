@@ -86,8 +86,7 @@ only re-provision the queues, never re-`migrate`.
 !!! warning "Destructive"
 
     This permanently deletes all task history across every queue. Re-provision your
-    declared queues afterward with `migrate`, `absurd_sync_queues`, or by starting a
-    worker.
+    declared queues afterward with `migrate` or `absurd_sync_queues`.
 
     Scheduled jobs survive the flush and **error on each fire** until the queues exist
     again — re-provision promptly. The `OPTIONS["CLEANUP"]` job is the exception: it

@@ -11,6 +11,7 @@ import psycopg.errors
 import pytest
 from django.contrib.auth.models import Group
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.db import connection
 from django.db.utils import ProgrammingError
 from django.utils import timezone
@@ -214,22 +215,26 @@ def test_cleanup_does_not_relabel_an_unrelated_missing_relation(
             cur.execute("alter table absurd.t_default_probe rename to t_default")
 
 
-def test_cleanup_command_reports_no_backends(
-    capsys: pytest.CaptureFixture[str],
-    settings: Settings,
-) -> None:
+def test_cleanup_command_fails_when_no_absurd_backend(settings: Settings) -> None:
+    # A nightly cron is the caller that matters: a settings regression must not stop
+    # every cleanup while the exit code still reports success.
     settings.TASKS = {}
-    call_command("absurd_cleanup")
-    assert capsys.readouterr().out == "No Absurd task backends configured.\n"
+    with pytest.raises(CommandError) as excinfo:
+        call_command("absurd_cleanup")
+    assert str(excinfo.value) == (
+        "No Absurd backend configured. Add a "
+        "django_absurd.backends.AbsurdBackend entry to TASKS."
+    )
 
 
-def test_flush_reports_no_backends(
-    capsys: pytest.CaptureFixture[str],
-    settings: Settings,
-) -> None:
+def test_flush_command_fails_when_no_absurd_backend(settings: Settings) -> None:
     settings.TASKS = {}
-    call_command("absurd_flush")
-    assert capsys.readouterr().out == "No Absurd task backends configured.\n"
+    with pytest.raises(CommandError) as excinfo:
+        call_command("absurd_flush")
+    assert str(excinfo.value) == (
+        "No Absurd backend configured. Add a "
+        "django_absurd.backends.AbsurdBackend entry to TASKS."
+    )
 
 
 def test_flush_reports_no_queues(capsys: pytest.CaptureFixture[str]) -> None:
@@ -334,7 +339,7 @@ def test_beat_fires_cleanup_on_cadence(
         for r in caplog.records
         if r.name == "django_absurd.scheduler" and r.getMessage().startswith("cleanup")
     ]
-    assert ran == ['cleanup ran: slot="2026-01-01T00:01:00Z"']
+    assert ran == ['cleanup ran: due="2026-01-01T00:01:00Z"']
 
 
 def test_beat_isolates_failing_cleanup(

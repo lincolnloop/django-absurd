@@ -91,6 +91,8 @@ module: tasks resolve by import path, so no `tasks.py` is required. Tasks may be
 (`def`) or async (`async def`); one worker runs both.
 
 - `async def` enqueues with `await send_report.aenqueue(42)`.
+- The queue must already exist — enqueuing never creates one. See
+  [what `migrate` installs](#what-migrate-installs).
 - Enqueuing rides the surrounding transaction, so an `atomic()` rollback drops the task.
 - Delivery is **at-least-once** — keep handlers idempotent. See
   [runs and retries](#runs-and-retries).
@@ -514,6 +516,8 @@ Beat evaluates cron in-process and enqueues each task when its slot comes due; a
   fires at most once. It does not replace single-instance supervision.
 - **Never backfills.** A slot that passes while beat is down is skipped; the next one
   proceeds on schedule.
+- **A failed enqueue is not retried either.** Beat logs the error and advances, so an
+  unprovisioned target queue costs every slot until someone provisions it.
 - Grammar is [croniter](https://pypi.org/project/croniter/): standard 5-field
   `min hour dom mon dow`, or 6-field with a leading seconds column for sub-minute
   cadence (`"*/30 * * * * *"` is every 30s). Each slot enqueues a task, so size the
@@ -710,10 +714,10 @@ python manage.py absurd_worker --queue reports --concurrency 4
 ```
 
 A single worker runs **both** sync and async tasks: `async def` on an event loop (true
-concurrency for I/O-bound work), sync `def` in a thread pool. On start it reconciles
-every declared queue — creating missing ones, applying declared policy changes — and
-rebuilds the admin views to reflect the whole catalog, not just the served queue,
-reporting to stdout. Then it polls until `SIGINT`/`SIGTERM`.
+concurrency for I/O-bound work), sync `def` in a thread pool. It provisions nothing: a
+`--queue` that [`migrate`](#what-migrate-installs) has not created is refused before the
+first poll, naming `absurd_sync_queues`. Otherwise it announces itself on stdout and
+polls until `SIGINT`/`SIGTERM`.
 
 | Flag              | Default         | What it does                                          |
 | ----------------- | --------------- | ----------------------------------------------------- |
@@ -755,10 +759,25 @@ python manage.py migrate
 ```
 
 Absurd's schema ships as a Django migration, and `post_migrate` provisions the declared
-queues and rebuilds the admin views. Declared queues are additionally created on worker
-start, by `absurd_sync_queues`, and on first enqueue; only declared queues are ever
+queues and rebuilds the admin views on every `migrate`, applied migrations or not.
+`manage.py absurd_sync_queues` does the same on demand — and repairs a queue whose
+catalog row outlived its tables, reporting `Repaired: <queue>`. Those two, plus
+[`dj_absurd.sync_queues()`](#fixture-api) in tests, are the only things that provision:
+enqueuing and starting a worker never create a queue. Only declared queues are ever
 created, and an undeclared name is rejected. The SQL comes from the pinned Absurd
 version and is never fetched at migrate time.
+
+```bash
+python manage.py absurd_sync_queues --check   # asserts; writes nothing
+```
+
+- `--check` reports what `absurd_sync_queues` would create, repair or reconcile and
+  exits non-zero if anything would, for a release step that asserts rather than acts.
+- `post_migrate` is per-database: `migrate --database=<alias>` is the run that
+  provisions that alias, and a `migrate` on another one leaves it untouched.
+- `migrate` fails when provisioning fails. The one exception is an absent schema, which
+  it reports and exits 0 on — a partial `migrate <app>`, or a `--fake`, reaches it
+  having installed nothing.
 
 → [Absurd: database setup](https://earendil-works.github.io/absurd/database/).
 
@@ -839,8 +858,7 @@ python manage.py absurd_flush --noinput  # drops without prompting
 **Destructive: this deletes all task history.** It removes every queue — its per-queue
 tables and registry entry — along with all tasks, runs, and events in them. It does not
 uninstall Absurd: the schema, migrations, and functions stay, so you never re-`migrate`,
-only re-provision the queues with `migrate`, `absurd_sync_queues`, or by starting a
-worker.
+only re-provision the queues with `migrate` or `absurd_sync_queues`.
 
 - Scheduled jobs survive the flush and **error on each fire** until the queues exist
   again, so re-provision promptly. The `OPTIONS["CLEANUP"]` job is the exception: it
@@ -903,10 +921,9 @@ synthesized `queue` column. `Queue` is the queue catalog, keyed by `queue_name`.
 - **Filter by `queue=` whenever you can.** The views carry no cross-queue index, so
   `queue=` prunes to a single per-queue table while an unfiltered query — ordering by
   `enqueue_at`, or filtering only on `state` — scans every queue's table.
-- They are backed by Postgres views rebuilt by `migrate`, worker start, and
-  `absurd_sync_queues`. A queue that appears only afterwards — declared late and reached
-  by an enqueue before the next provisioning step — is absent from results until then.
-  Dropping a queue removes its view.
+- They are backed by Postgres views rebuilt by `migrate` and `absurd_sync_queues`. A
+  queue created outside django-absurd — `absurdctl`, a direct SDK call — is absent from
+  results until the next of those runs. Dropping a queue removes its view.
 
 ### The admin
 
@@ -914,8 +931,9 @@ With `django.contrib.admin` installed, django-absurd registers read-only pages f
 models above. No configuration. Turn them off with [`ENABLE_ADMIN`](#backend-options),
 or register elsewhere with `ADMIN_SITE`.
 
-- A queue created only by an enqueue, with no worker started and no sync run, is not yet
-  in the views, so its tasks do not appear — run `absurd_sync_queues`.
+- A queue created outside django-absurd — `absurdctl`, a direct SDK call — is not in the
+  views, so its tasks do not appear. The changelist says so and names the queues;
+  `absurd_sync_queues` indexes them.
 - **Non-default `DATABASE`:** the synthesized models read from the Absurd database, but
   Django's own `LogEntry`, session, and `ContentType` tables must still exist in
   `"default"` — run `migrate` on it too.
@@ -1019,10 +1037,10 @@ entry). Its `FrozenTime` handle carries the only two movers, `move_to(datetime)`
 
 **`drain()`** runs every currently-claimable task on `queue` to completion in-process —
 no worker subprocess, no polling loop — one at a time, returning one `RunSnapshot` per
-run executed, in claim order. It **provisions nothing**, unlike the CLI: `migrate`
-leaves a test database ready, but a queue a single test declares by overriding `TASKS`
-has no table, so call `sync_queues()` first or `drain()` raises
-`QueueNotProvisionedError`. An undeclared queue raises `QueueNotDeclaredError`.
+run executed, in claim order. It **provisions nothing**: `migrate` leaves a test
+database ready, but a queue a single test declares by overriding `TASKS` has no table,
+so call `sync_queues()` first or `drain()` raises `QueueNotProvisionedError`. An
+undeclared queue raises `QueueNotDeclaredError`.
 
 ```python
 (run,) = dj_absurd.drain()  # one RunSnapshot per run, in claim order
@@ -1073,8 +1091,8 @@ snapshot.failure  # None except on a terminal failure
   task's own status.
 
 **`sync_queues()`** is the runtime counterpart of `manage.py absurd_sync_queues`. Rarely
-needed, since `migrate` already provisions the declared catalog — reach for it only when
-the test itself changed queue topology.
+needed, since `migrate` already provisions the declared catalog — but nothing else
+re-provisions, so a test that changes queue topology has to call it.
 
 ### Cleanup is automatic
 
@@ -1239,27 +1257,31 @@ except DjangoAbsurdError:
     ...
 ```
 
-| Type                        | Raised when                                                                                         |
-| --------------------------- | --------------------------------------------------------------------------------------------------- |
-| `SchemaNotInstalledError`   | The Absurd Postgres schema itself isn't installed — run `manage.py migrate`                         |
-| `QueueNotDeclaredError`     | A queue name matches no queue declared for the backend                                              |
-| `QueueNotProvisionedError`  | A queue is declared but its Absurd table isn't provisioned yet — run `manage.py absurd_sync_queues` |
-| `BackendNotConfiguredError` | No `AbsurdBackend`, or more than one, is configured in `TASKS`                                      |
-| `QueueReadOnlyError`        | `.save()`/`.delete()` on one of the [read-only models](#query-queue-state)                          |
-| `ViewNotProvisionedError`   | One of those views hits a missing relation because a queue was never provisioned                    |
-| `TaskIdQueueMismatchError`  | `dj_absurd.get_result` got a `"queue:uuid"` id and a `queue=` naming different queues               |
-| `TaskNotFoundError`         | `dj_absurd.get_result` found no task by that id on that queue                                       |
+| Type                              | Raised when                                                                                         |
+| --------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `SchemaNotInstalledError`         | The Absurd Postgres schema itself isn't installed — run `manage.py migrate`                         |
+| `QueueNotDeclaredError`           | A queue name matches no queue declared for the backend                                              |
+| `QueueNotProvisionedError`        | A queue is declared but its Absurd table isn't provisioned yet — run `manage.py absurd_sync_queues` |
+| `BackendNotConfiguredError`       | No `AbsurdBackend` is configured in `TASKS`                                                         |
+| `MultipleBackendsConfiguredError` | More than one `AbsurdBackend` is configured; the package supports exactly one                       |
+| `QueueReadOnlyError`              | `.save()`/`.delete()` on one of the [read-only models](#query-queue-state)                          |
+| `ViewNotProvisionedError`         | One of those views hits a missing relation because a queue was never provisioned                    |
+| `TaskIdQueueMismatchError`        | `dj_absurd.get_result` got a `"queue:uuid"` id and a `queue=` naming different queues               |
+| `TaskNotFoundError`               | `dj_absurd.get_result` found no task by that id on that queue                                       |
 
 - `enqueue` raises `QueueNotDeclaredError` only when the backend's `QUEUES` is empty or
   unset; with `QUEUES` configured, a typo'd name is rejected earlier as Django's own
   `InvalidTask`.
-- Every `absurd_*` management command inherits `AbsurdCommand` (or its
-  `AbsurdReportCommand` subclass), which turns a fixed set of configuration failures —
-  `ImproperlyConfigured`, `BackendNotConfiguredError`, `SchemaNotInstalledError`,
-  `QueueNotDeclaredError`, `QueueNotProvisionedError` — into a clean `CommandError`;
-  `--traceback` still shows the original chain. Every other error, including any other
-  `DjangoAbsurdError` subclass, keeps its own type and full traceback — it signals a
-  bug, not a configuration mistake.
+- `QueueNotProvisionedError` reaches every entry point alike — `enqueue`, `emit_event`,
+  `absurd_worker` at start, `dj_absurd.drain`, `dj_absurd.get_result` — because none of
+  them provision.
+- Every `absurd_*` management command inherits `AbsurdCommand`, which turns a fixed set
+  of configuration failures — `ImproperlyConfigured`, `BackendNotConfiguredError`,
+  `MultipleBackendsConfiguredError`, `SchemaNotInstalledError`, `QueueNotDeclaredError`,
+  `QueueNotProvisionedError` — into a clean `CommandError`; `--traceback` still shows
+  the original chain. Every other error, including any other `DjangoAbsurdError`
+  subclass, keeps its own type and full traceback — it signals a bug, not a
+  configuration mistake.
 - The hierarchy is not total. Catch `DjangoAbsurdError` for django-absurd's own typed
   errors; other failures — config validation, clock misuse — still raise plain
   `ImproperlyConfigured` / `RuntimeError` / `TypeError`.

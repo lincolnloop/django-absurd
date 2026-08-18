@@ -1,6 +1,5 @@
 import asyncio
 import contextlib
-import datetime as dt
 import logging
 import os
 import signal
@@ -19,6 +18,7 @@ from pytest_django import Settings
 from django_absurd.backends import AbsurdBackend, get_absurd_backends
 from django_absurd.exceptions import (
     DjangoAbsurdError,
+    MultipleBackendsConfiguredError,
     QueueNotDeclaredError,
     QueueNotProvisionedError,
     SchemaNotInstalledError,
@@ -68,16 +68,6 @@ def test_worker_client_rejects_non_psycopg3(settings: Settings) -> None:
     }
     with pytest.raises(CommandError, match="psycopg"):
         call_command("absurd_worker", queue="default")
-
-
-def test_worker_client_opens_without_provisioning_check() -> None:
-    # No absurd_sync_queues; 'default' unprovisioned (schema present).
-    # aworker_client must NOT raise — the provisioned-or-die check is gone.
-    async def _enter() -> list[str]:
-        async with aworker_client(backend(), "default") as client:
-            return await client.list_queues()
-
-    assert "default" not in asyncio.run(_enter())  # unprovisioned, yet no error
 
 
 def test_worker_client_absent_schema_errors() -> None:
@@ -173,7 +163,7 @@ def test_task_outside_tasks_py_runs(dj_absurd: AbsurdTestRuntime) -> None:
 
 
 def test_queue_defaults_to_default(
-    capsys: pytest.CaptureFixture[str], settings: Settings
+    capsys: pytest.CaptureFixture[str], dj_absurd: AbsurdTestRuntime, settings: Settings
 ) -> None:
     settings.TASKS = {
         "default": {
@@ -181,7 +171,8 @@ def test_queue_defaults_to_default(
             "QUEUES": ["default"],
         }
     }
-    tasks.make_group.enqueue("dflt")  # auto-creates the default queue
+    dj_absurd.sync_queues()  # _isolate_queues dropped the catalog on the way in
+    tasks.make_group.enqueue("dflt")
     utils.start_worker_until_done(  # no --queue -> "default"
         lambda: Group.objects.filter(name="dflt").exists()
     )
@@ -209,7 +200,7 @@ def test_worker_rejects_alias_flag(settings: Settings) -> None:
 
 
 def test_worker_uses_single_backend_at_nondefault_alias(
-    capsys: pytest.CaptureFixture[str], settings: Settings
+    capsys: pytest.CaptureFixture[str], dj_absurd: AbsurdTestRuntime, settings: Settings
 ) -> None:
     settings.TASKS = {
         "myabsurd": {
@@ -217,6 +208,7 @@ def test_worker_uses_single_backend_at_nondefault_alias(
             "QUEUES": ["default"],
         }
     }
+    dj_absurd.sync_queues()  # _isolate_queues dropped the catalog on the way in
     utils.start_worker()
     assert "Started worker on queue 'default'." in capsys.readouterr().out
 
@@ -254,6 +246,7 @@ def test_worker_multiple_backends_errors(settings: Settings) -> None:
         "django-absurd supports one Absurd backend per project; "
         "configure exactly one AbsurdBackend in TASKS."
     )
+    assert isinstance(exc.value.__cause__, MultipleBackendsConfiguredError)
 
 
 def test_command_parses_all_flags_with_defaults() -> None:
@@ -279,149 +272,143 @@ def test_command_runs_task_end_to_end(dj_absurd: AbsurdTestRuntime) -> None:
     assert snap.state == "completed"
 
 
-def test_worker_start_provisions_all_declared_queues(
+def test_worker_refuses_an_unprovisioned_queue(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # full provision on start: every declared queue, not just the served one
-    utils.start_worker(queue="default")
-    created_line, started_line, stop_requested_line, stopped_line = (
-        capsys.readouterr().out.splitlines()
+    # _isolate_queues dropped the catalog and nothing at boot puts it back, so the
+    # worker must refuse before it announces itself rather than reach the claim loop.
+    with connection.cursor() as cur:
+        cur.execute(
+            "drop view if exists absurd.tasks_view, absurd.runs_view, "
+            "absurd.checkpoints_view, absurd.waits_view, absurd.events_view cascade"
+        )
+    with pytest.raises(CommandError) as exc:
+        utils.start_worker(queue="default")
+    assert str(exc.value) == (
+        "Queue 'default' is declared but its Absurd table is not provisioned. "
+        "Run: manage.py absurd_sync_queues"
     )
-    assert set(created_line.removeprefix("Created: ").split(", ")) == {
-        "default",
-        "other",
-        "reports",
-    }
-    assert started_line == "🐘 Started worker on queue 'default'."
-    assert stop_requested_line == (
-        "🐘 Stop requested on queue 'default'; finishing in-flight tasks."
-    )
-    assert stopped_line == "🐘 Stopped worker on queue 'default'."
-    assert Queue.objects.filter(queue_name="default").exists()
-    assert Queue.objects.filter(queue_name="other").exists()
+    assert capsys.readouterr().out == ""
+    assert Queue.objects.filter(queue_name="default").exists() is False
+    with connection.cursor() as cur:
+        cur.execute("select count(*) from pg_views where schemaname = 'absurd'")
+        assert cur.fetchone() == (0,)
 
 
-def test_worker_command_reconciles_changed_mutable_option(
-    capsys: pytest.CaptureFixture[str], settings: Settings
+@pytest.mark.parametrize(
+    ("entrypoint", "expected_error"),
+    [
+        ("command", CommandError),
+        ("function", QueueNotProvisionedError),
+    ],
+)
+def test_a_half_provisioned_queue_is_refused(
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+    entrypoint: str,
+    expected_error: type[Exception],
 ) -> None:
-    settings.TASKS = {
-        "default": {
-            "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "OPTIONS": {"QUEUES": {"default": {"cleanup_limit": 100}}},
-        }
-    }
+    # The catalog row outlives its tables, so the catalog guard reads the queue as
+    # provisioned and the table probe beside it is what refuses. Nothing may announce a
+    # start first: under `restart: on-failure` that line is all an operator sees, and it
+    # would be describing a worker that never claimed anything.
     call_command("absurd_sync_queues")
-    settings.TASKS = {
-        "default": {
-            "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "OPTIONS": {"QUEUES": {"default": {"cleanup_limit": 250}}},
-        }
-    }
-    capsys.readouterr()  # drop sync output
-    utils.start_worker(queue="default")
-    out = capsys.readouterr().out
-    assert out == (
-        "Reconciled: default\n"
-        "🐘 Started worker on queue 'default'.\n"
-        "🐘 Stop requested on queue 'default'; finishing in-flight tasks.\n"
-        "🐘 Stopped worker on queue 'default'.\n"
+    capsys.readouterr()  # drop the sync report; the worker's own output is the subject
+    with connection.cursor() as cur:
+        cur.execute(
+            "drop table absurd.t_default, absurd.r_default, absurd.c_default, "
+            "absurd.e_default, absurd.w_default cascade"
+        )
+
+    def consume_the_queue() -> None:
+        if entrypoint == "command":
+            call_command("absurd_worker", queue="default")
+        else:
+            drain_queue("default")
+
+    with (
+        caplog.at_level(logging.INFO, logger="django_absurd"),
+        pytest.raises(expected_error) as exc,
+    ):
+        consume_the_queue()
+    assert str(exc.value) == (
+        "Queue 'default' is declared but its Absurd table is not provisioned. "
+        "Run: manage.py absurd_sync_queues"
     )
-    assert Queue.objects.get(queue_name="default").cleanup_limit == 250  # DB proof
+    assert capsys.readouterr().out == ""
+    assert [
+        r.getMessage() for r in caplog.records if r.name == "django_absurd.worker"
+    ] == []
+    assert Queue.objects.filter(queue_name="default").exists() is True
 
 
-def test_worker_command_reconciles_changed_interval_option(
-    capsys: pytest.CaptureFixture[str], settings: Settings
+def test_worker_refuses_a_partitioned_queue_missing_its_idempotency_table(
+    settings: Settings,
 ) -> None:
-    # Two mutable opts: cleanup_limit unchanged (loop continues), cleanup_ttl changed
-    # (interval drift via parse_interval).
-    settings.TASKS = {
-        "default": {
-            "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "OPTIONS": {
-                "QUEUES": {"default": {"cleanup_limit": 100, "cleanup_ttl": "30 days"}}
-            },
-        }
-    }
+    # i_<queue> is one of a partitioned queue's own tables, so the boot probe has to
+    # expect it exactly as the repair probe does — a claim alone would never notice.
+    settings.TASKS = utils.make_tasks_settings(
+        queues={**utils.DECLARED_QUEUES, "parts": {"storage_mode": "partitioned"}}
+    )
     call_command("absurd_sync_queues")
-    settings.TASKS = {
-        "default": {
-            "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "OPTIONS": {
-                "QUEUES": {"default": {"cleanup_limit": 100, "cleanup_ttl": "60 days"}}
-            },
-        }
-    }
-    capsys.readouterr()
-    utils.start_worker(queue="default")
-    out = capsys.readouterr().out
-    assert out == (
-        "Reconciled: default\n"
-        "🐘 Started worker on queue 'default'.\n"
-        "🐘 Stop requested on queue 'default'; finishing in-flight tasks.\n"
-        "🐘 Stopped worker on queue 'default'.\n"
+    with connection.cursor() as cur:
+        cur.execute("drop table absurd.i_parts cascade")
+    with pytest.raises(QueueNotProvisionedError) as exc:
+        drain_queue("parts")
+    assert str(exc.value) == (
+        "Queue 'parts' is declared but its Absurd table is not provisioned. "
+        "Run: manage.py absurd_sync_queues"
     )
-    assert Queue.objects.get(queue_name="default").cleanup_ttl == dt.timedelta(days=60)
 
 
-def test_worker_command_no_reconcile_when_unchanged(
-    capsys: pytest.CaptureFixture[str], settings: Settings
+def test_worker_translates_a_queue_dropped_under_a_running_worker(
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    settings.TASKS = {
-        "default": {
-            "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "OPTIONS": {"QUEUES": {"default": {"cleanup_ttl": "30 days"}}},
-        }
-    }
+    # What the boot probe cannot answer, and the only event left for run_worker's own
+    # translation: the tables were there at boot and gone by the next claim. This worker
+    # really did start, so it says so, and the failure still names the repair command.
     call_command("absurd_sync_queues")
-    before = Queue.objects.get(queue_name="default").cleanup_ttl
-    capsys.readouterr()
-    utils.start_worker(queue="default")
-    out = capsys.readouterr().out
-    # Drift-gated no-op: no Created/Reconciled, no "No queues to sync.", just
-    # the start and stop lines.
-    assert out == (
-        "🐘 Started worker on queue 'default'.\n"
-        "🐘 Stop requested on queue 'default'; finishing in-flight tasks.\n"
-        "🐘 Stopped worker on queue 'default'.\n"
+    capsys.readouterr()  # drop the sync report; the worker's own output is the subject
+
+    def drop_the_queue_tables() -> bool:
+        # IF EXISTS because the predicate is polled: the drop lands once and every later
+        # call has to be a harmless no-op, not an exception on a watcher thread.
+        with connection.cursor() as cur:
+            cur.execute(
+                "drop table if exists absurd.t_default, absurd.r_default, "
+                "absurd.c_default, absurd.e_default, absurd.w_default cascade"
+            )
+        return False
+
+    with pytest.raises(CommandError) as exc:
+        utils.start_worker_until_done(drop_the_queue_tables, queue="default")
+    assert str(exc.value) == (
+        "Queue 'default' is declared but its Absurd table is not provisioned. "
+        "Run: manage.py absurd_sync_queues"
     )
-    assert Queue.objects.get(queue_name="default").cleanup_ttl == before
+    assert capsys.readouterr().out == "🐘 Started worker on queue 'default'.\n"
 
 
-def test_worker_command_warns_on_storage_mode_drift(
-    capsys: pytest.CaptureFixture[str], settings: Settings
-) -> None:
-    settings.TASKS = {
-        "default": {
-            "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "OPTIONS": {"QUEUES": {"default": {}}},
-        }
-    }
-    call_command("absurd_sync_queues")  # create 'default' unpartitioned
-    settings.TASKS = {
-        "default": {
-            "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "OPTIONS": {"QUEUES": {"default": {"storage_mode": "partitioned"}}},
-        }
-    }
-    capsys.readouterr()
-    utils.start_worker(queue="default")
-    cap = capsys.readouterr()
-    assert cap.out == (
-        "🐘 Started worker on queue 'default'.\n"
-        "🐘 Stop requested on queue 'default'; finishing in-flight tasks.\n"
-        "🐘 Stopped worker on queue 'default'.\n"
-    )
-    # The command's own warning shares stderr with the console handler the worker
-    # attaches, whose StreamHandler defaults to stderr as Django's own console
-    # handler does.
-    assert cap.err == (
-        "queues provisioned: no changes\n"
-        "Queue 'default': storage_mode cannot be changed "
-        "(existing: 'unpartitioned', declared: 'partitioned'); skipping.\n"
-        'worker started: alias="default" queue="default" database="default"'
-        " concurrency=1\n"
-        "worker stop requested: finishing in-flight tasks\n"
-        'worker stopped: alias="default" queue="default" database="default"\n'
+@task(queue_name="default")
+def drop_its_own_queue_tables() -> None:
+    """Take the queue's tables away from under the drain that is running this."""
+    with connection.cursor() as cur:
+        cur.execute(
+            "drop table if exists absurd.t_default, absurd.r_default, "
+            "absurd.c_default, absurd.e_default, absurd.w_default cascade"
+        )
+
+
+def test_drain_translates_a_queue_dropped_under_a_running_drain() -> None:
+    # The drain's half of the same backstop: its claim found the tables and its
+    # bookkeeping no longer does, which no boot probe could have known.
+    call_command("absurd_sync_queues")
+    drop_its_own_queue_tables.enqueue()
+    with pytest.raises(QueueNotProvisionedError) as exc:
+        drain_queue("default")
+    assert str(exc.value) == (
+        "Queue 'default' is declared but its Absurd table is not provisioned. "
+        "Run: manage.py absurd_sync_queues"
     )
 
 
@@ -520,8 +507,7 @@ def test_undeclared_queue_error_is_also_a_django_absurd_error() -> None:
 def test_drain_queue_on_an_unprovisioned_queue_errors_sync_queues() -> None:
     # Declared but never provisioned (no absurd_sync_queues, and _isolate_queues
     # dropped every queue's tables): drain_queue does not provision, so the missing
-    # table surfaces as the curated error naming the command that fixes it. No
-    # enqueue() here — that one auto-creates the queue it writes to.
+    # table surfaces as the curated error naming the command that fixes it.
     with pytest.raises(QueueNotProvisionedError) as exc:
         drain_queue("default")
 
@@ -531,16 +517,25 @@ def test_drain_queue_on_an_unprovisioned_queue_errors_sync_queues() -> None:
     )
 
 
-def test_drain_queue_does_not_relabel_an_unrelated_missing_relation() -> None:
+@pytest.mark.parametrize("entrypoint", ["command", "function"])
+def test_an_unrelated_missing_relation_is_not_relabelled(entrypoint: str) -> None:
     """A missing relation that is NOT one of this queue's own Absurd tables surfaces as
-    itself. Relabeling it "run absurd_sync_queues" would send the reader to the wrong
-    door, and dropping the cause would hide which relation is actually missing.
+    itself, on the live worker and the in-process drain alike. Relabeling it "run
+    absurd_sync_queues" would send the reader to the wrong door, and dropping the cause
+    would hide which relation is actually missing.
 
     Driven the way it happens in production: an audit trigger on a queue table whose
     target relation is gone. A plpgsql body carries no dependency on the tables it
     names, so nothing blocks the drop and the failure lands when the trigger next fires
-    — from inside the claim, i.e. exactly where the curated error used to swallow it.
+    — from inside the claim, which is where both entry points translate.
     """
+
+    def consume_the_queue() -> None:
+        if entrypoint == "command":
+            call_command("absurd_worker", queue="default")
+        else:
+            drain_queue("default")
+
     call_command("absurd_sync_queues")
     tasks.add.enqueue(2, 3)
     try:
@@ -558,7 +553,7 @@ def test_drain_queue_does_not_relabel_an_unrelated_missing_relation() -> None:
             )
 
         with pytest.raises(psycopg.errors.UndefinedTable) as undefined:
-            drain_queue("default")
+            consume_the_queue()
 
         assert (
             undefined.value.diag.message_primary

@@ -6,16 +6,23 @@ services:
       - POSTGRES_PASSWORD=postgres
     volumes:
       - web_pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres"]
+      interval: 1s
+      timeout: 5s
+      retries: 30
 
-  app:
+  # Provisioning is a deploy step: migrate is what creates the queues, and the worker
+  # refuses to start until this has run. One-shot, and both long-running services gate
+  # on it completing.
+  migrate:
     build:
       context: ../..
       dockerfile: examples/web/Dockerfile
+    command: nanodjango manage app.py migrate
     depends_on:
-      - db
-    restart: on-failure
-    ports:
-      - "${APP_PORT:-8000}:8000"
+      db:
+        condition: service_healthy
     environment: &env
       - PGHOST=db
       - PGPORT=5432
@@ -26,13 +33,27 @@ services:
       - ./:/app
       - ../../django_absurd:/src/django_absurd
 
+  app:
+    build:
+      context: ../..
+      dockerfile: examples/web/Dockerfile
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: on-failure
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    environment: *env
+    volumes: *mounts
+
   worker:
     build:
       context: ../..
       dockerfile: examples/web/Dockerfile
     command: nanodjango manage app.py absurd_worker
     depends_on:
-      - app
+      migrate:
+        condition: service_completed_successfully
     restart: on-failure
     environment: *env
     volumes: *mounts

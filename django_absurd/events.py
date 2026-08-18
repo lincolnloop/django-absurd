@@ -25,7 +25,7 @@ def emit_event(
 ) -> None:
     backend = get_absurd_backend()
     if backend is None:
-        raise BackendNotConfiguredError(0)
+        raise BackendNotConfiguredError
     if queue not in backend.queues:
         raise QueueNotDeclaredError(queue, backend.alias, backend.queues)
     client = get_absurd_client()

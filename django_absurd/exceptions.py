@@ -55,8 +55,13 @@ class QueueNotDeclaredError(DjangoAbsurdError):
 class QueueNotProvisionedError(DjangoAbsurdError):
     """A queue is declared but its Absurd table has not been provisioned.
 
-    Raised by ``worker.drain_queue`` and ``events.emit_event`` when a claim/emit hits
-    a missing relation that names one of the queue's own Absurd tables.
+    Raised by ``AbsurdBackend.enqueue``, ``worker.drain_queue``, ``worker.run_worker``,
+    ``events.emit_event`` and ``AbsurdTestRuntime.get_result`` when a statement hits a
+    missing relation that names one of the queue's own Absurd tables. ``aworker_client``
+    also raises it up front, from two boot checks — the queue's absence from
+    ``list_queues()``, and any of its own tables being absent — so no worker announces
+    a start it cannot honour. ``run_worker``'s translation then covers the rest of the
+    run, a queue dropped while the worker holds it included.
     """
 
     def __init__(self, queue: str) -> None:
@@ -117,20 +122,22 @@ class SchemaNotInstalledError(DjangoAbsurdError):
 
 
 class BackendNotConfiguredError(DjangoAbsurdError):
-    """No single Absurd backend could be resolved — zero or several configured. One
-    type for both counts: the package supports exactly one Absurd backend per
-    project, so either way there is no single backend to act on.
-    """
+    """No Absurd backend is configured at all."""
 
-    def __init__(self, backend_count: int) -> None:
-        if backend_count == 0:
-            msg = (
-                "No Absurd backend configured. Add a "
-                "django_absurd.backends.AbsurdBackend entry to TASKS."
-            )
-        else:
-            msg = (
-                "django-absurd supports one Absurd backend per project; "
-                "configure exactly one AbsurdBackend in TASKS."
-            )
+    def __init__(self) -> None:
+        msg = (
+            "No Absurd backend configured. Add a "
+            "django_absurd.backends.AbsurdBackend entry to TASKS."
+        )
+        super().__init__(msg)
+
+
+class MultipleBackendsConfiguredError(DjangoAbsurdError):
+    """Several Absurd backends are configured, and the package supports exactly one."""
+
+    def __init__(self) -> None:
+        msg = (
+            "django-absurd supports one Absurd backend per project; "
+            "configure exactly one AbsurdBackend in TASKS."
+        )
         super().__init__(msg)

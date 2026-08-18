@@ -53,6 +53,24 @@ def test_db_for_read_write_route_django_absurd() -> None:
     assert router.db_for_write(Queue) == "absurd"
 
 
+@pytest.mark.django_db(databases=["absurd", "default"], transaction=True)
+def test_migrate_provisions_only_the_database_it_migrated(
+    settings: Settings,
+) -> None:
+    # post_migrate is per-database, so migrating "default" must leave the Absurd
+    # alias alone; only migrating the alias itself provisions it.
+    settings.TASKS = {
+        "default": {
+            "BACKEND": ABSURD,
+            "OPTIONS": {"DATABASE": "absurd", "QUEUES": {"scoped": {}}},
+        }
+    }
+    call_command("migrate", "django_absurd", database="default", verbosity=0)
+    assert Queue.objects.using("absurd").filter(queue_name="scoped").exists() is False
+    call_command("migrate", "django_absurd", database="absurd", verbosity=0)
+    assert Queue.objects.using("absurd").filter(queue_name="scoped").exists() is True
+
+
 def test_sync_command_honors_alias(
     settings: Settings,
 ) -> None:
@@ -73,6 +91,7 @@ def test_roundtrip_drains_on_the_non_default_alias(
     # the fixture resolves the Absurd alias itself (resolve_absurd_database), so a
     # drain/get_result here must land on "absurd", never the router's "default"
     assert dj_absurd.alias == "absurd"
+    dj_absurd.sync_queues()  # _isolate_queues dropped the catalog on the way in
     result = sum_numbers.enqueue(1, 2)
     assert [run.result for run in dj_absurd.drain()] == [3]
     snapshot = dj_absurd.get_result(result.id)

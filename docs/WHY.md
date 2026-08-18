@@ -53,6 +53,86 @@ replaced upstream by a function that falls back to what Postgres has built in, w
 what makes the package installable by an ordinary application role on a locked-down
 deployment.
 
+### Queue provisioning: `migrate` or the command, never a runtime seam
+
+Provisioning per-queue tables from the declared queue list has been redesigned three
+times, and none of the three left a record — the reasoning below had to be reconstructed
+from commit history, which is precisely why it is written here. The founding design was
+explicit-only: all mutation through a management command, `migrate` only migrates, and a
+system check to tell you when the command was due.
+
+The second design added runtime self-heal at two seams — an enqueue created a missing
+declared queue, and the worker provisioned at boot — to take a mandatory command out of
+the workflow. It also retired the founding check: the missing-queue warning was narrowed
+to storage-mode drift because auto-create now healed that case, and the schema-absent
+warning was dropped separately as a runtime error rather than a deploy-time one. Being
+always-on with no opt-out rested on a claim that concurrent creators race harmlessly.
+That claim was false. The create is an if-not-exists, which Postgres documents as not
+race-free: two sessions creating the same table for the first time collide on a catalog
+unique index.
+
+The third design, two days later, moved provisioning onto `post_migrate`, which fires on
+every `migrate` invocation whether or not any migration was applied. That delivered
+exactly the ergonomics the runtime seams had been bought for, without a runtime seam —
+which made the two self-heal paths redundant with it rather than complementary. Nobody
+noticed at the time, so they stayed, and the same change quietly widened the worker seam
+past what had been agreed: reconcile the served queue only became reconcile the whole
+catalog and rebuild the admin views.
+
+The fourth design removes both seams, and the reasons stack in this order. The race is
+real and was measured — 74 of 100 concurrent provisioning calls failed at four
+processes, 39 of 80 at two — and the enqueue half was the same race, never guarded,
+surfacing an integrity error out of a web request. Self-heal also wanted DDL rights in a
+web request: creating a queue needs create privilege on the engine's namespace at
+request time, and production web roles are commonly DML-only — the same anti-correlation
+between who has the privilege and who benefits that already ruled out read-path
+self-heal in the admin, here on the write path. The engine itself self-heals nothing:
+spawning and claiming build dynamic SQL against a per-queue table name and raise on a
+missing one, and creating a queue is a separate explicit call the SDK never makes
+implicitly, so auto-create was entirely this layer's invention. And `post_migrate`
+already carries the ergonomics.
+
+The founding design's queue-state check was deliberately not restored with it. A
+database-dependent check runs _before_ the command that would fix the condition it
+reports — `migrate` injects its target database into the check kwargs, and the command
+base runs checks ahead of its own handler — so "a declared queue is not provisioned"
+would fire on every `migrate` that follows declaring a queue, moments before
+`post_migrate` provisions it. An error would block that `migrate`; a warning would cry
+wolf, get silenced project-wide, and then be dead in the one case it exists for — the
+trap the schema-absent warning fell into. The founding requirement was written when
+nothing provisioned automatically; `post_migrate` carries that load now.
+
+Four rules fell out of reviewing and running that fourth design, each one a decision
+someone could otherwise get wrong later.
+
+**Exactly one failure is forgiven at migrate time, and only one can be.** The
+migrate-time hook fires for every installed app, not only the ones being migrated, so
+migrating a single unrelated app on a fresh database reaches it before the engine's
+schema exists. That state has to pass quietly, or the command breaks for a reason the
+operator did not cause. Everything else fails the migrate, because a deploy that
+provisioned nothing must not report success. Narrowing the forgiven case to "unless the
+operator faked the migration" is not available: the framework consumes that flag before
+the hook runs, and a faked run is indistinguishable from a real one once the schema
+exists.
+
+**"Provisioned" gets exactly one definition** — the catalog row plus every table the
+queue owns, which depends on its storage mode. Two doors once disagreed about that, one
+counting five tables and the other six: the queue refused every request that touched the
+sixth, while the repair command reported nothing to do and the release gate reported
+healthy. Any new door deciding whether a queue is usable must ask that same question; a
+second definition is a defect even while the two copies happen to agree.
+
+**A gate has to be satisfiable.** The assert-only mode fails when provisioning would
+change anything — except a declared storage-mode change, which is warned about and
+skipped. That one cannot fail the gate, because the mode of an existing queue cannot be
+changed and no shipped command clears the condition, so failing would wedge a pipeline
+with no way through. A gate that cannot be satisfied is worse than one that stays quiet.
+
+**Nothing announces a start it cannot honour.** A worker that logs itself started and
+then dies on its first claim poisons the one line an operator alerts on, and under a
+restart policy it repeats forever. Every check deciding whether a worker may run happens
+before the banner, not after.
+
 ## Tasks, enqueue & the worker
 
 Enqueuing runs on Django's connection inside the caller's transaction, so a task spawned
@@ -587,10 +667,10 @@ corrupt its bookkeeping. So the models refuse `save`/`delete` and the admin gran
 add/change/delete. Each entity (tasks, runs, checkpoints, events, waits) spans every
 queue through a single `UNION ALL` view carrying a synthesized queue column, so one
 changelist or queryset covers all queues instead of one per queue; the cost is no
-cross-queue index, so filtering by queue is the fast path. The views are (re)built at
-migrate / worker-start / sync, so a queue reached only by a bare enqueue before the next
-sync is briefly absent from them — the admin surfaces that gap rather than pretending
-the list is complete.
+cross-queue index, so filtering by queue is the fast path. The views are (re)built
+wherever the declared catalog is provisioned — `migrate` or the sync command — so a
+queue declared but not yet provisioned is absent from them; the admin surfaces that gap
+rather than pretending the list is complete.
 
 ## Routing & multiple databases
 
@@ -718,6 +798,26 @@ Honest limit: catching the base is not universal. Several configuration, connect
 test-guard paths still raise plain framework or stdlib errors, so the docs must not
 promise otherwise.
 
+One type per condition, not one type per area. A single type once covered both "none
+configured" and "more than one configured", which forced it to take a count and branch
+on it — so every raise site passed a literal number naming a condition the reader then
+had to look up, and five of the six sites could only ever mean one of them. The count
+never reached either message.
+
+Only configuration failures are translated. The management-command base turns a fixed,
+deliberately narrow set of them into a clean error without a traceback; everything else,
+including the package's other own types, keeps its type and full traceback. Broadening
+that set to the whole family reads tidier and is worse: a command that swallowed every
+error this package raises would present bugs as configuration mistakes, and the
+traceback is the only thing that distinguishes them.
+
+No command reports success for work it did not do. A command asked to act on the engine
+when none is configured exits non-zero rather than printing a note and exiting zero. The
+tempting exception is a maintenance command whose no-op is harmless — but a missing
+backend is a misconfiguration rather than an intended no-op, and the quiet version means
+a settings regression passes a release gate and stops recurring maintenance without ever
+failing.
+
 ## Release notes are generated from commit titles
 
 The changelog is rendered from commit subjects, and the newest section is also the
@@ -747,6 +847,12 @@ notes without a second step.
 
 Task **priority** is unsupported because Absurd has no notion of it — we won't fake it
 behind a flag that implies otherwise.
+
+**Partitioned queues** can be declared, but their support is unsettled and the scope
+decision is tracked separately. One known edge has no in-band exit: repairing a
+partitioned queue re-runs partition creation, and Postgres refuses to create a partition
+whose range overlaps rows already sitting in the default partition, which no shipped
+command clears.
 
 A **natively** async enqueue is a deliberate non-goal, and that is narrower than it
 sounds: async task bodies run on the worker, and the async enqueue call exists and works

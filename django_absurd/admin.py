@@ -145,8 +145,7 @@ class ReadOnlyAbsurdAdmin(ReadOnlyAdminBase):
                 messages.warning(
                     request,
                     f"Queue(s) {names} exist but aren't indexed in the admin views "
-                    "yet — run 'manage.py absurd_sync_queues' (or start a worker on "
-                    "them) to include their tasks.",
+                    "yet — run 'manage.py absurd_sync_queues' to include their tasks.",
                 )
         return super().changelist_view(request, extra_context)
 

@@ -17,7 +17,6 @@ from django_absurd.apps import provision_queues_after_migrate
 from django_absurd.exceptions import ViewNotProvisionedError
 from django_absurd.flush import flush_absurd_state
 from django_absurd.models import Queue
-from django_absurd.queues import get_absurd_client
 from tests import tasks, utils
 
 if t.TYPE_CHECKING:
@@ -98,19 +97,6 @@ def test_sync_command_rebuilds_views_with_new_queue() -> None:
 def test_self_heal_removed() -> None:
     assert not hasattr(admin_views, "ensure_view_current")
     assert not hasattr(admin_views, "VIEW_BUILD_CACHE")
-
-
-def test_worker_start_rebuilds_when_it_created_queue() -> None:
-    task_model: t.Any = build_admin_model(
-        next(s for s in ADMIN_ENTITY_SPECS if s.name == "tasks")
-    )
-    get_absurd_client().drop_queue("other")
-    utils.start_worker(queue="other")
-    tasks.add.using(queue_name="other").enqueue(7, 8)
-    utils.start_worker_until_done(
-        lambda: task_model.objects.filter(queue="other").exists(), queue="other"
-    )
-    assert task_model.objects.filter(queue="other").count() >= 1
 
 
 def test_dropped_queue_read_raises_typed_error() -> None:

@@ -1,6 +1,7 @@
 from django.core.management.base import CommandParser
 
 from django_absurd.backends import get_absurd_backends
+from django_absurd.exceptions import BackendNotConfiguredError
 from django_absurd.flush import clear_queues
 from django_absurd.management.base import AbsurdCommand
 from django_absurd.queues import list_provisioned_queues
@@ -23,8 +24,7 @@ class Command(AbsurdCommand):
 
     def handle(self, *args: object, **options: object) -> None:
         if not get_absurd_backends():
-            self.stdout.write("No Absurd task backends configured.")
-            return
+            raise BackendNotConfiguredError
         queues = list_provisioned_queues()
         if not queues:
             self.stdout.write("No queues to flush.")

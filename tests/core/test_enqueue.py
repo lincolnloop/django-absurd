@@ -1,6 +1,7 @@
 import asyncio
 import typing as t
 
+import psycopg.errors
 import pytest
 from django.contrib.auth.models import Group
 from django.core.management import call_command
@@ -11,10 +12,14 @@ from pytest_django import Settings
 
 from django_absurd import absurd_params
 from django_absurd.connection import register_jsonb_loader
-from django_absurd.exceptions import QueueNotDeclaredError, SchemaNotInstalledError
+from django_absurd.exceptions import (
+    QueueNotDeclaredError,
+    QueueNotProvisionedError,
+    SchemaNotInstalledError,
+)
+from django_absurd.models import Queue
 from django_absurd.queues import get_absurd_client
 from django_absurd.tasks import AbsurdTask
-from django_absurd.test import AbsurdTestRuntime
 from tests import tasks, utils
 
 if t.TYPE_CHECKING:
@@ -108,14 +113,77 @@ def test_aenqueue_lands() -> None:
     assert len(get_absurd_client().claim_tasks(batch_size=1)) == 1
 
 
-def test_enqueue_auto_creates_declared_queue_and_runs(
-    dj_absurd: AbsurdTestRuntime,
+def test_enqueue_to_an_unprovisioned_queue_refuses() -> None:
+    # 'default' declared, but _isolate_queues dropped its tables and nothing at runtime
+    # puts them back.
+    with pytest.raises(QueueNotProvisionedError) as exc:
+        tasks.add.enqueue(1, 2)
+    assert str(exc.value) == (
+        "Queue 'default' is declared but its Absurd table is not provisioned. "
+        "Run: manage.py absurd_sync_queues"
+    )
+    assert Queue.objects.filter(queue_name="default").exists() is False
+
+
+def test_enqueue_to_a_half_provisioned_partitioned_queue_refuses(
+    settings: Settings,
 ) -> None:
-    # 'default' declared but unprovisioned (no absurd_sync_queues). Enqueue auto-creates
-    # it; the worker then runs the task end-to-end.
-    tasks.make_group.enqueue("auto")
-    dj_absurd.drain()
-    assert Group.objects.filter(name="auto").exists()
+    # spawn_task reserves the idempotency key in i_<queue> before it touches
+    # t_<queue>, so a partitioned queue whose catalog row outlived its tables reports
+    # that relation missing first.
+    settings.TASKS = utils.make_tasks_settings(
+        queues={**utils.DECLARED_QUEUES, "parts": {"storage_mode": "partitioned"}}
+    )
+    call_command("absurd_sync_queues")
+    with connections["default"].cursor() as cursor:
+        cursor.execute(
+            "drop table absurd.i_parts, absurd.t_parts, absurd.r_parts, "
+            "absurd.c_parts, absurd.e_parts, absurd.w_parts cascade"
+        )
+    bound = absurd_params(idempotency_key="k").bind(tasks.add).using(queue_name="parts")
+    with pytest.raises(QueueNotProvisionedError) as exc:
+        bound.enqueue(1, 2)
+    assert str(exc.value) == (
+        "Queue 'parts' is declared but its Absurd table is not provisioned. "
+        "Run: manage.py absurd_sync_queues"
+    )
+    assert Queue.objects.filter(queue_name="parts").exists() is True
+
+
+def test_enqueue_lands_after_a_repaired_idempotency_table(
+    settings: Settings,
+) -> None:
+    # i_<queue> gone on its own is what a partial restore leaves, and the refusal above
+    # sends the operator to absurd_sync_queues — so that command has to repair it.
+    settings.TASKS = utils.make_tasks_settings(
+        queues={**utils.DECLARED_QUEUES, "parts": {"storage_mode": "partitioned"}}
+    )
+    call_command("absurd_sync_queues")
+    with connections["default"].cursor() as cursor:
+        cursor.execute("drop table absurd.i_parts cascade")
+    call_command("absurd_sync_queues")
+    bound = absurd_params(idempotency_key="k").bind(tasks.add).using(queue_name="parts")
+    result = bound.enqueue(1, 2)
+    with connections["default"].cursor() as cursor:
+        cursor.execute("select idempotency_key, task_id from absurd.i_parts")
+        assert [(key, str(task_id)) for key, task_id in cursor.fetchall()] == [
+            ("k", result.id.removeprefix("parts:"))
+        ]
+
+
+def test_enqueue_propagates_an_unrelated_undefined_table() -> None:
+    # spawn_task reads absurd.queues when an idempotency key is set, and that relation
+    # is nobody's queue table — the classifier must not relabel it as provisioning.
+    call_command("absurd_sync_queues")
+    with connections["default"].cursor() as cursor:
+        cursor.execute("alter table absurd.queues rename to queues_hidden")
+    try:
+        with pytest.raises(psycopg.errors.UndefinedTable) as exc:
+            absurd_params(idempotency_key="k").bind(tasks.add).enqueue(1, 2)
+    finally:
+        with connections["default"].cursor() as cursor:
+            cursor.execute("alter table absurd.queues_hidden rename to queues")
+    assert exc.value.diag.message_primary == 'relation "absurd.queues" does not exist'
 
 
 def test_enqueue_to_undeclared_queue_raises() -> None:
@@ -143,14 +211,14 @@ def test_enqueue_with_empty_queues_reports_undeclared(
     )
 
 
-def test_enqueue_auto_create_survives_outer_atomic(
-    dj_absurd: AbsurdTestRuntime,
-) -> None:
+def test_enqueue_refusal_leaves_an_outer_atomic_usable() -> None:
+    # The savepoint around spawn is what buys this: the refusal rolls back only the
+    # spawn, so the enclosing block can still commit its own writes.
     with transaction.atomic():
-        tasks.make_group.enqueue("inatomic")
-        assert Group.objects.count() == 0  # nothing committed yet
-    dj_absurd.drain()
-    assert Group.objects.filter(name="inatomic").exists()
+        with pytest.raises(QueueNotProvisionedError):
+            tasks.make_group.enqueue("refused")
+        Group.objects.create(name="after-refusal")
+    assert Group.objects.filter(name="after-refusal").exists() is True
 
 
 def test_enqueue_with_absent_schema_raises_clear_error() -> None:

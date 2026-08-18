@@ -115,10 +115,13 @@ one `RunSnapshot` per run executed, in claim order.
 | `failed`    | raised, and out of retries                                                                                                        |
 | `cancelled` | cancelled before or during execution                                                                                              |
 
-- **`drain` provisions nothing**, unlike the CLI. `migrate` leaves a test database
-  ready, but a queue declared by overriding `TASKS` in one test has no table — call
-  `sync_queues()` first or `drain()` raises `QueueNotProvisionedError`. Undeclared
-  raises `QueueNotDeclaredError`; see [exceptions](configuration.md#exceptions).
+- **`drain` provisions nothing.** Building the test database runs `migrate`, which
+  provisions the queues declared at that moment. A queue declared after that — by
+  overriding `TASKS` in one test, or by adding it to settings on a
+  [`--reuse-db`](https://pytest-django.readthedocs.io/en/latest/database.html#reuse-db-reuse-the-testing-database-between-test-runs)
+  run — has no table: call [`sync_queues()`](#sync-queues) first, or re-run with
+  `--create-db`, or `drain()` raises `QueueNotProvisionedError`. Undeclared raises
+  `QueueNotDeclaredError`; see [exceptions](configuration.md#exceptions).
 
 ### `dj_absurd.emit(name, payload=None, queue="default")` { #emit data-toc-label="emit()" }
 
@@ -153,7 +156,8 @@ including `sleeping`, which `TaskResult.status` can't show.
 | `failure`          | `None` except on a terminal failure (see below)   |
 
 - `task_id` takes a bare uuid or a prefixed `"queue:uuid"`. The prefix wins over
-  `queue`'s default; a `queue=` that disagrees raises `TaskIdQueueMismatchError`.
+  `queue`'s default; a `queue=` that disagrees raises `TaskIdQueueMismatchError`. An
+  unprovisioned queue raises `QueueNotProvisionedError`, same as `drain()`.
 - **This view can't express an in-flight [retry](tasks.md#retries-spawn-options):**
   `attempts` reads `2` before the second attempt runs, `state="sleeping"` covers a
   backoff as well as a durable sleep, and `failure` is `None` mid-backoff. Use
@@ -165,8 +169,9 @@ including `sleeping`, which `TaskResult.status` can't show.
 ### `dj_absurd.sync_queues()` { #sync-queues data-toc-label="sync_queues()" }
 
 Provisions every declared queue — the runtime counterpart of
-`manage.py absurd_sync_queues`. Only needed when a test changes queue topology, such as
-a `settings` override declaring a queue the migration never saw.
+`manage.py absurd_sync_queues`. Only needed when a test declares a queue the test
+database was never built with — a `settings` override, or a new queue in settings under
+`--reuse-db`.
 
 ### `dj_absurd.now` { #now data-toc-label="now" }
 
