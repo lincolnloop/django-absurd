@@ -174,6 +174,7 @@ def run_worker(
     *,
     run_beat: bool = False,
     options: WorkerOptions | None = None,
+    on_started: t.Callable[[], None] | None = None,
     on_stop_requested: t.Callable[[], None] | None = None,
 ) -> None:
     options = options or WorkerOptions()
@@ -184,6 +185,7 @@ def run_worker(
             queue,
             run_beat=run_beat,
             options=options,
+            on_started=on_started,
             on_stop_requested=on_stop_requested,
         )
     )
@@ -195,9 +197,15 @@ async def arun_worker(
     *,
     run_beat: bool = False,
     options: WorkerOptions,
+    on_started: t.Callable[[], None] | None = None,
     on_stop_requested: t.Callable[[], None] | None = None,
 ) -> None:
     async with open_worker_runtime(backend, queue, options) as client:
+        # Announce only once the runtime is up: the startup guards live inside the
+        # context manager, so a banner written before it would advertise a worker
+        # that then refuses.
+        if on_started is not None:
+            on_started()
         if run_beat:
             await run_worker_with_beat(
                 client, options, backend, on_stop_requested=on_stop_requested
@@ -287,13 +295,19 @@ async def aworker_client(
         client._registry = LazyTaskRegistry(queue, backend)  # noqa: SLF001 -- SDK has no public fallback-resolver hook; install lazy import_string resolution
         try:
             # Probes for the schema-absent guard; raises if Absurd is not migrated.
-            await client.list_queues()
+            provisioned = await client.list_queues()
         except (
             psycopg.errors.InvalidSchemaName,
             psycopg.errors.UndefinedTable,
             psycopg.errors.UndefinedFunction,
         ) as err:
             raise SchemaNotInstalledError from err
+        # Nothing provisions at boot any more, so refuse here rather than let the
+        # claim loop raise a raw UndefinedTable. Free: list_queues() is already
+        # awaited above. Residual: a catalog row whose tables were dropped still
+        # reads as provisioned — absurd_sync_queues is what repairs that.
+        if queue not in provisioned:
+            raise QueueNotProvisionedError(queue)
         yield client
     finally:
         await conn.close()

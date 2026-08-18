@@ -10,14 +10,13 @@ from django_absurd import logging as absurd_logging
 from django_absurd.exceptions import QueueNotDeclaredError
 from django_absurd.management.base import (
     BEAT_DISABLED_UNDER_PG_CRON,
-    AbsurdReportCommand,
+    AbsurdCommand,
     resolve_backend,
 )
-from django_absurd.queues import provision_backend
 from django_absurd.worker import WorkerOptions, run_worker
 
 
-class Command(AbsurdReportCommand):
+class Command(AbsurdCommand):
     help = "Start the Absurd task worker."
 
     def add_arguments(self, parser: "CommandParser") -> None:
@@ -83,13 +82,10 @@ class Command(AbsurdReportCommand):
         if queue not in backend.queues:
             raise QueueNotDeclaredError(queue, backend.alias, backend.queues)
 
-        # Full provision on start so the admin views reflect every declared queue,
-        # not just the one this worker serves.
-        result = provision_backend(backend)
-        self.report_sync_result(result)
-
         elephant = console.build_glyph_prefix(self.stdout, "🐘")
-        self.stdout.write(f"{elephant}Started worker on queue '{queue}'.")
+
+        def announce_started() -> None:
+            self.stdout.write(f"{elephant}Started worker on queue '{queue}'.")
 
         def announce_stop_requested() -> None:
             self.stdout.write(
@@ -102,6 +98,7 @@ class Command(AbsurdReportCommand):
             queue,
             run_beat=options["beat"],
             options=worker_options,
+            on_started=announce_started,
             on_stop_requested=announce_stop_requested,
         )
         self.stdout.write(f"{elephant}Stopped worker on queue '{queue}'.")

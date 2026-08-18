@@ -1,6 +1,5 @@
 import asyncio
 import contextlib
-import datetime as dt
 import logging
 import os
 import signal
@@ -68,16 +67,6 @@ def test_worker_client_rejects_non_psycopg3(settings: Settings) -> None:
     }
     with pytest.raises(CommandError, match="psycopg"):
         call_command("absurd_worker", queue="default")
-
-
-def test_worker_client_opens_without_provisioning_check() -> None:
-    # No absurd_sync_queues; 'default' unprovisioned (schema present).
-    # aworker_client must NOT raise — the provisioned-or-die check is gone.
-    async def _enter() -> list[str]:
-        async with aworker_client(backend(), "default") as client:
-            return await client.list_queues()
-
-    assert "default" not in asyncio.run(_enter())  # unprovisioned, yet no error
 
 
 def test_worker_client_absent_schema_errors() -> None:
@@ -281,150 +270,27 @@ def test_command_runs_task_end_to_end(dj_absurd: AbsurdTestRuntime) -> None:
     assert snap.state == "completed"
 
 
-def test_worker_start_provisions_all_declared_queues(
+def test_worker_refuses_an_unprovisioned_queue(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # full provision on start: every declared queue, not just the served one
-    utils.start_worker(queue="default")
-    created_line, started_line, stop_requested_line, stopped_line = (
-        capsys.readouterr().out.splitlines()
+    # _isolate_queues dropped the catalog and nothing at boot puts it back, so the
+    # worker must refuse before it announces itself rather than reach the claim loop.
+    with connection.cursor() as cur:
+        cur.execute(
+            "drop view if exists absurd.tasks_view, absurd.runs_view, "
+            "absurd.checkpoints_view, absurd.waits_view, absurd.events_view cascade"
+        )
+    with pytest.raises(CommandError) as exc:
+        utils.start_worker(queue="default")
+    assert str(exc.value) == (
+        "Queue 'default' is declared but its Absurd table is not provisioned. "
+        "Run: manage.py absurd_sync_queues"
     )
-    assert set(created_line.removeprefix("Created: ").split(", ")) == {
-        "default",
-        "other",
-        "reports",
-    }
-    assert started_line == "🐘 Started worker on queue 'default'."
-    assert stop_requested_line == (
-        "🐘 Stop requested on queue 'default'; finishing in-flight tasks."
-    )
-    assert stopped_line == "🐘 Stopped worker on queue 'default'."
-    assert Queue.objects.filter(queue_name="default").exists()
-    assert Queue.objects.filter(queue_name="other").exists()
-
-
-def test_worker_command_reconciles_changed_mutable_option(
-    capsys: pytest.CaptureFixture[str], settings: Settings
-) -> None:
-    settings.TASKS = {
-        "default": {
-            "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "OPTIONS": {"QUEUES": {"default": {"cleanup_limit": 100}}},
-        }
-    }
-    call_command("absurd_sync_queues")
-    settings.TASKS = {
-        "default": {
-            "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "OPTIONS": {"QUEUES": {"default": {"cleanup_limit": 250}}},
-        }
-    }
-    capsys.readouterr()  # drop sync output
-    utils.start_worker(queue="default")
-    out = capsys.readouterr().out
-    assert out == (
-        "Reconciled: default\n"
-        "🐘 Started worker on queue 'default'.\n"
-        "🐘 Stop requested on queue 'default'; finishing in-flight tasks.\n"
-        "🐘 Stopped worker on queue 'default'.\n"
-    )
-    assert Queue.objects.get(queue_name="default").cleanup_limit == 250  # DB proof
-
-
-def test_worker_command_reconciles_changed_interval_option(
-    capsys: pytest.CaptureFixture[str], settings: Settings
-) -> None:
-    # Two mutable opts: cleanup_limit unchanged (loop continues), cleanup_ttl changed
-    # (interval drift via parse_interval).
-    settings.TASKS = {
-        "default": {
-            "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "OPTIONS": {
-                "QUEUES": {"default": {"cleanup_limit": 100, "cleanup_ttl": "30 days"}}
-            },
-        }
-    }
-    call_command("absurd_sync_queues")
-    settings.TASKS = {
-        "default": {
-            "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "OPTIONS": {
-                "QUEUES": {"default": {"cleanup_limit": 100, "cleanup_ttl": "60 days"}}
-            },
-        }
-    }
-    capsys.readouterr()
-    utils.start_worker(queue="default")
-    out = capsys.readouterr().out
-    assert out == (
-        "Reconciled: default\n"
-        "🐘 Started worker on queue 'default'.\n"
-        "🐘 Stop requested on queue 'default'; finishing in-flight tasks.\n"
-        "🐘 Stopped worker on queue 'default'.\n"
-    )
-    assert Queue.objects.get(queue_name="default").cleanup_ttl == dt.timedelta(days=60)
-
-
-def test_worker_command_no_reconcile_when_unchanged(
-    capsys: pytest.CaptureFixture[str], settings: Settings
-) -> None:
-    settings.TASKS = {
-        "default": {
-            "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "OPTIONS": {"QUEUES": {"default": {"cleanup_ttl": "30 days"}}},
-        }
-    }
-    call_command("absurd_sync_queues")
-    before = Queue.objects.get(queue_name="default").cleanup_ttl
-    capsys.readouterr()
-    utils.start_worker(queue="default")
-    out = capsys.readouterr().out
-    # Drift-gated no-op: no Created/Reconciled, no "No queues to sync.", just
-    # the start and stop lines.
-    assert out == (
-        "🐘 Started worker on queue 'default'.\n"
-        "🐘 Stop requested on queue 'default'; finishing in-flight tasks.\n"
-        "🐘 Stopped worker on queue 'default'.\n"
-    )
-    assert Queue.objects.get(queue_name="default").cleanup_ttl == before
-
-
-def test_worker_command_warns_on_storage_mode_drift(
-    capsys: pytest.CaptureFixture[str], settings: Settings
-) -> None:
-    settings.TASKS = {
-        "default": {
-            "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "OPTIONS": {"QUEUES": {"default": {}}},
-        }
-    }
-    call_command("absurd_sync_queues")  # create 'default' unpartitioned
-    settings.TASKS = {
-        "default": {
-            "BACKEND": "django_absurd.backends.AbsurdBackend",
-            "OPTIONS": {"QUEUES": {"default": {"storage_mode": "partitioned"}}},
-        }
-    }
-    capsys.readouterr()
-    utils.start_worker(queue="default")
-    cap = capsys.readouterr()
-    assert cap.out == (
-        "🐘 Started worker on queue 'default'.\n"
-        "🐘 Stop requested on queue 'default'; finishing in-flight tasks.\n"
-        "🐘 Stopped worker on queue 'default'.\n"
-    )
-    # The command's own warning shares stderr with the console handler the worker
-    # attaches, whose StreamHandler defaults to stderr as Django's own console
-    # handler does.
-    assert cap.err == (
-        "queues provisioned: no changes\n"
-        "Queue 'default': storage_mode cannot be changed "
-        "(existing: 'unpartitioned', declared: 'partitioned'); skipping.\n"
-        'worker started: alias="default" queue="default" database="default"'
-        " concurrency=1\n"
-        "worker stop requested: finishing in-flight tasks\n"
-        'worker stopped: alias="default" queue="default" database="default"\n'
-    )
+    assert capsys.readouterr().out == ""
+    assert not Queue.objects.filter(queue_name="default").exists()
+    with connection.cursor() as cur:
+        cur.execute("select count(*) from pg_views where schemaname = 'absurd'")
+        assert cur.fetchone() == (0,)
 
 
 def test_worker_command_schema_absent_errors_migrate() -> None:

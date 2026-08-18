@@ -135,13 +135,25 @@ def test_list_shorthand(settings: Settings) -> None:
 
 
 def test_sync_reconciles_changed_option_idempotent(settings: Settings) -> None:
-    settings.TASKS = build_tasks_setting({"q": {"cleanup_limit": 100}})
+    # Two mutable opts, so the drift scan is exercised both ways: cleanup_limit
+    # unchanged (loop continues) and cleanup_ttl changed via parse_interval.
+    settings.TASKS = build_tasks_setting(
+        {"q": {"cleanup_limit": 100, "cleanup_ttl": "30 days"}}
+    )
     call_command("absurd_sync_queues")
-    settings.TASKS = build_tasks_setting({"q": {"cleanup_limit": 250}})
+    settings.TASKS = build_tasks_setting(
+        {"q": {"cleanup_limit": 100, "cleanup_ttl": "60 days"}}
+    )
+    call_command("absurd_sync_queues")
+    assert Queue.objects.get(queue_name="q").cleanup_ttl == dt.timedelta(days=60)
+    settings.TASKS = build_tasks_setting(
+        {"q": {"cleanup_limit": 250, "cleanup_ttl": "60 days"}}
+    )
     call_command("absurd_sync_queues")
     assert Queue.objects.get(queue_name="q").cleanup_limit == 250
     call_command("absurd_sync_queues")
     assert Queue.objects.get(queue_name="q").cleanup_limit == 250
+    assert Queue.objects.get(queue_name="q").cleanup_ttl == dt.timedelta(days=60)
 
 
 def test_non_destructive(settings: Settings) -> None:
