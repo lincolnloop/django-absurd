@@ -101,6 +101,28 @@ def test_flush_absurd_state_tolerates_a_missing_queue_table() -> None:
     assert Queue.objects.filter(queue_name="other").exists()  # catalog row untouched
 
 
+@pytest.mark.usefixtures("_isolate_queues")
+def test_flush_absurd_state_truncates_an_undeclared_queues_idempotency_table() -> None:
+    # clear_queues iterates list_provisioned_queues() — the catalog, not TASKS — so it
+    # reaches a queue absurdctl or raw SQL created out of band. Only a partitioned queue
+    # owns an i_<queue>, and declaring one is now absurd.E003, so this is the sole way
+    # truncate_queue_tables' to_regclass probe (TRUNCATE has no IF EXISTS) is exercised.
+    with connections["default"].cursor() as cur:
+        cur.execute("SELECT absurd.create_queue('outofband', 'partitioned')")
+        cur.execute("SELECT to_regclass('absurd.i_outofband') IS NOT NULL")
+        assert cur.fetchone()[0], "absurd.create_queue no longer builds i_<queue>"
+        cur.execute(
+            "INSERT INTO absurd.i_outofband (idempotency_key, task_id)"
+            " VALUES ('k', gen_random_uuid())"
+        )
+
+    flush_absurd_state()
+
+    with connections["default"].cursor() as cur:
+        cur.execute("SELECT count(*) FROM absurd.i_outofband")
+        assert cur.fetchone()[0] == 0
+
+
 def test_flush_absurd_state_resets_a_stranded_fake_now() -> None:
     utils.set_database_fake_now("2036-01-01T00:00:00+00:00")
     try:
