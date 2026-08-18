@@ -48,24 +48,9 @@ retries never redo completed work.
 →
 [Absurd: Concepts — Retries](https://earendil-works.github.io/absurd/concepts/#retries).
 
-## Schema & migrations
+## Before a worker starts
 
-```bash
-python manage.py migrate
-```
-
-Absurd's schema ships as a Django
-[migration](https://docs.djangoproject.com/en/6.0/topics/migrations/) and installs the
-declared queues with it. The SQL comes from the pinned Absurd version and is never
-fetched at migrate time.
-
-- **Privileges:** `migrate` needs `GRANT CREATE ON DATABASE <db>` and nothing more — no
-  extension, so no superuser and no managed-Postgres allow-list entry.
-  `CREATE SCHEMA IF NOT EXISTS` checks that privilege _before_ the schema's existence,
-  so pre-creating `absurd` yourself doesn't avoid the grant. The schema name is fixed.
-- **Already running Absurd?** `python manage.py migrate --fake django_absurd` records
-  the migration as applied without re-running the DDL. Only do this when the existing
-  schema matches `django_absurd.ABSURD_SCHEMA_VERSION` exactly — faking doesn't check,
-  and a mismatch fails at runtime in ways Django can't detect.
-
-→ [Absurd: database setup](https://earendil-works.github.io/absurd/database/).
+`migrate` has to have run: it installs Absurd's schema and provisions the declared
+queues, and a worker refuses to start on a queue that isn't provisioned. See
+[Deploying](deploying.md) for the release step, the privileges `migrate` needs, and
+adopting a database that already runs Absurd.

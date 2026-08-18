@@ -20,6 +20,24 @@ Those two lines are the whole deploy for most projects — queue changes are rar
 `migrate` covers them when they happen. Add `python manage.py absurd_sync_queues` only
 when your release step doesn't run `migrate` at all.
 
+## What `migrate` needs
+
+Absurd's schema ships as a Django
+[migration](https://docs.djangoproject.com/en/6.0/topics/migrations/). The SQL comes
+from the pinned Absurd version and is never fetched at migrate time.
+
+- **Privileges:** `migrate` needs `GRANT CREATE ON DATABASE <db>` and nothing more — no
+  extension, so no superuser and no managed-Postgres allow-list entry.
+  `CREATE SCHEMA IF NOT EXISTS` checks that privilege _before_ the schema's existence,
+  so pre-creating `absurd` yourself doesn't avoid the grant. The schema name is fixed.
+- **Already running Absurd?** `python manage.py migrate --fake django_absurd` records
+  the migration as applied without re-running the DDL. Only do this when the existing
+  schema matches `django_absurd.ABSURD_SCHEMA_VERSION` exactly — faking doesn't check,
+  and a mismatch fails at runtime in ways Django can't detect. Faking skips the DDL but
+  still fires `post_migrate`, so the declared queues are provisioned either way.
+
+→ [Absurd: database setup](https://earendil-works.github.io/absurd/database/).
+
 ## Non-default database
 
 ```bash
@@ -57,9 +75,9 @@ CommandError: Queues are not in sync. Run: manage.py absurd_sync_queues
 row outlived its tables. In sync, it prints `🗃️ No queues to sync.` and exits 0.
 
 Reach for it in a release step that asserts rather than acts, or to ask a production
-database whether it is in sync without needing DDL rights. It is also the way to make
-provisioning failure loud: the `post_migrate` receiver reports nothing when it can't
-provision, so a `migrate` that provisioned no queue still exits 0.
+database whether it is in sync without needing DDL rights. It is also the way to gate a
+pipeline on the answer: `migrate` prints `Not provisioned:` and the reason when it can't
+provision, but it still exits 0, so only this reports the condition as a status code.
 
 ## `migrate --check` doesn't see queues
 
