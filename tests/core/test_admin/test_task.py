@@ -8,7 +8,7 @@ from django.core.management import call_command
 from django.db import connections
 from django.test import Client
 from django.urls import reverse, reverse_lazy
-from pytest_django.fixtures import Settings
+from pytest_django import DjangoDbBlocker, Settings
 
 from django_absurd.admin_views import ADMIN_ENTITY_SPECS, build_admin_model
 from django_absurd.queues import get_absurd_client
@@ -24,7 +24,6 @@ from tests.core.test_admin.utils import (
 
 if t.TYPE_CHECKING:
     from bs4 import ResultSet, Tag
-    from pytest_django.plugin import DjangoDbBlocker
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -164,7 +163,7 @@ def test_changelist_no_warning_when_all_queues_indexed(
 def test_changelist_survives_staleness_detection_failure(
     admin_user: User,
     client: Client,
-    django_db_blocker: "DjangoDbBlocker",
+    django_db_blocker: DjangoDbBlocker,
 ) -> None:
     client.force_login(admin_user)
     with utils.hide_absurd_schema():

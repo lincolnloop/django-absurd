@@ -12,14 +12,12 @@ from pathlib import Path
 import pytest
 from django.core.management import call_command
 from django.db import connections
+from pytest_django import Settings
 
 from django_absurd.pg_cron import catalog
 from django_absurd.pg_cron.choices import Source
 from django_absurd.pg_cron.models import ScheduledTask
 from tests.pg_cron import utils
-
-if t.TYPE_CHECKING:
-    import pytest_django.fixtures
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -103,7 +101,7 @@ def test_migrate_skips_sync_on_a_real_database_when_explicitly_disabled(
 
 
 def test_migrate_skips_sync_by_default_on_a_test_database(
-    settings: "pytest_django.fixtures.Settings",
+    settings: Settings,
 ) -> None:
     settings.TASKS = utils.build_pg_cron_tasks(
         {"nightly": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
@@ -120,7 +118,7 @@ def test_migrate_skips_sync_by_default_on_a_test_database(
 
 
 def test_migrate_syncs_on_a_test_database_when_explicitly_enabled(
-    settings: "pytest_django.fixtures.Settings",
+    settings: Settings,
 ) -> None:
     settings.TASKS = utils.build_pg_cron_tasks(
         {"nightly": {"task": "tests.tasks.add", "cron": "0 2 * * *"}}
@@ -136,7 +134,7 @@ def test_migrate_syncs_on_a_test_database_when_explicitly_enabled(
 
 
 def test_scheduled_task_create_and_delete_are_unaffected_by_either_setting(
-    settings: "pytest_django.fixtures.Settings",
+    settings: Settings,
 ) -> None:
     settings.TASKS = utils.build_pg_cron_tasks({})
     settings.TASKS["default"]["OPTIONS"]["SYNC_SCHEDULES_ON_TEST_DB"] = False

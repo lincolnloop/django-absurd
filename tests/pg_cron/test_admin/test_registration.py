@@ -1,11 +1,10 @@
-import typing as t
-
 import pytest
 from bs4 import BeautifulSoup
 from django.contrib import admin as djadmin
 from django.contrib.auth.models import Permission, User
 from django.test import Client
 from django.urls import reverse_lazy
+from pytest_django import Settings
 
 from django_absurd.admin import resolve_admin_sites
 from django_absurd.pg_cron.admin import (
@@ -14,9 +13,6 @@ from django_absurd.pg_cron.admin import (
 )
 from django_absurd.pg_cron.models import ScheduledTask
 from tests.admin import custom_site, gated_site, other_site
-
-if t.TYPE_CHECKING:
-    import pytest_django.fixtures
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -46,7 +42,7 @@ def test_staff_user_with_view_permission_sees_scheduledtask_in_index(
 
 
 def test_custom_admin_site_registration(
-    settings: "pytest_django.fixtures.Settings",
+    settings: Settings,
 ) -> None:
     settings.TASKS = {
         "default": {
@@ -59,7 +55,7 @@ def test_custom_admin_site_registration(
 
 
 def test_autoregister_skips_when_enable_admin_false(
-    settings: "pytest_django.fixtures.Settings",
+    settings: Settings,
 ) -> None:
     gated_site._registry.pop(ScheduledTask, None)
     settings.TASKS = {
@@ -76,7 +72,7 @@ def test_autoregister_skips_when_enable_admin_false(
 
 
 def test_register_is_idempotent(
-    settings: "pytest_django.fixtures.Settings",
+    settings: Settings,
 ) -> None:
     other_site._registry.pop(ScheduledTask, None)
     register_scheduled_task_admin([other_site])
@@ -87,7 +83,7 @@ def test_register_is_idempotent(
 
 
 def test_autoregister_skips_when_no_absurd_backend(
-    settings: "pytest_django.fixtures.Settings",
+    settings: Settings,
 ) -> None:
     gated_site._registry.pop(ScheduledTask, None)
     settings.TASKS = {}
@@ -96,7 +92,7 @@ def test_autoregister_skips_when_no_absurd_backend(
 
 
 def test_autoregister_registers_when_enable_admin_true(
-    settings: "pytest_django.fixtures.Settings",
+    settings: Settings,
 ) -> None:
     other_site._registry.pop(ScheduledTask, None)
     settings.TASKS = {

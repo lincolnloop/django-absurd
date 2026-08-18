@@ -4,7 +4,7 @@ import pytest
 from django.db import connections
 from django.tasks import TaskResultStatus, task_backends
 from django.utils import timezone
-from pytest_django.fixtures import Settings
+from pytest_django import Settings
 
 from django_absurd import absurd_params
 from django_absurd.connection import register_jsonb_loader

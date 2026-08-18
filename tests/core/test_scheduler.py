@@ -8,13 +8,13 @@ import typing as t
 import zoneinfo
 
 import pytest
-import pytest_django.fixtures
 import time_machine
 from django.contrib.auth.models import Group
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.tasks import TaskResultStatus
 from django.utils import timezone
+from pytest_django import Settings
 
 from django_absurd.backends import AbsurdBackend, get_absurd_backends
 from django_absurd.scheduler import (
@@ -46,7 +46,7 @@ def make_tasks_setting(
 
 
 def test_settings_provider_reads_entries(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = make_tasks_setting(
         {
@@ -73,7 +73,7 @@ def test_settings_provider_reads_entries(
 
 
 def test_settings_provider_defaults_and_empty(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = make_tasks_setting(
         {"ping": {"task": "tests.tasks.add", "cron": "*/5 * * * *"}}
@@ -86,7 +86,7 @@ def test_settings_provider_defaults_and_empty(
 
 
 def test_settings_provider_no_schedule_key(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = {
         "default": {
@@ -111,7 +111,7 @@ def test_get_next_datetime_rolls_forward(dj_absurd: AbsurdTestRuntime) -> None:
 
 
 def test_get_next_datetime_uses_django_timezone(
-    dj_absurd: AbsurdTestRuntime, settings: pytest_django.fixtures.Settings
+    dj_absurd: AbsurdTestRuntime, settings: Settings
 ) -> None:
     # 06:00 in Chicago (UTC-6)
     with dj_absurd.freeze_time(dt.datetime(2026, 1, 1, 12, 0, tzinfo=dt.UTC)):
@@ -171,7 +171,7 @@ def run_beat_until(
 
 def test_beat_fires_each_due_slot(
     dj_absurd: AbsurdTestRuntime,
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = make_tasks_setting(
         {
@@ -195,7 +195,7 @@ def test_beat_fires_each_due_slot(
 
 def test_beat_fires_multiple_schedules_due_same_slot(
     dj_absurd: AbsurdTestRuntime,
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     # Two distinct schedules sharing a cron slot both fire in the one tick pass.
     settings.TASKS = make_tasks_setting(
@@ -224,7 +224,7 @@ def test_beat_fires_multiple_schedules_due_same_slot(
 
 def test_beat_no_schedules_returns(
     caplog: pytest.LogCaptureFixture,
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = make_tasks_setting({})
     backend = get_absurd_backends()["default"]
@@ -237,7 +237,7 @@ def test_beat_no_schedules_returns(
 
 def test_beat_started_logs_schedule_count_and_cleanup(
     caplog: pytest.LogCaptureFixture,
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = make_tasks_setting(
         {"nightly": {"task": "tests.tasks.add", "cron": "0 2 * * *"}},
@@ -257,7 +257,7 @@ def test_beat_started_logs_schedule_count_and_cleanup(
 def test_beat_isolates_failing_schedule(
     caplog: pytest.LogCaptureFixture,
     dj_absurd: AbsurdTestRuntime,
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = make_tasks_setting(
         {
@@ -296,7 +296,7 @@ def test_beat_isolates_failing_schedule(
 
 def test_beat_spawns_task_with_args(
     dj_absurd: AbsurdTestRuntime,
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = make_tasks_setting(
         {
@@ -319,7 +319,7 @@ def test_beat_spawns_task_with_args(
 
 def test_beat_spawns_task_with_kwargs(
     dj_absurd: AbsurdTestRuntime,
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = make_tasks_setting(
         {
@@ -342,7 +342,7 @@ def test_beat_spawns_task_with_kwargs(
 
 def test_beat_empty_queue_string_falls_back_to_task_queue(
     dj_absurd: AbsurdTestRuntime,
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     """queue: "" normalises to the task's own queue (parity with pg_cron's
     fallback), not a literal "" queue that enqueue would reject."""
@@ -368,7 +368,7 @@ def test_beat_empty_queue_string_falls_back_to_task_queue(
 
 def test_beat_routes_task_to_queue(
     dj_absurd: AbsurdTestRuntime,
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = make_tasks_setting(
         {
@@ -394,7 +394,7 @@ def test_beat_routes_task_to_queue(
 
 def test_beat_routes_task_to_queue_non_default_alias(
     dj_absurd: AbsurdTestRuntime,
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = {
         "second": {
@@ -426,7 +426,7 @@ def test_beat_routes_task_to_queue_non_default_alias(
 
 def test_get_result_rebinds_queue_and_backend_together(
     dj_absurd: AbsurdTestRuntime,
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     # tasks.make_group's own decorator names the "default" alias, and these settings
     # deliberately omit it: only "second" is configured, so a queue-only rebind of the
@@ -496,7 +496,7 @@ def test_derive_idempotency_key_differs_across_backends() -> None:
 
 
 def test_settings_provider_sets_backend_alias(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = {
         "second": {
@@ -521,7 +521,7 @@ def test_settings_provider_sets_backend_alias(
 
 def test_idempotency_key_dedups_same_slot(
     dj_absurd: AbsurdTestRuntime,
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     # The command/loop never re-fires a single slot; this tests spawn_scheduled
     # directly to prove our key + Absurd's real dedup together collapse repeated
@@ -547,7 +547,7 @@ def test_idempotency_key_dedups_same_slot(
 
 
 def test_absurd_beat_empty_schedule_runs_handle(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     # Covers absurd_beat handle body (single-backend path via base.py:16-17).
     # Empty SCHEDULE → run_beat returns immediately (no blocking), no threads needed.
@@ -563,7 +563,7 @@ def test_absurd_beat_empty_schedule_runs_handle(
 
 
 def test_absurd_beat_valid_and_signal_handler(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     # Covers base.py:15 (valid alias → backend = backends[alias]) and
     # absurd_beat.py:27 (handle_signal body: stop.set()).
@@ -604,7 +604,7 @@ def test_absurd_beat_valid_and_signal_handler(
 
 def test_absurd_beat_startup_reports_cleanup(
     capsys: pytest.CaptureFixture[str],
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     # Covers absurd_beat.py:38-39 (cleanup appended to the startup message). Empty
     # SCHEDULE + a CLEANUP makes run_beat loop, so a handler-gated SIGINT stops it; the
@@ -640,7 +640,7 @@ def test_absurd_beat_startup_reports_cleanup(
 
 
 def test_absurd_beat_rejects_alias_flag(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = make_tasks_setting({})
     with pytest.raises(CommandError):
@@ -648,7 +648,7 @@ def test_absurd_beat_rejects_alias_flag(
 
 
 def test_beat_stop_interrupts_long_sleep(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     # Real threading.Event.wait — stop.set() must wake the beat promptly.
     settings.TASKS = make_tasks_setting(
@@ -679,7 +679,7 @@ def test_beat_stop_interrupts_long_sleep(
 
 
 def test_worker_with_beat_runs_scheduled_task(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = make_tasks_setting(
         {
@@ -708,7 +708,7 @@ def test_worker_with_beat_runs_scheduled_task(
 
 
 def test_beat_already_stopped_on_entry_skips_loop(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     # Covers scheduler.py 92->exit: while-False branch when stop is pre-set.
     # Beat has at least one schedule so it passes the early-return guard, reaches
@@ -734,7 +734,7 @@ def test_beat_already_stopped_on_entry_skips_loop(
 
 def test_beat_skips_not_yet_due_schedule(
     dj_absurd: AbsurdTestRuntime,
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     # Covers scheduler.py 99->98: if due <= current False branch.
     # Two schedules: one every minute (due), one at 02:00 (far future, not due).
@@ -770,7 +770,7 @@ def test_beat_skips_not_yet_due_schedule(
 
 def test_plain_worker_runs_blocking_worker(
     caplog: pytest.LogCaptureFixture,
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     # Covers arun_worker's else branch: a worker started without --beat.
     settings.TASKS = make_tasks_setting(

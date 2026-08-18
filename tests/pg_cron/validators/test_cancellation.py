@@ -1,4 +1,4 @@
-from pytest_django.fixtures import Settings
+from pytest_django import Settings
 
 from tests.pg_cron.validators.utils import validate_from_model
 

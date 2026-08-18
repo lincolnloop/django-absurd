@@ -2,7 +2,7 @@ import typing as t
 
 import pytest
 from django.db import connections
-from pytest_django.fixtures import Settings
+from pytest_django import Settings
 
 from django_absurd.pg_cron import detection
 from tests.pg_cron import utils

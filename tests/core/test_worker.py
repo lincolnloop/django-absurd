@@ -14,7 +14,7 @@ from django.core.management import call_command, load_command_class
 from django.core.management.base import CommandError
 from django.db import connection
 from django.tasks import task
-from pytest_django.fixtures import Settings
+from pytest_django import Settings
 
 from django_absurd.backends import AbsurdBackend, get_absurd_backends
 from django_absurd.exceptions import (

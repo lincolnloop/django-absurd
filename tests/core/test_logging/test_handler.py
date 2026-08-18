@@ -2,7 +2,7 @@ import inspect
 import logging
 
 import pytest
-import pytest_django.fixtures
+from pytest_django import Settings
 
 from django_absurd import hooks
 from django_absurd import logging as absurd_logging
@@ -51,7 +51,7 @@ def test_running_the_worker_gives_the_package_a_console_handler() -> None:
 
 @pytest.mark.django_db(transaction=True)
 def test_the_worker_defers_to_a_project_that_configured_this_package(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.LOGGING = CONSOLE_LOGGING
     logger = logging.getLogger("django_absurd")
@@ -61,7 +61,7 @@ def test_the_worker_defers_to_a_project_that_configured_this_package(
 
 
 def test_a_configured_child_logger_is_left_alone(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     """Configuring django_absurd.worker says what you want from the worker; a handler
     on the parent would print those lines twice.
@@ -84,7 +84,7 @@ def test_a_configured_child_logger_is_left_alone(
     ],
 )
 def test_a_logging_config_that_names_someone_else_still_gets_the_default(
-    config: object, settings: pytest_django.fixtures.Settings
+    config: object, settings: Settings
 ) -> None:
     settings.LOGGING = config
     absurd_logging.attach_console_handler()
@@ -93,7 +93,7 @@ def test_a_logging_config_that_names_someone_else_still_gets_the_default(
 
 @pytest.mark.django_db(transaction=True)
 def test_attaching_twice_does_not_duplicate_the_handler(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = utils.make_tasks_settings()
     absurd_logging.attach_console_handler()
@@ -114,7 +114,7 @@ def test_the_sync_client_gets_only_the_hook_it_can_run() -> None:
 
 
 def test_the_worker_defers_the_handler_to_a_root_only_logging_config(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     """Root catches our records by propagation, so attaching underneath it would
     print every line twice — once bare, once through the project's handler.
@@ -133,7 +133,7 @@ def test_the_worker_defers_the_handler_to_a_root_only_logging_config(
 
 
 def test_a_root_entry_spelled_under_loggers_counts_too(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.LOGGING = {
         **DICTCONFIG_HEADER,

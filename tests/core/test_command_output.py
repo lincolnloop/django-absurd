@@ -2,7 +2,7 @@ import io
 
 import pytest
 from django.core.management import call_command
-from pytest_django.fixtures import Settings
+from pytest_django import Settings
 
 from django_absurd.test import AbsurdTestRuntime
 from tests import utils

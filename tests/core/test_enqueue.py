@@ -7,7 +7,7 @@ from django.core.management import call_command
 from django.db import connections, transaction
 from django.tasks import TaskResultStatus, task
 from django.tasks.exceptions import InvalidTask
-from pytest_django.fixtures import Settings
+from pytest_django import Settings
 
 from django_absurd import absurd_params
 from django_absurd.connection import register_jsonb_loader

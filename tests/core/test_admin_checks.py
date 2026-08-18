@@ -1,7 +1,7 @@
 import pytest
 from django.core.management import call_command
 from django.core.management.base import SystemCheckError
-from pytest_django.fixtures import Settings
+from pytest_django import Settings
 
 BACKEND = "django_absurd.backends.AbsurdBackend"
 IMMEDIATE = "django.tasks.backends.immediate.ImmediateBackend"

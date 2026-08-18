@@ -1,5 +1,5 @@
 import pytest
-import pytest_django.fixtures
+from pytest_django import Settings
 
 from tests.pg_cron.validators.utils import (
     ValidateSubject,
@@ -10,7 +10,7 @@ from tests.pg_cron.validators.utils import (
 
 def test_undeclared_queue_override_rejected_by_check(
     capsys: pytest.CaptureFixture[str],
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     # The core check validates explicit queue overrides via validate_schedule, which
     # calls validate_declared_queue with the override value and emits the custom
@@ -21,7 +21,7 @@ def test_undeclared_queue_override_rejected_by_check(
 
 
 def test_undeclared_queue_override_rejected_by_model(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     # Model full_clean: the queue field's callable choices enforce membership at the
     # field level (Django emits its own message) before clean() runs.

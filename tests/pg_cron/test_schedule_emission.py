@@ -2,9 +2,9 @@ import logging
 from pathlib import Path
 
 import pytest
-import pytest_django.fixtures
 from django.core.management import call_command
 from django.db import transaction
+from pytest_django import Settings
 
 from django_absurd.pg_cron import catalog
 from django_absurd.pg_cron.choices import Source
@@ -19,7 +19,7 @@ LOADED_SCHEDULE_FIXTURE = str(
 
 
 def test_save_emits_job_only_after_commit(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     """Emission rides the row's transaction.on_commit, never synchronously in post_save:
     inside an open transaction the central job is still absent; it appears only once the
@@ -39,7 +39,7 @@ def test_save_emits_job_only_after_commit(
 
 def test_central_failure_after_commit_is_swallowed_and_logged(
     caplog: pytest.LogCaptureFixture,
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     """A central-connection failure that lands AFTER the row committed (here pg_cron
     rejecting an invalid cron) is swallowed-and-logged, never propagated as a 500 — the
@@ -66,7 +66,7 @@ def test_central_failure_after_commit_is_swallowed_and_logged(
 
 
 def test_saving_admin_schedule_schedules_the_job(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = utils.build_pg_cron_tasks({})
     ScheduledTask.objects.create(
@@ -84,7 +84,7 @@ def test_saving_admin_schedule_schedules_the_job(
 
 
 def test_saving_disabled_admin_schedule_is_inactive(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = utils.build_pg_cron_tasks({})
     ScheduledTask.objects.create(
@@ -102,7 +102,7 @@ def test_saving_disabled_admin_schedule_is_inactive(
 
 
 def test_saving_settings_schedule_also_schedules_the_job(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     """Unified path: a settings row emits through the same signal (reconcile upserts
     rows; the signal schedules the jobs)."""
@@ -124,7 +124,7 @@ def test_saving_settings_schedule_also_schedules_the_job(
 
 
 def test_deleting_admin_schedule_unschedules_the_job(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = utils.build_pg_cron_tasks({})
     scheduled_task = ScheduledTask.objects.create(
@@ -140,7 +140,7 @@ def test_deleting_admin_schedule_unschedules_the_job(
 
 
 def test_saving_schedule_without_absurd_backend_is_a_noop(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     """No Absurd backend configured at all: (un)schedule are clean no-ops — the
     only surviving no-op condition once the scheduler-specific guard collapses."""
@@ -166,7 +166,7 @@ def test_saving_schedule_without_absurd_backend_is_a_noop(
 
 @pytest.mark.django_db(transaction=True, databases=["default", "replica"])
 def test_cross_database_write_is_rejected(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     """A ScheduledTask forced onto a non-absurd database (here via .using on a second
     alias) is rejected before the row is inserted — schedules live only on the absurd
@@ -190,7 +190,7 @@ def test_cross_database_write_is_rejected(
 
 @pytest.mark.django_db(transaction=True, databases=["default", "replica"])
 def test_cross_database_row_stays_deletable(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     """A stray row created out-of-band on a foreign DB (bulk_create bypasses
     the pre_save guard) must stay deletable — the delete receiver skips it
@@ -211,7 +211,7 @@ def test_cross_database_row_stays_deletable(
 
 
 def test_loaddata_schedules_the_job(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     """loaddata is a real write, so the row's job materializes — the row is the source
     of truth, so a loaded/restored schedule is a live schedule."""

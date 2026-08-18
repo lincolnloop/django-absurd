@@ -2,7 +2,7 @@ import psycopg.errors
 import pytest
 from django.core.management import call_command
 from django.db import connection
-from pytest_django.fixtures import Settings
+from pytest_django import Settings
 
 from django_absurd import emit_event
 from django_absurd.exceptions import (

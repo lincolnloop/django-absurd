@@ -3,15 +3,15 @@
 # (poll cron.job_run_details until the producer fires into its own DB) rather than a
 # blind sleep; xdist-safe because the producer targets a per-worker-unique DB.
 import pytest
-import pytest_django.fixtures
 from django.db import connections
+from pytest_django import Settings
 
 from tests.pg_cron import utils
 
 
 @pytest.mark.django_db(transaction=True)
 def test_producing_schedule_never_fires_into_this_test_db(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = utils.build_pg_cron_tasks({}, pg_cron_on_test_db=True)
     test_db = str(connections["default"].settings_dict["NAME"])

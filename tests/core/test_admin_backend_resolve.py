@@ -1,4 +1,4 @@
-from pytest_django.fixtures import Settings
+from pytest_django import Settings
 
 from django_absurd.backends import AbsurdBackend
 from django_absurd.queues import get_absurd_backend

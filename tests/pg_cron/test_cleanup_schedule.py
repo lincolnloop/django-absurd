@@ -1,8 +1,8 @@
 import typing as t
 
 import pytest
-import pytest_django.fixtures
 from django.core.management import call_command
+from pytest_django import Settings
 
 from django_absurd.pg_cron import catalog
 from django_absurd.pg_cron.choices import Source
@@ -33,7 +33,7 @@ def build_cleanup_jobname() -> str:
 
 
 def test_sync_schedules_cleanup_job(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = build_cleanup_tasks("17 * * * *")
 
@@ -45,7 +45,7 @@ def test_sync_schedules_cleanup_job(
 
 
 def test_cleanup_job_is_isolated_to_its_own_lane(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = build_cleanup_tasks("17 * * * *")
 
@@ -60,7 +60,7 @@ def test_cleanup_job_is_isolated_to_its_own_lane(
 
 
 def test_sync_unschedules_cleanup_job_when_cleanup_dropped(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = build_cleanup_tasks("17 * * * *")
     call_command("absurd_sync_crons")
@@ -73,7 +73,7 @@ def test_sync_unschedules_cleanup_job_when_cleanup_dropped(
 
 
 def test_cleanup_job_survives_absurd_flush_command(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = build_cleanup_tasks("17 * * * *")
 
@@ -89,7 +89,7 @@ def test_cleanup_job_survives_absurd_flush_command(
 
 
 def test_teardown_removes_cleanup_job(
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
     settings.TASKS = build_cleanup_tasks("17 * * * *")
     call_command("absurd_sync_crons")

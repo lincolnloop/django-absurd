@@ -6,9 +6,7 @@ import pytest
 from django.core.management import call_command
 from django.db import connections
 from django.test import TransactionTestCase
-
-if t.TYPE_CHECKING:
-    import pytest_django.fixtures
+from pytest_django import Settings
 
 from django_absurd import absurd_params, pytest_plugin
 from django_absurd.flush import flush_absurd_state
@@ -53,7 +51,7 @@ def test_flush_absurd_state_truncates_rows_by_default() -> None:
 
 
 def test_flush_absurd_state_truncates_a_partitioned_queues_idempotency_table(
-    settings: "pytest_django.fixtures.Settings",
+    settings: Settings,
 ) -> None:
     # `i_<queue>` only exists for a `partitioned` queue — exercise that branch of
     # truncate_queue_tables (the unpartitioned "default" queue used elsewhere in this
@@ -83,7 +81,7 @@ def test_flush_absurd_state_drops_schema_when_requested() -> None:
 
 
 def test_flush_absurd_state_is_a_noop_on_an_unmigrated_schema(
-    settings: "pytest_django.fixtures.Settings",
+    settings: Settings,
 ) -> None:
     # Mirrors tests/core/test_checks.py::test_db_unreachable_is_silent's real
     # unreachable-DB technique: mutating settings.DATABASES alone is not enough — the
@@ -165,7 +163,7 @@ def test_post_teardown_hook_skips_undeclared_absurd_alias() -> None:
 
 
 def test_post_teardown_hook_skips_without_an_absurd_backend(
-    settings: "pytest_django.fixtures.Settings",
+    settings: Settings,
 ) -> None:
     # Seed under the real Absurd backend, then swap TASKS to a non-Absurd backend so
     # the hook's unconfigured-backend guard (no AbsurdBackend) fires and skips flushing.
