@@ -181,7 +181,8 @@ def test_queue_defaults_to_default(
             "QUEUES": ["default"],
         }
     }
-    tasks.make_group.enqueue("dflt")  # auto-creates the default queue
+    utils.provision_declared_queues()
+    tasks.make_group.enqueue("dflt")
     utils.start_worker_until_done(  # no --queue -> "default"
         lambda: Group.objects.filter(name="dflt").exists()
     )
@@ -217,6 +218,7 @@ def test_worker_uses_single_backend_at_nondefault_alias(
             "QUEUES": ["default"],
         }
     }
+    utils.provision_declared_queues()
     utils.start_worker()
     assert "Started worker on queue 'default'." in capsys.readouterr().out
 
