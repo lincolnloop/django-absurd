@@ -30,7 +30,7 @@ class Command(AbsurdCommand):
     def handle(self, *args: t.Any, **options: t.Any) -> None:
         backends = get_absurd_backends()
         if not backends:
-            raise BackendNotConfiguredError(0)
+            raise BackendNotConfiguredError
         dry_run = options["check"]
         crate_out = console.build_glyph_prefix(self.stdout, "🗃️")
         crate_err = console.build_glyph_prefix(self.stderr, "🗃️")

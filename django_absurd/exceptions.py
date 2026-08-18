@@ -122,20 +122,22 @@ class SchemaNotInstalledError(DjangoAbsurdError):
 
 
 class BackendNotConfiguredError(DjangoAbsurdError):
-    """No single Absurd backend could be resolved — zero or several configured. One
-    type for both counts: the package supports exactly one Absurd backend per
-    project, so either way there is no single backend to act on.
-    """
+    """No Absurd backend is configured at all."""
 
-    def __init__(self, backend_count: int) -> None:
-        if backend_count == 0:
-            msg = (
-                "No Absurd backend configured. Add a "
-                "django_absurd.backends.AbsurdBackend entry to TASKS."
-            )
-        else:
-            msg = (
-                "django-absurd supports one Absurd backend per project; "
-                "configure exactly one AbsurdBackend in TASKS."
-            )
+    def __init__(self) -> None:
+        msg = (
+            "No Absurd backend configured. Add a "
+            "django_absurd.backends.AbsurdBackend entry to TASKS."
+        )
+        super().__init__(msg)
+
+
+class MultipleBackendsConfiguredError(DjangoAbsurdError):
+    """Several Absurd backends are configured, and the package supports exactly one."""
+
+    def __init__(self) -> None:
+        msg = (
+            "django-absurd supports one Absurd backend per project; "
+            "configure exactly one AbsurdBackend in TASKS."
+        )
         super().__init__(msg)

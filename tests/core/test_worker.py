@@ -18,6 +18,7 @@ from pytest_django import Settings
 from django_absurd.backends import AbsurdBackend, get_absurd_backends
 from django_absurd.exceptions import (
     DjangoAbsurdError,
+    MultipleBackendsConfiguredError,
     QueueNotDeclaredError,
     QueueNotProvisionedError,
     SchemaNotInstalledError,
@@ -245,6 +246,7 @@ def test_worker_multiple_backends_errors(settings: Settings) -> None:
         "django-absurd supports one Absurd backend per project; "
         "configure exactly one AbsurdBackend in TASKS."
     )
+    assert isinstance(exc.value.__cause__, MultipleBackendsConfiguredError)
 
 
 def test_command_parses_all_flags_with_defaults() -> None:

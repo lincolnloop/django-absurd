@@ -20,7 +20,7 @@ class Command(AbsurdCommand):
 
     def handle(self, *args: object, **options: object) -> None:
         if not get_absurd_backends():
-            raise BackendNotConfiguredError(0)
+            raise BackendNotConfiguredError
         queues = t.cast("list[str]", options["queues"]) or None
         for row in cleanup_queues(queues):
             self.stdout.write(

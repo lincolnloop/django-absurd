@@ -257,7 +257,7 @@ class AbsurdTestRuntime:
         guard_against_open_transaction(self.alias, "sync_queues")
         backend = queues.get_absurd_backend()
         if backend is None:
-            raise BackendNotConfiguredError(0)
+            raise BackendNotConfiguredError
         run_off_event_loop(functools.partial(queues.provision_backend, backend))
 
     def get_result(

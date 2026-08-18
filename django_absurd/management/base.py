@@ -6,12 +6,13 @@ from django.core.management.base import BaseCommand, CommandError
 from django_absurd.backends import AbsurdBackend, get_absurd_backends
 from django_absurd.exceptions import (
     BackendNotConfiguredError,
+    MultipleBackendsConfiguredError,
     QueueNotDeclaredError,
     QueueNotProvisionedError,
     SchemaNotInstalledError,
 )
 
-# Each of these five owns a message that already names the fix (an add/run/configure
+# Each of these six owns a message that already names the fix (an add/run/configure
 # instruction), so translating it into an untyped CommandError with no traceback loses
 # nothing an operator needs. Any other DjangoAbsurdError subclass — and anything
 # unforeseen — signals a bug, not a configuration mistake, and keeps its own type and
@@ -19,6 +20,7 @@ from django_absurd.exceptions import (
 CONFIGURATION_ERRORS: tuple[type[Exception], ...] = (
     ImproperlyConfigured,
     BackendNotConfiguredError,
+    MultipleBackendsConfiguredError,
     SchemaNotInstalledError,
     QueueNotDeclaredError,
     QueueNotProvisionedError,
@@ -34,9 +36,11 @@ BEAT_DISABLED_UNDER_PG_CRON = (
 
 def resolve_backend() -> AbsurdBackend:
     backends = get_absurd_backends()
-    if len(backends) == 1:
-        return next(iter(backends.values()))
-    raise BackendNotConfiguredError(len(backends))
+    if not backends:
+        raise BackendNotConfiguredError
+    if len(backends) > 1:
+        raise MultipleBackendsConfiguredError
+    return next(iter(backends.values()))
 
 
 class AbsurdCommand(BaseCommand):

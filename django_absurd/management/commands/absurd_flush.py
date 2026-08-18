@@ -24,7 +24,7 @@ class Command(AbsurdCommand):
 
     def handle(self, *args: object, **options: object) -> None:
         if not get_absurd_backends():
-            raise BackendNotConfiguredError(0)
+            raise BackendNotConfiguredError
         queues = list_provisioned_queues()
         if not queues:
             self.stdout.write("No queues to flush.")
