@@ -338,7 +338,7 @@ def test_sync_check_reports_pending_work_and_writes_nothing(
         "Queues are not in sync. Run: manage.py absurd_sync_queues"
     )
     assert capsys.readouterr().out == "🗃️ Would create: pending\n"
-    assert not Queue.objects.filter(queue_name="pending").exists()
+    assert Queue.objects.filter(queue_name="pending").exists() is False
 
 
 @pytest.mark.usefixtures("_isolate_queues")

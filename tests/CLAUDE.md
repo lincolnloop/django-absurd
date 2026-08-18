@@ -14,6 +14,11 @@ pre-commit gates), see [`../CLAUDE.md`](../CLAUDE.md).
 - **`from pytest_django import Settings`**, always, and annotate bare:
   `settings: Settings`. Never `pytest_django.fixtures.Settings`, quoted or otherwise — a
   quoted one passes the test run and fails mypy, so it survives until the slow gate.
+- **Assert a boolean by identity: `is True` / `is False`**, never `assert x` or
+  `assert not x`. Applies to every `.exists()` — `assert qs.exists() is False`, not
+  `assert not qs.exists()`. Truthiness passes for the wrong object too: drop the
+  `.exists()` call in a refactor and `assert qs` still passes on a non-empty queryset,
+  while `is True` fails. Same for any predicate helper returning `bool`.
 - **Shared fixtures live in the parent `tests/conftest.py`**, inherited by all three
   suites via `--confcutdir=..` in each suite's `pytest.toml` (each suite's rootdir is
   its own dir, so without `confcutdir` a parent conftest isn't discovered). Do NOT

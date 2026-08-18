@@ -122,7 +122,7 @@ def test_enqueue_to_an_unprovisioned_queue_refuses() -> None:
         "Queue 'default' is declared but its Absurd table is not provisioned. "
         "Run: manage.py absurd_sync_queues"
     )
-    assert not Queue.objects.filter(queue_name="default").exists()
+    assert Queue.objects.filter(queue_name="default").exists() is False
 
 
 def test_enqueue_to_a_half_provisioned_partitioned_queue_refuses(
@@ -147,7 +147,7 @@ def test_enqueue_to_a_half_provisioned_partitioned_queue_refuses(
         "Queue 'parts' is declared but its Absurd table is not provisioned. "
         "Run: manage.py absurd_sync_queues"
     )
-    assert Queue.objects.filter(queue_name="parts").exists()
+    assert Queue.objects.filter(queue_name="parts").exists() is True
 
 
 def test_enqueue_propagates_an_unrelated_undefined_table() -> None:
@@ -197,7 +197,7 @@ def test_enqueue_refusal_leaves_an_outer_atomic_usable() -> None:
         with pytest.raises(QueueNotProvisionedError):
             tasks.make_group.enqueue("refused")
         Group.objects.create(name="after-refusal")
-    assert Group.objects.filter(name="after-refusal").exists()
+    assert Group.objects.filter(name="after-refusal").exists() is True
 
 
 def test_enqueue_with_absent_schema_raises_clear_error() -> None:

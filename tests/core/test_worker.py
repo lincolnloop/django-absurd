@@ -287,7 +287,7 @@ def test_worker_refuses_an_unprovisioned_queue(
         "Run: manage.py absurd_sync_queues"
     )
     assert capsys.readouterr().out == ""
-    assert not Queue.objects.filter(queue_name="default").exists()
+    assert Queue.objects.filter(queue_name="default").exists() is False
     with connection.cursor() as cur:
         cur.execute("select count(*) from pg_views where schemaname = 'absurd'")
         assert cur.fetchone() == (0,)
@@ -331,7 +331,7 @@ def test_a_half_provisioned_queue_is_refused(
         "Run: manage.py absurd_sync_queues"
     )
     assert capsys.readouterr().out == expected_out
-    assert Queue.objects.filter(queue_name="default").exists()
+    assert Queue.objects.filter(queue_name="default").exists() is True
 
 
 def test_worker_command_schema_absent_errors_migrate() -> None:

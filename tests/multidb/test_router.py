@@ -66,9 +66,9 @@ def test_migrate_provisions_only_the_database_it_migrated(
         }
     }
     call_command("migrate", "django_absurd", database="default", verbosity=0)
-    assert not Queue.objects.using("absurd").filter(queue_name="scoped").exists()
+    assert Queue.objects.using("absurd").filter(queue_name="scoped").exists() is False
     call_command("migrate", "django_absurd", database="absurd", verbosity=0)
-    assert Queue.objects.using("absurd").filter(queue_name="scoped").exists()
+    assert Queue.objects.using("absurd").filter(queue_name="scoped").exists() is True
 
 
 def test_sync_command_honors_alias(
