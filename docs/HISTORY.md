@@ -218,3 +218,19 @@ commit where it last lived — recoverable from git any time.
 - 2026-08-10 — git-cliff-changelog implementation plan (cliff.toml, backfill over
   `a1..a5`, the release-skill step, and slicing the release body out of the file) →
   [view @b33abe6](https://github.com/lincolnloop/django-absurd/blob/b33abe6ee44454adaa27225cad2310a5fc72a988/docs/plans/2026-08-10-git-cliff-changelog.md)
+- 2026-08-15 — command-error-translation design spec (one command base translating a
+  narrow set of configuration failures into a clean `CommandError`, and the measured
+  six-command behaviour table it was decided from) →
+  [view @d852573](https://github.com/lincolnloop/django-absurd/blob/d852573719c117857f8bc07eca46db145b80792c/docs/specs/2026-08-15-command-error-translation-design.md)
+- 2026-08-15 — command-error-translation implementation plan (the base class, the
+  per-command migration, and the exception messages each command surfaces) →
+  [view @d852573](https://github.com/lincolnloop/django-absurd/blob/d852573719c117857f8bc07eca46db145b80792c/docs/plans/2026-08-15-command-error-translation.md)
+- 2026-08-17 — explicit-provisioning design spec (provisioning as a deploy step: enqueue
+  and the worker refusing an unprovisioned queue, `post_migrate` scoped to the migrated
+  database, an assert-only sync mode, plus the addendum recording what adversarial
+  review and live testing changed) →
+  [view @d852573](https://github.com/lincolnloop/django-absurd/blob/d852573719c117857f8bc07eca46db145b80792c/docs/specs/2026-08-17-explicit-provisioning-design.md)
+- 2026-08-17 — explicit-provisioning implementation plan (the measured blast radius that
+  collapsed a two-PR split into one, and the sequence that removed both self-heal seams)
+  →
+  [view @d852573](https://github.com/lincolnloop/django-absurd/blob/d852573719c117857f8bc07eca46db145b80792c/docs/plans/2026-08-17-explicit-provisioning.md)

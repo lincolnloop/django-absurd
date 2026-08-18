@@ -715,6 +715,15 @@ before _and_ after a test is specific to testing the library's own internals —
 something a normal project needs — so it stays an internal helper, never forced on
 users.
 
+The suites reach a provisioned queue by running the migration, not because anything
+heals one at runtime — worth knowing before planning around a change to provisioning.
+When runtime healing was removed, the predicted blast radius was that the suites leaned
+on it broadly and that around ninety-five tests would need repair; measured, exactly
+eight failed, every one of them asserting the behaviour being deleted. A staged rollout
+and a teardown fixture were both built on the prediction and both thrown away, one of
+them after measuring that it changed nothing. A predicted blast radius is a hypothesis:
+run the control before designing around it.
+
 The pytest integration loads as a plugin imported before Django is configured, on every
 pytest run in any environment where the package is installed — Django project or not.
 That forces strict import-safety: the plugin touches nothing Django at import time and
