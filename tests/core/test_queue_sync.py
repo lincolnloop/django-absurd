@@ -156,6 +156,27 @@ def test_sync_reconciles_changed_option_idempotent(settings: Settings) -> None:
     assert Queue.objects.get(queue_name="q").cleanup_ttl == dt.timedelta(days=60)
 
 
+@pytest.mark.usefixtures("_isolate_queues")
+def test_sync_recreates_the_tables_of_a_surviving_catalog_row(
+    capsys: pytest.CaptureFixture[str], settings: Settings
+) -> None:
+    # The state QueueNotProvisionedError sends an operator here to fix: a manual drop
+    # or a partial restore leaves the catalog row behind, so a row-gated reconcile
+    # would report "no changes" and repair nothing.
+    settings.TASKS = build_tasks_setting({"partial": {}})
+    call_command("absurd_sync_queues")
+    with connection.cursor() as cur:
+        cur.execute(
+            "drop table absurd.t_partial, absurd.r_partial, absurd.c_partial, "
+            "absurd.e_partial, absurd.w_partial cascade"
+        )
+    assert not table_exists("t_partial")
+    capsys.readouterr()
+    call_command("absurd_sync_queues")
+    assert table_exists("t_partial")
+    assert capsys.readouterr().out == "🗃️ No queues to sync.\n"
+
+
 def test_non_destructive(settings: Settings) -> None:
     settings.TASKS = build_tasks_setting({"keep": {}})
     call_command("absurd_sync_queues")

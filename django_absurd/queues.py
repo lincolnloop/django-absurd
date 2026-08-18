@@ -7,7 +7,7 @@ import zlib
 from dataclasses import dataclass, field
 
 import psycopg.errors
-from absurd_sdk import Absurd, QueuePolicyOptions
+from absurd_sdk import Absurd, QueuePolicyOptions, QueueStorageMode
 from django.db import connections, transaction
 from django.db.utils import ProgrammingError
 
@@ -139,6 +139,18 @@ def reconcile_queue(backend: backends.AbsurdBackend, queue_name: str) -> SyncRes
         client.create_queue(queue_name, **opts)
         result.created.append(queue_name)
     else:
+        # Idempotent by construction (INSERT ... ON CONFLICT DO NOTHING, then
+        # ensure_queue_tables), so this puts back the tables of a queue whose catalog
+        # row outlived them — a manual drop, a partial restore — which is the state
+        # QueueNotProvisionedError sends an operator here to repair. The EXISTING
+        # storage mode, never the declared one: create_queue refuses a mode change
+        # outright, and drift is warned about below rather than applied.
+        client.create_queue(
+            queue_name,
+            # Read back from absurd.queues, whose create_queue only ever writes
+            # these two.
+            storage_mode=t.cast("QueueStorageMode", existing.storage_mode),
+        )
         # MUTABLE_OPTION_KEYS mirrors QueuePolicyOptions's fields exactly; the cast is
         # safe by construction.
         mutable_opts = t.cast(
