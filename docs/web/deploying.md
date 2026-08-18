@@ -17,8 +17,19 @@ enqueuing to a declared but unprovisioned queue raises
 [`absurd_worker`](workers.md#run-a-worker) refuses to start on one.
 
 Those two lines are the whole deploy for most projects — queue changes are rare, and
-`migrate` covers them when they happen. Add `python manage.py absurd_sync_queues` only
-when your release step doesn't run `migrate` at all.
+`migrate` covers them when they happen.
+
+```bash
+python manage.py absurd_sync_queues
+```
+
+Provisions the declared queues on its own, without a `migrate` — for a release step that
+doesn't run one, or to pick up a queue change between deploys.
+
+- `check --deploy` does not run the checks tagged `database` — `absurd.W002`, and
+  pg_cron's `absurd.E012`. `migrate` runs them for the database it migrates, so the two
+  lines above cover them; a release step without `migrate` needs
+  `check --database=<alias>` to get them.
 
 ## What `migrate` needs
 

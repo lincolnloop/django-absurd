@@ -767,6 +767,18 @@ enqueuing and starting a worker never create a queue. Only declared queues are e
 created, and an undeclared name is rejected. The SQL comes from the pinned Absurd
 version and is never fetched at migrate time.
 
+```bash
+python manage.py absurd_sync_queues --check   # asserts; writes nothing
+```
+
+- `--check` reports what `absurd_sync_queues` would create, repair or reconcile and
+  exits non-zero if anything would, for a release step that asserts rather than acts.
+- `post_migrate` is per-database: `migrate --database=<alias>` is the run that
+  provisions that alias, and a `migrate` on another one leaves it untouched.
+- `migrate` fails when provisioning fails. The one exception is an absent schema, which
+  it reports and exits 0 on — a partial `migrate <app>`, or a `--fake`, reaches it
+  having installed nothing.
+
 → [Absurd: database setup](https://earendil-works.github.io/absurd/database/).
 
 ## Cleanup
@@ -1245,16 +1257,17 @@ except DjangoAbsurdError:
     ...
 ```
 
-| Type                        | Raised when                                                                                         |
-| --------------------------- | --------------------------------------------------------------------------------------------------- |
-| `SchemaNotInstalledError`   | The Absurd Postgres schema itself isn't installed — run `manage.py migrate`                         |
-| `QueueNotDeclaredError`     | A queue name matches no queue declared for the backend                                              |
-| `QueueNotProvisionedError`  | A queue is declared but its Absurd table isn't provisioned yet — run `manage.py absurd_sync_queues` |
-| `BackendNotConfiguredError` | No `AbsurdBackend`, or more than one, is configured in `TASKS`                                      |
-| `QueueReadOnlyError`        | `.save()`/`.delete()` on one of the [read-only models](#query-queue-state)                          |
-| `ViewNotProvisionedError`   | One of those views hits a missing relation because a queue was never provisioned                    |
-| `TaskIdQueueMismatchError`  | `dj_absurd.get_result` got a `"queue:uuid"` id and a `queue=` naming different queues               |
-| `TaskNotFoundError`         | `dj_absurd.get_result` found no task by that id on that queue                                       |
+| Type                              | Raised when                                                                                         |
+| --------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `SchemaNotInstalledError`         | The Absurd Postgres schema itself isn't installed — run `manage.py migrate`                         |
+| `QueueNotDeclaredError`           | A queue name matches no queue declared for the backend                                              |
+| `QueueNotProvisionedError`        | A queue is declared but its Absurd table isn't provisioned yet — run `manage.py absurd_sync_queues` |
+| `BackendNotConfiguredError`       | No `AbsurdBackend` is configured in `TASKS`                                                         |
+| `MultipleBackendsConfiguredError` | More than one `AbsurdBackend` is configured; the package supports exactly one                       |
+| `QueueReadOnlyError`              | `.save()`/`.delete()` on one of the [read-only models](#query-queue-state)                          |
+| `ViewNotProvisionedError`         | One of those views hits a missing relation because a queue was never provisioned                    |
+| `TaskIdQueueMismatchError`        | `dj_absurd.get_result` got a `"queue:uuid"` id and a `queue=` naming different queues               |
+| `TaskNotFoundError`               | `dj_absurd.get_result` found no task by that id on that queue                                       |
 
 - `enqueue` raises `QueueNotDeclaredError` only when the backend's `QUEUES` is empty or
   unset; with `QUEUES` configured, a typo'd name is rejected earlier as Django's own
@@ -1264,10 +1277,11 @@ except DjangoAbsurdError:
   them provision.
 - Every `absurd_*` management command inherits `AbsurdCommand`, which turns a fixed set
   of configuration failures — `ImproperlyConfigured`, `BackendNotConfiguredError`,
-  `SchemaNotInstalledError`, `QueueNotDeclaredError`, `QueueNotProvisionedError` — into
-  a clean `CommandError`; `--traceback` still shows the original chain. Every other
-  error, including any other `DjangoAbsurdError` subclass, keeps its own type and full
-  traceback — it signals a bug, not a configuration mistake.
+  `MultipleBackendsConfiguredError`, `SchemaNotInstalledError`, `QueueNotDeclaredError`,
+  `QueueNotProvisionedError` — into a clean `CommandError`; `--traceback` still shows
+  the original chain. Every other error, including any other `DjangoAbsurdError`
+  subclass, keeps its own type and full traceback — it signals a bug, not a
+  configuration mistake.
 - The hierarchy is not total. Catch `DjangoAbsurdError` for django-absurd's own typed
   errors; other failures — config validation, clock misuse — still raise plain
   `ImproperlyConfigured` / `RuntimeError` / `TypeError`.
