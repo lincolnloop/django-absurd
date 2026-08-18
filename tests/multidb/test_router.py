@@ -1,12 +1,8 @@
-import typing as t
-
 import pytest
 from django.core.management import call_command
 from django.db import connections
 from django.tasks import task
-
-if t.TYPE_CHECKING:
-    from pytest_django import Settings
+from pytest_django import Settings
 
 from django_absurd.models import Queue
 from django_absurd.routers import AbsurdRouter
@@ -58,7 +54,7 @@ def test_db_for_read_write_route_django_absurd() -> None:
 
 
 def test_sync_command_honors_alias(
-    settings: "Settings",
+    settings: Settings,
 ) -> None:
     settings.TASKS = {
         "default": {

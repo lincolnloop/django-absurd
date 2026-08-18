@@ -5,6 +5,7 @@ import pytest
 from django.apps import apps
 from django.core.management import call_command
 from django.db import connections, models
+from pytest_django import DjangoDbBlocker
 
 from django_absurd import admin_views
 from django_absurd.admin_views import (
@@ -21,7 +22,6 @@ from tests import tasks, utils
 
 if t.TYPE_CHECKING:
     from django.apps.config import AppConfig
-    from pytest_django.plugin import DjangoDbBlocker
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -53,7 +53,7 @@ def test_read_path_does_no_ddl() -> None:
 
 @pytest.mark.django_db(transaction=True)
 def test_migrate_provisions_declared_queues_and_views(
-    django_db_blocker: "DjangoDbBlocker",
+    django_db_blocker: DjangoDbBlocker,
 ) -> None:
     # `migrate` fires post_migrate → sync_queues: declared queues created + views
     # built, reported on stdout in Django's migrate style.
@@ -75,7 +75,7 @@ def test_migrate_provisions_declared_queues_and_views(
 
 @pytest.mark.django_db(transaction=True)
 def test_provision_skips_when_schema_absent(
-    django_db_blocker: "DjangoDbBlocker",
+    django_db_blocker: DjangoDbBlocker,
 ) -> None:
     # post_migrate: best-effort; missing schema swallowed, not raised
     with utils.hide_absurd_schema():
