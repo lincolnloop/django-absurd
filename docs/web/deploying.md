@@ -19,14 +19,14 @@ enqueuing to a declared but unprovisioned queue raises
 Those two lines are the whole deploy for most projects. Everything below is for a
 release step that departs from them.
 
-## Provisioning without `migrate`
+## Updating queues explicitly
 
 ```bash
 python manage.py absurd_sync_queues
 ```
 
-Provisions the declared queues on its own — for a release step that doesn't run
-`migrate`, or to pick up a queue change between deploys.
+`migrate` already does this on every run; this command does only that part — for a
+release step that doesn't run `migrate`, or to pick up a queue change between deploys.
 
 ## What `migrate` needs
 
