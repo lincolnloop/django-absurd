@@ -516,6 +516,8 @@ Beat evaluates cron in-process and enqueues each task when its slot comes due; a
   fires at most once. It does not replace single-instance supervision.
 - **Never backfills.** A slot that passes while beat is down is skipped; the next one
   proceeds on schedule.
+- **A failed enqueue is not retried either.** Beat logs the error and advances, so an
+  unprovisioned target queue costs every slot until someone provisions it.
 - Grammar is [croniter](https://pypi.org/project/croniter/): standard 5-field
   `min hour dom mon dow`, or 6-field with a leading seconds column for sub-minute
   cadence (`"*/30 * * * * *"` is every 30s). Each slot enqueues a task, so size the

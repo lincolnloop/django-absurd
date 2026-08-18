@@ -55,6 +55,9 @@ like any other.
 
 - **Run exactly one.** No leader election — concurrent beats each fire every slot.
 - **Never backfills.** A slot missed while down is skipped.
+- **A failed enqueue is not retried either.** Beat logs the error and moves to the next
+  slot, so an [unprovisioned](deploying.md) target queue costs you every slot until
+  someone provisions it.
 - Grammar is [croniter](https://pypi.org/project/croniter/): 5-field, or 6-field with a
   leading seconds column (`"*/30 * * * * *"`).
 - Expressions use Django's
