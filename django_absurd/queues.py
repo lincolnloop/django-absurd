@@ -1,12 +1,14 @@
+import contextlib
 import datetime as dt
 import logging
 import re
 import typing as t
+import zlib
 from dataclasses import dataclass, field
 
 import psycopg.errors
 from absurd_sdk import Absurd, QueuePolicyOptions
-from django.db import connections
+from django.db import connections, transaction
 from django.db.utils import ProgrammingError
 
 from django_absurd import backends
@@ -36,6 +38,11 @@ MUTABLE_OPTION_KEYS = (
 INTERVAL_OPTION_KEYS = frozenset(
     ("partition_lookahead", "partition_lookback", "cleanup_ttl", "detach_min_age")
 )
+
+# Advisory-lock key for provision_backend. Derived from a name rather than written as a
+# literal so it reads as ours; concurrent sessions only have to agree with each other,
+# never across servers or versions.
+PROVISION_LOCK_KEY = zlib.crc32(b"django_absurd.provision")
 
 
 @dataclass
@@ -176,9 +183,36 @@ def provision_backend(backend: backends.AbsurdBackend) -> SyncResult:
     # The single integral provisioning step (used by post_migrate, the sync command,
     # and worker start): reconcile every declared queue, then rebuild all admin views
     # so they reflect the full catalog — not just the queue a worker happens to serve.
-    result = sync_queues(backend)
-    rebuild_views(backend.database)
+    validate_backend(backend.database)  # the lock below is Postgres-only SQL
+    with lock_provisioning(backend.database):
+        result = sync_queues(backend)
+        rebuild_views(backend.database)
     return result
+
+
+@contextlib.contextmanager
+def lock_provisioning(using: str) -> t.Iterator[None]:
+    """Serialize concurrent provisioners, which a deploy runs by the handful.
+
+    Both halves of provisioning create objects by name with no lock held while the name
+    is absent — ``CREATE TABLE IF NOT EXISTS`` inside ``absurd.create_queue``, and
+    ``CREATE VIEW`` after a ``DROP VIEW IF EXISTS`` that matched nothing — so racing a
+    database's first boot collides on a catalog unique index.
+
+    The transaction belongs to the lock, not to the caller: ``pg_advisory_xact_lock``
+    lives exactly as long as its transaction, so taken under autocommit it would release
+    before the work it guards. Scoping it here also means a crashed provisioner releases
+    it, with no stuck-lock cleanup path to own.
+
+    Called inside a caller's own atomic this degrades to a savepoint, so the lock is
+    held until THEIR commit — still correct, just longer. No caller here provisions
+    inside a transaction: both commands and the post_migrate receiver run outside one,
+    and ``AbsurdTestRuntime.sync_queues`` refuses if one is open.
+    """
+    with transaction.atomic(using=using):
+        with connections[using].cursor() as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(%s)", [PROVISION_LOCK_KEY])
+        yield
 
 
 def parse_interval(using: str, interval_str: str) -> dt.timedelta:
