@@ -37,7 +37,9 @@ class Command(AbsurdCommand):
             self.stdout.write(
                 f"{stdout_prefix}Reconciled: {', '.join(result.reconciled)}"
             )
-        if not result.created and not result.reconciled:
+        if result.repaired:
+            self.stdout.write(f"{stdout_prefix}Repaired: {', '.join(result.repaired)}")
+        if not result.created and not result.reconciled and not result.repaired:
             self.stdout.write(f"{stdout_prefix}{empty_message}")
         for warning in result.storage_warnings:
             self.stderr.write(self.style.WARNING(f"{stderr_prefix}{warning}"))

@@ -21,6 +21,7 @@ from django_absurd.queues import (
     get_absurd_client,
     resolve_absurd_database,
 )
+from django_absurd.test import AbsurdTestRuntime
 from tests import utils
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -174,7 +175,30 @@ def test_sync_recreates_the_tables_of_a_surviving_catalog_row(
     capsys.readouterr()
     call_command("absurd_sync_queues")
     assert table_exists("t_partial")
-    assert capsys.readouterr().out == "🗃️ No queues to sync.\n"
+    assert capsys.readouterr().out == "🗃️ Repaired: partial\n"
+
+
+@pytest.mark.usefixtures("_isolate_queues")
+def test_sync_leaves_a_provisioned_partitioned_queue_alone(
+    dj_absurd: AbsurdTestRuntime, settings: Settings
+) -> None:
+    # Once the clock passes the pre-created window, rows land in the default partition,
+    # and ensure_partitions can no longer create the weeks they belong to — Postgres
+    # refuses. Provisioning must not reach that DDL for a queue already provisioned.
+    settings.TASKS = build_tasks_setting({"parts": {"storage_mode": "partitioned"}})
+    call_command("absurd_sync_queues")
+    with dj_absurd.freeze_time() as frozen_time:
+        frozen_time.shift(dt.timedelta(days=60))
+        with connection.cursor() as cur:
+            # The partition key is a uuidv7 range over task_id, not enqueue_at.
+            cur.execute(
+                "insert into absurd.t_parts "
+                "(task_id, task_name, params, state, enqueue_at) values "
+                "(absurd.uuidv7_floor(now() + interval '60 days'), 'late', "
+                "'{}'::jsonb, 'pending', now() + interval '60 days')"
+            )
+        call_command("absurd_sync_queues")
+    assert Queue.objects.get(queue_name="parts").storage_mode == "partitioned"
 
 
 def test_non_destructive(settings: Settings) -> None:
@@ -201,7 +225,7 @@ def test_sync_reports_no_queues_when_all_in_sync(
     assert len(records) == 1
     assert (
         records[0].getMessage()
-        == 'queues provisioned: created="freshsync" reconciled=""'
+        == 'queues provisioned: created="freshsync" reconciled="" repaired=""'
     )
     capsys.readouterr()
     call_command("absurd_sync_queues")  # freshsync exists, no drift -> empty result

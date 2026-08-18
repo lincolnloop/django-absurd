@@ -49,6 +49,7 @@ PROVISION_LOCK_KEY = zlib.crc32(b"django_absurd.provision")
 class SyncResult:
     created: list[str] = field(default_factory=list)
     reconciled: list[str] = field(default_factory=list)
+    repaired: list[str] = field(default_factory=list)
     storage_warnings: list[str] = field(default_factory=list)
 
 
@@ -139,18 +140,22 @@ def reconcile_queue(backend: backends.AbsurdBackend, queue_name: str) -> SyncRes
         client.create_queue(queue_name, **opts)
         result.created.append(queue_name)
     else:
-        # Idempotent by construction (INSERT ... ON CONFLICT DO NOTHING, then
-        # ensure_queue_tables), so this puts back the tables of a queue whose catalog
-        # row outlived them — a manual drop, a partial restore — which is the state
-        # QueueNotProvisionedError sends an operator here to repair. The EXISTING
-        # storage mode, never the declared one: create_queue refuses a mode change
-        # outright, and drift is warned about below rather than applied.
-        client.create_queue(
-            queue_name,
-            # Read back from absurd.queues, whose create_queue only ever writes
-            # these two.
-            storage_mode=t.cast("QueueStorageMode", existing.storage_mode),
-        )
+        # Puts back the tables of a queue whose catalog row outlived them — a manual
+        # drop, a partial restore — the state QueueNotProvisionedError sends an
+        # operator here to repair. Gated on them actually being absent rather than
+        # called unconditionally: create_queue re-runs ensure_partitions, and a
+        # partitioned queue whose default partition has collected rows for a week the
+        # window now covers cannot survive that. The EXISTING storage mode, never the
+        # declared one: create_queue refuses a mode change outright, and drift is
+        # warned about below rather than applied.
+        if find_missing_queue_tables(db, queue_name):
+            client.create_queue(
+                queue_name,
+                # Read back from absurd.queues, whose create_queue only ever writes
+                # these two.
+                storage_mode=t.cast("QueueStorageMode", existing.storage_mode),
+            )
+            result.repaired.append(queue_name)
         # MUTABLE_OPTION_KEYS mirrors QueuePolicyOptions's fields exactly; the cast is
         # safe by construction.
         mutable_opts = t.cast(
@@ -169,25 +174,45 @@ def reconcile_queue(backend: backends.AbsurdBackend, queue_name: str) -> SyncRes
     return result
 
 
+def find_missing_queue_tables(using: str, queue_name: str) -> list[str]:
+    """Which of ``queue_name``'s own Absurd tables are absent, catalog row aside.
+
+    ``to_regclass`` rather than a ``pg_class`` join: it takes the qualified name and
+    answers NULL instead of raising, which is the whole question being asked. A
+    partitioned queue also owns ``i_<queue>``, deliberately not probed — it exists only
+    when an idempotency key is used, so its absence is not what a half-provisioned
+    queue looks like.
+    """
+    with connections[using].cursor() as cursor:
+        cursor.execute(
+            "select name from unnest(%s::text[]) as name "
+            "where to_regclass('absurd.' || quote_ident(name)) is null",
+            [[f"{prefix}_{queue_name}" for prefix in QUEUE_TABLE_PREFIXES]],
+        )
+        return [str(row[0]) for row in cursor.fetchall()]
+
+
 def sync_queues(backend: backends.AbsurdBackend) -> SyncResult:
     result = SyncResult()
     for name in backends.get_declared_queues(backend):
         r = reconcile_queue(backend, name)
         result.created.extend(r.created)
         result.reconciled.extend(r.reconciled)
+        result.repaired.extend(r.repaired)
         result.storage_warnings.extend(r.storage_warnings)
     log_sync_result(result)
     return result
 
 
 def log_sync_result(result: SyncResult) -> None:
-    if not result.created and not result.reconciled:
+    if not result.created and not result.reconciled and not result.repaired:
         logger.info("queues provisioned: no changes")
         return
     logger.info(
-        'queues provisioned: created="%s" reconciled="%s"',
+        'queues provisioned: created="%s" reconciled="%s" repaired="%s"',
         ", ".join(result.created),
         ", ".join(result.reconciled),
+        ", ".join(result.repaired),
     )
 
 
