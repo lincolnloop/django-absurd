@@ -4,14 +4,15 @@ Follows [#195](https://github.com/lincolnloop/django-absurd/issues/195).
 
 ## Problem
 
-Four code paths create queue topology today:
+Five code paths create queue topology today:
 
 | path                                        | creates                             | runs in           |
 | ------------------------------------------- | ----------------------------------- | ----------------- |
 | `post_migrate` → `provision_backend`        | declared queues + all 5 admin views | `migrate`         |
 | `absurd_sync_queues` → `provision_backend`  | declared queues + all 5 admin views | operator command  |
+| `AbsurdTestRuntime.sync_queues` (`test.py`) | declared queues + all 5 admin views | a test, on demand |
 | `absurd_worker` start → `provision_backend` | declared queues + all 5 admin views | worker boot       |
-| `enqueue` (`backends.py:181-205`)           | one declared queue, retries spawn   | **a web request** |
+| `enqueue` (`backends.py:181-207`)           | one declared queue, retries spawn   | **a web request** |
 
 Last two are self-heal, from [#13](https://github.com/lincolnloop/django-absurd/pull/13)
 (2026-06-24). That design locked "both seams auto-create, always on, no opt-out" on a
@@ -22,18 +23,19 @@ stated constraint:
 
 Second sentence false. `ensure_queue_tables` is `CREATE TABLE IF NOT EXISTS`, which
 Postgres documents as not race-free — concurrent FIRST creation collides on a catalog
-unique index. #195 proved it in the view half (`pg_type_typname_nsp_index`, 9 of 12
-concurrent calls). Enqueue half is the same race, still unguarded: N web containers
-enqueueing to a declared-but-unprovisioned queue collide, and the `IntegrityError`
-surfaces out of a request.
+unique index. #195 proved it in the view half: 74 failures of 100 concurrent calls at 4
+processes, 39 of 80 at 2. Enqueue half is the same race, still unguarded (`create_queue`
+at `backends.py:195` sits outside `lock_provisioning`): N web containers enqueueing to a
+declared-but-unprovisioned queue collide, and the `IntegrityError` surfaces out of a
+request.
 
 Three further facts, all verified:
 
-- **Upstream does not self-heal.** Probed against a live Absurd schema: `spawn_task` and
-  `claim_task` on a missing queue both raise
-  `UndefinedTable: relation "absurd.t_<queue>" does not exist`. `create_queue` is a
-  separate explicit call; the SDK worker never invokes it. Auto-create is entirely a
-  django-absurd layer.
+- **Upstream does not self-heal.** `spawn_task` and `claim_task` build dynamic SQL
+  against `'t_' || p_queue_name` and raise
+  `UndefinedTable: relation "absurd.t_<queue>" does not exist` on a missing queue
+  (probed live; pinned SQL corroborates). `create_queue` is a separate explicit call the
+  SDK never invokes implicitly. Auto-create is entirely a django-absurd layer.
 - **Self-heal wants DDL rights in a web request.** Enqueue's `create_queue` needs
   `CREATE` on the `absurd` schema at request time. Prod web roles are commonly DML-only
   — the same anti-correlation that got admin read-path self-heal dropped. Here it is the
@@ -45,9 +47,11 @@ Three further facts, all verified:
   not complementary. The project's founding position
   (`docs/superpowers/specs/2026-06-18-queue-models-design.md`, initial commit) was
   explicit-only: "All mutation happens through an explicit management command — NO
-  `migrate`/`post_migrate`/`ready()` magic. A system check tells you when to run the
-  command." #13 overrode it AND deleted that check as collateral (W001 dropped, W002
-  narrowed to storage_mode drift), on the premise disproved above.
+  `migrate`/`post_migrate`/`ready()` magic. `migrate` only migrates. A system check
+  tells you when to run the command." #13 overrode it and removed that check — W002
+  narrowed to storage_mode drift because auto-create healed the missing-queue case, and
+  W001 dropped on the separate ground that schema-absence is a runtime error rather than
+  a deploy warning.
 
 ## Ship
 
@@ -60,65 +64,137 @@ Provisioning is a deploy step. Runtime paths classify and refuse.
 classifying, drops the create-and-retry:
 
 - undeclared queue → `QueueNotDeclaredError` (unchanged)
-- schema absent → `SchemaNotInstalledError` (unchanged)
-- declared, schema present, missing queue table → `QueueNotProvisionedError`
+- `InvalidSchemaName`/`UndefinedFunction` → `SchemaNotInstalledError`
+- `UndefinedTable` naming one of this queue's own tables → `QueueNotProvisionedError`
+- anything else → re-raise untouched
 
-Third case reuses `names_a_queue_table` so an unrelated `UndefinedTable` from inside
-`spawn_task` re-raises untouched, same discipline as `worker.drain_queue` and
-`events.emit_event`. `QueueNotProvisionedError`'s message already names the fix
-(`Run: manage.py absurd_sync_queues`).
+Schema-absence classification MOVES. Today it is detected by the create-and-retry
+failing (`backends.py:194-200`); with the create gone it must read off the ORIGINAL
+spawn exception. Same outcomes, new mechanism, so its tests change too.
+
+`UndefinedTable` case reuses `names_a_queue_table`, the discipline `drain_queue` and
+`events.emit_event` already follow. `QueueNotProvisionedError`'s message already names
+the fix (`Run: manage.py absurd_sync_queues`).
 
 Savepoint stays: `spawn` still runs inside `transaction.atomic(savepoint=True)` so a
 failed enqueue leaves an enclosing atomic usable. The retry spawn goes with the create.
 
-### Worker start stops provisioning
+### Worker start stops provisioning, and regains a startup guard
 
-`absurd_worker.handle` drops `provision_backend` + `report_sync_result`. Claim path
-already raises `QueueNotProvisionedError` (`worker.py:168`), and the command base
-translates it to `CommandError` (it is in `CONFIGURATION_ERRORS`), so an operator gets
-one clean line naming the command to run.
+`absurd_worker.handle` drops `provision_backend` + `report_sync_result`.
 
-Loses the view rebuild on worker boot. Acceptable: views are admin-only, and both
-remaining provisioners rebuild the full catalog.
+That alone is NOT enough, and the naive version regresses the operator experience. The
+live worker path (`run_worker` → `arun_worker` → `run_blocking_worker`) carries no
+`UndefinedTable` handling: the `QueueNotProvisionedError` translation at `worker.py:168`
+belongs to `drain_queue`, the in-process test-tooling entry point, not to the CLI. The
+only guard on the live path is `aworker_client`'s schema probe (`worker.py:289-296`),
+and its `list_queues()` succeeds whenever the schema exists — including when the served
+queue's tables do not. A raw `psycopg.errors.UndefinedTable` is not in
+`CONFIGURATION_ERRORS`, so without new work the operator gets an untranslated traceback
+out of the claim loop.
+
+So restore the guard #13 deleted, retyped. #13's spec says outright: "`aworker_client`:
+DELETE the `if queue not in provisioned: raise ImproperlyConfigured` block. Queue
+guaranteed to exist by the time the async client runs (command reconciled first)." That
+premise dies with worker provisioning, so the block comes back beside the existing
+schema probe, raising `QueueNotProvisionedError` instead of `ImproperlyConfigured`. It
+costs no extra query — `list_queues()` is already awaited there — and it fires before
+the worker announces itself, so the command base turns it into one clean `CommandError`.
+
+Residual, accepted: `list_queues` reads catalog rows, so a row-present/tables-absent
+queue still reaches the claim loop and raises raw `UndefinedTable`. See the reconcile
+fix below, which is what makes that state recoverable at all.
+
+Losing the view rebuild on worker boot is fine: views are admin-only (`get_result` reads
+the raw per-queue tables, not the union views), and both command-side provisioners
+rebuild the full catalog.
 
 Note the worker seam had already drifted past what #13 authorized — spec said reconcile
 the SERVED queue only; #17 widened it to the whole catalog plus views.
 
+### Sync heals what the error promises it heals
+
+`reconcile_queue` calls `create_queue` only when the `Queue` catalog row is absent
+(`queues.py:129-157`); with the row present it reconciles policy and nothing else. So a
+row-present/tables-absent queue — manual drop, partial restore — is healed today ONLY by
+enqueue's unconditional `create_queue`, and after this change by nothing:
+`QueueNotProvisionedError` would send an operator to a command that reports "no
+changes".
+
+Call `create_queue` unconditionally instead. It is idempotent by construction
+(`INSERT … ON CONFLICT DO NOTHING` then `perform ensure_queue_tables`), so it recreates
+missing tables for an existing row and no-ops otherwise. `created` accounting still keys
+off the pre-existing row check, so command output is unchanged. Cost is a handful of
+`IF NOT EXISTS` statements per declared queue, at deploy time only.
+
 ### No queue-state check
 
 The founding spec paired explicit-only provisioning with "a system check tells you when
-to run the command", and #13 deleted that check. Not restoring it, deliberately:
+to run the command", and #13 removed it. Not restoring it, deliberately:
 
 - DB-dependent checks run BEFORE the command that would fix the condition. Verified:
   `migrate` injects `databases=[options["database"]]` into its check kwargs
   (`migrate.py:95`) and `BaseCommand.execute` runs `self.check()` ahead of `handle()`.
   So a "declared queue not provisioned" check fires on every `migrate` that follows
   declaring a queue — moments before `post_migrate` provisions it. An Error would block
-  that `migrate`; a Warning cries wolf. This is the same complaint that retired W001.
+  that `migrate`; a Warning cries wolf. This is half of why W001 was retired as noisy.
 - A warning that routinely fires when nothing is wrong gets added to
   `SILENCED_SYSTEM_CHECKS`, and is then dead in the case it exists for.
-- The condition is already loud at runtime, from three entrypoints, with a message
-  naming the command. A check only buys earliness, and only for projects that run
-  `check --database` rather than the bare `check`.
+- The condition is already reported at runtime with a message naming the command.
 - The founding spec wrote that requirement when NOTHING provisioned automatically —
   `post_migrate` did not exist. It carries the ergonomic load now, so the gap the check
   covered is far narrower than it was.
 
 `query_queue_state` therefore keeps reporting W002 storage-mode drift only, unchanged.
 
+### Test tooling must stop relying on self-heal
+
+The suites are the biggest consumer of the behaviour being deleted. `post_migrate`
+provisions the test database once at creation (`tests/settings.py:61-65`); per-test
+`flush_absurd_state` only TRUNCATEs; `_isolate_queues` (`tests/conftest.py`) hard-drops
+all topology before AND after its test. What repairs the NEXT test today is enqueue
+auto-create, or `utils.start_worker*` provisioning at boot. Both go.
+
+Roughly 95 tests across `tests/core` and `tests/multidb` enqueue or start a worker with
+no provisioning call of their own, so this is a fixture decision, not a per-test edit:
+**`_isolate_queues` re-provisions on teardown** — drop the schema, then put the declared
+set back — so the fixture's contract becomes "hermetic AND leaves a clean baseline"
+rather than "leaves a hole the next test heals by accident". Files that genuinely test
+the unprovisioned state provision or drop explicitly within the test.
+
+Same exposure downstream, and it needs documenting rather than fixing: a project using
+the pytest tooling that drops topology and relies on first-enqueue recreation must call
+`dj_absurd.sync_queues()`; a `--reuse-db` run that declares a NEW queue gets no
+`post_migrate` on later runs, so it needs `--create-db` or that same call.
+`AbsurdTestRuntime.sync_queues`'s docstring ("rarely needed") stops being true.
+
 ### Unchanged
 
 `post_migrate` and `absurd_sync_queues` keep `provision_backend`, and with it
 `lock_provisioning`. Best-effort swallow in the `post_migrate` receiver stays as is.
 
+## Consequences elsewhere, accepted
+
+- **Beat.** `spawn_scheduled` (`scheduler.py:76`) enqueues, and `fire_schedule`
+  (`:176-180`) catches every exception into `logger.exception`. A schedule pointed at an
+  unprovisioned queue currently auto-creates; afterwards it logs the typed error every
+  slot and never runs, while the worker stays up. Loud in the log, invisible in the
+  queue — and the beat loop must keep going for the other schedules, so the swallow
+  stays.
+- **Deferred enqueue.** The `run_after` wrapper's inner enqueue happens inside a worker
+  at due time. An unprovisioned target now burns the wrapper's `max_attempts` and lands
+  FAILED instead of auto-creating. Visible in the admin, which is the right place.
+
 ## Out of scope
 
-- Skipping the view rebuild when nothing changed (deploy-stall hedge). Measured: rebuild
-  is 5-28ms for 1-25 queues, so the only argument was lock exposure, and that is
-  dominated by the admin ORDER BY work.
-- `post_migrate`'s silent swallow. Real (unreachable DB provisions nothing, says
-  nothing) but a separate decision.
-- Anything about admin views' shape or the pg_cron provisioning path.
+- Skipping the view rebuild when nothing changed (deploy-stall hedge). Measured on this
+  branch with a temporary timing test: `rebuild_views` is 4.9ms at one queue and 24.2ms
+  at 25 (min of 5 runs, local Postgres), so the only argument was lock exposure, and
+  that is dominated by the admin ORDER BY work.
+- `post_migrate`'s silent swallow — see the upgrade note, which it makes worse. Separate
+  decision.
+- Anything about admin views' shape or the pg_cron provisioning path (pg_cron is
+  unaffected: its SQL wrapper spawns directly and never had auto-create).
 
 ## Testing
 
@@ -128,40 +204,74 @@ RED first, through real entrypoints.
   the complete message. Assert the queue is still absent afterwards — the point is that
   nothing was created.
 - Enqueue to an undeclared queue still raises `QueueNotDeclaredError`; enqueue against a
-  hidden schema still raises `SchemaNotInstalledError`.
+  hidden schema still raises `SchemaNotInstalledError` (now classified off the spawn
+  exception, so this test is exercising new code).
 - An unrelated `UndefinedTable` raised from inside `spawn_task` propagates as itself,
   not relabelled.
 - Enqueue inside an outer `transaction.atomic` leaves that block usable after the
   refusal (replaces the existing auto-create-under-atomic test).
 - `absurd_worker` against an unprovisioned declared queue exits with `CommandError`
-  carrying the typed message, and creates neither the queue nor the views.
-- Existing `post_migrate` / `absurd_sync_queues` and system-check tests must keep
-  passing untouched — no check changes ship here.
+  carrying the typed message, before any "Started worker" output, and creates neither
+  the queue nor the views.
+- `absurd_sync_queues` recreates the tables of a queue whose catalog row survived but
+  whose tables were dropped, and still reports it as no change.
+- `_isolate_queues` leaves the declared set provisioned after teardown.
+- Existing `post_migrate` / `absurd_sync_queues` and system-check tests keep passing
+  untouched — no check changes ship here.
 
-Tests that assert the removed behaviour and must go or be rewritten:
-`tests/core/test_enqueue.py::test_enqueue_auto_creates_declared_queue_and_runs`,
-`::test_enqueue_auto_create_survives_outer_atomic`,
-`tests/core/test_orm_views.py::test_worker_start_rebuilds_when_it_created_queue`, plus
-the two `tests/core/test_worker.py` sites whose comments lean on enqueue auto-creating
-(`:184`, `:524`).
+Tests asserting the removed behaviour, to delete or rewrite. The list is long because
+the suite currently self-heals through both deleted paths; treat it as a starting
+inventory, not a closed set, and expect order-dependent failures beyond it:
+
+- `tests/core/test_enqueue.py::test_enqueue_auto_creates_declared_queue_and_runs`,
+  `::test_enqueue_auto_create_survives_outer_atomic`.
+- `tests/core/test_worker.py`: `::test_worker_start_provisions_all_declared_queues`
+  (`:282`), the boot-reconcile assertions at `:304` and `:332`, the boot stderr
+  assertion at `:390`, and the enqueue-after-`_isolate_queues` reliance at `:184` and
+  `:211`. `:428`'s comment credits provisioning error translation that will no longer
+  exist; `:524`'s is comment-only.
+- `tests/core/test_orm_views.py::test_worker_start_rebuilds_when_it_created_queue`, and
+  `::test_sync_command_rebuilds_views_with_new_queue` (`:86`), which never calls the
+  command its name claims and passes on in-file ordering.
+- `tests/multidb/test_router.py:74` — enqueue after `_isolate_queues` with no sync.
+- `tests/core/test_absurd_fixture_async.py` (`:30`, `:44`, `:57`) — passes today only
+  because the preceding file's `_isolate_queues` teardown is healed by auto-create.
 
 ## Docs
 
-- `django_absurd/AGENTS.md:757-759` states the removed behaviour outright ("on worker
-  start, by `absurd_sync_queues`, and on first enqueue") — rewrite. `README.md` and the
-  rest of AGENTS.md: `migrate` provisions, `absurd_sync_queues` is the explicit path,
-  run it in the release step if the deploy does not run `migrate`.
-- `docs/web/`: same claim wherever it recurs (`configuration.md`, `admin.md`,
-  `cleanup.md`, `testing.md` all mention `sync_queues`).
-- `examples/`: worker services rely on the app service's `migrate`; confirm each compose
-  still converges (worker restarts until provisioned) and fix the flow docs if they
-  promise auto-create.
+- `django_absurd/AGENTS.md:757-761` states the removed behaviour outright ("on worker
+  start, by `absurd_sync_queues`, and on first enqueue") — rewrite, plus `:906-909` and
+  `:917-918`. `README.md` already promises migrate-provisioning only.
+- `docs/web/workers.md:16` — "On start it provisions every declared queue and rebuilds
+  the admin views" is exactly what stops being true.
+- `docs/web/configuration.md:120-122` — the `QueueNotProvisionedError` raiser list gains
+  enqueue and the worker. `docs/web/testing.md:118` and its `--reuse-db` guidance per
+  the test-tooling section above.
+- `django_absurd/admin.py:146-149` is SOURCE, not docs: the changelist warning offers
+  "(or start a worker on them)", which becomes false. Its message-asserting test changes
+  with it.
+- `django_absurd/queues.py:183-184`'s comment names worker start as a caller.
+- `examples/`: worker services converge via `restart: on-failure` once the app service's
+  `migrate` lands; confirm with a real `docker compose up` on all three rather than by
+  reading. No example doc promises auto-create.
 - `docs/WHY.md`: the durable record. Three decisions have passed through here
-  (explicit-only → self-heal → post_migrate) and none of it was ever captured, which is
-  why this had to be reconstructed from git.
+  (explicit-only → self-heal → post_migrate) and none was ever captured, which is why
+  this had to be reconstructed from git.
 
 ## Upgrade note
 
-Breaking; `feat!`. Deploys that run `migrate` are unaffected — `post_migrate` provisions
-the declared set every time. Exposed case is declaring a queue and deploying without
-`migrate`: add `absurd_sync_queues` to the release step.
+Breaking; `feat!`. A deploy that runs `manage.py migrate` to completion is unaffected —
+`post_migrate` provisions the declared set every time, applied migrations or not.
+
+Three ways to be affected anyway, all worth naming in the release notes:
+
+- Declaring a queue and deploying without `migrate`. Add `absurd_sync_queues` to the
+  release step.
+- Pipelines gated on `migrate --check`: it exits before `post_migrate` fires, and a
+  queue-only change touches no migrations, so the provisioning step is skipped by a
+  pipeline that believes it runs migrate.
+- The `post_migrate` receiver swallows `ImproperlyConfigured`, `OperationalError`,
+  `ProgrammingError` and `SchemaNotInstalledError` silently, so an unreachable database
+  — or a migrate role without `CREATE` on the `absurd` schema — provisions nothing and
+  reports nothing. Worker boot and first enqueue are today's fallbacks for that, and
+  both are being removed.
