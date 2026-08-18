@@ -13,7 +13,7 @@ from django.core.management import call_command
 from django.db import connections
 from django.dispatch import Signal
 
-from django_absurd import queues, worker
+from django_absurd import worker
 from django_absurd.test import open_test_connection
 
 if t.TYPE_CHECKING:
@@ -326,16 +326,3 @@ def connect_receiver(
         yield
     finally:
         signal.disconnect(receiver, sender=sender)
-
-
-def provision_declared_queues() -> None:
-    """Provision every declared queue, as ``migrate`` and ``absurd_sync_queues`` do.
-
-    For a test that varies topology — ``_isolate_queues`` drops the catalog on the way
-    in, and the pytest plugin never re-runs ``migrate`` — so the queue a later enqueue
-    or worker needs has to be asked for here, at the call site, rather than left to a
-    runtime path that recreates it.
-    """
-    backend = queues.get_absurd_backend()
-    if backend is not None:
-        queues.provision_backend(backend)

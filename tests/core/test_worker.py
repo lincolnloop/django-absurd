@@ -173,7 +173,7 @@ def test_task_outside_tasks_py_runs(dj_absurd: AbsurdTestRuntime) -> None:
 
 
 def test_queue_defaults_to_default(
-    capsys: pytest.CaptureFixture[str], settings: Settings
+    capsys: pytest.CaptureFixture[str], dj_absurd: AbsurdTestRuntime, settings: Settings
 ) -> None:
     settings.TASKS = {
         "default": {
@@ -181,7 +181,7 @@ def test_queue_defaults_to_default(
             "QUEUES": ["default"],
         }
     }
-    utils.provision_declared_queues()
+    dj_absurd.sync_queues()  # _isolate_queues dropped the catalog on the way in
     tasks.make_group.enqueue("dflt")
     utils.start_worker_until_done(  # no --queue -> "default"
         lambda: Group.objects.filter(name="dflt").exists()
@@ -210,7 +210,7 @@ def test_worker_rejects_alias_flag(settings: Settings) -> None:
 
 
 def test_worker_uses_single_backend_at_nondefault_alias(
-    capsys: pytest.CaptureFixture[str], settings: Settings
+    capsys: pytest.CaptureFixture[str], dj_absurd: AbsurdTestRuntime, settings: Settings
 ) -> None:
     settings.TASKS = {
         "myabsurd": {
@@ -218,7 +218,7 @@ def test_worker_uses_single_backend_at_nondefault_alias(
             "QUEUES": ["default"],
         }
     }
-    utils.provision_declared_queues()
+    dj_absurd.sync_queues()  # _isolate_queues dropped the catalog on the way in
     utils.start_worker()
     assert "Started worker on queue 'default'." in capsys.readouterr().out
 
