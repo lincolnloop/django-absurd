@@ -9,7 +9,6 @@ from pytest_django import Settings
 
 from django_absurd.backends import get_absurd_backends
 from django_absurd.routers import AbsurdRouter
-from tests import utils
 from tests.utils import make_tasks_settings
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -37,56 +36,21 @@ def run_absurd_check(
     return cap.out + cap.err
 
 
-def test_in_sync_no_warning(
+def test_an_unreachable_database_is_not_reported_as_the_wrong_backend(
     capsys: pytest.CaptureFixture[str],
     settings: Settings,
 ) -> None:
-    settings.TASKS = build_tasks_setting({"synced": {}})
-    call_command("absurd_sync_queues")
-    out = run_absurd_check(capsys, databases=["default"])
-    assert (
-        "django-absurd: declared queues are out of sync with the database." not in out
-    )
-
-
-def test_db_unreachable_is_silent(
-    capsys: pytest.CaptureFixture[str],
-    settings: Settings,
-) -> None:
+    # A database that cannot be connected to at all says nothing about the backend
+    # class, so validate_backend's OperationalError must not be read as E001.
     settings.TASKS = build_tasks_setting({"a": {}})
     real_name = settings.DATABASES["default"]["NAME"]
     settings.DATABASES["default"]["NAME"] = "absurd_nope_missing_db"
     del connections["default"]
     try:
-        out = run_absurd_check(capsys, databases=["default"])
-        assert (
-            "django-absurd: declared queues are out of sync with the database."
-            not in out
-        )
+        assert "absurd.E001" not in run_absurd_check(capsys)
     finally:
         settings.DATABASES["default"]["NAME"] = real_name
         connections["default"].close()
-
-
-@pytest.mark.parametrize(
-    "after",
-    [
-        {"synced": {}, "missing": {}},
-        {"synced": {"cleanup_limit": 250}},
-        {"synced": {"cleanup_ttl": "60 days"}},
-    ],
-    ids=["missing-queue", "mutable-scalar", "mutable-duration"],
-)
-def test_self_healing_drift_no_longer_warns(
-    capsys: pytest.CaptureFixture[str],
-    settings: Settings,
-    after: dict[str, CreateQueueOptions],
-) -> None:
-    settings.TASKS = build_tasks_setting({"synced": {}})
-    call_command("absurd_sync_queues")
-    settings.TASKS = build_tasks_setting(after)
-    out = run_absurd_check(capsys, databases=["default"])
-    assert "absurd.W002" not in out
 
 
 def test_invalid_policy_modes_error(
@@ -100,7 +64,7 @@ def test_invalid_policy_modes_error(
         {"q": {"storage_mode": "bogus", "detach_mode": "nope"}},
     )
     settings.TASKS = build_tasks_setting(invalid_queues)
-    out = run_absurd_check(capsys, databases=["default"])
+    out = run_absurd_check(capsys)
     assert (
         "django-absurd: invalid per-queue policy options. Queue 'q':"
         " invalid storage_mode 'bogus'." in out
@@ -165,17 +129,6 @@ def test_retention_policy_keys_are_still_accepted(
     assert "absurd.E003" not in run_absurd_check(capsys)
 
 
-def test_schema_absent_check_is_silent(
-    capsys: pytest.CaptureFixture[str],
-    settings: Settings,
-) -> None:
-    settings.TASKS = build_tasks_setting({"a": {}})
-    with utils.hide_absurd_schema():
-        out = run_absurd_check(capsys, databases=["default"])
-    assert "absurd.W001" not in out
-    assert "absurd.W002" not in out
-
-
 @pytest.mark.django_db(databases=["default", "sqlite"])
 def test_check_errors_on_wrong_backend(
     capsys: pytest.CaptureFixture[str],
@@ -212,16 +165,6 @@ def test_a_router_instance_satisfies_the_router_check(
     settings.TASKS = build_tasks_setting({"x": {}}, database="absurd")
     settings.DATABASE_ROUTERS = [AbsurdRouter()]
     assert "absurd.E005" not in run_absurd_check(capsys)
-
-
-def test_queue_state_check_is_quiet_without_an_absurd_backend(
-    capsys: pytest.CaptureFixture[str],
-    settings: Settings,
-) -> None:
-    settings.TASKS = {
-        "default": {"BACKEND": "django.tasks.backends.immediate.ImmediateBackend"}
-    }
-    assert "absurd.W002" not in run_absurd_check(capsys, databases=["default"])
 
 
 def test_check_errors_when_router_missing(
@@ -307,7 +250,7 @@ def test_queues_option_as_a_list_errors(
             "OPTIONS": {"QUEUES": ["a"]},
         }
     }
-    out = run_absurd_check(capsys, databases=["default"])
+    out = run_absurd_check(capsys)
     assert "absurd.E014" in out
     assert (
         "django-absurd: OPTIONS['QUEUES'] must be a mapping of queue name to"
@@ -346,9 +289,7 @@ def test_single_absurd_backend_no_e004(
     settings: Settings,
 ) -> None:
     settings.TASKS = build_tasks_setting({"q": {}})
-    assert "more than one Absurd backend" not in run_absurd_check(
-        capsys, databases=["default"]
-    )
+    assert "more than one Absurd backend" not in run_absurd_check(capsys)
 
 
 def test_two_absurd_backends_distinct_db_error(
@@ -383,35 +324,13 @@ def test_two_absurd_backends_same_db_error(
         "a": {"BACKEND": ABSURD, "OPTIONS": {"QUEUES": {}}},
         "b": {"BACKEND": ABSURD, "OPTIONS": {"QUEUES": {}}},
     }
-    out = run_absurd_check(capsys, databases=["default"])
+    out = run_absurd_check(capsys)
     assert "absurd.E004" in out
     assert "django-absurd: more than one Absurd backend is configured." in out
     assert (
         "django-absurd uses a single Absurd backend per project"
         " — configure exactly one AbsurdBackend in TASKS." in out
     )
-
-
-def test_plain_check_skips_db_state(
-    capsys: pytest.CaptureFixture[str],
-    settings: Settings,
-) -> None:
-    settings.TASKS = build_tasks_setting({"synced": {}})
-    call_command("absurd_sync_queues")
-    settings.TASKS = build_tasks_setting({"synced": {}, "missing": {}})
-    out = run_absurd_check(capsys)  # plain `check`, no --database
-    assert "absurd.W002" not in out
-
-
-def test_check_with_database_runs_db_state(
-    capsys: pytest.CaptureFixture[str],
-    settings: Settings,
-) -> None:
-    settings.TASKS = build_tasks_setting({"synced": {}})
-    call_command("absurd_sync_queues")
-    settings.TASKS = build_tasks_setting({"synced": {}, "missing": {}})
-    out = run_absurd_check(capsys, databases=["default"])
-    assert "absurd.W002" not in out
 
 
 E009_MSG = "django-absurd: OPTIONS['DEFAULT_MAX_ATTEMPTS'] must be an integer >= 1."

@@ -64,7 +64,6 @@ def provision_queues_after_migrate(
             lines = [f"  Created {name!r}" for name in result.created]
             lines += [f"  Reconciled {name!r}" for name in result.reconciled]
             lines += [f"  Repaired {name!r}" for name in result.repaired]
-            lines += [style.WARNING(f"  {w}") for w in result.storage_warnings]
         if lines and verbosity >= 1 and stdout is not None:
             heading = f"Provisioning Absurd queues ({alias}):"
             stdout.write(style.MIGRATE_HEADING(heading))

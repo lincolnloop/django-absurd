@@ -61,11 +61,10 @@ def test_flush_absurd_state_drops_schema_when_requested() -> None:
 def test_flush_absurd_state_is_a_noop_on_an_unmigrated_schema(
     settings: Settings,
 ) -> None:
-    # Mirrors tests/core/test_checks.py::test_db_unreachable_is_silent's real
-    # unreachable-DB technique: mutating settings.DATABASES alone is not enough — the
-    # existing psycopg connection stays open and gets reused. del connections["default"]
-    # forces the NEXT use to actually attempt (and fail) a fresh connect against the
-    # bogus name, which is what makes OperationalError/ProgrammingError reachable here.
+    # Mutating settings.DATABASES alone is not enough — the existing psycopg connection
+    # stays open and gets reused. del connections["default"] forces the NEXT use to
+    # actually attempt (and fail) a fresh connect against the bogus name, which is what
+    # makes OperationalError/ProgrammingError reachable here.
     real_name = settings.DATABASES["default"]["NAME"]
     settings.DATABASES["default"]["NAME"] = "absurd_nope_missing_db"
     del connections["default"]

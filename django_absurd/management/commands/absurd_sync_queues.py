@@ -33,7 +33,6 @@ class Command(AbsurdCommand):
             raise BackendNotConfiguredError
         dry_run = options["check"]
         crate_out = console.build_glyph_prefix(self.stdout, "🗃️")
-        crate_err = console.build_glyph_prefix(self.stderr, "🗃️")
         pending = False
         for alias, backend in backends.items():
             alias_label = f"[{alias}] " if len(backends) > 1 else ""
@@ -44,7 +43,6 @@ class Command(AbsurdCommand):
             self.report_sync_result(
                 result,
                 stdout_prefix=f"{crate_out}{alias_label}",
-                stderr_prefix=f"{crate_err}{alias_label}",
                 empty_message="No queues to sync.",
                 dry_run=dry_run,
             )
@@ -56,7 +54,6 @@ class Command(AbsurdCommand):
         result: SyncResult,
         *,
         stdout_prefix: str,
-        stderr_prefix: str,
         empty_message: str,
         dry_run: bool = False,
     ) -> None:
@@ -77,5 +74,3 @@ class Command(AbsurdCommand):
             )
         if not result.created and not result.reconciled and not result.repaired:
             self.stdout.write(f"{stdout_prefix}{empty_message}")
-        for warning in result.storage_warnings:
-            self.stderr.write(self.style.WARNING(f"{stderr_prefix}{warning}"))

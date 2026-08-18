@@ -6,11 +6,11 @@ from absurd_sdk import CreateQueueOptions, QueueDetachMode, QueueStorageMode
 from django.apps import AppConfig, apps
 from django.conf import settings
 from django.contrib.admin.sites import AdminSite
-from django.core.checks import CheckMessage, Error, Tags, register
+from django.core.checks import CheckMessage, Error, register
 from django.core.checks import Warning as DjangoWarning
 from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.db import router as db_router
-from django.db.utils import OperationalError, ProgrammingError
+from django.db.utils import OperationalError
 from django.utils.connection import ConnectionDoesNotExist
 from django.utils.module_loading import import_string
 
@@ -21,7 +21,6 @@ from django_absurd.backends import (
     get_declared_queues,
 )
 from django_absurd.connection import BACKEND_ERROR_MESSAGE, validate_backend
-from django_absurd.models import Queue
 from django_absurd.queues import get_absurd_backend, get_absurd_database
 from django_absurd.routers import AbsurdRouter
 from django_absurd.validators import (
@@ -32,11 +31,6 @@ from django_absurd.validators import (
     validate_task_path,
 )
 
-W002_MSG = (
-    "django-absurd: a queue's declared storage_mode differs from the database"
-    " (storage_mode is immutable)."
-)
-W002_HINT = "Recreate the queue, or revert the declared storage_mode."
 E005_MSG = (
     "django-absurd: a non-default DATABASE is configured but AbsurdRouter is not in"
     " DATABASE_ROUTERS."
@@ -448,34 +442,6 @@ def check_absurd_config(
     return errors
 
 
-@register(Tags.database, "absurd")
-def check_absurd_queue_state(
-    *,
-    app_configs: Sequence[AppConfig] | None,
-    databases: Sequence[str] | None,
-    **kwargs: t.Any,
-) -> list[CheckMessage]:
-    # Django 6.0 runs a Tags.database check with databases=None; 6.1 skips it
-    # instead. Either way there is nothing to check against.
-    if not databases:
-        return []
-    backends = get_absurd_backends()
-    if not backends:
-        return []
-
-    errors: list[CheckMessage] = []
-    for backend in backends.values():
-        db = get_absurd_database(backend)
-        if db not in databases:
-            continue
-        declared = get_declared_queues(backend)
-        if not declared:
-            continue
-        errors.extend(query_queue_state(db, declared))
-
-    return errors
-
-
 def declares_queues_as_a_mapping(backend: AbsurdBackend) -> bool:
     return isinstance(backend.options.get("QUEUES", {}), Mapping)
 
@@ -551,32 +517,3 @@ def validate_queue_policy(
 
 def router_installed() -> bool:
     return any(isinstance(router, AbsurdRouter) for router in db_router.routers)
-
-
-def query_queue_state(
-    alias: str, declared: dict[str, CreateQueueOptions]
-) -> list[CheckMessage]:
-    try:
-        actual = {
-            q.queue_name: q
-            for q in Queue.objects.using(alias).filter(queue_name__in=declared)
-        }
-    except (OperationalError, ProgrammingError):
-        return []
-
-    drift = [
-        name
-        for name in declared
-        if name in actual
-        and declared[name].get("storage_mode")
-        and declared[name]["storage_mode"] != actual[name].storage_mode
-    ]
-    if drift:
-        return [
-            DjangoWarning(
-                W002_MSG,
-                hint=f"{W002_HINT} Affected: {', '.join(drift)}",
-                id="absurd.W002",
-            )
-        ]
-    return []
