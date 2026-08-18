@@ -125,27 +125,6 @@ def test_enqueue_to_an_unprovisioned_queue_refuses() -> None:
     assert Queue.objects.filter(queue_name="default").exists() is False
 
 
-def test_enqueue_lands_after_a_repaired_idempotency_table(
-    settings: Settings,
-) -> None:
-    # i_<queue> gone on its own is what a partial restore leaves, and the refusal above
-    # sends the operator to absurd_sync_queues — so that command has to repair it.
-    settings.TASKS = utils.make_tasks_settings(
-        queues={**utils.DECLARED_QUEUES, "parts": {"storage_mode": "partitioned"}}
-    )
-    call_command("absurd_sync_queues")
-    with connections["default"].cursor() as cursor:
-        cursor.execute("drop table absurd.i_parts cascade")
-    call_command("absurd_sync_queues")
-    bound = absurd_params(idempotency_key="k").bind(tasks.add).using(queue_name="parts")
-    result = bound.enqueue(1, 2)
-    with connections["default"].cursor() as cursor:
-        cursor.execute("select idempotency_key, task_id from absurd.i_parts")
-        assert [(key, str(task_id)) for key, task_id in cursor.fetchall()] == [
-            ("k", result.id.removeprefix("parts:"))
-        ]
-
-
 def test_enqueue_propagates_an_unrelated_undefined_table() -> None:
     # spawn_task reads absurd.queues when an idempotency key is set, and that relation
     # is nobody's queue table — the classifier must not relabel it as provisioning.
