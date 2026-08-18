@@ -2,7 +2,7 @@ import typing as t
 from collections.abc import Mapping, Sequence
 
 import croniter
-from absurd_sdk import CreateQueueOptions, QueueDetachMode, QueueStorageMode
+from absurd_sdk import CreateQueueOptions, QueueStorageMode
 from django.apps import AppConfig, apps
 from django.conf import settings
 from django.contrib.admin.sites import AdminSite
@@ -43,10 +43,7 @@ E002_MSG = (
 )
 E002_HINT = "Remove either the top-level QUEUES key or OPTIONS['QUEUES'] — not both."
 E003_MSG = "django-absurd: invalid per-queue policy options."
-E003_HINT = (
-    "Remove unknown keys and ensure storage_mode/detach_mode values"
-    " are valid SDK literals."
-)
+E003_HINT = "Remove unknown keys; 'unpartitioned' is the only accepted storage_mode."
 E003_HINT_MAPPING = (
     "Map each queue name to its policy dict — {} for the Absurd defaults."
 )
@@ -68,7 +65,6 @@ E004_HINT = (
 
 VALID_QUEUE_OPTION_KEYS = set(CreateQueueOptions.__annotations__)
 VALID_STORAGE_MODES = set(t.get_args(QueueStorageMode))
-VALID_DETACH_MODES = set(t.get_args(QueueDetachMode))
 
 E006_ENABLE_ADMIN_MSG = "django-absurd: OPTIONS['ENABLE_ADMIN'] must be a bool."
 E006_ENABLE_ADMIN_HINT = "Set ENABLE_ADMIN to True or False."
@@ -474,16 +470,6 @@ def validate_queue_policy(
             Error(
                 f"{E003_MSG} Queue '{queue_name}':"
                 f" invalid storage_mode '{storage_mode_value}'.",
-                hint=E003_HINT,
-                id="absurd.E003",
-            )
-        )
-    if "detach_mode" in policy and policy["detach_mode"] not in VALID_DETACH_MODES:
-        detach_mode_value = policy["detach_mode"]
-        errors.append(
-            Error(
-                f"{E003_MSG} Queue '{queue_name}':"
-                f" invalid detach_mode '{detach_mode_value}'.",
                 hint=E003_HINT,
                 id="absurd.E003",
             )

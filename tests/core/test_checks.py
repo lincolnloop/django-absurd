@@ -57,21 +57,17 @@ def test_invalid_policy_modes_error(
     capsys: pytest.CaptureFixture[str],
     settings: Settings,
 ) -> None:
-    # Deliberately invalid values, to exercise the check's own rejection at
+    # Deliberately invalid value, to exercise the check's own rejection at
     # runtime — CreateQueueOptions' Literal fields don't allow this statically.
     invalid_queues = t.cast(
         "dict[str, CreateQueueOptions]",
-        {"q": {"storage_mode": "bogus", "detach_mode": "nope"}},
+        {"q": {"storage_mode": "bogus"}},
     )
     settings.TASKS = build_tasks_setting(invalid_queues)
     out = run_absurd_check(capsys)
     assert (
         "django-absurd: invalid per-queue policy options. Queue 'q':"
         " invalid storage_mode 'bogus'." in out
-    )
-    assert (
-        "django-absurd: invalid per-queue policy options. Queue 'q':"
-        " invalid detach_mode 'nope'." in out
     )
 
 

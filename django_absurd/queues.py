@@ -53,8 +53,8 @@ class SyncResult:
 
 @dataclass
 class QueuePlan:
-    """What one declared queue needs — carrying the arguments that would satisfy it, not
-    just flags, so the write path applies a decision it never re-derives.
+    """What one declared queue needs — the write path applies this decision rather than
+    re-deriving it.
     """
 
     queue_name: str
