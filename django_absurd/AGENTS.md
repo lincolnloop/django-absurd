@@ -1184,10 +1184,10 @@ which is where [retention](#retention-knobs) lives. Omit both to use just `"defa
 
 - Undeclared queue names are rejected, never silently created. Queue creation is
   additive: nothing ever drops a queue you removed from config.
-- A queue's `storage_mode` is immutable once it exists; a declared change is reported as
-  `absurd.W002` and not applied.
-- `storage_mode="partitioned"` is declarable but **experimental — not tested yet**, with
-  no automated partition lifecycle. Don't rely on it in production.
+- **`storage_mode="partitioned"` is refused as a configuration error** (`absurd.E003`),
+  and so are its partition-only policy keys (`partition_lookahead`,
+  `partition_lookback`, `detach_mode`, `detach_min_age`). Support is tracked at
+  https://github.com/lincolnloop/django-absurd/issues/216.
 
 → [Absurd: storage](https://earendil-works.github.io/absurd/storage/).
 
@@ -1232,7 +1232,7 @@ than silencing it.
 | ------------- | --------------------------------------------------------------------------------------------------------------------- |
 | `absurd.E001` | Backend or database misconfiguration                                                                                  |
 | `absurd.E002` | `QUEUES` declared in both the top level and `OPTIONS`                                                                 |
-| `absurd.E003` | Invalid per-queue policy options                                                                                      |
+| `absurd.E003` | Invalid per-queue policy options — also raised for a `partitioned` storage_mode or a partition-only key               |
 | `absurd.E004` | More than one Absurd backend configured; exactly one per project is supported                                         |
 | `absurd.E005` | `AbsurdRouter` missing from `DATABASE_ROUTERS`                                                                        |
 | `absurd.E006` | `ENABLE_ADMIN` is not a bool, or `ADMIN_SITE` does not resolve to `AdminSite` instances                               |
@@ -1243,7 +1243,6 @@ than silencing it.
 | `absurd.E012` | The central `cron.database_name` database is unreachable or missing `pg_cron` — see [operator setup](#operator-setup) |
 | `absurd.E013` | `"django_absurd.pg_cron"` installed with no `AbsurdBackend` configured                                                |
 | `absurd.E014` | `OPTIONS["QUEUES"]` is not a mapping of queue name to policy options                                                  |
-| `absurd.W002` | (Warning) A queue's declared `storage_mode` differs from the database                                                 |
 | `absurd.W003` | (Warning) `django_absurd.pg_cron` ordered before `django_absurd` in `INSTALLED_APPS`                                  |
 
 ### Exceptions
