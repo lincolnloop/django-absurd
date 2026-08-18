@@ -10,7 +10,6 @@ from django_absurd.exceptions import (
     QueueNotProvisionedError,
     SchemaNotInstalledError,
 )
-from django_absurd.queues import SyncResult
 
 # Each of these five owns a message that already names the fix (an add/run/configure
 # instruction), so translating it into an untyped CommandError with no traceback loses
@@ -55,25 +54,3 @@ class AbsurdCommand(BaseCommand):
             return super().execute(*args, **options)
         except CONFIGURATION_ERRORS as exc:
             raise CommandError(str(exc)) from exc
-
-
-class AbsurdReportCommand(AbsurdCommand):
-    """Base for commands that report a queue SyncResult to stdout/stderr."""
-
-    def report_sync_result(
-        self,
-        result: SyncResult,
-        stdout_prefix: str = "",
-        stderr_prefix: str = "",
-        empty_message: str | None = None,
-    ) -> None:
-        if result.created:
-            self.stdout.write(f"{stdout_prefix}Created: {', '.join(result.created)}")
-        if result.reconciled:
-            self.stdout.write(
-                f"{stdout_prefix}Reconciled: {', '.join(result.reconciled)}"
-            )
-        if empty_message and not result.created and not result.reconciled:
-            self.stdout.write(f"{stdout_prefix}{empty_message}")
-        for warning in result.storage_warnings:
-            self.stderr.write(self.style.WARNING(f"{stderr_prefix}{warning}"))

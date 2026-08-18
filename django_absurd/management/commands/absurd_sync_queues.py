@@ -1,10 +1,10 @@
 from django_absurd import console
 from django_absurd.backends import get_absurd_backends
-from django_absurd.management.base import AbsurdReportCommand
-from django_absurd.queues import provision_backend
+from django_absurd.management.base import AbsurdCommand
+from django_absurd.queues import SyncResult, provision_backend
 
 
-class Command(AbsurdReportCommand):
+class Command(AbsurdCommand):
     help = "Create and reconcile queues declared on each Absurd task backend."
 
     def handle(self, *args: object, **options: object) -> None:
@@ -22,3 +22,22 @@ class Command(AbsurdReportCommand):
                 stderr_prefix=f"{crate_err}{alias_label}",
                 empty_message="No queues to sync.",
             )
+
+    def report_sync_result(
+        self,
+        result: SyncResult,
+        *,
+        stdout_prefix: str,
+        stderr_prefix: str,
+        empty_message: str,
+    ) -> None:
+        if result.created:
+            self.stdout.write(f"{stdout_prefix}Created: {', '.join(result.created)}")
+        if result.reconciled:
+            self.stdout.write(
+                f"{stdout_prefix}Reconciled: {', '.join(result.reconciled)}"
+            )
+        if not result.created and not result.reconciled:
+            self.stdout.write(f"{stdout_prefix}{empty_message}")
+        for warning in result.storage_warnings:
+            self.stderr.write(self.style.WARNING(f"{stderr_prefix}{warning}"))

@@ -1258,13 +1258,12 @@ except DjangoAbsurdError:
   `InvalidTask`.
 - `QueueNotProvisionedError` reaches every entry point alike — `enqueue`, `emit_event`,
   `absurd_worker` at start, `dj_absurd.drain` — because none of them provision.
-- Every `absurd_*` management command inherits `AbsurdCommand` (or its
-  `AbsurdReportCommand` subclass), which turns a fixed set of configuration failures —
-  `ImproperlyConfigured`, `BackendNotConfiguredError`, `SchemaNotInstalledError`,
-  `QueueNotDeclaredError`, `QueueNotProvisionedError` — into a clean `CommandError`;
-  `--traceback` still shows the original chain. Every other error, including any other
-  `DjangoAbsurdError` subclass, keeps its own type and full traceback — it signals a
-  bug, not a configuration mistake.
+- Every `absurd_*` management command inherits `AbsurdCommand`, which turns a fixed set
+  of configuration failures — `ImproperlyConfigured`, `BackendNotConfiguredError`,
+  `SchemaNotInstalledError`, `QueueNotDeclaredError`, `QueueNotProvisionedError` — into
+  a clean `CommandError`; `--traceback` still shows the original chain. Every other
+  error, including any other `DjangoAbsurdError` subclass, keeps its own type and full
+  traceback — it signals a bug, not a configuration mistake.
 - The hierarchy is not total. Catch `DjangoAbsurdError` for django-absurd's own typed
   errors; other failures — config validation, clock misuse — still raise plain
   `ImproperlyConfigured` / `RuntimeError` / `TypeError`.
