@@ -162,6 +162,10 @@ def test_declaring_a_partition_only_policy_key_is_an_error(
     out = run_absurd_check(capsys)
     assert "absurd.E003" in out
     assert f"Queue 'q' declares '{key}'" in out
+    assert (
+        "Remove this key. Track partitioned support at"
+        " https://github.com/lincolnloop/django-absurd/issues/216." in out
+    )
 
 
 def test_retention_policy_keys_are_still_accepted(

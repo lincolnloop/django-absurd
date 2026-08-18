@@ -62,6 +62,10 @@ E003_HINT_PARTITIONED = (
     "Declare storage_mode 'unpartitioned', or omit it. Track partitioned support at"
     " https://github.com/lincolnloop/django-absurd/issues/216."
 )
+E003_HINT_PARTITION_ONLY_KEY = (
+    "Remove this key. Track partitioned support at"
+    " https://github.com/lincolnloop/django-absurd/issues/216."
+)
 E004_MSG = "django-absurd: more than one Absurd backend is configured."
 E004_HINT = (
     "django-absurd uses a single Absurd backend per project"
@@ -531,7 +535,7 @@ def validate_queue_policy(
         Error(
             f"{E003_MSG_PARTITION_ONLY_KEY} Queue '{queue_name}' declares"
             f" '{key}', which only applies to a partitioned queue.",
-            hint=E003_HINT_PARTITIONED,
+            hint=E003_HINT_PARTITION_ONLY_KEY,
             id="absurd.E003",
         )
         for key in (
