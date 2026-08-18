@@ -156,7 +156,8 @@ including `sleeping`, which `TaskResult.status` can't show.
 | `failure`          | `None` except on a terminal failure (see below)   |
 
 - `task_id` takes a bare uuid or a prefixed `"queue:uuid"`. The prefix wins over
-  `queue`'s default; a `queue=` that disagrees raises `TaskIdQueueMismatchError`.
+  `queue`'s default; a `queue=` that disagrees raises `TaskIdQueueMismatchError`. An
+  unprovisioned queue raises `QueueNotProvisionedError`, same as `drain()`.
 - **This view can't express an in-flight [retry](tasks.md#retries-spawn-options):**
   `attempts` reads `2` before the second attempt runs, `state="sleeping"` covers a
   backoff as well as a durable sleep, and `failure` is `None` mid-backoff. Use

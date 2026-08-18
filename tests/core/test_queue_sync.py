@@ -43,6 +43,22 @@ def table_exists(name: str) -> bool:
         return bool(row[0]) if row else False
 
 
+def list_absent_queue_tables(queue_name: str) -> list[str]:
+    # Spelled out rather than imported from django_absurd.queues: a repair that puts
+    # back only the table the prefix tuple happens to start with has to fail here.
+    return [
+        name
+        for name in (
+            f"t_{queue_name}",
+            f"r_{queue_name}",
+            f"c_{queue_name}",
+            f"e_{queue_name}",
+            f"w_{queue_name}",
+        )
+        if not table_exists(name)
+    ]
+
+
 def test_get_absurd_client_uses_psycopg3_connection() -> None:
     get_absurd_client()
     assert isinstance(connection.connection, psycopg.Connection)
@@ -135,7 +151,9 @@ def test_list_shorthand(settings: Settings) -> None:
     assert Queue.objects.filter(queue_name="alpha").exists()
 
 
-def test_sync_reconciles_changed_option_idempotent(settings: Settings) -> None:
+def test_sync_reconciles_changed_option_idempotent(
+    capsys: pytest.CaptureFixture[str], settings: Settings
+) -> None:
     # Two mutable opts, so the drift scan is exercised both ways: cleanup_limit
     # unchanged (loop continues) and cleanup_ttl changed via parse_interval.
     settings.TASKS = build_tasks_setting(
@@ -145,14 +163,22 @@ def test_sync_reconciles_changed_option_idempotent(settings: Settings) -> None:
     settings.TASKS = build_tasks_setting(
         {"q": {"cleanup_limit": 100, "cleanup_ttl": "60 days"}}
     )
+    capsys.readouterr()
     call_command("absurd_sync_queues")
+    assert capsys.readouterr().out == "🗃️ Reconciled: q\n"
     assert Queue.objects.get(queue_name="q").cleanup_ttl == dt.timedelta(days=60)
     settings.TASKS = build_tasks_setting(
         {"q": {"cleanup_limit": 250, "cleanup_ttl": "60 days"}}
     )
+    capsys.readouterr()
     call_command("absurd_sync_queues")
+    assert capsys.readouterr().out == "🗃️ Reconciled: q\n"
     assert Queue.objects.get(queue_name="q").cleanup_limit == 250
+    capsys.readouterr()
     call_command("absurd_sync_queues")
+    # The report is the only witness of the no-drift direction: set_queue_policy run
+    # unconditionally would leave every column below byte-identical anyway.
+    assert capsys.readouterr().out == "🗃️ No queues to sync.\n"
     assert Queue.objects.get(queue_name="q").cleanup_limit == 250
     assert Queue.objects.get(queue_name="q").cleanup_ttl == dt.timedelta(days=60)
 
@@ -171,11 +197,47 @@ def test_sync_recreates_the_tables_of_a_surviving_catalog_row(
             "drop table absurd.t_partial, absurd.r_partial, absurd.c_partial, "
             "absurd.e_partial, absurd.w_partial cascade"
         )
-    assert not table_exists("t_partial")
+    assert list_absent_queue_tables("partial") == [
+        "t_partial",
+        "r_partial",
+        "c_partial",
+        "e_partial",
+        "w_partial",
+    ]
     capsys.readouterr()
     call_command("absurd_sync_queues")
-    assert table_exists("t_partial")
     assert capsys.readouterr().out == "🗃️ Repaired: partial\n"
+    assert list_absent_queue_tables("partial") == []
+
+
+@pytest.mark.usefixtures("_isolate_queues")
+def test_sync_recreates_the_tables_of_a_surviving_partitioned_catalog_row(
+    capsys: pytest.CaptureFixture[str], settings: Settings
+) -> None:
+    # Unpartitioned is the one mode where handing create_queue the existing
+    # storage_mode decides nothing, so the repair is only really proven here: dropping
+    # the mode would put t_ back as a plain table and the queue would silently stop
+    # being partitioned.
+    settings.TASKS = build_tasks_setting({"partsurv": {"storage_mode": "partitioned"}})
+    call_command("absurd_sync_queues")
+    with connection.cursor() as cur:
+        cur.execute(
+            "drop table absurd.t_partsurv, absurd.r_partsurv, absurd.c_partsurv, "
+            "absurd.e_partsurv, absurd.w_partsurv cascade"
+        )
+    # A partitioned queue's sixth table, which find_missing_queue_tables deliberately
+    # never probes; leaving it keeps the repair driven by the five that are probed.
+    assert table_exists("i_partsurv")
+    capsys.readouterr()
+    call_command("absurd_sync_queues")
+    assert capsys.readouterr().out == "🗃️ Repaired: partsurv\n"
+    assert list_absent_queue_tables("partsurv") == []
+    assert Queue.objects.get(queue_name="partsurv").storage_mode == "partitioned"
+    with connection.cursor() as cur:
+        cur.execute(
+            "select relkind from pg_class where oid = 'absurd.t_partsurv'::regclass"
+        )
+        assert cur.fetchone() == ("p",)
 
 
 @pytest.mark.usefixtures("_isolate_queues")

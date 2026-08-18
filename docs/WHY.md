@@ -98,9 +98,9 @@ reports — `migrate` injects its target database into the check kwargs, and the
 base runs checks ahead of its own handler — so "a declared queue is not provisioned"
 would fire on every `migrate` that follows declaring a queue, moments before
 `post_migrate` provisions it. An error would block that `migrate`; a warning would cry
-wolf, get silenced project-wide, and then be dead in the one case it exists for. That is
-half of why the original warning was retired as noisy. The founding requirement was
-written when nothing provisioned automatically; `post_migrate` carries that load now.
+wolf, get silenced project-wide, and then be dead in the one case it exists for — the
+trap the schema-absent warning fell into. The founding requirement was written when
+nothing provisioned automatically; `post_migrate` carries that load now.
 
 ## Tasks, enqueue & the worker
 

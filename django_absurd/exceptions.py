@@ -55,8 +55,12 @@ class QueueNotDeclaredError(DjangoAbsurdError):
 class QueueNotProvisionedError(DjangoAbsurdError):
     """A queue is declared but its Absurd table has not been provisioned.
 
-    Raised by ``worker.drain_queue`` and ``events.emit_event`` when a claim/emit hits
-    a missing relation that names one of the queue's own Absurd tables.
+    Raised by ``AbsurdBackend.enqueue``, ``worker.drain_queue``, ``worker.run_worker``,
+    ``events.emit_event`` and ``AbsurdTestRuntime.get_result`` when a statement hits a
+    missing relation that names one of the queue's own Absurd tables. ``aworker_client``
+    also raises it up front, from the queue's absence from ``list_queues()`` — a catalog
+    check, so a queue whose row outlived its tables passes that one and reaches this
+    error through ``run_worker``'s translation instead, once a claim runs.
     """
 
     def __init__(self, queue: str) -> None:

@@ -759,7 +759,7 @@ python manage.py migrate
 Absurd's schema ships as a Django migration, and `post_migrate` provisions the declared
 queues and rebuilds the admin views on every `migrate`, applied migrations or not.
 `manage.py absurd_sync_queues` does the same on demand — and repairs a queue whose
-catalog row outlived its tables. Those two, plus
+catalog row outlived its tables, reporting `Repaired: <queue>`. Those two, plus
 [`dj_absurd.sync_queues()`](#fixture-api) in tests, are the only things that provision:
 enqueuing and starting a worker never create a queue. Only declared queues are ever
 created, and an undeclared name is rejected. The SQL comes from the pinned Absurd
@@ -908,8 +908,8 @@ synthesized `queue` column. `Queue` is the queue catalog, keyed by `queue_name`.
   `queue=` prunes to a single per-queue table while an unfiltered query — ordering by
   `enqueue_at`, or filtering only on `state` — scans every queue's table.
 - They are backed by Postgres views rebuilt by `migrate` and `absurd_sync_queues`. A
-  queue declared since the later of those is absent from results until the next one
-  runs. Dropping a queue removes its view.
+  queue created outside django-absurd — `absurdctl`, a direct SDK call — is absent from
+  results until the next of those runs. Dropping a queue removes its view.
 
 ### The admin
 
@@ -917,8 +917,9 @@ With `django.contrib.admin` installed, django-absurd registers read-only pages f
 models above. No configuration. Turn them off with [`ENABLE_ADMIN`](#backend-options),
 or register elsewhere with `ADMIN_SITE`.
 
-- A queue declared since the last `migrate` is not yet in the views, so its tasks do not
-  appear — run `absurd_sync_queues`.
+- A queue created outside django-absurd — `absurdctl`, a direct SDK call — is not in the
+  views, so its tasks do not appear. The changelist says so and names the queues;
+  `absurd_sync_queues` indexes them.
 - **Non-default `DATABASE`:** the synthesized models read from the Absurd database, but
   Django's own `LogEntry`, session, and `ContentType` tables must still exist in
   `"default"` — run `migrate` on it too.
@@ -1257,7 +1258,8 @@ except DjangoAbsurdError:
   unset; with `QUEUES` configured, a typo'd name is rejected earlier as Django's own
   `InvalidTask`.
 - `QueueNotProvisionedError` reaches every entry point alike — `enqueue`, `emit_event`,
-  `absurd_worker` at start, `dj_absurd.drain` — because none of them provision.
+  `absurd_worker` at start, `dj_absurd.drain`, `dj_absurd.get_result` — because none of
+  them provision.
 - Every `absurd_*` management command inherits `AbsurdCommand`, which turns a fixed set
   of configuration failures — `ImproperlyConfigured`, `BackendNotConfiguredError`,
   `SchemaNotInstalledError`, `QueueNotDeclaredError`, `QueueNotProvisionedError` — into

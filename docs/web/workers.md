@@ -13,10 +13,12 @@ python manage.py absurd_worker --queue reports --concurrency 4
 ```
 
 One worker runs both sync and `async def` tasks — async on an event loop, sync in a
-thread pool. On start it checks that `--queue` is declared and provisioned, then polls
-for work. It provisions nothing: an unprovisioned queue exits with
-`QueueNotProvisionedError` before the worker prints anything — run `migrate` or
-[`manage.py absurd_sync_queues`](configuration.md#declaring-queues) first.
+thread pool. On start it checks that `--queue` is declared and present in the queue
+catalog, then polls for work. It provisions nothing: a queue that isn't there exits with
+a `CommandError` before the worker prints anything — run `migrate` or
+[`manage.py absurd_sync_queues`](configuration.md#declaring-queues) first. A queue whose
+catalog row outlived its tables passes that check and exits the same way on the first
+claim, after the banner.
 
 | Flag              | Default        | What it does                                                       |
 | ----------------- | -------------- | ------------------------------------------------------------------ |

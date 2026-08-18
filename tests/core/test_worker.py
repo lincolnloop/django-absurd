@@ -293,6 +293,47 @@ def test_worker_refuses_an_unprovisioned_queue(
         assert cur.fetchone() == (0,)
 
 
+@pytest.mark.parametrize(
+    ("entrypoint", "expected_error", "expected_out"),
+    [
+        ("command", CommandError, "🐘 Started worker on queue 'default'.\n"),
+        ("function", QueueNotProvisionedError, ""),
+    ],
+)
+def test_a_half_provisioned_queue_is_refused(
+    capsys: pytest.CaptureFixture[str],
+    entrypoint: str,
+    expected_error: type[Exception],
+    expected_out: str,
+) -> None:
+    # The catalog row outlives its tables, so the boot guard reads the queue as
+    # provisioned and only the claim can tell. The live worker therefore announces
+    # itself first — and then still has to name absurd_sync_queues, not raise a raw
+    # UndefinedTable that restarts it forever under `restart: on-failure`.
+    call_command("absurd_sync_queues")
+    capsys.readouterr()  # drop the sync report; the worker's own output is the subject
+    with connection.cursor() as cur:
+        cur.execute(
+            "drop table absurd.t_default, absurd.r_default, absurd.c_default, "
+            "absurd.e_default, absurd.w_default cascade"
+        )
+
+    def consume_the_queue() -> None:
+        if entrypoint == "command":
+            call_command("absurd_worker", queue="default")
+        else:
+            drain_queue("default")
+
+    with pytest.raises(expected_error) as exc:
+        consume_the_queue()
+    assert str(exc.value) == (
+        "Queue 'default' is declared but its Absurd table is not provisioned. "
+        "Run: manage.py absurd_sync_queues"
+    )
+    assert capsys.readouterr().out == expected_out
+    assert Queue.objects.filter(queue_name="default").exists()
+
+
 def test_worker_command_schema_absent_errors_migrate() -> None:
     # The provision_backend error translation errors before ever
     # reaching the blocking worker loop. Driven through the live-worker helper: a
@@ -388,8 +429,7 @@ def test_undeclared_queue_error_is_also_a_django_absurd_error() -> None:
 def test_drain_queue_on_an_unprovisioned_queue_errors_sync_queues() -> None:
     # Declared but never provisioned (no absurd_sync_queues, and _isolate_queues
     # dropped every queue's tables): drain_queue does not provision, so the missing
-    # table surfaces as the curated error naming the command that fixes it. No
-    # enqueue() here — that one auto-creates the queue it writes to.
+    # table surfaces as the curated error naming the command that fixes it.
     with pytest.raises(QueueNotProvisionedError) as exc:
         drain_queue("default")
 
@@ -399,16 +439,25 @@ def test_drain_queue_on_an_unprovisioned_queue_errors_sync_queues() -> None:
     )
 
 
-def test_drain_queue_does_not_relabel_an_unrelated_missing_relation() -> None:
+@pytest.mark.parametrize("entrypoint", ["command", "function"])
+def test_an_unrelated_missing_relation_is_not_relabelled(entrypoint: str) -> None:
     """A missing relation that is NOT one of this queue's own Absurd tables surfaces as
-    itself. Relabeling it "run absurd_sync_queues" would send the reader to the wrong
-    door, and dropping the cause would hide which relation is actually missing.
+    itself, on the live worker and the in-process drain alike. Relabeling it "run
+    absurd_sync_queues" would send the reader to the wrong door, and dropping the cause
+    would hide which relation is actually missing.
 
     Driven the way it happens in production: an audit trigger on a queue table whose
     target relation is gone. A plpgsql body carries no dependency on the tables it
     names, so nothing blocks the drop and the failure lands when the trigger next fires
-    — from inside the claim, i.e. exactly where the curated error used to swallow it.
+    — from inside the claim, which is where both entry points translate.
     """
+
+    def consume_the_queue() -> None:
+        if entrypoint == "command":
+            call_command("absurd_worker", queue="default")
+        else:
+            drain_queue("default")
+
     call_command("absurd_sync_queues")
     tasks.add.enqueue(2, 3)
     try:
@@ -426,7 +475,7 @@ def test_drain_queue_does_not_relabel_an_unrelated_missing_relation() -> None:
             )
 
         with pytest.raises(psycopg.errors.UndefinedTable) as undefined:
-            drain_queue("default")
+            consume_the_queue()
 
         assert (
             undefined.value.diag.message_primary

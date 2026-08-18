@@ -21,10 +21,15 @@ if t.TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Per-queue table prefixes, as absurd.create_queue names them: tasks, runs, checkpoints,
-# events, waiters. (``i_<queue>`` exists for a partitioned queue too, but only spawn and
-# cleanup touch it — nothing a drain runs can miss it.)
+# Per-queue table prefixes absurd.create_queue names for EVERY queue: tasks, runs,
+# checkpoints, events, waiters. What truncate and the missing-table probe iterate, so it
+# omits the conditional ``i_<queue>`` — both would be wrong about a queue that has none.
 QUEUE_TABLE_PREFIXES = ("t", "r", "c", "e", "w")
+
+# Plus ``i_<queue>``, which a PARTITIONED queue owns as well: spawn_task reserves an
+# idempotency key there before it touches ``t_<queue>``, so it is the first relation a
+# half-provisioned partitioned queue reports missing.
+QUEUE_OWNED_TABLE_PREFIXES = (*QUEUE_TABLE_PREFIXES, "i")
 
 MUTABLE_OPTION_KEYS = (
     "partition_lookahead",
@@ -106,7 +111,7 @@ def names_a_queue_table(exc: psycopg.errors.UndefinedTable, queue: str) -> bool:
     message = exc.diag.message_primary or ""
     return any(
         re.search(rf"\b{re.escape(prefix)}_{re.escape(queue)}\b", message)
-        for prefix in QUEUE_TABLE_PREFIXES
+        for prefix in QUEUE_OWNED_TABLE_PREFIXES
     )
 
 
@@ -178,10 +183,10 @@ def find_missing_queue_tables(using: str, queue_name: str) -> list[str]:
     """Which of ``queue_name``'s own Absurd tables are absent, catalog row aside.
 
     ``to_regclass`` rather than a ``pg_class`` join: it takes the qualified name and
-    answers NULL instead of raising, which is the whole question being asked. A
-    partitioned queue also owns ``i_<queue>``, deliberately not probed — it exists only
-    when an idempotency key is used, so its absence is not what a half-provisioned
-    queue looks like.
+    answers NULL instead of raising, which is the whole question being asked. Probes
+    the five every queue owns, never a partitioned queue's ``i_<queue>``: one list then
+    works whatever the storage mode, and ``create_queue`` makes them all together, so a
+    missing ``i_<queue>`` never travels alone.
     """
     with connections[using].cursor() as cursor:
         cursor.execute(
@@ -240,8 +245,8 @@ def lock_provisioning(using: str) -> t.Iterator[None]:
 
     Called inside a caller's own atomic this degrades to a savepoint, so the lock is
     held until THEIR commit — still correct, just longer. No caller here provisions
-    inside a transaction: both commands and the post_migrate receiver run outside one,
-    and ``AbsurdTestRuntime.sync_queues`` refuses if one is open.
+    inside a transaction: ``absurd_sync_queues`` and the post_migrate receiver run
+    outside one, and ``AbsurdTestRuntime.sync_queues`` refuses if one is open.
     """
     with transaction.atomic(using=using):
         with connections[using].cursor() as cur:

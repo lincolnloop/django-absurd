@@ -125,6 +125,31 @@ def test_enqueue_to_an_unprovisioned_queue_refuses() -> None:
     assert not Queue.objects.filter(queue_name="default").exists()
 
 
+def test_enqueue_to_a_half_provisioned_partitioned_queue_refuses(
+    settings: Settings,
+) -> None:
+    # spawn_task reserves the idempotency key in i_<queue> before it touches
+    # t_<queue>, so a partitioned queue whose catalog row outlived its tables reports
+    # that relation missing first.
+    settings.TASKS = utils.make_tasks_settings(
+        queues={**utils.DECLARED_QUEUES, "parts": {"storage_mode": "partitioned"}}
+    )
+    call_command("absurd_sync_queues")
+    with connections["default"].cursor() as cursor:
+        cursor.execute(
+            "drop table absurd.i_parts, absurd.t_parts, absurd.r_parts, "
+            "absurd.c_parts, absurd.e_parts, absurd.w_parts cascade"
+        )
+    bound = absurd_params(idempotency_key="k").bind(tasks.add).using(queue_name="parts")
+    with pytest.raises(QueueNotProvisionedError) as exc:
+        bound.enqueue(1, 2)
+    assert str(exc.value) == (
+        "Queue 'parts' is declared but its Absurd table is not provisioned. "
+        "Run: manage.py absurd_sync_queues"
+    )
+    assert Queue.objects.filter(queue_name="parts").exists()
+
+
 def test_enqueue_propagates_an_unrelated_undefined_table() -> None:
     # spawn_task reads absurd.queues when an idempotency key is set, and that relation
     # is nobody's queue table — the classifier must not relabel it as provisioning.

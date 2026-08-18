@@ -177,18 +177,31 @@ def run_worker(
     on_started: t.Callable[[], None] | None = None,
     on_stop_requested: t.Callable[[], None] | None = None,
 ) -> None:
+    """Run the blocking worker to a stop signal — what ``absurd_worker`` calls.
+
+    The missing-relation translation wraps the whole run rather than the boot probe,
+    because ``aworker_client``'s guard reads the catalog: a queue whose row outlived its
+    tables passes it and only fails once ``claim_tasks`` runs — which a ``--beat`` run
+    reaches through here too. As in ``drain_queue``, only a relation of THIS queue's own
+    earns the translation; anything else re-raises as itself, chained.
+    """
     options = options or WorkerOptions()
     validate_backend(backend.database)
-    asyncio.run(
-        arun_worker(
-            backend,
-            queue,
-            run_beat=run_beat,
-            options=options,
-            on_started=on_started,
-            on_stop_requested=on_stop_requested,
+    try:
+        asyncio.run(
+            arun_worker(
+                backend,
+                queue,
+                run_beat=run_beat,
+                options=options,
+                on_started=on_started,
+                on_stop_requested=on_stop_requested,
+            )
         )
-    )
+    except psycopg.errors.UndefinedTable as exc:
+        if not names_a_queue_table(exc, queue):
+            raise
+        raise QueueNotProvisionedError(queue) from exc
 
 
 async def arun_worker(
@@ -302,10 +315,8 @@ async def aworker_client(
             psycopg.errors.UndefinedFunction,
         ) as err:
             raise SchemaNotInstalledError from err
-        # Nothing provisions at boot any more, so refuse here rather than let the
-        # claim loop raise a raw UndefinedTable. Free: list_queues() is already
-        # awaited above. Residual: a catalog row whose tables were dropped still
-        # reads as provisioned — absurd_sync_queues is what repairs that.
+        # Refuse before the banner, for free: list_queues() is already awaited above.
+        # A catalog row outliving its tables passes this — run_worker catches that one.
         if queue not in provisioned:
             raise QueueNotProvisionedError(queue)
         yield client
