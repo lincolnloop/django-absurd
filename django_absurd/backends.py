@@ -17,11 +17,15 @@ from django.tasks.signals import task_enqueued
 from django.utils import timezone
 from django.utils.module_loading import import_string
 
-from django_absurd import dispatch
+from django_absurd import dispatch, queues
 from django_absurd.admin_views import ADMIN_ENTITY_SPECS, build_queue_table_model
 from django_absurd.connection import build_absurd_client
 from django_absurd.deferred import DEFER_NAME_SUFFIX
-from django_absurd.exceptions import QueueNotDeclaredError, SchemaNotInstalledError
+from django_absurd.exceptions import (
+    QueueNotDeclaredError,
+    QueueNotProvisionedError,
+    SchemaNotInstalledError,
+)
 from django_absurd.tasks import AbsurdTask, SpawnKwargs, build_merged_spawn_options
 
 if t.TYPE_CHECKING:
@@ -183,28 +187,18 @@ class AbsurdBackend(BaseTaskBackend):
             psycopg.errors.UndefinedFunction,
             psycopg.errors.InvalidSchemaName,
         ) as exc:
-            declared = get_declared_queues(self)
             # validate_task() rejects an undeclared queue (InvalidTask) when the
-            # backend declares queues. This guards the empty-QUEUES config (where
-            # that check is skipped) and the declared[...] access below from KeyError.
-            if task.queue_name not in declared:
+            # backend declares queues. This guards the empty-QUEUES config, where
+            # that check is skipped.
+            if task.queue_name not in get_declared_queues(self):
                 raise QueueNotDeclaredError(
                     task.queue_name, self.alias, self.queues
                 ) from exc
-            try:
-                client.create_queue(task.queue_name, **declared[task.queue_name])
-            except (
-                psycopg.errors.UndefinedFunction,
-                psycopg.errors.InvalidSchemaName,
-            ) as exc:
+            if not isinstance(exc, psycopg.errors.UndefinedTable):
                 raise SchemaNotInstalledError from exc
-            with transaction.atomic(using=self.database, savepoint=True):
-                spawn_result = client.spawn(
-                    spawn_name,
-                    spawn_params,
-                    queue=task.queue_name,
-                    **merged,
-                )
+            if queues.names_a_queue_table(exc, task.queue_name):
+                raise QueueNotProvisionedError(task.queue_name) from exc
+            raise
         result: TaskResult[t.Any, t.Any] = TaskResult(
             task=task,
             id=f"{task.queue_name}:{spawn_result['task_id']}",
