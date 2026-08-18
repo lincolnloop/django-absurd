@@ -49,7 +49,7 @@ def provision_queues_after_migrate(
             continue
         try:
             result = provision_backend(backend)
-        except SchemaNotInstalledError as exc:
+        except SchemaNotInstalledError:
             # The one forgiven failure, and the reason the escape hatch exists:
             # `migrate --fake django_absurd` against a schema installed out of band
             # has nothing to provision into yet. Said out loud all the same, because
@@ -57,7 +57,17 @@ def provision_queues_after_migrate(
             # propagates and fails the migrate — a deploy that provisioned nothing
             # must not report success, and re-running migrate retries provisioning
             # once the cause is fixed.
-            lines = [style.WARNING(f"  Not provisioned: {exc}")]
+            #
+            # Worded here rather than printed off the exception, whose own "Run:
+            # manage.py migrate" is right at every other door and circular at this one:
+            # `migrate` is what is printing it, and after a `--fake` the migration is
+            # recorded, so re-running installs nothing however often it is run.
+            lines = [
+                style.WARNING(
+                    "  Not provisioned: the Absurd schema is absent; this migrate did"
+                    " not install it."
+                )
+            ]
         else:
             lines = [f"  Created {name!r}" for name in result.created]
             lines += [f"  Reconciled {name!r}" for name in result.reconciled]

@@ -7,7 +7,12 @@ import zlib
 from dataclasses import dataclass, field
 
 import psycopg.errors
-from absurd_sdk import Absurd, QueuePolicyOptions, QueueStorageMode
+from absurd_sdk import (
+    Absurd,
+    CreateQueueOptions,
+    QueuePolicyOptions,
+    QueueStorageMode,
+)
 from django.db import connections, transaction
 
 from django_absurd import backends
@@ -55,6 +60,19 @@ class SyncResult:
     reconciled: list[str] = field(default_factory=list)
     repaired: list[str] = field(default_factory=list)
     storage_warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
+class QueuePlan:
+    """What one declared queue needs — carrying the arguments that would satisfy it, not
+    just flags, so the write path applies a decision it never re-derives.
+    """
+
+    queue_name: str
+    create_options: CreateQueueOptions | None = None
+    repair_storage_mode: QueueStorageMode | None = None
+    policy_options: QueuePolicyOptions | None = None
+    storage_warning: str | None = None
 
 
 def get_absurd_database(backend: backends.AbsurdBackend) -> str:
@@ -117,82 +135,84 @@ def names_a_queue_table(exc: psycopg.errors.UndefinedTable, queue: str) -> bool:
 def reconcile_queue(backend: backends.AbsurdBackend, queue_name: str) -> SyncResult:
     db = backend.database
     validate_backend(db)
-    opts = backends.get_declared_queues(backend)[queue_name]
-    result = SyncResult()
-    client = build_absurd_client(db)
-    existing = get_queue_object(db, queue_name)
-    if existing is None:
-        client.create_queue(queue_name, **opts)
-        result.created.append(queue_name)
-    else:
-        # Puts back the tables of a queue whose catalog row outlived them — a manual
-        # drop, a partial restore — the state QueueNotProvisionedError sends an
-        # operator here to repair. Gated on them actually being absent rather than
-        # called unconditionally: create_queue re-runs ensure_partitions, and a
-        # partitioned queue whose default partition has collected rows for a week the
-        # window now covers cannot survive that. The EXISTING storage mode, never the
-        # declared one: create_queue refuses a mode change outright, and drift is
-        # warned about below rather than applied.
-        if find_missing_queue_tables(
-            db, queue_name, storage_mode=existing.storage_mode
-        ):
-            client.create_queue(
-                queue_name,
-                # Read back from absurd.queues, whose create_queue only ever writes
-                # these two.
-                storage_mode=t.cast("QueueStorageMode", existing.storage_mode),
-            )
-            result.repaired.append(queue_name)
-        # MUTABLE_OPTION_KEYS mirrors QueuePolicyOptions's fields exactly; the cast is
-        # safe by construction.
-        mutable_opts = t.cast(
-            "QueuePolicyOptions",
-            {k: v for k, v in opts.items() if k in MUTABLE_OPTION_KEYS},
-        )
-        if mutable_opts and check_mutable_options_drifted(db, mutable_opts, existing):
-            client.set_queue_policy(queue_name, **mutable_opts)
-            result.reconciled.append(queue_name)
-        if "storage_mode" in opts and opts["storage_mode"] != existing.storage_mode:
-            result.storage_warnings.append(
-                f"Queue '{queue_name}': storage_mode cannot be changed "
-                f"(existing: {existing.storage_mode!r}, "
-                f"declared: {opts['storage_mode']!r}); skipping."
-            )
-    return result
+    plan = plan_queue(db, queue_name, backends.get_declared_queues(backend)[queue_name])
+    apply_queue_plan(build_absurd_client(db), plan)
+    return summarize_queue_plans([plan])
 
 
 def plan_queue_sync(backend: backends.AbsurdBackend) -> SyncResult:
     """What ``provision_backend`` would do, without doing any of it.
 
-    Reads the same three predicates the write path branches on — catalog row, tables,
-    policy drift — so the two cannot disagree about a queue without one of those
-    changing. Nothing here writes, so a role with no DDL rights can still ask.
+    Shares ``plan_queue`` with the write path, so the two cannot classify a queue
+    differently or word the storage warning two ways. Nothing here writes, so a role
+    with no DDL rights can still ask, and the provisioning lock keeps covering the
+    writes alone.
     """
     db = backend.database
     validate_backend(db)
     require_installed_schema(db)
-    result = SyncResult()
-    for queue_name, opts in backends.get_declared_queues(backend).items():
-        existing = get_queue_object(db, queue_name)
-        if existing is None:
-            result.created.append(queue_name)
-            continue
-        if find_missing_queue_tables(
-            db, queue_name, storage_mode=existing.storage_mode
-        ):
-            result.repaired.append(queue_name)
-        mutable_opts = t.cast(
-            "QueuePolicyOptions",
-            {k: v for k, v in opts.items() if k in MUTABLE_OPTION_KEYS},
+    return summarize_queue_plans(
+        plan_queue(db, queue_name, opts)
+        for queue_name, opts in backends.get_declared_queues(backend).items()
+    )
+
+
+def plan_queue(using: str, queue_name: str, opts: CreateQueueOptions) -> QueuePlan:
+    """What ``queue_name`` needs to match ``opts``, decided by reading only.
+
+    The one decision point for both the dry run and the write path: a second copy of
+    this branching drifts silently, since a reworded warning moves no exit code.
+    """
+    existing = get_queue_object(using, queue_name)
+    if existing is None:
+        return QueuePlan(queue_name, create_options=opts)
+    plan = QueuePlan(queue_name)
+    # Puts back the tables of a queue whose catalog row outlived them — a manual drop, a
+    # partial restore — the state QueueNotProvisionedError sends an operator here to
+    # repair. Gated on them actually being absent rather than repaired unconditionally:
+    # create_queue re-runs ensure_partitions, and a partitioned queue whose default
+    # partition has collected rows for a week the window now covers cannot survive that.
+    if find_missing_queue_tables(using, queue_name, storage_mode=existing.storage_mode):
+        # The EXISTING mode, read back from absurd.queues: create_queue refuses a mode
+        # change outright, so declared drift is warned about below, never applied here.
+        plan.repair_storage_mode = t.cast("QueueStorageMode", existing.storage_mode)
+    # MUTABLE_OPTION_KEYS mirrors QueuePolicyOptions's fields exactly; the cast is safe
+    # by construction.
+    mutable_opts = t.cast(
+        "QueuePolicyOptions",
+        {k: v for k, v in opts.items() if k in MUTABLE_OPTION_KEYS},
+    )
+    if mutable_opts and check_mutable_options_drifted(using, mutable_opts, existing):
+        plan.policy_options = mutable_opts
+    if "storage_mode" in opts and opts["storage_mode"] != existing.storage_mode:
+        plan.storage_warning = (
+            f"Queue '{queue_name}': storage_mode cannot be changed "
+            f"(existing: {existing.storage_mode!r}, "
+            f"declared: {opts['storage_mode']!r}); skipping."
         )
-        if mutable_opts and check_mutable_options_drifted(db, mutable_opts, existing):
-            result.reconciled.append(queue_name)
-        if "storage_mode" in opts and opts["storage_mode"] != existing.storage_mode:
-            result.storage_warnings.append(
-                f"Queue '{queue_name}': storage_mode cannot be changed "
-                f"(existing: {existing.storage_mode!r}, "
-                f"declared: {opts['storage_mode']!r}); skipping."
-            )
+    return plan
+
+
+def apply_queue_plan(client: Absurd, plan: QueuePlan) -> None:
+    if plan.create_options is not None:
+        client.create_queue(plan.queue_name, **plan.create_options)
+    if plan.repair_storage_mode is not None:
+        client.create_queue(plan.queue_name, storage_mode=plan.repair_storage_mode)
+    if plan.policy_options is not None:
+        client.set_queue_policy(plan.queue_name, **plan.policy_options)
+
+
+def summarize_queue_plans(plans: t.Iterable[QueuePlan]) -> SyncResult:
+    result = SyncResult()
+    for plan in plans:
+        if plan.create_options is not None:
+            result.created.append(plan.queue_name)
+        if plan.repair_storage_mode is not None:
+            result.repaired.append(plan.queue_name)
+        if plan.policy_options is not None:
+            result.reconciled.append(plan.queue_name)
+        if plan.storage_warning is not None:
+            result.storage_warnings.append(plan.storage_warning)
     return result
 
 

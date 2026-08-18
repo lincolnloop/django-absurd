@@ -160,22 +160,6 @@ def test_sync_reports_an_absent_schema_with_no_queues_declared(
     )
 
 
-def test_migrate_tolerates_an_absent_schema_with_no_queues_declared(
-    settings: Settings,
-) -> None:
-    # `migrate --fake django_absurd` is forgiven whatever a project declares, and a
-    # project can legally declare no queues at all.
-    settings.TASKS = build_tasks_setting({})
-    buf = io.StringIO()
-    with utils.hide_absurd_schema():
-        call_command("migrate", "django_absurd", verbosity=1, stdout=buf)
-    assert buf.getvalue().endswith(
-        "Provisioning Absurd queues (default):\n"
-        "  Not provisioned: Absurd schema is not installed. "
-        "Run: manage.py migrate\n"
-    )
-
-
 def test_migrate_fails_when_only_the_catalog_table_is_missing(
     settings: Settings,
 ) -> None:
@@ -218,18 +202,24 @@ def test_migrate_fails_when_provisioning_errors(settings: Settings) -> None:
             )
 
 
-def test_migrate_says_so_when_it_cannot_provision(settings: Settings) -> None:
+@pytest.mark.parametrize("queues", [{}, {"alpha": {}}])
+def test_migrate_says_so_when_it_cannot_provision(
+    queues: dict[str, CreateQueueOptions], settings: Settings
+) -> None:
     # The receiver swallows so a faked or adopted migration still completes, but a
     # silent swallow leaves nothing provisioned and nothing said — and no runtime
-    # path repairs that any more.
-    settings.TASKS = build_tasks_setting({"alpha": {}})
+    # path repairs that any more. It reports the condition in its OWN words rather than
+    # the exception's: `migrate` printing "Run: manage.py migrate" is advice that loops
+    # forever, since the migration is already recorded. Declaring no queues is the same
+    # report — absence is classified for the whole operation, ahead of any queue loop.
+    settings.TASKS = build_tasks_setting(queues)
     buf = io.StringIO()
     with utils.hide_absurd_schema():
         call_command("migrate", "django_absurd", verbosity=1, stdout=buf)
     assert buf.getvalue().endswith(
         "Provisioning Absurd queues (default):\n"
-        "  Not provisioned: Absurd schema is not installed. "
-        "Run: manage.py migrate\n"
+        "  Not provisioned: the Absurd schema is absent; this migrate did not "
+        "install it.\n"
     )
 
 
@@ -488,6 +478,27 @@ def test_sync_prefixes_the_storage_mode_warning(
         "🗃️ Queue 'driftglyph': storage_mode cannot be changed "
         "(existing: 'unpartitioned', declared: 'partitioned'); skipping.\n"
     )
+
+
+def test_sync_check_warns_about_a_storage_mode_change_in_the_same_words(
+    capsys: pytest.CaptureFixture[str], settings: Settings
+) -> None:
+    # Nothing else pins the warning on the --check side, and a warning never moves the
+    # exit code, so reworded-on-one-side-only is invisible without this.
+    settings.TASKS = build_tasks_setting({"driftcheck": {}})
+    call_command("absurd_sync_queues")  # create 'driftcheck' unpartitioned
+    settings.TASKS = build_tasks_setting(
+        {"driftcheck": {"storage_mode": "partitioned"}}
+    )
+    capsys.readouterr()
+    call_command("absurd_sync_queues", "--check")
+    planned = capsys.readouterr()
+    assert planned.err == (
+        "🗃️ Queue 'driftcheck': storage_mode cannot be changed "
+        "(existing: 'unpartitioned', declared: 'partitioned'); skipping.\n"
+    )
+    call_command("absurd_sync_queues")
+    assert capsys.readouterr().err == planned.err
 
 
 def test_get_absurd_database_resolves_from_backend(settings: Settings) -> None:
