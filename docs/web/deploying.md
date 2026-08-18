@@ -25,8 +25,7 @@ release step that departs from them.
 python manage.py absurd_sync_queues
 ```
 
-`migrate` already does this on every run; this command does only that part — for a
-release step that doesn't run `migrate`, or to pick up a queue change between deploys.
+`migrate` already does this on every run; this command does only that part.
 
 ## What `migrate` needs
 
