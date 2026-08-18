@@ -81,8 +81,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Run the suite in its Docker stack
         run: |
-          docker compose up -d --build db
-          until docker compose exec -T db pg_isready -U postgres; do sleep 1; done
+          docker compose up -d --build --wait db
           docker compose run --rm --build app sh -c "cd /app && pytest"
       - name: Rewrite container coverage paths to repo-relative
         if: ${{ success() || failure() }}
