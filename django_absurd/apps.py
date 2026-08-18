@@ -3,6 +3,7 @@ import typing as t
 from django.apps import AppConfig
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management.color import color_style
+from django.db import DEFAULT_DB_ALIAS
 from django.db.models.signals import post_migrate
 from django.db.utils import OperationalError, ProgrammingError
 
@@ -35,12 +36,19 @@ class AbsurdConfig(AppConfig):
 def provision_queues_after_migrate(
     sender: AppConfig,
     *,
+    using: str = DEFAULT_DB_ALIAS,
     verbosity: int = 1,
     stdout: t.IO[str] | None = None,
     **kwargs: object,
 ) -> None:
     style = color_style()
     for alias, backend in get_absurd_backends().items():
+        # post_migrate is per-database. Provisioning a backend whose database was
+        # not the one migrated is work the operator did not ask for, and it makes
+        # every pass-through migrate swallow a failure that was never a problem.
+        # Django's own receivers gate the same way, on ``using``.
+        if backend.database != using:
+            continue
         try:
             result = provision_backend(backend)
         except (
@@ -48,15 +56,17 @@ def provision_queues_after_migrate(
             OperationalError,
             ProgrammingError,
             SchemaNotInstalledError,
-        ):
-            # Best-effort: skip when the schema isn't installed on the target DB
-            # (e.g. a faked/adopted migration, or a non-Absurd database). This is
-            # a signal receiver, not a command — it never runs through the
-            # command base, so this except tuple is permanent, not a stopgap.
-            continue
-        lines = [f"  Created {name!r}" for name in result.created]
-        lines += [f"  Reconciled {name!r}" for name in result.reconciled]
-        lines += [style.WARNING(f"  {w}") for w in result.storage_warnings]
+        ) as exc:
+            # Swallowed so a faked or adopted migration still completes, but said
+            # out loud: nothing at runtime provisions a queue any more. A signal
+            # receiver never runs through the command base, so this tuple is
+            # permanent, not a stopgap.
+            lines = [style.WARNING(f"  Not provisioned: {exc}")]
+        else:
+            lines = [f"  Created {name!r}" for name in result.created]
+            lines += [f"  Reconciled {name!r}" for name in result.reconciled]
+            lines += [f"  Repaired {name!r}" for name in result.repaired]
+            lines += [style.WARNING(f"  {w}") for w in result.storage_warnings]
         if lines and verbosity >= 1 and stdout is not None:
             heading = f"Provisioning Absurd queues ({alias}):"
             stdout.write(style.MIGRATE_HEADING(heading))

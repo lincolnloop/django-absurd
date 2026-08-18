@@ -53,6 +53,24 @@ def test_db_for_read_write_route_django_absurd() -> None:
     assert router.db_for_write(Queue) == "absurd"
 
 
+@pytest.mark.django_db(databases=["absurd", "default"], transaction=True)
+def test_migrate_provisions_only_the_database_it_migrated(
+    settings: "pytest_django.fixtures.Settings",
+) -> None:
+    # post_migrate is per-database, so migrating "default" must leave the Absurd
+    # alias alone; only migrating the alias itself provisions it.
+    settings.TASKS = {
+        "default": {
+            "BACKEND": ABSURD,
+            "OPTIONS": {"DATABASE": "absurd", "QUEUES": {"scoped": {}}},
+        }
+    }
+    call_command("migrate", "django_absurd", database="default", verbosity=0)
+    assert not Queue.objects.using("absurd").filter(queue_name="scoped").exists()
+    call_command("migrate", "django_absurd", database="absurd", verbosity=0)
+    assert Queue.objects.using("absurd").filter(queue_name="scoped").exists()
+
+
 def test_sync_command_honors_alias(
     settings: Settings,
 ) -> None:

@@ -179,6 +179,40 @@ def reconcile_queue(backend: backends.AbsurdBackend, queue_name: str) -> SyncRes
     return result
 
 
+def plan_queue_sync(backend: backends.AbsurdBackend) -> SyncResult:
+    """What ``provision_backend`` would do, without doing any of it.
+
+    Reads the same three predicates the write path branches on — catalog row, tables,
+    policy drift — so the two cannot disagree about a queue without one of those
+    changing. Nothing here writes, so a role with no DDL rights can still ask.
+    """
+    from django_absurd.models import Queue  # noqa: PLC0415
+
+    db = backend.database
+    validate_backend(db)
+    result = SyncResult()
+    for queue_name, opts in backends.get_declared_queues(backend).items():
+        existing = Queue.objects.using(db).filter(queue_name=queue_name).first()
+        if existing is None:
+            result.created.append(queue_name)
+            continue
+        if find_missing_queue_tables(db, queue_name):
+            result.repaired.append(queue_name)
+        mutable_opts = t.cast(
+            "QueuePolicyOptions",
+            {k: v for k, v in opts.items() if k in MUTABLE_OPTION_KEYS},
+        )
+        if mutable_opts and check_mutable_options_drifted(db, mutable_opts, existing):
+            result.reconciled.append(queue_name)
+        if "storage_mode" in opts and opts["storage_mode"] != existing.storage_mode:
+            result.storage_warnings.append(
+                f"Queue '{queue_name}': storage_mode cannot be changed "
+                f"(existing: {existing.storage_mode!r}, "
+                f"declared: {opts['storage_mode']!r}); skipping."
+            )
+    return result
+
+
 def find_missing_queue_tables(using: str, queue_name: str) -> list[str]:
     """Which of ``queue_name``'s own Absurd tables are absent, catalog row aside.
 

@@ -134,6 +134,35 @@ def test_migrate_tolerates_an_absent_schema(settings: Settings) -> None:
         call_command("migrate", "django_absurd", verbosity=0)
 
 
+def test_migrate_says_so_when_it_cannot_provision(settings: Settings) -> None:
+    # The receiver swallows so a faked or adopted migration still completes, but a
+    # silent swallow leaves nothing provisioned and nothing said — and no runtime
+    # path repairs that any more.
+    settings.TASKS = build_tasks_setting({"alpha": {}})
+    buf = io.StringIO()
+    with utils.hide_absurd_schema():
+        call_command("migrate", "django_absurd", verbosity=1, stdout=buf)
+    assert buf.getvalue().endswith(
+        "Provisioning Absurd queues (default):\n"
+        "  Not provisioned: Absurd schema is not installed. "
+        "Run: manage.py migrate\n"
+    )
+
+
+@pytest.mark.usefixtures("_isolate_queues")
+def test_migrate_reports_a_queue_it_repaired(settings: Settings) -> None:
+    settings.TASKS = build_tasks_setting({"mended": {}})
+    call_command("absurd_sync_queues")
+    with connection.cursor() as cur:
+        cur.execute(
+            "drop table absurd.t_mended, absurd.r_mended, absurd.c_mended, "
+            "absurd.e_mended, absurd.w_mended cascade"
+        )
+    buf = io.StringIO()
+    call_command("migrate", "django_absurd", verbosity=1, stdout=buf)
+    assert "  Repaired 'mended'" in buf.getvalue()
+
+
 def test_sync_creates_with_options_and_model_maps(settings: Settings) -> None:
     settings.TASKS = build_tasks_setting(
         {"x": {"storage_mode": "partitioned", "cleanup_ttl": "90 days"}}
@@ -261,6 +290,48 @@ def test_sync_leaves_a_provisioned_partitioned_queue_alone(
             )
         call_command("absurd_sync_queues")
     assert Queue.objects.get(queue_name="parts").storage_mode == "partitioned"
+
+
+@pytest.mark.usefixtures("_isolate_queues")
+def test_sync_check_reports_pending_work_and_writes_nothing(
+    capsys: pytest.CaptureFixture[str], settings: Settings
+) -> None:
+    settings.TASKS = build_tasks_setting({"pending": {}})
+    with pytest.raises(CommandError) as excinfo:
+        call_command("absurd_sync_queues", "--check")
+    assert str(excinfo.value) == (
+        "Queues are not in sync. Run: manage.py absurd_sync_queues"
+    )
+    assert capsys.readouterr().out == "🗃️ Would create: pending\n"
+    assert not Queue.objects.filter(queue_name="pending").exists()
+
+
+@pytest.mark.usefixtures("_isolate_queues")
+def test_sync_check_is_quiet_once_everything_is_provisioned(
+    capsys: pytest.CaptureFixture[str], settings: Settings
+) -> None:
+    settings.TASKS = build_tasks_setting({"settled": {}})
+    call_command("absurd_sync_queues")
+    capsys.readouterr()
+    call_command("absurd_sync_queues", "--check")
+    assert capsys.readouterr().out == "🗃️ No queues to sync.\n"
+
+
+@pytest.mark.usefixtures("_isolate_queues")
+def test_sync_check_names_what_the_real_run_then_does(
+    capsys: pytest.CaptureFixture[str], settings: Settings
+) -> None:
+    # The dry run reads the same three predicates the write path does; this is what
+    # keeps the two from drifting apart.
+    settings.TASKS = build_tasks_setting({"agree": {"cleanup_limit": 100}})
+    call_command("absurd_sync_queues")
+    settings.TASKS = build_tasks_setting({"agree": {"cleanup_limit": 250}})
+    capsys.readouterr()
+    with pytest.raises(CommandError):
+        call_command("absurd_sync_queues", "--check")
+    planned = capsys.readouterr().out
+    call_command("absurd_sync_queues")
+    assert planned == capsys.readouterr().out.replace("Reconciled:", "Would reconcile:")
 
 
 def test_non_destructive(settings: Settings) -> None:
