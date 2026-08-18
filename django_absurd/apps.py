@@ -1,11 +1,9 @@
 import typing as t
 
 from django.apps import AppConfig
-from django.core.exceptions import ImproperlyConfigured
 from django.core.management.color import color_style
 from django.db import DEFAULT_DB_ALIAS
 from django.db.models.signals import post_migrate
-from django.db.utils import OperationalError, ProgrammingError
 
 from django_absurd.admin_views import PRIVATE_ADMIN_APPS
 from django_absurd.backends import get_absurd_backends
@@ -51,16 +49,14 @@ def provision_queues_after_migrate(
             continue
         try:
             result = provision_backend(backend)
-        except (
-            ImproperlyConfigured,
-            OperationalError,
-            ProgrammingError,
-            SchemaNotInstalledError,
-        ) as exc:
-            # Swallowed so a faked or adopted migration still completes, but said
-            # out loud: nothing at runtime provisions a queue any more. A signal
-            # receiver never runs through the command base, so this tuple is
-            # permanent, not a stopgap.
+        except SchemaNotInstalledError as exc:
+            # The one forgiven failure, and the reason the escape hatch exists:
+            # `migrate --fake django_absurd` against a schema installed out of band
+            # has nothing to provision into yet. Said out loud all the same, because
+            # nothing at runtime provisions a queue any more. Every OTHER failure
+            # propagates and fails the migrate — a deploy that provisioned nothing
+            # must not report success, and re-running migrate retries provisioning
+            # once the cause is fixed.
             lines = [style.WARNING(f"  Not provisioned: {exc}")]
         else:
             lines = [f"  Created {name!r}" for name in result.created]

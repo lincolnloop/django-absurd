@@ -116,31 +116,12 @@ def names_a_queue_table(exc: psycopg.errors.UndefinedTable, queue: str) -> bool:
 
 
 def reconcile_queue(backend: backends.AbsurdBackend, queue_name: str) -> SyncResult:
-    # The ONE import that would make this module settings-dependent at load time:
-    # ``django_absurd.models`` defines model classes (``build_admin_model``), so
-    # importing it reads INSTALLED_APPS. Keeping it in here is what lets
-    # ``django_absurd.pytest_plugin``/``.test``/``.flush`` import this module at their
-    # own top level during pytest's bootstrap, in any venv, before Django is configured.
-    # Move it to the top of this module and every pytest run in a non-Django project
-    # dies with INTERNALERROR (see tests/core/test_pytest_plugin.py's
-    # test_a_pytest_run_with_no_django_settings_still_collects).
-    from django_absurd.models import Queue  # noqa: PLC0415
-
     db = backend.database
     validate_backend(db)
     opts = backends.get_declared_queues(backend)[queue_name]
     result = SyncResult()
     client = build_absurd_client(db)
-    try:
-        existing = Queue.objects.using(db).filter(queue_name=queue_name).first()
-    except ProgrammingError as exc:
-        cause = exc.__cause__
-        if not isinstance(
-            cause,
-            (psycopg.errors.InvalidSchemaName, psycopg.errors.UndefinedTable),
-        ):
-            raise
-        raise SchemaNotInstalledError from exc
+    existing = get_queue_object(db, queue_name)
     if existing is None:
         client.create_queue(queue_name, **opts)
         result.created.append(queue_name)
@@ -186,13 +167,11 @@ def plan_queue_sync(backend: backends.AbsurdBackend) -> SyncResult:
     policy drift — so the two cannot disagree about a queue without one of those
     changing. Nothing here writes, so a role with no DDL rights can still ask.
     """
-    from django_absurd.models import Queue  # noqa: PLC0415
-
     db = backend.database
     validate_backend(db)
     result = SyncResult()
     for queue_name, opts in backends.get_declared_queues(backend).items():
-        existing = Queue.objects.using(db).filter(queue_name=queue_name).first()
+        existing = get_queue_object(db, queue_name)
         if existing is None:
             result.created.append(queue_name)
             continue
@@ -211,6 +190,32 @@ def plan_queue_sync(backend: backends.AbsurdBackend) -> SyncResult:
                 f"declared: {opts['storage_mode']!r}); skipping."
             )
     return result
+
+
+def get_queue_object(using: str, queue_name: str) -> "Queue | None":
+    """``queue_name``'s ``Queue``, or None — with schema-absence classified.
+
+    Shared by the write path and the dry run so only one of them can be wrong about what
+    a missing schema looks like. A ``ProgrammingError`` that is NOT about the schema
+    surfaces as itself: relabelling it would send the reader to the wrong door.
+    """
+    # The ONE import that would make this module settings-dependent at load time —
+    # ``django_absurd.models`` reads INSTALLED_APPS — and our pytest plugin is an
+    # entry point, so it loads in ANY venv's pytest run, Django project or not. See
+    # tests/core/test_pytest_plugin.py's
+    # test_a_pytest_run_with_no_django_settings_still_collects.
+    from django_absurd.models import Queue  # noqa: PLC0415
+
+    try:
+        return Queue.objects.using(using).filter(queue_name=queue_name).first()
+    except ProgrammingError as exc:
+        cause = exc.__cause__
+        if not isinstance(
+            cause,
+            (psycopg.errors.InvalidSchemaName, psycopg.errors.UndefinedTable),
+        ):
+            raise
+        raise SchemaNotInstalledError from exc
 
 
 def find_missing_queue_tables(using: str, queue_name: str) -> list[str]:

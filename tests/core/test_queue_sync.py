@@ -128,10 +128,45 @@ def test_reconcile_does_not_relabel_an_unrelated_missing_column(
 def test_migrate_tolerates_an_absent_schema(settings: Settings) -> None:
     # The migration is already recorded as applied, so `migrate` replays no DDL
     # but still fires `post_migrate` — which must swallow SchemaNotInstalledError
-    # from provisioning rather than blowing up `migrate` itself.
+    # from provisioning rather than blowing up `migrate` itself. This is the
+    # adoption path: `migrate --fake django_absurd` against a schema installed out
+    # of band, and the only failure `migrate` forgives.
     settings.TASKS = build_tasks_setting({"alpha": {}})
     with utils.hide_absurd_schema():
         call_command("migrate", "django_absurd", verbosity=0)
+
+
+def test_sync_check_fails_when_it_cannot_look(settings: Settings) -> None:
+    # --check must never answer "in sync" when it could not read the catalog at all.
+    settings.TASKS = build_tasks_setting({"alpha": {}})
+    with utils.hide_absurd_schema(), pytest.raises(CommandError) as excinfo:
+        call_command("absurd_sync_queues", "--check")
+    assert str(excinfo.value) == (
+        "Absurd schema is not installed. Run: manage.py migrate"
+    )
+
+
+def test_migrate_fails_when_provisioning_errors(settings: Settings) -> None:
+    # Anything other than an absent schema means this deploy provisioned nothing and
+    # nothing at runtime will fix it, so `migrate` must not report success. Driven the
+    # way it could happen for real: the catalog's own column altered out from under
+    # the receiver, which classifies as a plain UndefinedColumn rather than as
+    # schema-absent.
+    settings.TASKS = build_tasks_setting({"alpha": {}})
+    call_command("absurd_sync_queues")
+    with connection.cursor() as cur:
+        cur.execute(
+            "alter table absurd.queues rename column queue_name to queue_name_gone"
+        )
+    try:
+        with pytest.raises(ProgrammingError) as excinfo:
+            call_command("migrate", "django_absurd", verbosity=0)
+        assert isinstance(excinfo.value.__cause__, psycopg.errors.UndefinedColumn)
+    finally:
+        with connection.cursor() as cur:
+            cur.execute(
+                "alter table absurd.queues rename column queue_name_gone to queue_name"
+            )
 
 
 def test_migrate_says_so_when_it_cannot_provision(settings: Settings) -> None:
