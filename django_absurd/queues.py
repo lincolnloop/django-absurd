@@ -9,7 +9,6 @@ from dataclasses import dataclass, field
 import psycopg.errors
 from absurd_sdk import Absurd, QueuePolicyOptions, QueueStorageMode
 from django.db import connections, transaction
-from django.db.utils import ProgrammingError
 
 from django_absurd import backends
 from django_absurd.admin_views import rebuild_views
@@ -22,8 +21,8 @@ if t.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Per-queue table prefixes absurd.create_queue names for EVERY queue: tasks, runs,
-# checkpoints, events, waiters. What truncate and the missing-table probe iterate, so it
-# omits the conditional ``i_<queue>`` — both would be wrong about a queue that has none.
+# checkpoints, events, waiters. Truncate and the missing-table probe both start here and
+# add ``i_<queue>`` for a partitioned queue only, the one kind that owns one.
 QUEUE_TABLE_PREFIXES = ("t", "r", "c", "e", "w")
 
 # Plus ``i_<queue>``, which a PARTITIONED queue owns as well: spawn_task reserves an
@@ -134,7 +133,9 @@ def reconcile_queue(backend: backends.AbsurdBackend, queue_name: str) -> SyncRes
         # window now covers cannot survive that. The EXISTING storage mode, never the
         # declared one: create_queue refuses a mode change outright, and drift is
         # warned about below rather than applied.
-        if find_missing_queue_tables(db, queue_name):
+        if find_missing_queue_tables(
+            db, queue_name, storage_mode=existing.storage_mode
+        ):
             client.create_queue(
                 queue_name,
                 # Read back from absurd.queues, whose create_queue only ever writes
@@ -169,13 +170,16 @@ def plan_queue_sync(backend: backends.AbsurdBackend) -> SyncResult:
     """
     db = backend.database
     validate_backend(db)
+    require_installed_schema(db)
     result = SyncResult()
     for queue_name, opts in backends.get_declared_queues(backend).items():
         existing = get_queue_object(db, queue_name)
         if existing is None:
             result.created.append(queue_name)
             continue
-        if find_missing_queue_tables(db, queue_name):
+        if find_missing_queue_tables(
+            db, queue_name, storage_mode=existing.storage_mode
+        ):
             result.repaired.append(queue_name)
         mutable_opts = t.cast(
             "QueuePolicyOptions",
@@ -193,11 +197,11 @@ def plan_queue_sync(backend: backends.AbsurdBackend) -> SyncResult:
 
 
 def get_queue_object(using: str, queue_name: str) -> "Queue | None":
-    """``queue_name``'s ``Queue``, or None — with schema-absence classified.
+    """``queue_name``'s ``Queue``, or None.
 
-    Shared by the write path and the dry run so only one of them can be wrong about what
-    a missing schema looks like. A ``ProgrammingError`` that is NOT about the schema
-    surfaces as itself: relabelling it would send the reader to the wrong door.
+    Schema absence is classified by the probe below, ahead of the read; the read's own
+    ``ProgrammingError`` surfaces as itself, since relabelling it would send the reader
+    to the wrong door.
     """
     # The ONE import that would make this module settings-dependent at load time —
     # ``django_absurd.models`` reads INSTALLED_APPS — and our pytest plugin is an
@@ -206,34 +210,85 @@ def get_queue_object(using: str, queue_name: str) -> "Queue | None":
     # test_a_pytest_run_with_no_django_settings_still_collects.
     from django_absurd.models import Queue  # noqa: PLC0415
 
-    try:
-        return Queue.objects.using(using).filter(queue_name=queue_name).first()
-    except ProgrammingError as exc:
-        cause = exc.__cause__
-        if not isinstance(
-            cause,
-            (psycopg.errors.InvalidSchemaName, psycopg.errors.UndefinedTable),
-        ):
-            raise
-        raise SchemaNotInstalledError from exc
+    require_installed_schema(using)
+    return Queue.objects.using(using).filter(queue_name=queue_name).first()
 
 
-def find_missing_queue_tables(using: str, queue_name: str) -> list[str]:
+def require_installed_schema(using: str) -> None:
+    """Raise ``SchemaNotInstalledError`` when ``using`` has no Absurd schema.
+
+    Asked of the whole operation up front, never read off a failed statement. An absent
+    schema and a dropped ``absurd.queues`` raise the identical ``UndefinedTable`` while
+    only the first is something ``migrate`` can fix, and the statement that hit it has
+    already aborted its transaction, so nothing can be asked after the fact. A backend
+    declaring no queues reads no queue at all and still rebuilds views off that table.
+    """
+    with connections[using].cursor() as cursor:
+        cursor.execute("select to_regnamespace('absurd') is null")
+        if cursor.fetchone()[0]:
+            raise SchemaNotInstalledError
+
+
+def find_missing_queue_tables(
+    using: str, queue_name: str, *, storage_mode: str
+) -> list[str]:
     """Which of ``queue_name``'s own Absurd tables are absent, catalog row aside.
 
     ``to_regclass`` rather than a ``pg_class`` join: it takes the qualified name and
-    answers NULL instead of raising, which is the whole question being asked. Probes
-    the five every queue owns, never a partitioned queue's ``i_<queue>``: one list then
-    works whatever the storage mode, and ``create_queue`` makes them all together, so a
-    missing ``i_<queue>`` never travels alone.
+    answers NULL instead of raising, which is the whole question being asked. Which
+    tables to expect follows ``storage_mode`` — the EXISTING one, since that is what
+    the queue was built with — so a partitioned queue's ``i_<queue>`` counts too: a
+    keyed enqueue reserves that relation before any other, and a probe blind to it
+    calls a queue healthy that refuses every keyed enqueue.
     """
+    prefixes = (
+        QUEUE_OWNED_TABLE_PREFIXES
+        if storage_mode == "partitioned"
+        else QUEUE_TABLE_PREFIXES
+    )
     with connections[using].cursor() as cursor:
         cursor.execute(
             "select name from unnest(%s::text[]) as name "
             "where to_regclass('absurd.' || quote_ident(name)) is null",
-            [[f"{prefix}_{queue_name}" for prefix in QUEUE_TABLE_PREFIXES]],
+            [[f"{prefix}_{queue_name}" for prefix in prefixes]],
         )
         return [str(row[0]) for row in cursor.fetchall()]
+
+
+async def afind_missing_queue_tables(
+    conn: "psycopg.AsyncConnection[t.Any]", queue_name: str
+) -> list[str]:
+    """``find_missing_queue_tables``, asked on a worker's own async connection.
+
+    A twin body, not a shared one: a worker holds a raw async connection, and a Django
+    cursor inside its loop raises ``SynchronousOnlyOperation``. The two must answer the
+    same question, so the ``to_regclass`` test, the prefix sets and the ``partitioned``
+    reading are kept identical — change one and change the other.
+
+    ``storage_mode`` is read here rather than passed in: one round trip, and a queue
+    with no catalog row (which every caller refuses before this) then reports nothing
+    missing instead of needing a branch that no input can reach.
+    """
+    async with conn.cursor() as cursor:
+        await cursor.execute(
+            "select name from absurd.queues q "
+            "cross join lateral unnest("
+            "case when q.storage_mode = 'partitioned' then %(partitioned)s::text[] "
+            "else %(unpartitioned)s::text[] end"
+            ") as name "
+            "where q.queue_name = %(queue)s "
+            "and to_regclass('absurd.' || quote_ident(name)) is null",
+            {
+                "partitioned": [
+                    f"{prefix}_{queue_name}" for prefix in QUEUE_OWNED_TABLE_PREFIXES
+                ],
+                "queue": queue_name,
+                "unpartitioned": [
+                    f"{prefix}_{queue_name}" for prefix in QUEUE_TABLE_PREFIXES
+                ],
+            },
+        )
+        return [str(row[0]) for row in await cursor.fetchall()]
 
 
 def sync_queues(backend: backends.AbsurdBackend) -> SyncResult:
@@ -262,6 +317,7 @@ def log_sync_result(result: SyncResult) -> None:
 
 def provision_backend(backend: backends.AbsurdBackend) -> SyncResult:
     validate_backend(backend.database)  # the lock below is Postgres-only SQL
+    require_installed_schema(backend.database)
     with lock_provisioning(backend.database):
         result = sync_queues(backend)
         rebuild_views(backend.database)

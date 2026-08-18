@@ -50,7 +50,7 @@ from django_absurd.hooks import (
     read_sdk_claimed_task,
 )
 from django_absurd.management.base import resolve_backend
-from django_absurd.queues import names_a_queue_table
+from django_absurd.queues import afind_missing_queue_tables, names_a_queue_table
 from django_absurd.scheduler import run_beat
 
 logger = logging.getLogger(__name__)
@@ -179,11 +179,12 @@ def run_worker(
 ) -> None:
     """Run the blocking worker to a stop signal — what ``absurd_worker`` calls.
 
-    The missing-relation translation wraps the whole run rather than the boot probe,
-    because ``aworker_client``'s guard reads the catalog: a queue whose row outlived its
-    tables passes it and only fails once ``claim_tasks`` runs — which a ``--beat`` run
-    reaches through here too. As in ``drain_queue``, only a relation of THIS queue's own
-    earns the translation; anything else re-raises as itself, chained.
+    The missing-relation translation wraps the whole run rather than the boot probe:
+    ``aworker_client`` refuses a queue whose tables are already gone, so what is left
+    for this one to catch is a queue dropped mid-flight, from any claim the run makes —
+    which a ``--beat`` run reaches through here too. As in ``drain_queue``, only a
+    relation of THIS queue's own earns the translation; anything else re-raises as
+    itself, chained.
     """
     options = options or WorkerOptions()
     validate_backend(backend.database)
@@ -315,9 +316,13 @@ async def aworker_client(
             psycopg.errors.UndefinedFunction,
         ) as err:
             raise SchemaNotInstalledError from err
-        # Refuse before the banner, for free: list_queues() is already awaited above.
-        # A catalog row outliving its tables passes this — run_worker catches that one.
+        # Both refusals belong before the banner: this is where "may this worker start"
+        # is decided, and open_worker_runtime logs `worker started` one frame out.
         if queue not in provisioned:
+            raise QueueNotProvisionedError(queue)
+        # The catalog row alone proves nothing — it outlives its tables after a manual
+        # drop or a partial restore, and only a claim would find out.
+        if await afind_missing_queue_tables(conn, queue):
             raise QueueNotProvisionedError(queue)
         yield client
     finally:

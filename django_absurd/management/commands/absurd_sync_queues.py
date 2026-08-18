@@ -4,6 +4,7 @@ from django.core.management.base import CommandError
 
 from django_absurd import console
 from django_absurd.backends import get_absurd_backends
+from django_absurd.exceptions import BackendNotConfiguredError
 from django_absurd.management.base import AbsurdCommand
 from django_absurd.queues import SyncResult, plan_queue_sync, provision_backend
 
@@ -29,8 +30,7 @@ class Command(AbsurdCommand):
     def handle(self, *args: t.Any, **options: t.Any) -> None:
         backends = get_absurd_backends()
         if not backends:
-            self.stdout.write("No Absurd task backends configured.")
-            return
+            raise BackendNotConfiguredError(0)
         dry_run = options["check"]
         crate_out = console.build_glyph_prefix(self.stdout, "🗃️")
         crate_err = console.build_glyph_prefix(self.stderr, "🗃️")

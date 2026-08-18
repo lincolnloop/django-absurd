@@ -294,22 +294,22 @@ def test_worker_refuses_an_unprovisioned_queue(
 
 
 @pytest.mark.parametrize(
-    ("entrypoint", "expected_error", "expected_out"),
+    ("entrypoint", "expected_error"),
     [
-        ("command", CommandError, "🐘 Started worker on queue 'default'.\n"),
-        ("function", QueueNotProvisionedError, ""),
+        ("command", CommandError),
+        ("function", QueueNotProvisionedError),
     ],
 )
 def test_a_half_provisioned_queue_is_refused(
+    caplog: pytest.LogCaptureFixture,
     capsys: pytest.CaptureFixture[str],
     entrypoint: str,
     expected_error: type[Exception],
-    expected_out: str,
 ) -> None:
-    # The catalog row outlives its tables, so the boot guard reads the queue as
-    # provisioned and only the claim can tell. The live worker therefore announces
-    # itself first — and then still has to name absurd_sync_queues, not raise a raw
-    # UndefinedTable that restarts it forever under `restart: on-failure`.
+    # The catalog row outlives its tables, so the catalog guard reads the queue as
+    # provisioned and the table probe beside it is what refuses. Nothing may announce a
+    # start first: under `restart: on-failure` that line is all an operator sees, and it
+    # would be describing a worker that never claimed anything.
     call_command("absurd_sync_queues")
     capsys.readouterr()  # drop the sync report; the worker's own output is the subject
     with connection.cursor() as cur:
@@ -324,14 +324,90 @@ def test_a_half_provisioned_queue_is_refused(
         else:
             drain_queue("default")
 
-    with pytest.raises(expected_error) as exc:
+    with (
+        caplog.at_level(logging.INFO, logger="django_absurd"),
+        pytest.raises(expected_error) as exc,
+    ):
         consume_the_queue()
     assert str(exc.value) == (
         "Queue 'default' is declared but its Absurd table is not provisioned. "
         "Run: manage.py absurd_sync_queues"
     )
-    assert capsys.readouterr().out == expected_out
+    assert capsys.readouterr().out == ""
+    assert [
+        r.getMessage() for r in caplog.records if r.name == "django_absurd.worker"
+    ] == []
     assert Queue.objects.filter(queue_name="default").exists() is True
+
+
+def test_worker_refuses_a_partitioned_queue_missing_its_idempotency_table(
+    settings: Settings,
+) -> None:
+    # i_<queue> is one of a partitioned queue's own tables, so the boot probe has to
+    # expect it exactly as the repair probe does — a claim alone would never notice.
+    settings.TASKS = utils.make_tasks_settings(
+        queues={**utils.DECLARED_QUEUES, "parts": {"storage_mode": "partitioned"}}
+    )
+    call_command("absurd_sync_queues")
+    with connection.cursor() as cur:
+        cur.execute("drop table absurd.i_parts cascade")
+    with pytest.raises(QueueNotProvisionedError) as exc:
+        drain_queue("parts")
+    assert str(exc.value) == (
+        "Queue 'parts' is declared but its Absurd table is not provisioned. "
+        "Run: manage.py absurd_sync_queues"
+    )
+
+
+def test_worker_translates_a_queue_dropped_under_a_running_worker(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # What the boot probe cannot answer, and the only event left for run_worker's own
+    # translation: the tables were there at boot and gone by the next claim. This worker
+    # really did start, so it says so, and the failure still names the repair command.
+    call_command("absurd_sync_queues")
+    capsys.readouterr()  # drop the sync report; the worker's own output is the subject
+
+    def drop_the_queue_tables() -> bool:
+        # IF EXISTS because the predicate is polled: the drop lands once and every later
+        # call has to be a harmless no-op, not an exception on a watcher thread.
+        with connection.cursor() as cur:
+            cur.execute(
+                "drop table if exists absurd.t_default, absurd.r_default, "
+                "absurd.c_default, absurd.e_default, absurd.w_default cascade"
+            )
+        return False
+
+    with pytest.raises(CommandError) as exc:
+        utils.start_worker_until_done(drop_the_queue_tables, queue="default")
+    assert str(exc.value) == (
+        "Queue 'default' is declared but its Absurd table is not provisioned. "
+        "Run: manage.py absurd_sync_queues"
+    )
+    assert capsys.readouterr().out == "🐘 Started worker on queue 'default'.\n"
+
+
+@task(queue_name="default")
+def drop_its_own_queue_tables() -> None:
+    """Take the queue's tables away from under the drain that is running this."""
+    with connection.cursor() as cur:
+        cur.execute(
+            "drop table if exists absurd.t_default, absurd.r_default, "
+            "absurd.c_default, absurd.e_default, absurd.w_default cascade"
+        )
+
+
+def test_drain_translates_a_queue_dropped_under_a_running_drain() -> None:
+    # The drain's half of the same backstop: its claim found the tables and its
+    # bookkeeping no longer does, which no boot probe could have known.
+    call_command("absurd_sync_queues")
+    drop_its_own_queue_tables.enqueue()
+    with pytest.raises(QueueNotProvisionedError) as exc:
+        drain_queue("default")
+    assert str(exc.value) == (
+        "Queue 'default' is declared but its Absurd table is not provisioned. "
+        "Run: manage.py absurd_sync_queues"
+    )
 
 
 def test_worker_command_schema_absent_errors_migrate() -> None:

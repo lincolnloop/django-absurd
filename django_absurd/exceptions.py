@@ -58,9 +58,10 @@ class QueueNotProvisionedError(DjangoAbsurdError):
     Raised by ``AbsurdBackend.enqueue``, ``worker.drain_queue``, ``worker.run_worker``,
     ``events.emit_event`` and ``AbsurdTestRuntime.get_result`` when a statement hits a
     missing relation that names one of the queue's own Absurd tables. ``aworker_client``
-    also raises it up front, from the queue's absence from ``list_queues()`` — a catalog
-    check, so a queue whose row outlived its tables passes that one and reaches this
-    error through ``run_worker``'s translation instead, once a claim runs.
+    also raises it up front, from two boot checks — the queue's absence from
+    ``list_queues()``, and any of its own tables being absent — so no worker announces
+    a start it cannot honour. ``run_worker``'s translation then covers the rest of the
+    run, a queue dropped while the worker holds it included.
     """
 
     def __init__(self, queue: str) -> None:
