@@ -77,6 +77,7 @@ def test_roundtrip_drains_on_the_non_default_alias(
     # the fixture resolves the Absurd alias itself (resolve_absurd_database), so a
     # drain/get_result here must land on "absurd", never the router's "default"
     assert dj_absurd.alias == "absurd"
+    dj_absurd.sync_queues()  # _isolate_queues dropped the catalog on the way in
     result = sum_numbers.enqueue(1, 2)
     assert [run.result for run in dj_absurd.drain()] == [3]
     snapshot = dj_absurd.get_result(result.id)
