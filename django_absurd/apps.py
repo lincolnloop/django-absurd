@@ -51,7 +51,8 @@ def provision_queues_after_migrate(
             result = provision_backend(backend)
         except SchemaNotInstalledError:
             # Forgiven because post_migrate fires for every app config: a partial
-            # `migrate auth` on a fresh database lands here before ours has run.
+            # `migrate auth` on a fresh database lands here before ours has run, and
+            # `migrate --fake` lands here having deliberately run no DDL at all.
             # Worded here rather than printed off the exception, whose own "Run:
             # manage.py migrate" is circular when migrate is what prints it.
             lines = [
