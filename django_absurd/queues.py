@@ -203,6 +203,11 @@ def lock_provisioning(using: str) -> t.Iterator[None]:
     lives exactly as long as its transaction, so taken under autocommit it would release
     before the work it guards. Scoping it here also means a crashed provisioner releases
     it, with no stuck-lock cleanup path to own.
+
+    Called inside a caller's own atomic this degrades to a savepoint, so the lock is
+    held until THEIR commit — still correct, just longer. No caller here provisions
+    inside a transaction: both commands and the post_migrate receiver run outside one,
+    and ``AbsurdTestRuntime.sync_queues`` refuses if one is open.
     """
     with transaction.atomic(using=using):
         with connections[using].cursor() as cur:
