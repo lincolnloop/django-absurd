@@ -3,6 +3,53 @@ Never `git cliff -o`: it discards every hand edit, and no regeneration can repro
 
 # Changelog
 
+## [0.1.0a7](https://github.com/lincolnloop/django-absurd/compare/v0.1.0a6...v0.1.0a7) - 2026-08-18
+
+**Provisioning is a deploy step.** `migrate` provisions the queues you declare, and
+nothing at runtime creates one any more: enqueuing to a declared but unprovisioned queue
+raises `QueueNotProvisionedError`, and `absurd_worker` refuses to start on one
+([#212](https://github.com/lincolnloop/django-absurd/pull/212)). A deploy that runs
+`manage.py migrate` needs no change. A release step that doesn't must run
+`manage.py absurd_sync_queues`; `--check` reports what it would do and exits non-zero,
+for a step that asserts rather than acts. Absurd on a non-default database alias now
+needs `migrate --database=<alias>` — a `migrate` on `default` no longer provisions it as
+a side effect.
+
+### Breaking changes
+
+- Provisioning is a deploy step, not a runtime seam
+  ([#212](https://github.com/lincolnloop/django-absurd/pull/212)) — enqueue and
+  `absurd_worker` raise `QueueNotProvisionedError` instead of creating a missing queue.
+  `post_migrate` provisions only the database being migrated. `migrate` fails when
+  provisioning fails for any reason other than an absent schema. `absurd_sync_queues`,
+  `absurd_cleanup` and `absurd_flush` exit non-zero when no Absurd backend is
+  configured.
+- Translate configuration failures to CommandError in one command base
+  ([#191](https://github.com/lincolnloop/django-absurd/pull/191))
+
+### Features
+
+- Test and support Django 6.1
+  ([#181](https://github.com/lincolnloop/django-absurd/pull/181))
+
+### Bug fixes
+
+- Serialize provisioning with an advisory lock
+  ([#202](https://github.com/lincolnloop/django-absurd/pull/202))
+- Make the queue checks agree, and close the coverage gaps
+  ([#197](https://github.com/lincolnloop/django-absurd/pull/197))
+- Quote string values in the logfmt-style log lines
+  ([#194](https://github.com/lincolnloop/django-absurd/pull/194))
+- Report a malformed OPTIONS["QUEUES"] as absurd.E014
+  ([#190](https://github.com/lincolnloop/django-absurd/pull/190))
+
+### Documentation
+
+- Give the admin its own page
+  ([#189](https://github.com/lincolnloop/django-absurd/pull/189))
+- Rewrite the packaged integration guide, example-first
+  ([#177](https://github.com/lincolnloop/django-absurd/pull/177))
+
 ## [0.1.0a6](https://github.com/lincolnloop/django-absurd/compare/v0.1.0a5...v0.1.0a6) - 2026-08-12
 
 **Start from an empty database.** Absurd 0.5.0 no longer depends on a UUID extension.
