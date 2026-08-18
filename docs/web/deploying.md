@@ -75,9 +75,14 @@ CommandError: Queues are not in sync. Run: manage.py absurd_sync_queues
 row outlived its tables. In sync, it prints `🗃️ No queues to sync.` and exits 0.
 
 Reach for it in a release step that asserts rather than acts, or to ask a production
-database whether it is in sync without needing DDL rights. It is also the way to gate a
-pipeline on the answer: `migrate` prints `Not provisioned:` and the reason when it can't
-provision, but it still exits 0, so only this reports the condition as a status code.
+database whether it is in sync without needing DDL rights. It is not a second line of
+defence behind `migrate`, which fails on a provisioning error itself — it answers the
+question a release step that never runs `migrate`, or runs it against another database,
+would otherwise leave unasked.
+
+The one condition `migrate` reports without failing is an absent schema: it prints
+`Not provisioned: Absurd schema is not installed.` and exits 0, because there is nothing
+to provision into yet. That is the state `migrate --fake` leaves behind.
 
 ## `migrate --check` doesn't see queues
 

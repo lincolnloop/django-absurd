@@ -290,3 +290,49 @@ Three ways to be affected anyway, all worth naming in the release notes:
   — or a migrate role without `CREATE` on the `absurd` schema — provisions nothing and
   reports nothing. Worker boot and first enqueue are today's fallbacks for that, and
   both are being removed.
+
+## Shipped beyond this design
+
+Adversarial review and live testing against a fresh project moved five things after the
+sections above were written. Each supersedes what it names.
+
+- **Missing-table probe follows storage mode.** `find_missing_queue_tables` probed the
+  five tables every queue owns; the enqueue-time classifier matched six. A partitioned
+  queue missing only `i_<queue>` therefore refused every keyed enqueue while sync
+  reported nothing to repair and `--check` exited 0 — unrepairable by any shipped
+  command, and fatal to a whole schedule, since `spawn_scheduled` always carries an
+  idempotency key. The probe now takes the existing `storage_mode`. `aworker_client`
+  asks the same question on its own async connection
+  (`queues.afind_missing_queue_tables`) — a twin body, because a Django cursor inside
+  the worker's loop raises `SynchronousOnlyOperation`.
+- **Schema absence classified per operation, not per queue.** Classification lived in
+  the per-queue loop, so a backend declaring no queues reached `rebuild_views` and
+  raised a raw `ProgrammingError` — breaking the `migrate --fake` path the swallow
+  exists for, and diverging from `--check`, which exited 0 in the same state.
+  `require_installed_schema` asks up front, in both the write path and the dry run.
+- **The swallow narrowed to genuine absence** — supersedes _Out of scope_'s
+  "`post_migrate`'s silent swallow … Separate decision", and the third upgrade bullet
+  below it. An absent schema and a dropped `absurd.queues` raise the identical
+  `UndefinedTable`, and only the first is something `migrate` can fix; the second made
+  `migrate` print `Not provisioned: … Run: manage.py migrate` and exit 0 forever, advice
+  that loops because the migration is already applied. Only a live probe separates them,
+  and it has to run before the failing statement, which has already aborted its
+  transaction.
+- **The worker refuses before it announces a start.** The catalog check passed a queue
+  whose row outlived its tables, so `worker started:` and the `🐘 Started worker` banner
+  both printed for a worker that died on its first claim — repeating under
+  `restart: on-failure`, on the one line an operator would alert on. `drain_queue`
+  logged it too. The boot guard in `aworker_client` covers both entry points;
+  `run_worker`'s translation is left holding a queue dropped mid-flight.
+- **No Absurd backend configured is an error for every `absurd_*` command**,
+  `absurd_cleanup` and `absurd_flush` included — reverses the exit-code split left
+  standing in `2026-08-15-command-error-translation-design.md`'s _Out of scope_. Exiting
+  0 is defensible only where doing nothing is the intended outcome, and a missing
+  backend is a misconfiguration: a nightly `absurd_cleanup` otherwise stops cleaning
+  silently and reports success.
+
+Two additions the _Docs_ section above does not list: `docs/web/deploying.md` (the
+deploy script, the `--database` asymmetry, `--check`, and the `migrate --check` trap),
+and examples gating `app` and `worker` on a one-shot `migrate` service via
+`service_completed_successfully` — which replaces the `restart: on-failure` convergence
+that section describes.
