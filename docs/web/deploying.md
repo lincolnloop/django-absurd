@@ -19,14 +19,6 @@ enqueuing to a declared but unprovisioned queue raises
 Those two lines are the whole deploy for most projects. Everything below is for a
 release step that departs from them.
 
-## Updating queues explicitly
-
-```bash
-python manage.py absurd_sync_queues
-```
-
-`migrate` already does this on every run; this command does only that part.
-
 ## What `migrate` needs
 
 Absurd's schema ships as a Django
@@ -69,15 +61,17 @@ python manage.py migrate                     # Django's own tables
 - A non-default alias needs `django_absurd.routers.AbsurdRouter` in `DATABASE_ROUTERS`
   (`absurd.E005`) — see [Non-default database](configuration.md#non-default-database).
 
-## Assert instead of act
+## Updating queues explicitly
 
 ```bash
-python manage.py absurd_sync_queues --check
+python manage.py absurd_sync_queues
+python manage.py absurd_sync_queues --check   # report only, write nothing
 ```
 
-Read-only: reports what would change and exits non-zero if anything would. It answers
-about queues; the admin views are rebuilt by every real run, so a dropped view is not
-something it reports.
+`migrate` already does this on every run; this command does only that part. `--check`
+reports what would change and exits non-zero if anything would. It answers about queues;
+the admin views are rebuilt by every real run, so a dropped view is not something it
+reports.
 
 ```
 🗃️ Would create: pending
