@@ -165,7 +165,7 @@ dev = [
     { name = "django-stubs", specifier = "==6.0.9" },
     { name = "git-cliff", specifier = "==2.13.1" },
     { name = "hatch-vcs", specifier = "==0.5.0" },
-    { name = "hatchling", specifier = "==1.31.0" },
+    { name = "hatchling", specifier = "==1.32.0" },
     { name = "mypy", specifier = "==2.3.0" },
     { name = "psycopg", extras = ["binary"], specifier = "==3.3.4" },
     { name = "pytest", specifier = "==9.1.1" },
