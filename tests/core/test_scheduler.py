@@ -257,10 +257,10 @@ def test_beat_started_logs_schedule_count_and_cleanup(
 def test_beat_names_the_fix_when_a_target_queue_is_unprovisioned(
     caplog: pytest.LogCaptureFixture,
     dj_absurd: AbsurdTestRuntime,
-    settings: pytest_django.fixtures.Settings,
+    settings: Settings,
 ) -> None:
-    # Nothing provisions at runtime, and the loop never revisits the slot it just
-    # dropped, so this line is an operator's only notice — it has to say what to run.
+    # Nothing provisions at runtime, and the loop never revisits a firing it could not
+    # enqueue, so this line is an operator's only notice — it has to say what to run.
     settings.TASKS = make_tasks_setting(
         {"reporting": {"task": "tests.tasks.create_payload", "cron": "*/1 * * * *"}},
     )

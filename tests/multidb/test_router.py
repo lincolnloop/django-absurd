@@ -55,7 +55,7 @@ def test_db_for_read_write_route_django_absurd() -> None:
 
 @pytest.mark.django_db(databases=["absurd", "default"], transaction=True)
 def test_migrate_provisions_only_the_database_it_migrated(
-    settings: "pytest_django.fixtures.Settings",
+    settings: Settings,
 ) -> None:
     # post_migrate is per-database, so migrating "default" must leave the Absurd
     # alias alone; only migrating the alias itself provisions it.
