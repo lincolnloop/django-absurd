@@ -331,6 +331,10 @@ sections above were written. Each supersedes what it names.
   backend is a misconfiguration: a nightly `absurd_cleanup` otherwise stops cleaning
   silently and reports success.
 
+The repair reports itself. _Testing_'s "recreates the tables … and still reports it as
+no change" describes a shape that was never shipped: `SyncResult` gained a `repaired`
+list, so sync prints `Repaired: <queue>` and `--check` prints `Would repair: <queue>`.
+
 Two additions the _Docs_ section above does not list: `docs/web/deploying.md` (the
 deploy script, the `--database` asymmetry, `--check`, and the `migrate --check` trap),
 and examples gating `app` and `worker` on a one-shot `migrate` service via

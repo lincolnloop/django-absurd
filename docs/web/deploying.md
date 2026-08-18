@@ -26,15 +26,19 @@ Absurd's schema ships as a Django
 [migration](https://docs.djangoproject.com/en/6.0/topics/migrations/). The SQL comes
 from the pinned Absurd version and is never fetched at migrate time.
 
-- **Privileges:** `migrate` needs `GRANT CREATE ON DATABASE <db>` and nothing more — no
-  extension, so no superuser and no managed-Postgres allow-list entry.
-  `CREATE SCHEMA IF NOT EXISTS` checks that privilege _before_ the schema's existence,
-  so pre-creating `absurd` yourself doesn't avoid the grant. The schema name is fixed.
+- **Privileges:** `migrate` needs `GRANT CREATE ON DATABASE <db>` — no extension, so no
+  superuser and no managed-Postgres allow-list entry. `CREATE SCHEMA IF NOT EXISTS`
+  checks that privilege _before_ the schema's existence, so pre-creating `absurd`
+  yourself doesn't avoid the grant. The schema name is fixed. Provisioning then creates
+  tables _inside_ `absurd`, so the role needs `CREATE` on the schema as well — implicit
+  when `migrate` created it, and not when someone else did.
 - **Already running Absurd?** `python manage.py migrate --fake django_absurd` records
   the migration as applied without re-running the DDL. Only do this when the existing
   schema matches `django_absurd.ABSURD_SCHEMA_VERSION` exactly — faking doesn't check,
   and a mismatch fails at runtime in ways Django can't detect. Faking skips the DDL but
-  still fires `post_migrate`, so the declared queues are provisioned either way.
+  still fires `post_migrate`, so the declared queues are provisioned either way — which
+  needs `CREATE` on the schema the other role created. Without it `migrate` fails, where
+  earlier releases provisioned nothing and left the first worker or enqueue to heal it.
 
 → [Absurd: database setup](https://earendil-works.github.io/absurd/database/).
 
@@ -64,7 +68,9 @@ python manage.py migrate                     # Django's own tables
 python manage.py absurd_sync_queues --check
 ```
 
-Read-only: reports what would change and exits non-zero if anything would.
+Read-only: reports what would change and exits non-zero if anything would. It answers
+about queues; the admin views are rebuilt by every real run, so a dropped view is not
+something it reports.
 
 ```
 🗃️ Would create: pending
@@ -81,8 +87,9 @@ question a release step that never runs `migrate`, or runs it against another da
 would otherwise leave unasked.
 
 The one condition `migrate` reports without failing is an absent schema: it prints
-`Not provisioned: Absurd schema is not installed.` and exits 0, because there is nothing
-to provision into yet. That is the state `migrate --fake` leaves behind.
+`Not provisioned: the Absurd schema is absent; this migrate did not install it.` and
+exits 0, because there is nothing to provision into yet. That is the state
+`migrate --fake` leaves behind.
 
 ## `migrate --check` doesn't see queues
 

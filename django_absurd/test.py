@@ -20,7 +20,7 @@ underscore-prefixed methods are internal, and its dataclass fields are plain sta
 run in any venv with django-absurd installed, so its top level must stay settings-free
 — never add a module-level import reaching ``django_absurd.models``/``.checks``/
 ``.admin``. Full constraint and the one sanctioned choke point:
-``django_absurd.pytest_plugin``'s module docstring and ``queues.reconcile_queue``.
+``django_absurd.pytest_plugin``'s module docstring and ``queues.get_queue_object``.
 """
 
 import asyncio

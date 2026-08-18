@@ -18,7 +18,7 @@ module-level import.
 
 That constraint has ONE choke point, not a rule spread over this file: the only
 model-touching import in the whole graph reachable from here lives inside
-``django_absurd.queues.reconcile_queue``'s function body (see the comment there), which
+``django_absurd.queues.get_queue_object``'s function body (see the comment there), which
 is what keeps ``queues``, ``flush``, ``events`` and ``django_absurd.test`` settings-free
 and so importable at module level here. ``tests/core/test_pytest_plugin.py``'s
 ``test_a_pytest_run_with_no_django_settings_still_collects`` runs a real settings-less
