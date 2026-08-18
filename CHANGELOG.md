@@ -13,7 +13,9 @@ raises `QueueNotProvisionedError`, and `absurd_worker` refuses to start on one
 `manage.py absurd_sync_queues`; `--check` reports what it would do and exits non-zero,
 for a step that asserts rather than acts. Absurd on a non-default database alias now
 needs `migrate --database=<alias>` — a `migrate` on `default` no longer provisions it as
-a side effect.
+a side effect. The new
+[Deploying](https://lincolnloop.github.io/django-absurd/deploying/) page documents the
+deploy step, the `--database` nuance, and what `migrate` needs.
 
 ### Breaking changes
 
