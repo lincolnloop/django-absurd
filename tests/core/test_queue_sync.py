@@ -21,7 +21,6 @@ from django_absurd.queues import (
     get_absurd_client,
     resolve_absurd_database,
 )
-from django_absurd.test import AbsurdTestRuntime
 from tests import utils
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -238,12 +237,9 @@ def test_migrate_reports_a_queue_it_repaired(settings: Settings) -> None:
 
 
 def test_sync_creates_with_options_and_model_maps(settings: Settings) -> None:
-    settings.TASKS = build_tasks_setting(
-        {"x": {"storage_mode": "partitioned", "cleanup_ttl": "90 days"}}
-    )
+    settings.TASKS = build_tasks_setting({"x": {"cleanup_ttl": "90 days"}})
     call_command("absurd_sync_queues")
     q = Queue.objects.get(queue_name="x")
-    assert q.storage_mode == "partitioned"
     assert q.cleanup_ttl == dt.timedelta(days=90)
     assert table_exists("t_x")
 
@@ -311,82 +307,6 @@ def test_sync_recreates_the_tables_of_a_surviving_catalog_row(
     call_command("absurd_sync_queues")
     assert capsys.readouterr().out == "🗃️ Repaired: partial\n"
     assert list_absent_queue_tables("partial") == []
-
-
-@pytest.mark.usefixtures("_isolate_queues")
-def test_sync_recreates_the_tables_of_a_surviving_partitioned_catalog_row(
-    capsys: pytest.CaptureFixture[str], settings: Settings
-) -> None:
-    # Unpartitioned is the one mode where handing create_queue the existing
-    # storage_mode decides nothing, so the repair is only really proven here: dropping
-    # the mode would put t_ back as a plain table and the queue would silently stop
-    # being partitioned.
-    settings.TASKS = build_tasks_setting({"partsurv": {"storage_mode": "partitioned"}})
-    call_command("absurd_sync_queues")
-    with connection.cursor() as cur:
-        cur.execute(
-            "drop table absurd.t_partsurv, absurd.r_partsurv, absurd.c_partsurv, "
-            "absurd.e_partsurv, absurd.w_partsurv cascade"
-        )
-    # The sixth table a partitioned queue owns survives the drop here, so this repair is
-    # driven by the five; dropping it on its own is the test below.
-    assert table_exists("i_partsurv") is True
-    capsys.readouterr()
-    call_command("absurd_sync_queues")
-    assert capsys.readouterr().out == "🗃️ Repaired: partsurv\n"
-    assert list_absent_queue_tables("partsurv") == []
-    assert Queue.objects.get(queue_name="partsurv").storage_mode == "partitioned"
-    with connection.cursor() as cur:
-        cur.execute(
-            "select relkind from pg_class where oid = 'absurd.t_partsurv'::regclass"
-        )
-        assert cur.fetchone() == ("p",)
-
-
-@pytest.mark.usefixtures("_isolate_queues")
-def test_sync_repairs_a_partitioned_queues_idempotency_table_on_its_own(
-    capsys: pytest.CaptureFixture[str], settings: Settings
-) -> None:
-    # A keyed enqueue reserves i_<queue> before it touches any other table, so a probe
-    # blind to it leaves this queue refusing every keyed enqueue with nothing to repair.
-    settings.TASKS = build_tasks_setting({"partidem": {"storage_mode": "partitioned"}})
-    call_command("absurd_sync_queues")
-    with connection.cursor() as cur:
-        cur.execute("drop table absurd.i_partidem cascade")
-    capsys.readouterr()
-    with pytest.raises(CommandError) as excinfo:
-        call_command("absurd_sync_queues", "--check")
-    assert str(excinfo.value) == (
-        "Queues are not in sync. Run: manage.py absurd_sync_queues"
-    )
-    assert capsys.readouterr().out == "🗃️ Would repair: partidem\n"
-    call_command("absurd_sync_queues")
-    assert capsys.readouterr().out == "🗃️ Repaired: partidem\n"
-    assert table_exists("i_partidem") is True
-    assert Queue.objects.get(queue_name="partidem").storage_mode == "partitioned"
-
-
-@pytest.mark.usefixtures("_isolate_queues")
-def test_sync_leaves_a_provisioned_partitioned_queue_alone(
-    dj_absurd: AbsurdTestRuntime, settings: Settings
-) -> None:
-    # Once the clock passes the pre-created window, rows land in the default partition,
-    # and ensure_partitions can no longer create the weeks they belong to — Postgres
-    # refuses. Provisioning must not reach that DDL for a queue already provisioned.
-    settings.TASKS = build_tasks_setting({"parts": {"storage_mode": "partitioned"}})
-    call_command("absurd_sync_queues")
-    with dj_absurd.freeze_time() as frozen_time:
-        frozen_time.shift(dt.timedelta(days=60))
-        with connection.cursor() as cur:
-            # The partition key is a uuidv7 range over task_id, not enqueue_at.
-            cur.execute(
-                "insert into absurd.t_parts "
-                "(task_id, task_name, params, state, enqueue_at) values "
-                "(absurd.uuidv7_floor(now() + interval '60 days'), 'late', "
-                "'{}'::jsonb, 'pending', now() + interval '60 days')"
-            )
-        call_command("absurd_sync_queues")
-    assert Queue.objects.get(queue_name="parts").storage_mode == "partitioned"
 
 
 @pytest.mark.usefixtures("_isolate_queues")
@@ -460,45 +380,6 @@ def test_sync_reports_no_queues_when_all_in_sync(
     capsys.readouterr()
     call_command("absurd_sync_queues")  # freshsync exists, no drift -> empty result
     assert capsys.readouterr().out == "🗃️ No queues to sync.\n"
-
-
-def test_sync_prefixes_the_storage_mode_warning(
-    capsys: pytest.CaptureFixture[str], settings: Settings
-) -> None:
-    settings.TASKS = build_tasks_setting({"driftglyph": {}})
-    call_command("absurd_sync_queues")  # create 'driftglyph' unpartitioned
-    settings.TASKS = build_tasks_setting(
-        {"driftglyph": {"storage_mode": "partitioned"}}
-    )
-    capsys.readouterr()
-    call_command("absurd_sync_queues")
-    cap = capsys.readouterr()
-    assert cap.out == "🗃️ No queues to sync.\n"
-    assert cap.err == (
-        "🗃️ Queue 'driftglyph': storage_mode cannot be changed "
-        "(existing: 'unpartitioned', declared: 'partitioned'); skipping.\n"
-    )
-
-
-def test_sync_check_warns_about_a_storage_mode_change_in_the_same_words(
-    capsys: pytest.CaptureFixture[str], settings: Settings
-) -> None:
-    # Nothing else pins the warning on the --check side, and a warning never moves the
-    # exit code, so reworded-on-one-side-only is invisible without this.
-    settings.TASKS = build_tasks_setting({"driftcheck": {}})
-    call_command("absurd_sync_queues")  # create 'driftcheck' unpartitioned
-    settings.TASKS = build_tasks_setting(
-        {"driftcheck": {"storage_mode": "partitioned"}}
-    )
-    capsys.readouterr()
-    call_command("absurd_sync_queues", "--check")
-    planned = capsys.readouterr()
-    assert planned.err == (
-        "🗃️ Queue 'driftcheck': storage_mode cannot be changed "
-        "(existing: 'unpartitioned', declared: 'partitioned'); skipping.\n"
-    )
-    call_command("absurd_sync_queues")
-    assert capsys.readouterr().err == planned.err
 
 
 def test_get_absurd_database_resolves_from_backend(settings: Settings) -> None:

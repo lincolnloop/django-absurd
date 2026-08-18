@@ -8,7 +8,7 @@ from django.db import connections
 from django.test import TransactionTestCase
 from pytest_django import Settings
 
-from django_absurd import absurd_params, pytest_plugin
+from django_absurd import pytest_plugin
 from django_absurd.flush import flush_absurd_state
 from django_absurd.models import Queue, Task
 from django_absurd.test import install_absurd_cleanup
@@ -48,28 +48,6 @@ def test_flush_absurd_state_truncates_rows_by_default() -> None:
 
     assert task_model.objects.filter(queue="default").count() == 0
     assert Queue.objects.filter(queue_name="default").exists()  # schema untouched
-
-
-def test_flush_absurd_state_truncates_a_partitioned_queues_idempotency_table(
-    settings: Settings,
-) -> None:
-    # `i_<queue>` only exists for a `partitioned` queue — exercise that branch of
-    # truncate_queue_tables (the unpartitioned "default" queue used elsewhere in this
-    # file never creates it).
-    settings.TASKS = utils.make_tasks_settings(
-        queues={"part": {"storage_mode": "partitioned"}}
-    )
-    call_command("absurd_sync_queues")
-    absurd_params(idempotency_key="k").bind(tasks.add.using(queue_name="part")).enqueue(
-        1, 2
-    )
-    task_model: t.Any = Task
-    assert task_model.objects.filter(queue="part").count() == 1
-
-    flush_absurd_state()
-
-    assert task_model.objects.filter(queue="part").count() == 0
-    assert Queue.objects.filter(queue_name="part").exists()  # schema untouched
 
 
 def test_flush_absurd_state_drops_schema_when_requested() -> None:

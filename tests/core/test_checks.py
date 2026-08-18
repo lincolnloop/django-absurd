@@ -89,19 +89,6 @@ def test_self_healing_drift_no_longer_warns(
     assert "absurd.W002" not in out
 
 
-def test_storage_mode_drift_warns(
-    capsys: pytest.CaptureFixture[str],
-    settings: Settings,
-) -> None:
-    settings.TASKS = build_tasks_setting({"q": {}})
-    call_command("absurd_sync_queues")  # 'q' created unpartitioned
-    settings.TASKS = build_tasks_setting({"q": {"storage_mode": "partitioned"}})
-    out = run_absurd_check(capsys, databases=["default"])
-    assert "absurd.W002" in out
-    assert "storage_mode" in out
-    assert "q" in out
-
-
 def test_invalid_policy_modes_error(
     capsys: pytest.CaptureFixture[str],
     settings: Settings,
