@@ -13,8 +13,10 @@ python manage.py absurd_worker --queue reports --concurrency 4
 ```
 
 One worker runs both sync and `async def` tasks — async on an event loop, sync in a
-thread pool. On start it provisions every declared queue and rebuilds the admin views,
-then polls for work.
+thread pool. On start it checks that `--queue` is declared and provisioned, then polls
+for work. It provisions nothing: an unprovisioned queue exits with
+`QueueNotProvisionedError` before the worker prints anything — run `migrate` or
+[`manage.py absurd_sync_queues`](configuration.md#declaring-queues) first.
 
 | Flag              | Default        | What it does                                                       |
 | ----------------- | -------------- | ------------------------------------------------------------------ |

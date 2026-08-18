@@ -41,8 +41,9 @@ Use this to set [retention](https://earendil-works.github.io/absurd/storage/)
 }}
 ```
 
-Declared queues are provisioned at `migrate` and again when a [worker](workers.md)
-starts.
+Declared queues are provisioned at `migrate` and by `manage.py absurd_sync_queues` —
+nothing else creates one. `enqueue` and a starting [worker](workers.md) both refuse an
+unprovisioned queue.
 
 - Setting both forms is a configuration error (`absurd.E002`). Undeclared queue names
   are rejected, never silently created.
@@ -119,9 +120,10 @@ except DjangoAbsurdError:
 
 Typed errors under `DjangoAbsurdError`: `QueueNotDeclaredError` (never declared) and
 `QueueNotProvisionedError` (declared, no table yet — run
-`manage.py absurd_sync_queues`), raised by [`emit_event`](workflows.md#emit-from-a-view)
-and the test fixture's [`drain()`](testing.md#drain); and `SchemaNotInstalledError` (the
-Absurd schema itself isn't installed — run `manage.py migrate`).
+`manage.py absurd_sync_queues`), raised by `enqueue`, by a starting
+[worker](workers.md), by [`emit_event`](workflows.md#emit-from-a-view) and by the test
+fixture's [`drain()`](testing.md#drain); and `SchemaNotInstalledError` (the Absurd
+schema itself isn't installed — run `manage.py migrate`).
 
 - `enqueue` raises `QueueNotDeclaredError` only when `QUEUES` is empty or unset. With
   `QUEUES` configured, a typo is rejected earlier as Django's own `InvalidTask`.

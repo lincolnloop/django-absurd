@@ -133,21 +133,25 @@ def test_changelist_shows_dates_ordered_by_recent_activity(
     assert enqueue_elem.get_text(strip=True) != ""
 
 
+@pytest.mark.usefixtures("_isolate_queues")
 def test_changelist_warns_about_unindexed_queue(
-    admin_user: User, client: Client
+    admin_user: User, client: Client, dj_absurd: AbsurdTestRuntime
 ) -> None:
     # build the views over the declared queues, then create a queue directly
     # (config drift): it lands in the catalog but no view arm references it →
-    # unindexed.
+    # unindexed. _isolate_queues so 'drift' cannot outlive the run and leave the
+    # next --reuse-db pass with nothing to warn about.
+    dj_absurd.sync_queues()
     get_absurd_client().create_queue("drift")
     client.force_login(admin_user)
     resp = client.get(CHANGELIST)
     soup = parse_html(resp)
     warning = soup.select_one("ul.messagelist li.warning")
     assert warning is not None
-    text = warning.get_text()
-    assert "drift" in text
-    assert "absurd_sync_queues" in text
+    assert warning.get_text(strip=True) == (
+        "Queue(s) 'drift' exist but aren't indexed in the admin views yet — "
+        "run 'manage.py absurd_sync_queues' to include their tasks."
+    )
 
 
 def test_changelist_no_warning_when_all_queues_indexed(

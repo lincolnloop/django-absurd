@@ -12,9 +12,9 @@ filterable by queue and state. Runs, Checkpoints, Events, Waits, and the Queues 
 get their own alongside it.
 
 - Read-only. There is no retry or cancel — the admin reports, it does not drive.
-- A queue created only by an enqueue is not in the views yet, so its tasks do not
-  appear. The changelist says so and names the queues — run
-  `manage.py absurd_sync_queues` or start a worker on them.
+- A queue created outside django-absurd — `absurdctl`, a direct SDK call — is not in the
+  views, so its tasks do not appear. The changelist says so and names the queues;
+  `manage.py absurd_sync_queues` indexes them.
 - Toggle with `ENABLE_ADMIN`, or register on your own site with `ADMIN_SITE`
   ([Configuration](configuration.md#backend-options)).
 

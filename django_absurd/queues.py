@@ -192,9 +192,6 @@ def log_sync_result(result: SyncResult) -> None:
 
 
 def provision_backend(backend: backends.AbsurdBackend) -> SyncResult:
-    # The single integral provisioning step (used by post_migrate, the sync command,
-    # and worker start): reconcile every declared queue, then rebuild all admin views
-    # so they reflect the full catalog — not just the queue a worker happens to serve.
     validate_backend(backend.database)  # the lock below is Postgres-only SQL
     with lock_provisioning(backend.database):
         result = sync_queues(backend)
