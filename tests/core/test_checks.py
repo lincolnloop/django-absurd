@@ -66,9 +66,16 @@ def test_invalid_policy_modes_error(
     )
     settings.TASKS = build_tasks_setting(invalid_queues)
     out = run_absurd_check(capsys)
-    assert (
-        "django-absurd: invalid per-queue policy options. Queue 'q':"
-        " invalid storage_mode 'bogus'." in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E003) django-absurd: invalid per-queue policy options."
+        " Queue 'q': invalid storage_mode 'bogus'.\n"
+        "\tHINT: Remove unknown keys; 'unpartitioned' is the only accepted"
+        " storage_mode.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
     )
 
 
@@ -78,14 +85,17 @@ def test_declaring_partitioned_storage_is_an_error(
 ) -> None:
     settings.TASKS = build_tasks_setting({"q": {"storage_mode": "partitioned"}})
     out = run_absurd_check(capsys)
-    assert "absurd.E015" in out
-    assert (
-        "django-absurd: partitioned queues are not supported."
-        " Queue 'q' declares storage_mode 'partitioned'." in out
-    )
-    assert (
-        "Declare storage_mode 'unpartitioned', or omit it. Track partitioned"
-        " support at https://github.com/lincolnloop/django-absurd/issues/216." in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E015) django-absurd: partitioned queues are not supported."
+        " Queue 'q' declares storage_mode 'partitioned'.\n"
+        "\tHINT: Declare storage_mode 'unpartitioned', or omit it. Track"
+        " partitioned support at"
+        " https://github.com/lincolnloop/django-absurd/issues/216.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
     )
 
 
@@ -108,11 +118,17 @@ def test_declaring_a_partition_only_policy_key_is_an_error(
         t.cast("dict[str, CreateQueueOptions]", {"q": {key: value}})
     )
     out = run_absurd_check(capsys)
-    assert "absurd.E015" in out
-    assert f"Queue 'q' declares '{key}'" in out
-    assert (
-        "Remove this key. Track partitioned support at"
-        " https://github.com/lincolnloop/django-absurd/issues/216." in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E015) django-absurd: partitioned-queue-only policy key."
+        f" Queue 'q' declares '{key}', which only applies to a partitioned"
+        " queue.\n"
+        "\tHINT: Remove this key. Track partitioned support at"
+        " https://github.com/lincolnloop/django-absurd/issues/216.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
     )
 
 
@@ -134,10 +150,14 @@ def test_check_errors_on_wrong_backend(
 ) -> None:
     settings.TASKS = build_tasks_setting({"x": {}}, database="sqlite")
     out = run_absurd_check(capsys)
-    assert "absurd.E001" in out
-    assert (
-        "django-absurd requires the psycopg (v3) PostgreSQL backend. See https://www.psycopg.org/psycopg3/docs/"
-        in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E001) django-absurd requires the psycopg (v3) PostgreSQL"
+        " backend. See https://www.psycopg.org/psycopg3/docs/\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
     )
 
 
@@ -174,10 +194,16 @@ def test_check_errors_when_router_missing(
     settings.TASKS = build_tasks_setting({"x": {}}, database="absurd")
     settings.DATABASE_ROUTERS = []
     out = run_absurd_check(capsys)
-    assert "absurd.E005" in out
-    assert (
-        "django-absurd: a non-default DATABASE is configured but "
-        "AbsurdRouter is not in DATABASE_ROUTERS." in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E005) django-absurd: a non-default DATABASE is configured but"
+        " AbsurdRouter is not in DATABASE_ROUTERS.\n"
+        "\tHINT: Add 'django_absurd.routers.AbsurdRouter' to"
+        " settings.DATABASE_ROUTERS.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
     )
 
 
@@ -193,10 +219,16 @@ def test_both_queue_forms_set_errors(
         }
     }
     out = run_absurd_check(capsys)
-    assert "absurd.E002" in out
-    assert (
-        "django-absurd: both top-level QUEUES and OPTIONS['QUEUES'] "
-        "are set on the same backend." in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E002) django-absurd: both top-level QUEUES and"
+        " OPTIONS['QUEUES'] are set on the same backend.\n"
+        "\tHINT: Remove either the top-level QUEUES key or OPTIONS['QUEUES']"
+        " — not both.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
     )
 
 
@@ -220,9 +252,17 @@ def test_invalid_policy_key_errors(
         }
     }
     out = run_absurd_check(capsys)
-    assert "absurd.E002" not in out
-    assert "absurd.E003" in out
-    assert "a" in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E003) django-absurd: invalid per-queue policy options."
+        " Queue 'a': unknown key 'bogus_key'.\n"
+        "\tHINT: Remove unknown keys; 'unpartitioned' is the only accepted"
+        " storage_mode.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
 
 
 def test_invalid_storage_mode_literal_errors(
@@ -236,8 +276,17 @@ def test_invalid_storage_mode_literal_errors(
         }
     }
     out = run_absurd_check(capsys)
-    assert "absurd.E002" not in out
-    assert "absurd.E003" in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E003) django-absurd: invalid per-queue policy options."
+        " Queue 'a': invalid storage_mode 'nope'.\n"
+        "\tHINT: Remove unknown keys; 'unpartitioned' is the only accepted"
+        " storage_mode.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
 
 
 def test_queues_option_as_a_list_errors(
@@ -251,14 +300,16 @@ def test_queues_option_as_a_list_errors(
         }
     }
     out = run_absurd_check(capsys)
-    assert "absurd.E014" in out
-    assert (
-        "django-absurd: OPTIONS['QUEUES'] must be a mapping of queue name to"
-        " policy options." in out
-    )
-    assert (
-        "HINT: Write OPTIONS['QUEUES'] = {'a': {}}, or declare names only with the"
-        " top-level QUEUES list." in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E014) django-absurd: OPTIONS['QUEUES'] must be a mapping of"
+        " queue name to policy options.\n"
+        "\tHINT: Write OPTIONS['QUEUES'] = {'a': {}}, or declare names only with"
+        " the top-level QUEUES list.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
     )
 
 
@@ -289,7 +340,9 @@ def test_single_absurd_backend_no_e004(
     settings: Settings,
 ) -> None:
     settings.TASKS = build_tasks_setting({"q": {}})
-    assert "more than one Absurd backend" not in run_absurd_check(capsys)
+    assert (
+        run_absurd_check(capsys) == "System check identified no issues (0 silenced).\n"
+    )
 
 
 def test_two_absurd_backends_distinct_db_error(
@@ -307,11 +360,16 @@ def test_two_absurd_backends_distinct_db_error(
         },
     }
     out = run_absurd_check(capsys)
-    assert "absurd.E004" in out
-    assert "django-absurd: more than one Absurd backend is configured." in out
-    assert (
-        "django-absurd uses a single Absurd backend per project"
-        " — configure exactly one AbsurdBackend in TASKS." in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E004) django-absurd: more than one Absurd backend is"
+        " configured.\n"
+        "\tHINT: django-absurd uses a single Absurd backend per project —"
+        " configure exactly one AbsurdBackend in TASKS.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
     )
 
 
@@ -325,15 +383,17 @@ def test_two_absurd_backends_same_db_error(
         "b": {"BACKEND": ABSURD, "OPTIONS": {"QUEUES": {}}},
     }
     out = run_absurd_check(capsys)
-    assert "absurd.E004" in out
-    assert "django-absurd: more than one Absurd backend is configured." in out
-    assert (
-        "django-absurd uses a single Absurd backend per project"
-        " — configure exactly one AbsurdBackend in TASKS." in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E004) django-absurd: more than one Absurd backend is"
+        " configured.\n"
+        "\tHINT: django-absurd uses a single Absurd backend per project —"
+        " configure exactly one AbsurdBackend in TASKS.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
     )
-
-
-E009_MSG = "django-absurd: OPTIONS['DEFAULT_MAX_ATTEMPTS'] must be an integer >= 1."
 
 
 @pytest.mark.parametrize("value", [-1, 0, 1.5, "3", True])
@@ -352,8 +412,17 @@ def test_default_max_attempts_invalid_is_error(
         }
     }
     out = run_absurd_check(capsys)
-    assert E009_MSG in out
-    assert "absurd.E009" in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E009) django-absurd: OPTIONS['DEFAULT_MAX_ATTEMPTS'] must"
+        " be an integer >= 1.\n"
+        "\tHINT: Set DEFAULT_MAX_ATTEMPTS to a positive integer (Absurd rejects"
+        " < 1).\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
 
 
 def test_default_max_attempts_valid_no_error(
@@ -368,13 +437,6 @@ def test_default_max_attempts_valid_no_error(
     }
     out = run_absurd_check(capsys)
     assert out == "System check identified no issues (0 silenced).\n"
-
-
-E010_MSG = "django-absurd: invalid CLEANUP option."
-E010_HINT = (
-    "Set CLEANUP to a dict with a single 'schedule' key:"
-    ' OPTIONS["CLEANUP"] = {"schedule": "<cron>"}.'
-)
 
 
 @pytest.mark.parametrize(
@@ -402,9 +464,16 @@ def test_invalid_cleanup_errors(
         }
     }
     out = run_absurd_check(capsys)
-    assert E010_MSG in out
-    assert E010_HINT in out
-    assert "absurd.E010" in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E010) django-absurd: invalid CLEANUP option.\n"
+        "\tHINT: Set CLEANUP to a dict with a single 'schedule' key:"
+        ' OPTIONS["CLEANUP"] = {"schedule": "<cron>"}.\n'
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
 
 
 def test_scheduler_defaults_to_beat(
