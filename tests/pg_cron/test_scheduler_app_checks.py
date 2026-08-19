@@ -45,14 +45,17 @@ def test_pg_cron_app_before_core_warns(
     settings: Settings,
 ) -> None:
     out = run_check(capsys, settings, build_apps_with_pg_cron_first(settings))
-    assert "absurd.W003" in out
-    assert (
-        "django-absurd: 'django_absurd.pg_cron' is ordered before 'django_absurd'"
-        " in INSTALLED_APPS (its post_migrate cron reconcile runs before queue"
-        " provisioning)."
-    ) in out
-    assert (
-        "Place 'django_absurd.pg_cron' after 'django_absurd' in INSTALLED_APPS." in out
+    assert out == (
+        "System check identified some issues:\n"
+        "\n"
+        "WARNINGS:\n"
+        "?: (absurd.W003) django-absurd: 'django_absurd.pg_cron' is ordered"
+        " before 'django_absurd' in INSTALLED_APPS (its post_migrate cron"
+        " reconcile runs before queue provisioning).\n"
+        "\tHINT: Place 'django_absurd.pg_cron' after 'django_absurd' in"
+        " INSTALLED_APPS.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced).\n"
     )
 
 
@@ -79,8 +82,17 @@ def test_pg_cron_schedule_error_reported(
             }
         },
     )
-    assert "absurd.E007" in out
-    assert "queue 'ghost' is not declared." in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E007) django-absurd: invalid SCHEDULE entry. Schedule"
+        " 'nightly': queue 'ghost' is not declared.\n"
+        "\tHINT: Declare the queue under OPTIONS['QUEUES'] or correct the"
+        " queue name.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
 
 
 def test_pg_cron_app_config_path_before_core_warns(
@@ -98,14 +110,17 @@ def test_pg_cron_app_config_path_before_core_warns(
         ],
     ]
     out = run_check(capsys, settings, installed_apps=apps_with_config_path_first)
-    assert "absurd.W003" in out
-    assert (
-        "django-absurd: 'django_absurd.pg_cron' is ordered before 'django_absurd'"
-        " in INSTALLED_APPS (its post_migrate cron reconcile runs before queue"
-        " provisioning)."
-    ) in out
-    assert (
-        "Place 'django_absurd.pg_cron' after 'django_absurd' in INSTALLED_APPS." in out
+    assert out == (
+        "System check identified some issues:\n"
+        "\n"
+        "WARNINGS:\n"
+        "?: (absurd.W003) django-absurd: 'django_absurd.pg_cron' is ordered"
+        " before 'django_absurd' in INSTALLED_APPS (its post_migrate cron"
+        " reconcile runs before queue provisioning).\n"
+        "\tHINT: Place 'django_absurd.pg_cron' after 'django_absurd' in"
+        " INSTALLED_APPS.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced).\n"
     )
 
 
@@ -123,10 +138,20 @@ def test_pg_cron_installed_without_an_absurd_backend_is_reported(
     with pytest.raises(SystemCheckError) as exc_info:
         call_command("check", "django_absurd")
     out = str(exc_info.value)
-    assert "absurd.E013" in out
-    assert (
-        "django-absurd: 'django_absurd.pg_cron' is installed, but no AbsurdBackend is"
-        " configured, so a schedule would save without ever being scheduled." in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E013) django-absurd: 'django_absurd.pg_cron' is"
+        " installed, but no AbsurdBackend is configured, so a schedule would"
+        " save without ever being scheduled.\n"
+        "\tHINT: Point a TASKS entry at"
+        " django_absurd.backends.AbsurdBackend, or remove"
+        " 'django_absurd.pg_cron' from INSTALLED_APPS. To keep the app"
+        " installed with another backend deliberately (a dev or CI settings"
+        " module), add 'absurd.E013' to SILENCED_SYSTEM_CHECKS.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
     )
 
 
