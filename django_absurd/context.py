@@ -267,12 +267,12 @@ def describe_step_replayed(checkpoint_name: str, task_id: str) -> str:
 def describe_step_completed(checkpoint_name: str, task_id: str, duration: float) -> str:
     return (
         f'step completed: name="{checkpoint_name}" task_id="{task_id}"'
-        f" duration={duration:.3f}s"
+        f" duration={duration:.3f}"
     )
 
 
 def describe_sleep_for_suspended(step_name: str, task_id: str, duration: float) -> str:
-    return f'sleep suspended: step="{step_name}" task_id="{task_id}" for={duration}s'
+    return f'sleep suspended: step="{step_name}" task_id="{task_id}" for={duration}'
 
 
 def describe_sleep_until_suspended(

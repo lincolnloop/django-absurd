@@ -52,7 +52,7 @@ def read_hook_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
     return [r.getMessage() for r in caplog.records if r.name == "django_absurd.hooks"]
 
 
-DURATION = r"\d+\.\d{3}s"
+DURATION = r"\d+\.\d{3}"
 
 
 def test_a_successful_run_logs_started_then_completed(
