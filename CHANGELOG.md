@@ -3,6 +3,39 @@ Never `git cliff -o`: it discards every hand edit, and no regeneration can repro
 
 # Changelog
 
+## [0.1.0a8](https://github.com/lincolnloop/django-absurd/compare/v0.1.0a7...v0.1.0a8) - 2026-08-19
+
+**Partitioned queues are refused, not experimental.** Declaring
+`storage_mode="partitioned"` — or any of `partition_lookahead`, `partition_lookback`,
+`detach_mode`, `detach_min_age` — is now the configuration error `absurd.E015`, so
+`manage.py check` and `manage.py migrate` fail until you remove it. Nothing drove a
+partition lifecycle, which made the option's failure mode silent: it worked for weeks,
+then its rolling window lapsed and every new row funnelled into the default partition
+with no way back. `cleanup_ttl` and `cleanup_limit` are unaffected — they apply to both
+storage modes. `absurd.W002` (storage-mode drift) is gone with the handling it warned
+about. Partitioned support is tracked at
+[#216](https://github.com/lincolnloop/django-absurd/issues/216).
+
+Two smaller changes worth an upgrade note. Log lines now render durations as bare
+numbers without the `s` suffix
+([#221](https://github.com/lincolnloop/django-absurd/pull/221)), so anything parsing
+them needs adjusting. And the `absurd.E012` central-extension fail-safe now applies to a
+test database that `OPTIONS["PG_CRON_ON_TEST_DB"]` has opted into real `cron.*` writes —
+previously it stayed quiet there, which was the one configuration where a missing
+extension silently swallowed every schedule.
+
+### Breaking changes
+
+- Refuse storage_mode="partitioned" as a configuration error
+  ([#217](https://github.com/lincolnloop/django-absurd/pull/217)) — the four
+  partition-only policy keys are refused with it, `absurd.W002` is removed, and
+  `absurd.E012` now honours `PG_CRON_ON_TEST_DB`.
+
+### Features
+
+- Log durations as bare numbers, without the s suffix
+  ([#221](https://github.com/lincolnloop/django-absurd/pull/221))
+
 ## [0.1.0a7](https://github.com/lincolnloop/django-absurd/compare/v0.1.0a6...v0.1.0a7) - 2026-08-18
 
 **Provisioning is a deploy step.** `migrate` provisions the queues you declare, and
