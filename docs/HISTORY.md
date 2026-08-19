@@ -234,3 +234,7 @@ commit where it last lived — recoverable from git any time.
   collapsed a two-PR split into one, and the sequence that removed both self-heal seams)
   →
   [view @d852573](https://github.com/lincolnloop/django-absurd/blob/d852573719c117857f8bc07eca46db145b80792c/docs/plans/2026-08-17-explicit-provisioning.md)
+- 2026-08-18 — refuse-partitioned-queues implementation plan (the decision to close the
+  declaration door and delete the handling rather than carry it, and the reasoning that
+  no cheap correct fix existed for the lapsed-window wedge) →
+  [view @6c1b4f2](https://github.com/lincolnloop/django-absurd/blob/6c1b4f29233f5ab40e023d6cd279dd3b2586cde8/docs/plans/2026-08-18-refuse-partitioned-queues.md)

@@ -419,10 +419,10 @@ runs async task handlers and drives the async SDK — but the beat only sleeps a
 enqueues, so keeping it synchronous removed the extra concurrency machinery a shared
 async loop would have demanded. Co-located with a worker, it runs on its own thread.
 
-Database-side scheduling (`pg_cron`) is the opt-in alternative. An admin/model-managed
-schedule store was considered and deliberately not pursued for the initial release:
-settings is the only declaration source for both the beat and `pg_cron`. The model
-reserves a `source` column so an admin lane can slot in later without rework.
+An admin/model-managed schedule store was considered and deliberately not pursued for
+the initial release: settings is the only declaration source for both the beat and
+`pg_cron`. The model reserves a `source` column so an admin lane can slot in later
+without rework.
 
 ### `pg_cron`: projection table + constant command
 
@@ -482,6 +482,14 @@ different kind of fact — deployment topology, not schedule content — so its 
 scoped to run only alongside `migrate` and an explicit `check --database`, never a plain
 DB-free `check`: a connectivity error there is a deploy-readiness signal, not something
 that should block routine, DB-free invocations of `check`.
+
+A refusal gets its own identifier rather than riding a general-purpose one. Silencing is
+per-identifier, so a refusal sharing an id with a broad "your policy options are wrong"
+diagnostic can be switched off by a project silencing that diagnostic for an entirely
+unrelated reason — the thing we most want un-ignorable becomes the easiest to lose.
+Retiring an identifier when a refusal is lifted costs nothing, and identifiers are never
+reused, so a retired one stays retired rather than being recycled into a new meaning
+that an old settings entry would then silence by accident.
 
 Scheduler selection itself is derived, not a separate setting: `AbsurdBackend.scheduler`
 reads `INSTALLED_APPS` (`django_absurd.pg_cron` present → `"pg_cron"`, absent →
@@ -598,6 +606,14 @@ functions it calls: the explicit reconcile command is a separate, deliberate inv
 and a user who types it wants it to sync regardless of which database they're pointed
 at. Folding the guard into the shared functions would silently neuter that explicit
 command too — an automatic side effect and a deliberate command must not share a gate.
+
+The same opt-in governs the deploy-time fail-safe that checks the central catalog is
+reachable and carries the extension. That check is otherwise inert under a test suite,
+so for a long time it stayed quiet exactly where it was needed: a project that had opted
+a test database into real scheduling got the writes without the guard protecting them,
+and a missing extension there swallows every schedule silently. A setting that grants
+real side effects must also grant whatever verifies they can land — the guard follows
+the opt-in, or it is absent from the one configuration whose failure is invisible.
 
 Detecting "is this a test database" can't compare the live connection's database name
 against the name in settings at signal-fire time — Django's test-database swap mutates
@@ -877,4 +893,4 @@ A surface to enable Absurd's native `enable_cron` partition + detach maintenance
 remains unbuilt, and with partitioned queues refused there is nothing for it to maintain
 in the meantime. Retention is unaffected — the declarative `CLEANUP` job already
 schedules a native database job under pg_cron, see above. The partition/detach half of
-`enable_cron` stays dormant until partitioned support returns.
+`enable_cron` stays dormant until partitioned support lands.
