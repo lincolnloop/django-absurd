@@ -7,12 +7,7 @@ import zlib
 from dataclasses import dataclass, field
 
 import psycopg.errors
-from absurd_sdk import (
-    Absurd,
-    CreateQueueOptions,
-    QueuePolicyOptions,
-    QueueStorageMode,
-)
+from absurd_sdk import Absurd, CreateQueueOptions, QueuePolicyOptions
 from django.db import connections, transaction
 
 from django_absurd import backends
@@ -25,15 +20,10 @@ if t.TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Per-queue table prefixes absurd.create_queue names for EVERY queue: tasks, runs,
-# checkpoints, events, waiters. Truncate and the missing-table probe both start here and
-# add ``i_<queue>`` for a partitioned queue only, the one kind that owns one.
+# Per-queue table prefixes absurd.create_queue names for every queue: tasks, runs,
+# checkpoints, events, waiters. Truncate, both missing-table probes and the
+# UndefinedTable classifier all read this one tuple.
 QUEUE_TABLE_PREFIXES = ("t", "r", "c", "e", "w")
-
-# Plus ``i_<queue>``, which a PARTITIONED queue owns as well: spawn_task reserves an
-# idempotency key there before it touches ``t_<queue>``, so it is the first relation a
-# half-provisioned partitioned queue reports missing.
-QUEUE_OWNED_TABLE_PREFIXES = (*QUEUE_TABLE_PREFIXES, "i")
 
 MUTABLE_OPTION_KEYS = (
     "partition_lookahead",
@@ -59,20 +49,18 @@ class SyncResult:
     created: list[str] = field(default_factory=list)
     reconciled: list[str] = field(default_factory=list)
     repaired: list[str] = field(default_factory=list)
-    storage_warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
 class QueuePlan:
-    """What one declared queue needs — carrying the arguments that would satisfy it, not
-    just flags, so the write path applies a decision it never re-derives.
+    """What one declared queue needs — the write path applies this decision rather than
+    re-deriving it.
     """
 
     queue_name: str
     create_options: CreateQueueOptions | None = None
-    repair_storage_mode: QueueStorageMode | None = None
+    repair: bool = False
     policy_options: QueuePolicyOptions | None = None
-    storage_warning: str | None = None
 
 
 def get_absurd_database(backend: backends.AbsurdBackend) -> str:
@@ -128,7 +116,7 @@ def names_a_queue_table(exc: psycopg.errors.UndefinedTable, queue: str) -> bool:
     message = exc.diag.message_primary or ""
     return any(
         re.search(rf"\b{re.escape(prefix)}_{re.escape(queue)}\b", message)
-        for prefix in QUEUE_OWNED_TABLE_PREFIXES
+        for prefix in QUEUE_TABLE_PREFIXES
     )
 
 
@@ -144,9 +132,8 @@ def plan_queue_sync(backend: backends.AbsurdBackend) -> SyncResult:
     """What ``provision_backend`` would do, without doing any of it.
 
     Shares ``plan_queue`` with the write path, so the two cannot classify a queue
-    differently or word the storage warning two ways. Nothing here writes, so a role
-    with no DDL rights can still ask, and the provisioning lock keeps covering the
-    writes alone.
+    differently. Nothing here writes, so a role with no DDL rights can still ask, and
+    the provisioning lock keeps covering the writes alone.
     """
     db = backend.database
     validate_backend(db)
@@ -161,7 +148,7 @@ def plan_queue(using: str, queue_name: str, opts: CreateQueueOptions) -> QueuePl
     """What ``queue_name`` needs to match ``opts``, decided by reading only.
 
     The one decision point for both the dry run and the write path: a second copy of
-    this branching drifts silently, since a reworded warning moves no exit code.
+    this branching would let ``--check`` report one thing and the write do another.
     """
     existing = get_queue_object(using, queue_name)
     if existing is None:
@@ -169,13 +156,10 @@ def plan_queue(using: str, queue_name: str, opts: CreateQueueOptions) -> QueuePl
     plan = QueuePlan(queue_name)
     # Puts back the tables of a queue whose catalog row outlived them — a manual drop, a
     # partial restore — the state QueueNotProvisionedError sends an operator here to
-    # repair. Gated on them actually being absent rather than repaired unconditionally:
-    # create_queue re-runs ensure_partitions, and a partitioned queue whose default
-    # partition has collected rows for a week the window now covers cannot survive that.
-    if find_missing_queue_tables(using, queue_name, storage_mode=existing.storage_mode):
-        # The EXISTING mode, read back from absurd.queues: create_queue refuses a mode
-        # change outright, so declared drift is warned about below, never applied here.
-        plan.repair_storage_mode = t.cast("QueueStorageMode", existing.storage_mode)
+    # repair. Gated on their actual absence rather than run unconditionally, which would
+    # be needless DDL; when it does run against an out-of-band partitioned row,
+    # absurd.create_queue names the mismatch itself.
+    plan.repair = bool(find_missing_queue_tables(using, queue_name))
     # MUTABLE_OPTION_KEYS mirrors QueuePolicyOptions's fields exactly; the cast is safe
     # by construction.
     mutable_opts = t.cast(
@@ -184,20 +168,14 @@ def plan_queue(using: str, queue_name: str, opts: CreateQueueOptions) -> QueuePl
     )
     if mutable_opts and check_mutable_options_drifted(using, mutable_opts, existing):
         plan.policy_options = mutable_opts
-    if "storage_mode" in opts and opts["storage_mode"] != existing.storage_mode:
-        plan.storage_warning = (
-            f"Queue '{queue_name}': storage_mode cannot be changed "
-            f"(existing: {existing.storage_mode!r}, "
-            f"declared: {opts['storage_mode']!r}); skipping."
-        )
     return plan
 
 
 def apply_queue_plan(client: Absurd, plan: QueuePlan) -> None:
     if plan.create_options is not None:
         client.create_queue(plan.queue_name, **plan.create_options)
-    if plan.repair_storage_mode is not None:
-        client.create_queue(plan.queue_name, storage_mode=plan.repair_storage_mode)
+    if plan.repair:
+        client.create_queue(plan.queue_name)
     if plan.policy_options is not None:
         client.set_queue_policy(plan.queue_name, **plan.policy_options)
 
@@ -207,12 +185,10 @@ def summarize_queue_plans(plans: t.Iterable[QueuePlan]) -> SyncResult:
     for plan in plans:
         if plan.create_options is not None:
             result.created.append(plan.queue_name)
-        if plan.repair_storage_mode is not None:
+        if plan.repair:
             result.repaired.append(plan.queue_name)
         if plan.policy_options is not None:
             result.reconciled.append(plan.queue_name)
-        if plan.storage_warning is not None:
-            result.storage_warnings.append(plan.storage_warning)
     return result
 
 
@@ -249,28 +225,17 @@ def require_installed_schema(using: str) -> None:
             raise SchemaNotInstalledError
 
 
-def find_missing_queue_tables(
-    using: str, queue_name: str, *, storage_mode: str
-) -> list[str]:
+def find_missing_queue_tables(using: str, queue_name: str) -> list[str]:
     """Which of ``queue_name``'s own Absurd tables are absent, catalog row aside.
 
     ``to_regclass`` rather than a ``pg_class`` join: it takes the qualified name and
-    answers NULL instead of raising, which is the whole question being asked. Which
-    tables to expect follows ``storage_mode`` — the EXISTING one, since that is what
-    the queue was built with — so a partitioned queue's ``i_<queue>`` counts too: a
-    keyed enqueue reserves that relation before any other, and a probe blind to it
-    calls a queue healthy that refuses every keyed enqueue.
+    answers NULL instead of raising, which is the whole question being asked.
     """
-    prefixes = (
-        QUEUE_OWNED_TABLE_PREFIXES
-        if storage_mode == "partitioned"
-        else QUEUE_TABLE_PREFIXES
-    )
     with connections[using].cursor() as cursor:
         cursor.execute(
             "select name from unnest(%s::text[]) as name "
             "where to_regclass('absurd.' || quote_ident(name)) is null",
-            [[f"{prefix}_{queue_name}" for prefix in prefixes]],
+            [[f"{prefix}_{queue_name}" for prefix in QUEUE_TABLE_PREFIXES]],
         )
         return [str(row[0]) for row in cursor.fetchall()]
 
@@ -282,31 +247,14 @@ async def afind_missing_queue_tables(
 
     A twin body, not a shared one: a worker holds a raw async connection, and a Django
     cursor inside its loop raises ``SynchronousOnlyOperation``. The two must answer the
-    same question, so the ``to_regclass`` test, the prefix sets and the ``partitioned``
-    reading are kept identical — change one and change the other.
-
-    ``storage_mode`` is read here rather than passed in: one round trip, and a queue
-    with no catalog row (which every caller refuses before this) then reports nothing
-    missing instead of needing a branch that no input can reach.
+    same question, so the ``to_regclass`` test and the prefix set are kept identical —
+    change one and change the other.
     """
     async with conn.cursor() as cursor:
         await cursor.execute(
-            "select name from absurd.queues q "
-            "cross join lateral unnest("
-            "case when q.storage_mode = 'partitioned' then %(partitioned)s::text[] "
-            "else %(unpartitioned)s::text[] end"
-            ") as name "
-            "where q.queue_name = %(queue)s "
-            "and to_regclass('absurd.' || quote_ident(name)) is null",
-            {
-                "partitioned": [
-                    f"{prefix}_{queue_name}" for prefix in QUEUE_OWNED_TABLE_PREFIXES
-                ],
-                "queue": queue_name,
-                "unpartitioned": [
-                    f"{prefix}_{queue_name}" for prefix in QUEUE_TABLE_PREFIXES
-                ],
-            },
+            "select name from unnest(%s::text[]) as name "
+            "where to_regclass('absurd.' || quote_ident(name)) is null",
+            [[f"{prefix}_{queue_name}" for prefix in QUEUE_TABLE_PREFIXES]],
         )
         return [str(row[0]) for row in await cursor.fetchall()]
 
@@ -318,7 +266,6 @@ def sync_queues(backend: backends.AbsurdBackend) -> SyncResult:
         result.created.extend(r.created)
         result.reconciled.extend(r.reconciled)
         result.repaired.extend(r.repaired)
-        result.storage_warnings.extend(r.storage_warnings)
     log_sync_result(result)
     return result
 

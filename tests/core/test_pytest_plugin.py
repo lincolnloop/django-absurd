@@ -8,7 +8,7 @@ from django.db import connections
 from django.test import TransactionTestCase
 from pytest_django import Settings
 
-from django_absurd import absurd_params, pytest_plugin
+from django_absurd import pytest_plugin
 from django_absurd.flush import flush_absurd_state
 from django_absurd.models import Queue, Task
 from django_absurd.test import install_absurd_cleanup
@@ -50,28 +50,6 @@ def test_flush_absurd_state_truncates_rows_by_default() -> None:
     assert Queue.objects.filter(queue_name="default").exists()  # schema untouched
 
 
-def test_flush_absurd_state_truncates_a_partitioned_queues_idempotency_table(
-    settings: Settings,
-) -> None:
-    # `i_<queue>` only exists for a `partitioned` queue — exercise that branch of
-    # truncate_queue_tables (the unpartitioned "default" queue used elsewhere in this
-    # file never creates it).
-    settings.TASKS = utils.make_tasks_settings(
-        queues={"part": {"storage_mode": "partitioned"}}
-    )
-    call_command("absurd_sync_queues")
-    absurd_params(idempotency_key="k").bind(tasks.add.using(queue_name="part")).enqueue(
-        1, 2
-    )
-    task_model: t.Any = Task
-    assert task_model.objects.filter(queue="part").count() == 1
-
-    flush_absurd_state()
-
-    assert task_model.objects.filter(queue="part").count() == 0
-    assert Queue.objects.filter(queue_name="part").exists()  # schema untouched
-
-
 def test_flush_absurd_state_drops_schema_when_requested() -> None:
     tasks.add.enqueue(1, 2)
 
@@ -83,11 +61,10 @@ def test_flush_absurd_state_drops_schema_when_requested() -> None:
 def test_flush_absurd_state_is_a_noop_on_an_unmigrated_schema(
     settings: Settings,
 ) -> None:
-    # Mirrors tests/core/test_checks.py::test_db_unreachable_is_silent's real
-    # unreachable-DB technique: mutating settings.DATABASES alone is not enough — the
-    # existing psycopg connection stays open and gets reused. del connections["default"]
-    # forces the NEXT use to actually attempt (and fail) a fresh connect against the
-    # bogus name, which is what makes OperationalError/ProgrammingError reachable here.
+    # Mutating settings.DATABASES alone is not enough — the existing psycopg connection
+    # stays open and gets reused. del connections["default"] forces the NEXT use to
+    # actually attempt (and fail) a fresh connect against the bogus name, which is what
+    # makes OperationalError/ProgrammingError reachable here.
     real_name = settings.DATABASES["default"]["NAME"]
     settings.DATABASES["default"]["NAME"] = "absurd_nope_missing_db"
     del connections["default"]
@@ -122,6 +99,28 @@ def test_flush_absurd_state_tolerates_a_missing_queue_table() -> None:
     flush_absurd_state()  # must not raise
 
     assert Queue.objects.filter(queue_name="other").exists()  # catalog row untouched
+
+
+@pytest.mark.usefixtures("_isolate_queues")
+def test_flush_absurd_state_truncates_an_undeclared_queues_idempotency_table() -> None:
+    # clear_queues iterates list_provisioned_queues() — the catalog, not TASKS — so it
+    # reaches a queue absurdctl or raw SQL created out of band. Only a partitioned queue
+    # owns an i_<queue>, and declaring one is now absurd.E015, so this is the sole way
+    # truncate_queue_tables' to_regclass probe (TRUNCATE has no IF EXISTS) is exercised.
+    with connections["default"].cursor() as cur:
+        cur.execute("SELECT absurd.create_queue('outofband', 'partitioned')")
+        cur.execute("SELECT to_regclass('absurd.i_outofband') IS NOT NULL")
+        assert cur.fetchone()[0], "absurd.create_queue no longer builds i_<queue>"
+        cur.execute(
+            "INSERT INTO absurd.i_outofband (idempotency_key, task_id)"
+            " VALUES ('k', gen_random_uuid())"
+        )
+
+    flush_absurd_state()
+
+    with connections["default"].cursor() as cur:
+        cur.execute("SELECT count(*) FROM absurd.i_outofband")
+        assert cur.fetchone()[0] == 0
 
 
 def test_flush_absurd_state_resets_a_stranded_fake_now() -> None:

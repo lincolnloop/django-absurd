@@ -180,7 +180,8 @@ the Absurd one. See [pg_cron's own docs](https://github.com/citusdata/pg_cron).
 
 Managed Postgres (RDS, Cloud SQL, Azure) exposes these as parameter-group flags.
 `manage.py check` reports `absurd.E012` if the central database is unreachable or
-missing the extension.
+missing the extension. It stays quiet under a test suite unless `PG_CRON_ON_TEST_DB`
+opts that database in.
 
 Also worth scheduling: a
 [`cron.job_run_details`](https://github.com/citusdata/pg_cron#viewing-job-run-details)

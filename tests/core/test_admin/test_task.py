@@ -4,23 +4,16 @@ import uuid
 import pytest
 from django.contrib.admin.utils import quote
 from django.contrib.auth.models import User
-from django.core.management import call_command
 from django.db import connections
 from django.test import Client
 from django.urls import reverse, reverse_lazy
-from pytest_django import DjangoDbBlocker, Settings
+from pytest_django import DjangoDbBlocker
 
 from django_absurd.admin_views import ADMIN_ENTITY_SPECS, build_admin_model
 from django_absurd.queues import get_absurd_client
 from django_absurd.test import AbsurdTestRuntime
 from tests import atasks, tasks, utils
-from tests.core.test_admin.utils import (
-    BACKEND,
-    parse_html,
-    result_rows,
-    seed,
-    seed_mixed,
-)
+from tests.core.test_admin.utils import parse_html, result_rows, seed, seed_mixed
 
 if t.TYPE_CHECKING:
     from bs4 import ResultSet, Tag
@@ -310,30 +303,3 @@ def test_changelist_degrades_when_view_dropped(
     resp = client.get(CHANGELIST)
     assert resp.status_code == 200
     assert result_rows(parse_html(resp)) == []
-
-
-def test_partitioned_queue_appears_in_changelist(
-    admin_user: User,
-    client: Client,
-    dj_absurd: AbsurdTestRuntime,
-    settings: Settings,
-) -> None:
-    settings.TASKS = {
-        "default": {
-            "BACKEND": BACKEND,
-            "OPTIONS": {
-                "QUEUES": {
-                    "default": {},
-                    "part": {"storage_mode": "partitioned"},
-                }
-            },
-        }
-    }
-    call_command("absurd_sync_queues")
-    tasks.add.using(queue_name="part").enqueue(1, 1)
-    dj_absurd.drain("part")
-    client.force_login(admin_user)
-    resp = client.get(CHANGELIST)
-    soup = parse_html(resp)
-    queues = extract_field_texts(result_rows(soup), "field-queue")
-    assert "part" in queues

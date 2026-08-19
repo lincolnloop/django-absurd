@@ -40,7 +40,7 @@ def run_check(
 
 def test_valid_schedule_no_error(run_check: t.Callable[[t.Any], str]) -> None:
     out = run_check({"ok": {"task": "tests.tasks.add", "cron": "0 2 * * *"}})
-    assert "absurd.E007" not in out
+    assert out == "System check identified no issues (0 silenced).\n"
 
 
 def test_unimportable_task(run_check: t.Callable[[t.Any], str]) -> None:

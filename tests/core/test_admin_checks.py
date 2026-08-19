@@ -65,9 +65,7 @@ def test_valid_admin_config_no_e006(
         }
     }
     out = run_check(capsys)
-    assert "absurd.E006" not in out
-    assert "admin.E0" not in out
-    assert "System check identified no issues" in out
+    assert out == "System check identified no issues (0 silenced).\n"
 
 
 def test_no_absurd_backend_emits_no_e006(
@@ -75,7 +73,7 @@ def test_no_absurd_backend_emits_no_e006(
 ) -> None:
     settings.TASKS = {"default": {"BACKEND": IMMEDIATE}}
     out = run_check(capsys)
-    assert "absurd.E006" not in out
+    assert out == "System check identified no issues (0 silenced).\n"
 
 
 def test_admin_site_not_a_sequence_emits_e006(

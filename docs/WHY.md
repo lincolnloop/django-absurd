@@ -486,9 +486,9 @@ that should block routine, DB-free invocations of `check`.
 Scheduler selection itself is derived, not a separate setting: `AbsurdBackend.scheduler`
 reads `INSTALLED_APPS` (`django_absurd.pg_cron` present → `"pg_cron"`, absent →
 `"beat"`) rather than a user-set `OPTIONS["SCHEDULER"]` key. The original design had a
-static `absurd.E008` check catching `SCHEDULER="pg_cron"` set without the app installed;
-deriving scheduler from app presence makes that misconfiguration unrepresentable, so
-both the option and the check it needed are gone.
+static check catching `SCHEDULER="pg_cron"` set without the app installed; deriving
+scheduler from app presence makes that misconfiguration unrepresentable, so both the
+option and the check it needed are gone.
 
 ### The database-side grammar is matched here, not delegated to the database
 
@@ -857,11 +857,14 @@ notes without a second step.
 Task **priority** is unsupported because Absurd has no notion of it — we won't fake it
 behind a flag that implies otherwise.
 
-**Partitioned queues** can be declared, but their support is unsettled and the scope
-decision is tracked separately. One known edge has no in-band exit: repairing a
-partitioned queue re-runs partition creation, and Postgres refuses to create a partition
-whose range overlaps rows already sitting in the default partition, which no shipped
-command clears.
+**Partitioned queues** are refused as a configuration error rather than accepted and
+left to rot. Nothing drives a partition lifecycle, so a partitioned queue's failure mode
+is silent: it works for weeks, then its rolling window lapses and every new row quietly
+funnels into the default partition, with no in-band way back — Postgres refuses to
+create a partition whose range overlaps rows already sitting in the default one. An
+option that fails silently a month after it's set is worse than no option, so the
+handling was deleted rather than carried forward half-finished. The tracking issue holds
+the recovery point: <https://github.com/lincolnloop/django-absurd/issues/216>.
 
 A **natively** async enqueue is a deliberate non-goal, and that is narrower than it
 sounds: async task bodies run on the worker, and the async enqueue call exists and works
@@ -870,9 +873,8 @@ public surface gets an async twin by wrapping one implementation, not by growing
 second one. (Async task bodies, one-shot deferred enqueue, result retrieval, and
 recurring scheduling are all supported — see above.)
 
-A surface to enable Absurd's native `enable_cron` partition + detach maintenance jobs is
-not built yet. That native scheduling is pg_cron-only, so until a project-facing surface
-exists those partition/detach jobs are simply never created. (Retention itself is
-already covered natively — the declarative `CLEANUP` job schedules a native database job
-under pg_cron, see above; only the partition/detach half of `enable_cron` remains
-unsurfaced.)
+A surface to enable Absurd's native `enable_cron` partition + detach maintenance jobs
+remains unbuilt, and with partitioned queues refused there is nothing for it to maintain
+in the meantime. Retention is unaffected — the declarative `CLEANUP` job already
+schedules a native database job under pg_cron, see above. The partition/detach half of
+`enable_cron` stays dormant until partitioned support returns.

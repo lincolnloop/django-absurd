@@ -2,15 +2,15 @@ import typing as t
 from collections.abc import Mapping, Sequence
 
 import croniter
-from absurd_sdk import CreateQueueOptions, QueueDetachMode, QueueStorageMode
+from absurd_sdk import CreateQueueOptions, QueueStorageMode
 from django.apps import AppConfig, apps
 from django.conf import settings
 from django.contrib.admin.sites import AdminSite
-from django.core.checks import CheckMessage, Error, Tags, register
+from django.core.checks import CheckMessage, Error, register
 from django.core.checks import Warning as DjangoWarning
 from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.db import router as db_router
-from django.db.utils import OperationalError, ProgrammingError
+from django.db.utils import OperationalError
 from django.utils.connection import ConnectionDoesNotExist
 from django.utils.module_loading import import_string
 
@@ -21,7 +21,6 @@ from django_absurd.backends import (
     get_declared_queues,
 )
 from django_absurd.connection import BACKEND_ERROR_MESSAGE, validate_backend
-from django_absurd.models import Queue
 from django_absurd.queues import get_absurd_backend, get_absurd_database
 from django_absurd.routers import AbsurdRouter
 from django_absurd.validators import (
@@ -32,11 +31,6 @@ from django_absurd.validators import (
     validate_task_path,
 )
 
-W002_MSG = (
-    "django-absurd: a queue's declared storage_mode differs from the database"
-    " (storage_mode is immutable)."
-)
-W002_HINT = "Recreate the queue, or revert the declared storage_mode."
 E005_MSG = (
     "django-absurd: a non-default DATABASE is configured but AbsurdRouter is not in"
     " DATABASE_ROUTERS."
@@ -49,10 +43,7 @@ E002_MSG = (
 )
 E002_HINT = "Remove either the top-level QUEUES key or OPTIONS['QUEUES'] — not both."
 E003_MSG = "django-absurd: invalid per-queue policy options."
-E003_HINT = (
-    "Remove unknown keys and ensure storage_mode/detach_mode values"
-    " are valid SDK literals."
-)
+E003_HINT = "Remove unknown keys; 'unpartitioned' is the only accepted storage_mode."
 E003_HINT_MAPPING = (
     "Map each queue name to its policy dict — {} for the Absurd defaults."
 )
@@ -64,7 +55,6 @@ E004_HINT = (
 
 VALID_QUEUE_OPTION_KEYS = set(CreateQueueOptions.__annotations__)
 VALID_STORAGE_MODES = set(t.get_args(QueueStorageMode))
-VALID_DETACH_MODES = set(t.get_args(QueueDetachMode))
 
 E006_ENABLE_ADMIN_MSG = "django-absurd: OPTIONS['ENABLE_ADMIN'] must be a bool."
 E006_ENABLE_ADMIN_HINT = "Set ENABLE_ADMIN to True or False."
@@ -110,6 +100,17 @@ E014_MSG = (
 E014_HINT = (
     "Write OPTIONS['QUEUES'] = {'a': {}}, or declare names only with the top-level"
     " QUEUES list."
+)
+
+E015_MSG_PARTITIONED_STORAGE = "django-absurd: partitioned queues are not supported."
+E015_MSG_PARTITION_ONLY_KEY = "django-absurd: partitioned-queue-only policy key."
+E015_HINT_PARTITIONED = (
+    "Declare storage_mode 'unpartitioned', or omit it. Track partitioned support at"
+    " https://github.com/lincolnloop/django-absurd/issues/216."
+)
+E015_HINT_PARTITION_ONLY_KEY = (
+    "Remove this key. Track partitioned support at"
+    " https://github.com/lincolnloop/django-absurd/issues/216."
 )
 
 W003_MSG = (
@@ -438,34 +439,6 @@ def check_absurd_config(
     return errors
 
 
-@register(Tags.database, "absurd")
-def check_absurd_queue_state(
-    *,
-    app_configs: Sequence[AppConfig] | None,
-    databases: Sequence[str] | None,
-    **kwargs: t.Any,
-) -> list[CheckMessage]:
-    # Django 6.0 runs a Tags.database check with databases=None; 6.1 skips it
-    # instead. Either way there is nothing to check against.
-    if not databases:
-        return []
-    backends = get_absurd_backends()
-    if not backends:
-        return []
-
-    errors: list[CheckMessage] = []
-    for backend in backends.values():
-        db = get_absurd_database(backend)
-        if db not in databases:
-            continue
-        declared = get_declared_queues(backend)
-        if not declared:
-            continue
-        errors.extend(query_queue_state(db, declared))
-
-    return errors
-
-
 def declares_queues_as_a_mapping(backend: AbsurdBackend) -> bool:
     return isinstance(backend.options.get("QUEUES", {}), Mapping)
 
@@ -502,47 +475,32 @@ def validate_queue_policy(
                 id="absurd.E003",
             )
         )
-    if "detach_mode" in policy and policy["detach_mode"] not in VALID_DETACH_MODES:
-        detach_mode_value = policy["detach_mode"]
+    if policy.get("storage_mode") == "partitioned":
         errors.append(
             Error(
-                f"{E003_MSG} Queue '{queue_name}':"
-                f" invalid detach_mode '{detach_mode_value}'.",
-                hint=E003_HINT,
-                id="absurd.E003",
+                f"{E015_MSG_PARTITIONED_STORAGE} Queue '{queue_name}' declares"
+                " storage_mode 'partitioned'.",
+                hint=E015_HINT_PARTITIONED,
+                id="absurd.E015",
             )
         )
+    errors.extend(
+        Error(
+            f"{E015_MSG_PARTITION_ONLY_KEY} Queue '{queue_name}' declares"
+            f" '{key}', which only applies to a partitioned queue.",
+            hint=E015_HINT_PARTITION_ONLY_KEY,
+            id="absurd.E015",
+        )
+        for key in (
+            "partition_lookahead",
+            "partition_lookback",
+            "detach_mode",
+            "detach_min_age",
+        )
+        if key in policy
+    )
     return errors
 
 
 def router_installed() -> bool:
     return any(isinstance(router, AbsurdRouter) for router in db_router.routers)
-
-
-def query_queue_state(
-    alias: str, declared: dict[str, CreateQueueOptions]
-) -> list[CheckMessage]:
-    try:
-        actual = {
-            q.queue_name: q
-            for q in Queue.objects.using(alias).filter(queue_name__in=declared)
-        }
-    except (OperationalError, ProgrammingError):
-        return []
-
-    drift = [
-        name
-        for name in declared
-        if name in actual
-        and declared[name].get("storage_mode")
-        and declared[name]["storage_mode"] != actual[name].storage_mode
-    ]
-    if drift:
-        return [
-            DjangoWarning(
-                W002_MSG,
-                hint=f"{W002_HINT} Affected: {', '.join(drift)}",
-                id="absurd.W002",
-            )
-        ]
-    return []

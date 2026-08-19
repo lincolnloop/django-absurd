@@ -20,9 +20,9 @@ def _restore_original_names() -> t.Iterator[None]:
         detection.ORIGINAL_DATABASE_NAMES.update(saved)
 
 
-def test_test_environment_active_true_under_pytest() -> None:
+def test_is_test_environment_true_under_pytest() -> None:
     # setup_test_environment ran → the signal is present for the whole suite.
-    assert detection.test_environment_active() is True
+    assert detection.is_test_environment() is True
 
 
 @pytest.mark.usefixtures("_restore_original_names")

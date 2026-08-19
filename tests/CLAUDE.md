@@ -56,6 +56,14 @@ pre-commit gates), see [`../CLAUDE.md`](../CLAUDE.md).
 - **No monkeypatching / `unittest.mock.patch`.** Test observable behavior, not
   internals. If a test needs to patch our own functions to reach a branch, restructure
   so a real input drives that branch instead.
+  - **One carve-out: the resolver that names the central pg_cron database.** An
+    `absurd.E012` test may `monkeypatch`
+    `django_absurd.connection.resolve_cron_database` to aim the probe at an
+    extension-free database — the real central one has the extension, and no setting
+    renames it. The guard state itself is a real input: `OPTIONS["PG_CRON_ON_TEST_DB"]`
+    decides whether the fail-safe is inert under the suite, so never patch the
+    environment-detection seam. The probe and the check must run for real. Use pytest's
+    `monkeypatch`, never `unittest.mock.patch`.
 - **Test at a high, behavioral level — through real entrypoints, never helper units.**
   - **Admin features are HTTP-tested**: drive the real request cycle (log in, then
     `client.get`/`post` the admin URLs) and assert observable side effects, not by
@@ -137,8 +145,10 @@ pre-commit gates), see [`../CLAUDE.md`](../CLAUDE.md).
   `tests/pg_cron/test_pg_cron_grammar_matches_extension.py` is the worked example:
   pg_cron accepts a 6-field expression and silently truncates it, so our validator
   refuses what pg_cron allows.
-- **Assert the COMPLETE error message, never a fragment** (fragments are unreadable and
-  brittle); assert the full stable portion up to any volatile tail.
+- **Assert the whole captured output by equality, spelled out inline as a literal**,
+  never a fragment (fragments are unreadable, brittle, and a `not in id` assertion goes
+  vacuous the moment that id stops existing). No helper composes the expected string —
+  repeating the literal per call site is the point.
 - **Narrow `# type: ignore[...]` is expected when a test deliberately passes something
   the checker rejects** — our runtime error states are part of the public contract
   (users may not type-check at all), so they must be exercised. This is the one place

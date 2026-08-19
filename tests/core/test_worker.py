@@ -342,25 +342,6 @@ def test_a_half_provisioned_queue_is_refused(
     assert Queue.objects.filter(queue_name="default").exists() is True
 
 
-def test_worker_refuses_a_partitioned_queue_missing_its_idempotency_table(
-    settings: Settings,
-) -> None:
-    # i_<queue> is one of a partitioned queue's own tables, so the boot probe has to
-    # expect it exactly as the repair probe does — a claim alone would never notice.
-    settings.TASKS = utils.make_tasks_settings(
-        queues={**utils.DECLARED_QUEUES, "parts": {"storage_mode": "partitioned"}}
-    )
-    call_command("absurd_sync_queues")
-    with connection.cursor() as cur:
-        cur.execute("drop table absurd.i_parts cascade")
-    with pytest.raises(QueueNotProvisionedError) as exc:
-        drain_queue("parts")
-    assert str(exc.value) == (
-        "Queue 'parts' is declared but its Absurd table is not provisioned. "
-        "Run: manage.py absurd_sync_queues"
-    )
-
-
 def test_worker_translates_a_queue_dropped_under_a_running_worker(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

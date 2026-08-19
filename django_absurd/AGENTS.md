@@ -678,7 +678,7 @@ the Absurd one. A migration cannot do any of it.
 - `python manage.py check --database default` reports `absurd.E012` when that central
   database is unreachable or missing the extension. A deploy-time check: it runs on
   `migrate` and any `check --database` invocation, never on a plain DB-free `check`, and
-  stays quiet under a test suite.
+  stays quiet under a test suite unless `PG_CRON_ON_TEST_DB` opts that database in.
 - **Also worth scheduling: a
   [`cron.job_run_details`](https://github.com/citusdata/pg_cron#viewing-job-run-details)
   purge.** It is the only place fire-time failures show up, and it grows unbounded.
@@ -1184,10 +1184,10 @@ which is where [retention](#retention-knobs) lives. Omit both to use just `"defa
 
 - Undeclared queue names are rejected, never silently created. Queue creation is
   additive: nothing ever drops a queue you removed from config.
-- A queue's `storage_mode` is immutable once it exists; a declared change is reported as
-  `absurd.W002` and not applied.
-- `storage_mode="partitioned"` is declarable but **experimental — not tested yet**, with
-  no automated partition lifecycle. Don't rely on it in production.
+- **`storage_mode="partitioned"` is refused as a configuration error** (`absurd.E015`),
+  and so are its partition-only policy keys (`partition_lookahead`,
+  `partition_lookback`, `detach_mode`, `detach_min_age`). Support is tracked at
+  https://github.com/lincolnloop/django-absurd/issues/216.
 
 → [Absurd: storage](https://earendil-works.github.io/absurd/storage/).
 
@@ -1228,23 +1228,23 @@ python manage.py check django_absurd
 Each check states the problem and hints the resolution, so fix what it points at rather
 than silencing it.
 
-| ID            | Means                                                                                                                 |
-| ------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `absurd.E001` | Backend or database misconfiguration                                                                                  |
-| `absurd.E002` | `QUEUES` declared in both the top level and `OPTIONS`                                                                 |
-| `absurd.E003` | Invalid per-queue policy options                                                                                      |
-| `absurd.E004` | More than one Absurd backend configured; exactly one per project is supported                                         |
-| `absurd.E005` | `AbsurdRouter` missing from `DATABASE_ROUTERS`                                                                        |
-| `absurd.E006` | `ENABLE_ADMIN` is not a bool, or `ADMIN_SITE` does not resolve to `AdminSite` instances                               |
-| `absurd.E007` | Invalid `SCHEDULE` entry — see [Declare a schedule](#declare-a-schedule)                                              |
-| `absurd.E009` | `DEFAULT_MAX_ATTEMPTS` is not an integer `>= 1`                                                                       |
-| `absurd.E010` | Invalid `CLEANUP` — see [scheduled cleanup](#schedule-recurring-cleanup)                                              |
-| `absurd.E011` | `SYNC_SCHEDULES_ON_TEST_DB` is `True` without `PG_CRON_ON_TEST_DB`                                                    |
-| `absurd.E012` | The central `cron.database_name` database is unreachable or missing `pg_cron` — see [operator setup](#operator-setup) |
-| `absurd.E013` | `"django_absurd.pg_cron"` installed with no `AbsurdBackend` configured                                                |
-| `absurd.E014` | `OPTIONS["QUEUES"]` is not a mapping of queue name to policy options                                                  |
-| `absurd.W002` | (Warning) A queue's declared `storage_mode` differs from the database                                                 |
-| `absurd.W003` | (Warning) `django_absurd.pg_cron` ordered before `django_absurd` in `INSTALLED_APPS`                                  |
+| ID            | Means                                                                                                                                                                                                                                                         |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `absurd.E001` | Backend or database misconfiguration                                                                                                                                                                                                                          |
+| `absurd.E002` | `QUEUES` declared in both the top level and `OPTIONS`                                                                                                                                                                                                         |
+| `absurd.E003` | Invalid per-queue policy options                                                                                                                                                                                                                              |
+| `absurd.E004` | More than one Absurd backend configured; exactly one per project is supported                                                                                                                                                                                 |
+| `absurd.E005` | `AbsurdRouter` missing from `DATABASE_ROUTERS`                                                                                                                                                                                                                |
+| `absurd.E006` | `ENABLE_ADMIN` is not a bool, or `ADMIN_SITE` does not resolve to `AdminSite` instances                                                                                                                                                                       |
+| `absurd.E007` | Invalid `SCHEDULE` entry — see [Declare a schedule](#declare-a-schedule)                                                                                                                                                                                      |
+| `absurd.E009` | `DEFAULT_MAX_ATTEMPTS` is not an integer `>= 1`                                                                                                                                                                                                               |
+| `absurd.E010` | Invalid `CLEANUP` — see [scheduled cleanup](#schedule-recurring-cleanup)                                                                                                                                                                                      |
+| `absurd.E011` | `SYNC_SCHEDULES_ON_TEST_DB` is `True` without `PG_CRON_ON_TEST_DB`                                                                                                                                                                                            |
+| `absurd.E012` | The central `cron.database_name` database is unreachable or missing `pg_cron`; quiet under a test suite unless `PG_CRON_ON_TEST_DB` — see [operator setup](#operator-setup)                                                                                   |
+| `absurd.E013` | `"django_absurd.pg_cron"` installed with no `AbsurdBackend` configured                                                                                                                                                                                        |
+| `absurd.E014` | `OPTIONS["QUEUES"]` is not a mapping of queue name to policy options                                                                                                                                                                                          |
+| `absurd.E015` | `storage_mode="partitioned"` or a partition-only policy key (`partition_lookahead`, `partition_lookback`, `detach_mode`, `detach_min_age`) declared; partitioned queues are not supported. Tracked at https://github.com/lincolnloop/django-absurd/issues/216 |
+| `absurd.W003` | (Warning) `django_absurd.pg_cron` ordered before `django_absurd` in `INSTALLED_APPS`                                                                                                                                                                          |
 
 ### Exceptions
 

@@ -35,7 +35,7 @@ def test_form_b_pushes_keys_up_and_reads_options(
             "OPTIONS": {
                 "DATABASE": "absurd",
                 "DEFAULT_MAX_ATTEMPTS": 9,
-                "QUEUES": {"emails": {}, "retained": {"storage_mode": "partitioned"}},
+                "QUEUES": {"emails": {}, "retained": {}},
             },
         }
     }
