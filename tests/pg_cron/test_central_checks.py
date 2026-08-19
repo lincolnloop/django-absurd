@@ -127,6 +127,32 @@ def test_central_extension_check_reports_a_database_without_the_extension(
     )
 
 
+def test_central_extension_check_reports_an_unreachable_database(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    """Opted in, central lookup pointed at a database that does not exist, so opening
+    the connection fails — the probe's except arm, where the test above answers with a
+    real query against a database that merely lacks the extension."""
+    settings.TASKS = utils.build_pg_cron_tasks({}, pg_cron_on_test_db=True)
+    monkeypatch.setattr(
+        connection, "resolve_cron_database", lambda _alias: "absurd_no_such_database"
+    )
+    with pytest.raises(SystemCheckError) as excinfo:
+        call_command("check", "django_absurd", "--database", "default")
+    assert str(excinfo.value) == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E012) django-absurd: the central pg_cron catalog is unreachable"
+        " or missing the pg_cron extension.\n"
+        "\tHINT: Install pg_cron on the database named by cron.database_name"
+        " (CREATE EXTENSION pg_cron) and ensure it's reachable from this server.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
+
+
 def test_central_extension_check_passes_against_the_real_central_catalog(
     capsys: pytest.CaptureFixture[str],
     settings: Settings,
