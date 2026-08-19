@@ -111,6 +111,17 @@ writing or editing any test file. Running the suites:
     prettier. Never invoke `ruff` or `mypy` directly; pre-commit already runs them, and
     a hand-rolled invocation drifts from the hook's flags and exclusions.
   - Iterating on one file is still `uv run pytest <path> -v`.
+- **Codecov gates the MERGED coverage at 100%** (`codecov.yml`, project + patch status).
+  The target is on the project status only, never per-flag: a single flag cannot reach
+  100% because some branches exist on one Django version and not another (the
+  central-extension check's `databases` guard is reachable on 6.0, skipped on 6.1), so
+  only the union across the matrix is exact. Nothing equivalent sits in
+  `[tool.coverage.report]` — a local run is one env, where those gaps are legitimate.
+- **The combined coverage number only exists after all three suites run in order.**
+  `tests/core` passes `--cov` (no append, truncating `.coverage`); the other two append.
+  So a suite run alone leaves `.coverage` holding a partial picture, and `coverage.xml`
+  is overwritten by whichever suite ran last. Read a total only after a full
+  `tox -e dev`; a single-suite percentage means nothing on its own.
 - **Every tox test env runs the suites under `pytest-xdist`** (`-n auto` on each
   `pytest` command line, mypy envs excluded), so parallel safety is exercised on every
   push instead of only when someone remembers to pass `-n`. Worker count is xdist's own

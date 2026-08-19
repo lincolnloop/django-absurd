@@ -116,8 +116,8 @@ pre-commit gates), see [`../CLAUDE.md`](../CLAUDE.md).
   - Name a variable for the thing it holds (its type/role), not a generic placeholder.
 - **Test management commands AND system checks by running them**:
   `call_command("check", "django_absurd")` / `call_command("absurd_sync_queues")`,
-  capture output with pytest `capsys`, and **assert on the full emitted message text**
-  (not on internal return values).
+  capture output with pytest `capsys`, and **assert on the emitted output, never on
+  internal return values** — by equality against the whole of it, per the rule below.
 - **A check test that must ERROR uses `pytest.raises(SystemCheckError)`**, not a helper
   that captures output — a helper passes whether or not the check fired, and the
   `try/except/else` shape it invites leaves an unreachable `else` that fails the
