@@ -10,7 +10,7 @@ from tests import atasks, tasks
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
-DURATION = r"\d+\.\d{3}s"
+DURATION = r"\d+\.\d{3}"
 
 
 def read_context_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
@@ -117,7 +117,7 @@ def test_an_async_sleep_logs_suspended_then_resumed(
     messages = read_context_messages(caplog)
     assert (
         messages.count(
-            f'sleep suspended: step="nap" task_id="{task_id}" for={tasks.WEEK_SECONDS}s'
+            f'sleep suspended: step="nap" task_id="{task_id}" for={tasks.WEEK_SECONDS}'
         )
         == 1
     )
@@ -140,7 +140,7 @@ def test_a_sync_sleep_logs_suspended_then_resumed(
     messages = read_context_messages(caplog)
     assert (
         messages.count(
-            f'sleep suspended: step="nap" task_id="{task_id}" for={tasks.WEEK_SECONDS}s'
+            f'sleep suspended: step="nap" task_id="{task_id}" for={tasks.WEEK_SECONDS}'
         )
         == 1
     )

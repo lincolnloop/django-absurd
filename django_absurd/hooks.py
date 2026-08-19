@@ -120,7 +120,7 @@ def report_run_event(
             f" attempt={claimed['attempt']} max_attempts={claimed['max_attempts']}"
         )
         if started is not None:
-            detail += f" duration={time.monotonic() - started:.3f}s"
+            detail += f" duration={time.monotonic() - started:.3f}"
         logger.log(level, "%s: %s", event, detail, exc_info=exc_info)
     except Exception:
         # Last resort: reporting the fault is itself what failed, and raising from here
