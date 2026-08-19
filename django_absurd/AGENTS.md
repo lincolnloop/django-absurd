@@ -554,8 +554,9 @@ existing workers run the tasks; a settings-only change needs no new migration fi
   `"*/30 * * * * *"` would silently schedule `"*/30 * * * *"` — a cadence you did not
   write, reported as valid. `@reboot` and `@restart` are refused too: neither is a
   recurring cadence.
-- **Timezone is the `cron.timezone` GUC, default GMT** — not Django's `TIME_ZONE`. Set
-  it to match if yours is not UTC.
+- **Timezone is the `cron.timezone` GUC** (Grand Unified Configuration — Postgres's term
+  for a server setting), **default GMT** — not Django's `TIME_ZONE`. Set it to match if
+  yours is not UTC.
 - **To stop a job, remove it from `SCHEDULE`.** Every reconcile re-arms settings-owned
   jobs, so disabling one directly in `cron.job` does not survive the next deploy.
 - `absurd.W003` if the app is ordered before `"django_absurd"`, which would run its
@@ -661,6 +662,7 @@ the Absurd one. A migration cannot do any of it.
   execute rights.
 
   ```sql
+  GRANT CONNECT ON DATABASE <central_database> TO <scheduling_role>;
   GRANT USAGE ON SCHEMA cron TO <scheduling_role>;
   GRANT EXECUTE ON FUNCTION
       cron.schedule_in_database(text, text, text, text, text, boolean)
@@ -668,11 +670,27 @@ the Absurd one. A migration cannot do any of it.
   GRANT EXECUTE ON FUNCTION
       cron.alter_job(bigint, text, text, text, text, boolean)
       TO <scheduling_role>;
+  GRANT EXECUTE ON FUNCTION cron.unschedule(bigint) TO <scheduling_role>;
   ```
+
+  `CONNECT` is needed even though none of your tables live there: the central connection
+  reuses the app's own credentials and swaps only the database name.
 
   The `alter_job` grant is required, not optional: `schedule_in_database`'s `active`
   argument only takes effect when it first creates a job, so disabling an
   already-scheduled job needs an explicit `alter_job` call.
+
+- **A scheduling role that isn't a superuser needs one grant more**, or `migrate` fails:
+
+  ```sql
+  GRANT pg_read_all_settings TO <scheduling_role>;
+  ```
+
+  Discovering the central database means reading the `cron.database_name` GUC, which
+  pg_cron marks superuser-only. Without it the failure is
+  `permission denied to examine "cron.database_name"`. This is not specific to managed
+  Postgres — it applies on any server; local setups miss it only because they connect as
+  `postgres`.
 
 - Managed Postgres (RDS, Cloud SQL, Azure) exposes these as parameter-group flags.
 - `python manage.py check --database default` reports `absurd.E012` when that central
