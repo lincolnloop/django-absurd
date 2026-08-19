@@ -1,0 +1,20 @@
+---
+# The 100% target sits on the PROJECT status — the merged view across every
+# uploaded flag — and deliberately not on per-flag statuses. A single flag cannot
+# reach 100%: the central-extension check's `if not databases` guard is only
+# reachable on Django 6.0, because 6.1 skips Tags.database checks when no
+# --database is passed. Each single-version flag is therefore structurally short
+# while their union is exact, so a flag target would be permanently red with no
+# code change able to fix it.
+#
+# Nothing equivalent lives in [tool.coverage.report]: a local `tox -e dev` run is
+# one env, where those per-version gaps are legitimate.
+coverage:
+  status:
+    project:
+      default:
+        target: 100%
+        threshold: 0%
+    patch:
+      default:
+        target: 100%
