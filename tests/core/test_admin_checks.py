@@ -7,9 +7,6 @@ BACKEND = "django_absurd.backends.AbsurdBackend"
 IMMEDIATE = "django.tasks.backends.immediate.ImmediateBackend"
 
 BAD_PATH = "nonexistent.module.site"
-E006_BAD_PATH_MSG = (
-    f"django-absurd: OPTIONS['ADMIN_SITE'] entry {BAD_PATH!r} could not be imported."
-)
 
 
 def run_check(capsys: pytest.CaptureFixture[str]) -> str:
@@ -33,9 +30,17 @@ def test_bad_admin_site_path_emits_e006(
         }
     }
     out = run_check(capsys)
-    assert "absurd.E006" in out
-    assert E006_BAD_PATH_MSG in out
-    assert "Set ADMIN_SITE to a tuple of dotted paths to AdminSite instances." in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E006) django-absurd: OPTIONS['ADMIN_SITE'] entry"
+        " 'nonexistent.module.site' could not be imported.\n"
+        "\tHINT: Set ADMIN_SITE to a tuple of dotted paths to AdminSite"
+        " instances.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
 
 
 def test_non_bool_enable_admin_emits_e006(
@@ -49,9 +54,16 @@ def test_non_bool_enable_admin_emits_e006(
         }
     }
     out = run_check(capsys)
-    assert "absurd.E006" in out
-    assert "django-absurd: OPTIONS['ENABLE_ADMIN'] must be a bool." in out
-    assert "Set ENABLE_ADMIN to True or False." in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E006) django-absurd: OPTIONS['ENABLE_ADMIN'] must be a"
+        " bool.\n"
+        "\tHINT: Set ENABLE_ADMIN to True or False.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
 
 
 def test_valid_admin_config_no_e006(
@@ -87,11 +99,17 @@ def test_admin_site_not_a_sequence_emits_e006(
         }
     }
     out = run_check(capsys)
-    assert "absurd.E006" in out
-    assert (
-        "django-absurd: OPTIONS['ADMIN_SITE'] must be a tuple or list"
-        " of dotted-path strings."
-    ) in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E006) django-absurd: OPTIONS['ADMIN_SITE'] must be a tuple"
+        " or list of dotted-path strings.\n"
+        "\tHINT: Set ADMIN_SITE to a tuple of dotted paths to AdminSite"
+        " instances.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
 
 
 def test_admin_site_not_an_adminsite_emits_e006(
@@ -105,5 +123,14 @@ def test_admin_site_not_an_adminsite_emits_e006(
         }
     }
     out = run_check(capsys)
-    assert "absurd.E006" in out
-    assert "is not an AdminSite instance" in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E006) django-absurd: OPTIONS['ADMIN_SITE'] entry"
+        " 'decimal.Decimal' is not an AdminSite instance.\n"
+        "\tHINT: Set ADMIN_SITE to a tuple of dotted paths to AdminSite"
+        " instances.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
