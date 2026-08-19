@@ -77,7 +77,7 @@ def test_declaring_partitioned_storage_is_an_error(
 ) -> None:
     settings.TASKS = build_tasks_setting({"q": {"storage_mode": "partitioned"}})
     out = run_absurd_check(capsys)
-    assert "absurd.E003" in out
+    assert "absurd.E015" in out
     assert (
         "django-absurd: partitioned queues are not supported."
         " Queue 'q' declares storage_mode 'partitioned'." in out
@@ -107,7 +107,7 @@ def test_declaring_a_partition_only_policy_key_is_an_error(
         t.cast("dict[str, CreateQueueOptions]", {"q": {key: value}})
     )
     out = run_absurd_check(capsys)
-    assert "absurd.E003" in out
+    assert "absurd.E015" in out
     assert f"Queue 'q' declares '{key}'" in out
     assert (
         "Remove this key. Track partitioned support at"
@@ -122,7 +122,7 @@ def test_retention_policy_keys_are_still_accepted(
     settings.TASKS = build_tasks_setting(
         {"q": {"cleanup_ttl": "7 days", "cleanup_limit": 100}}
     )
-    assert "absurd.E003" not in run_absurd_check(capsys)
+    assert "absurd.E015" not in run_absurd_check(capsys)
 
 
 @pytest.mark.django_db(databases=["default", "sqlite"])

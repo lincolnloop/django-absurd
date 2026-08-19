@@ -105,7 +105,7 @@ def test_flush_absurd_state_tolerates_a_missing_queue_table() -> None:
 def test_flush_absurd_state_truncates_an_undeclared_queues_idempotency_table() -> None:
     # clear_queues iterates list_provisioned_queues() — the catalog, not TASKS — so it
     # reaches a queue absurdctl or raw SQL created out of band. Only a partitioned queue
-    # owns an i_<queue>, and declaring one is now absurd.E003, so this is the sole way
+    # owns an i_<queue>, and declaring one is now absurd.E015, so this is the sole way
     # truncate_queue_tables' to_regclass probe (TRUNCATE has no IF EXISTS) is exercised.
     with connections["default"].cursor() as cur:
         cur.execute("SELECT absurd.create_queue('outofband', 'partitioned')")

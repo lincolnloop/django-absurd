@@ -486,9 +486,9 @@ that should block routine, DB-free invocations of `check`.
 Scheduler selection itself is derived, not a separate setting: `AbsurdBackend.scheduler`
 reads `INSTALLED_APPS` (`django_absurd.pg_cron` present → `"pg_cron"`, absent →
 `"beat"`) rather than a user-set `OPTIONS["SCHEDULER"]` key. The original design had a
-static `absurd.E008` check catching `SCHEDULER="pg_cron"` set without the app installed;
-deriving scheduler from app presence makes that misconfiguration unrepresentable, so
-both the option and the check it needed are gone.
+static check catching `SCHEDULER="pg_cron"` set without the app installed; deriving
+scheduler from app presence makes that misconfiguration unrepresentable, so both the
+option and the check it needed are gone.
 
 ### The database-side grammar is matched here, not delegated to the database
 

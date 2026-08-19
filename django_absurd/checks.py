@@ -47,16 +47,6 @@ E003_HINT = "Remove unknown keys; 'unpartitioned' is the only accepted storage_m
 E003_HINT_MAPPING = (
     "Map each queue name to its policy dict — {} for the Absurd defaults."
 )
-E003_MSG_PARTITIONED_STORAGE = "django-absurd: partitioned queues are not supported."
-E003_MSG_PARTITION_ONLY_KEY = "django-absurd: partitioned-queue-only policy key."
-E003_HINT_PARTITIONED = (
-    "Declare storage_mode 'unpartitioned', or omit it. Track partitioned support at"
-    " https://github.com/lincolnloop/django-absurd/issues/216."
-)
-E003_HINT_PARTITION_ONLY_KEY = (
-    "Remove this key. Track partitioned support at"
-    " https://github.com/lincolnloop/django-absurd/issues/216."
-)
 E004_MSG = "django-absurd: more than one Absurd backend is configured."
 E004_HINT = (
     "django-absurd uses a single Absurd backend per project"
@@ -110,6 +100,17 @@ E014_MSG = (
 E014_HINT = (
     "Write OPTIONS['QUEUES'] = {'a': {}}, or declare names only with the top-level"
     " QUEUES list."
+)
+
+E015_MSG_PARTITIONED_STORAGE = "django-absurd: partitioned queues are not supported."
+E015_MSG_PARTITION_ONLY_KEY = "django-absurd: partitioned-queue-only policy key."
+E015_HINT_PARTITIONED = (
+    "Declare storage_mode 'unpartitioned', or omit it. Track partitioned support at"
+    " https://github.com/lincolnloop/django-absurd/issues/216."
+)
+E015_HINT_PARTITION_ONLY_KEY = (
+    "Remove this key. Track partitioned support at"
+    " https://github.com/lincolnloop/django-absurd/issues/216."
 )
 
 W003_MSG = (
@@ -477,18 +478,18 @@ def validate_queue_policy(
     if policy.get("storage_mode") == "partitioned":
         errors.append(
             Error(
-                f"{E003_MSG_PARTITIONED_STORAGE} Queue '{queue_name}' declares"
+                f"{E015_MSG_PARTITIONED_STORAGE} Queue '{queue_name}' declares"
                 " storage_mode 'partitioned'.",
-                hint=E003_HINT_PARTITIONED,
-                id="absurd.E003",
+                hint=E015_HINT_PARTITIONED,
+                id="absurd.E015",
             )
         )
     errors.extend(
         Error(
-            f"{E003_MSG_PARTITION_ONLY_KEY} Queue '{queue_name}' declares"
+            f"{E015_MSG_PARTITION_ONLY_KEY} Queue '{queue_name}' declares"
             f" '{key}', which only applies to a partitioned queue.",
-            hint=E003_HINT_PARTITION_ONLY_KEY,
-            id="absurd.E003",
+            hint=E015_HINT_PARTITION_ONLY_KEY,
+            id="absurd.E015",
         )
         for key in (
             "partition_lookahead",
