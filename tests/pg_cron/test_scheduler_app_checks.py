@@ -61,7 +61,7 @@ def test_pg_cron_app_after_core_clean(
     settings: Settings,
 ) -> None:
     out = run_check(capsys, settings)
-    assert "absurd.W003" not in out
+    assert out == "System check identified no issues (0 silenced).\n"
 
 
 def test_pg_cron_schedule_error_reported(
@@ -134,4 +134,5 @@ def test_pg_cron_installed_with_a_backend_is_not_reported(
     capsys: pytest.CaptureFixture[str],
     settings: Settings,
 ) -> None:
-    assert "absurd.E013" not in run_check(capsys, settings)
+    out = run_check(capsys, settings)
+    assert out == "System check identified no issues (0 silenced).\n"

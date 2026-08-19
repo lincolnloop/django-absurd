@@ -7,7 +7,8 @@ from django.core.management import call_command
 from django.core.management.base import SystemCheckError
 from pytest_django import Settings
 
-from django_absurd.pg_cron import checks
+from django_absurd import connection
+from django_absurd.pg_cron import checks, detection
 from tests.pg_cron import utils
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -79,7 +80,36 @@ def test_central_extension_check_skips_backend_on_other_database(
     call_command("check", "django_absurd", "--database", "replica")
 
 
-def test_probe_central_extension_reports_present_with_pg_cron() -> None:
-    """This suite's central DB (Task 7: central `postgres`) HAS pg_cron — the probe's
-    query + success path (`to_regproc(...)` returns non-null, `return True`)."""
-    assert checks.probe_central_extension("default") is True
+def test_central_extension_check_reports_a_database_without_the_extension(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Guards off, central lookup pointed at this suite's own test DB — which carries no
+    extension — so the probe's real query answers the missing-extension branch."""
+    monkeypatch.setattr(detection, "test_environment_active", lambda: False)
+    monkeypatch.setattr(detection, "is_test_database", lambda _alias: False)
+    monkeypatch.setattr(
+        connection, "resolve_cron_database", lambda _alias: utils.fetch_live_database()
+    )
+    with pytest.raises(SystemCheckError) as excinfo:
+        call_command("check", "django_absurd", "--database", "default")
+    assert str(excinfo.value) == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E012) django-absurd: the central pg_cron catalog is unreachable"
+        " or missing the pg_cron extension.\n"
+        "\tHINT: Install pg_cron on the database named by cron.database_name"
+        " (CREATE EXTENSION pg_cron) and ensure it's reachable from this server.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
+
+
+def test_central_extension_check_passes_against_the_real_central_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Guards off and the resolver left alone: the central `postgres` DB HAS pg_cron, so
+    the probe's success path runs and the check reports nothing."""
+    monkeypatch.setattr(detection, "test_environment_active", lambda: False)
+    monkeypatch.setattr(detection, "is_test_database", lambda _alias: False)
+    call_command("check", "django_absurd", "--database", "default")

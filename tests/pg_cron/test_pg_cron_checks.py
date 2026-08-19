@@ -58,7 +58,7 @@ def test_pg_cron_cleanup_accepts_pg_cron_grammar(
     settings: Settings,
 ) -> None:
     out = run_pg_cron_cleanup_check(settings, capsys, {"schedule": schedule})
-    assert "absurd.E010" not in out
+    assert out == "System check identified no issues (0 silenced).\n"
 
 
 def test_pg_cron_cleanup_rejects_a_non_cron_schedule(
@@ -116,7 +116,7 @@ def test_pg_cron_cron_grammar_accepted_at_check_time(
             "schedule": {"s": {"task": "tests.tasks.add", "cron": cron}},
         },
     )
-    assert "absurd.E007" not in out
+    assert out == "System check identified no issues (0 silenced).\n"
 
 
 def test_pg_cron_rejects_beats_six_field_cron_at_check_time(
@@ -381,7 +381,7 @@ def test_pg_cron_valid_five_field_cron_no_error(
             },
         },
     )
-    assert "absurd.E007" not in out
+    assert out == "System check identified no issues (0 silenced).\n"
 
 
 def test_pg_cron_non_string_name_yields_e007_not_typeerror(

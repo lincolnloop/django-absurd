@@ -47,7 +47,8 @@ def test_an_unreachable_database_is_not_reported_as_the_wrong_backend(
     settings.DATABASES["default"]["NAME"] = "absurd_nope_missing_db"
     del connections["default"]
     try:
-        assert "absurd.E001" not in run_absurd_check(capsys)
+        out = run_absurd_check(capsys)
+        assert out == "System check identified no issues (0 silenced).\n"
     finally:
         settings.DATABASES["default"]["NAME"] = real_name
         connections["default"].close()
@@ -122,7 +123,8 @@ def test_retention_policy_keys_are_still_accepted(
     settings.TASKS = build_tasks_setting(
         {"q": {"cleanup_ttl": "7 days", "cleanup_limit": 100}}
     )
-    assert "absurd.E015" not in run_absurd_check(capsys)
+    out = run_absurd_check(capsys)
+    assert out == "System check identified no issues (0 silenced).\n"
 
 
 @pytest.mark.django_db(databases=["default", "sqlite"])
@@ -149,7 +151,8 @@ def test_a_router_subclass_by_path_satisfies_the_router_check(
 ) -> None:
     settings.TASKS = build_tasks_setting({"x": {}}, database="absurd")
     settings.DATABASE_ROUTERS = ["tests.core.test_checks.RouterSubclassedByAProject"]
-    assert "absurd.E005" not in run_absurd_check(capsys)
+    out = run_absurd_check(capsys)
+    assert out == "System check identified no issues (0 silenced).\n"
 
 
 def test_a_router_instance_satisfies_the_router_check(
@@ -160,7 +163,8 @@ def test_a_router_instance_satisfies_the_router_check(
     # on a project that builds its routers itself.
     settings.TASKS = build_tasks_setting({"x": {}}, database="absurd")
     settings.DATABASE_ROUTERS = [AbsurdRouter()]
-    assert "absurd.E005" not in run_absurd_check(capsys)
+    out = run_absurd_check(capsys)
+    assert out == "System check identified no issues (0 silenced).\n"
 
 
 def test_check_errors_when_router_missing(
@@ -202,7 +206,7 @@ def test_pure_options_queues_no_e002(
 ) -> None:
     settings.TASKS = {"default": {"BACKEND": ABSURD, "OPTIONS": {"QUEUES": {"a": {}}}}}
     out = run_absurd_check(capsys)
-    assert "absurd.E002" not in out
+    assert out == "System check identified no issues (0 silenced).\n"
 
 
 def test_invalid_policy_key_errors(
@@ -269,14 +273,14 @@ def test_queues_option_with_a_non_mapping_policy_errors(
         }
     }
     out = run_absurd_check(capsys)
-    assert "absurd.E014" not in out
-    assert (
-        "django-absurd: invalid per-queue policy options. Queue 'a': policy options"
-        " must be a mapping, got str." in out
-    )
-    assert (
-        "HINT: Map each queue name to its policy dict — {} for the Absurd defaults."
-        in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n\n"
+        "ERRORS:\n"
+        "?: (absurd.E003) django-absurd: invalid per-queue policy options."
+        " Queue 'a': policy options must be a mapping, got str.\n"
+        "\tHINT: Map each queue name to its policy dict — {} for the Absurd"
+        " defaults.\n\n"
+        "System check identified 1 issue (0 silenced)."
     )
 
 
@@ -363,7 +367,7 @@ def test_default_max_attempts_valid_no_error(
         }
     }
     out = run_absurd_check(capsys)
-    assert "absurd.E009" not in out
+    assert out == "System check identified no issues (0 silenced).\n"
 
 
 E010_MSG = "django-absurd: invalid CLEANUP option."
@@ -426,4 +430,4 @@ def test_valid_cleanup_no_error(
         }
     }
     out = run_absurd_check(capsys)
-    assert "absurd.E010" not in out
+    assert out == "System check identified no issues (0 silenced).\n"

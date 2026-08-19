@@ -228,10 +228,7 @@ def check_pg_cron_central_extension(
             backend.database
         ):
             continue  # this fail-safe must not fire during the suite
-        if not probe_central_extension(backend.database):  # pragma: no cover
-            # Non-test fail-fast; unreachable under pytest — the test env is
-            # always active (approved: genuinely can't be reached without
-            # tampering with Django test-state internals).
+        if not probe_central_extension(backend.database):
             errors.append(Error(E012_MSG, hint=E012_HINT, id="absurd.E012"))
     return errors
 
