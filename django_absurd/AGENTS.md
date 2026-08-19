@@ -678,7 +678,7 @@ the Absurd one. A migration cannot do any of it.
 - `python manage.py check --database default` reports `absurd.E012` when that central
   database is unreachable or missing the extension. A deploy-time check: it runs on
   `migrate` and any `check --database` invocation, never on a plain DB-free `check`, and
-  stays quiet under a test suite.
+  stays quiet under a test suite unless `PG_CRON_ON_TEST_DB` opts that database in.
 - **Also worth scheduling: a
   [`cron.job_run_details`](https://github.com/citusdata/pg_cron#viewing-job-run-details)
   purge.** It is the only place fire-time failures show up, and it grows unbounded.
@@ -1240,7 +1240,7 @@ than silencing it.
 | `absurd.E009` | `DEFAULT_MAX_ATTEMPTS` is not an integer `>= 1`                                                                                                                                                                                                               |
 | `absurd.E010` | Invalid `CLEANUP` — see [scheduled cleanup](#schedule-recurring-cleanup)                                                                                                                                                                                      |
 | `absurd.E011` | `SYNC_SCHEDULES_ON_TEST_DB` is `True` without `PG_CRON_ON_TEST_DB`                                                                                                                                                                                            |
-| `absurd.E012` | The central `cron.database_name` database is unreachable or missing `pg_cron` — see [operator setup](#operator-setup)                                                                                                                                         |
+| `absurd.E012` | The central `cron.database_name` database is unreachable or missing `pg_cron`; quiet under a test suite unless `PG_CRON_ON_TEST_DB` — see [operator setup](#operator-setup)                                                                                   |
 | `absurd.E013` | `"django_absurd.pg_cron"` installed with no `AbsurdBackend` configured                                                                                                                                                                                        |
 | `absurd.E014` | `OPTIONS["QUEUES"]` is not a mapping of queue name to policy options                                                                                                                                                                                          |
 | `absurd.E015` | `storage_mode="partitioned"` or a partition-only policy key (`partition_lookahead`, `partition_lookback`, `detach_mode`, `detach_min_age`) declared; partitioned queues are not supported. Tracked at https://github.com/lincolnloop/django-absurd/issues/216 |

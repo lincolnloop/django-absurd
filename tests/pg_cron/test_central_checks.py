@@ -8,7 +8,7 @@ from django.core.management.base import SystemCheckError
 from pytest_django import Settings
 
 from django_absurd import connection
-from django_absurd.pg_cron import checks, detection
+from django_absurd.pg_cron import checks
 from tests.pg_cron import utils
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -50,13 +50,22 @@ def test_central_extension_check_registered_under_database_tag() -> None:
     assert Tags.database in checks.check_pg_cron_central_extension.tags
 
 
-def test_central_extension_check_skips_under_test_environment(
+def test_central_extension_check_stays_inert_without_the_test_db_opt_in(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
     settings: Settings,
 ) -> None:
-    """The check body is gated to skip while the test env is active — call_command
-    passes --database, so the check runs, but the test-env skip means no error."""
-    settings.TASKS = utils.build_pg_cron_tasks({}, pg_cron_on_test_db=True)
+    """Central lookup pointed at this suite's own extension-free test DB with the opt-in
+    off: the fail-safe is inert, so the probe never runs and nothing is reported."""
+    settings.TASKS = utils.build_pg_cron_tasks({}, pg_cron_on_test_db=False)
+    settings.TASKS["default"]["OPTIONS"]["SYNC_SCHEDULES_ON_TEST_DB"] = False
+    monkeypatch.setattr(
+        connection, "resolve_cron_database", lambda _alias: utils.fetch_live_database()
+    )
     call_command("check", "django_absurd", "--database", "default")
+    assert capsys.readouterr().out == (
+        "System check identified no issues (0 silenced).\n"
+    )
 
 
 def test_central_extension_check_skips_beat_scheduler_backend(
@@ -82,11 +91,11 @@ def test_central_extension_check_skips_backend_on_other_database(
 
 def test_central_extension_check_reports_a_database_without_the_extension(
     monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
 ) -> None:
-    """Guards off, central lookup pointed at this suite's own test DB — which carries no
+    """Opted in, central lookup pointed at this suite's own test DB — which carries no
     extension — so the probe's real query answers the missing-extension branch."""
-    monkeypatch.setattr(detection, "test_environment_active", lambda: False)
-    monkeypatch.setattr(detection, "is_test_database", lambda _alias: False)
+    settings.TASKS = utils.build_pg_cron_tasks({}, pg_cron_on_test_db=True)
     monkeypatch.setattr(
         connection, "resolve_cron_database", lambda _alias: utils.fetch_live_database()
     )
@@ -106,10 +115,13 @@ def test_central_extension_check_reports_a_database_without_the_extension(
 
 
 def test_central_extension_check_passes_against_the_real_central_catalog(
-    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    settings: Settings,
 ) -> None:
-    """Guards off and the resolver left alone: the central `postgres` DB HAS pg_cron, so
+    """Opted in with the resolver left alone: the central `postgres` DB HAS pg_cron, so
     the probe's success path runs and the check reports nothing."""
-    monkeypatch.setattr(detection, "test_environment_active", lambda: False)
-    monkeypatch.setattr(detection, "is_test_database", lambda _alias: False)
+    settings.TASKS = utils.build_pg_cron_tasks({}, pg_cron_on_test_db=True)
     call_command("check", "django_absurd", "--database", "default")
+    assert capsys.readouterr().out == (
+        "System check identified no issues (0 silenced).\n"
+    )

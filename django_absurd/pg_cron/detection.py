@@ -23,7 +23,7 @@ except ImportError as exc:  # pragma: no cover
 ORIGINAL_DATABASE_NAMES: dict[str, str] = {}
 
 
-def test_environment_active() -> bool:
+def is_test_environment() -> bool:
     return hasattr(_TestState, "saved_data")
 
 
@@ -34,7 +34,7 @@ def is_test_database(alias: str) -> bool:
 
 def is_pg_cron_inert(alias: str) -> bool:
     return (
-        test_environment_active() or is_test_database(alias)
+        is_test_environment() or is_test_database(alias)
     ) and not pg_cron_on_test_db(alias)
 
 

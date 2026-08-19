@@ -56,13 +56,13 @@ pre-commit gates), see [`../CLAUDE.md`](../CLAUDE.md).
 - **No monkeypatching / `unittest.mock.patch`.** Test observable behavior, not
   internals. If a test needs to patch our own functions to reach a branch, restructure
   so a real input drives that branch instead.
-  - **One carve-out: a guard whose precondition is "not running under test."** The
-    `absurd.E012` fail-safe is inert whenever the test environment is active, so no real
-    input can express the state it fires in — the restructure this rule asks for has no
-    answer, and the alternative is leaving the branch behind a `# pragma: no cover`,
-    which the project treats as a last resort. Such a test may `monkeypatch` the
-    environment-detection seam and the resolver that names the central database; it may
-    NOT fake the probe or the check itself, which must run for real. Use pytest's
+  - **One carve-out: the resolver that names the central pg_cron database.** An
+    `absurd.E012` test may `monkeypatch`
+    `django_absurd.connection.resolve_cron_database` to aim the probe at an
+    extension-free database — the real central one has the extension, and no setting
+    renames it. The guard state itself is a real input: `OPTIONS["PG_CRON_ON_TEST_DB"]`
+    decides whether the fail-safe is inert under the suite, so never patch the
+    environment-detection seam. The probe and the check must run for real. Use pytest's
     `monkeypatch`, never `unittest.mock.patch`.
 - **Test at a high, behavioral level — through real entrypoints, never helper units.**
   - **Admin features are HTTP-tested**: drive the real request cycle (log in, then
