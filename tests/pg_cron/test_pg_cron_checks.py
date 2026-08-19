@@ -12,8 +12,6 @@ from tests.utils import DECLARED_QUEUES as BASE_QUEUES
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
-E007_MSG = "django-absurd: invalid SCHEDULE entry."
-
 
 def run_pg_cron_check(
     settings: Settings,
@@ -66,7 +64,20 @@ def test_pg_cron_cleanup_rejects_a_non_cron_schedule(
     settings: Settings,
 ) -> None:
     out = run_pg_cron_cleanup_check(settings, capsys, {"schedule": "not a cron"})
-    assert "absurd.E010" in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E010) django-absurd: invalid CLEANUP option. Expected a"
+        " 5-field cron expression; got 3 fields.\n"
+        "\tHINT: Use a 5-field cron expression, an interval such as"
+        " '30 seconds' (1-59), or one of"
+        " @hourly/@daily/@weekly/@monthly/@yearly/@annually/@midnight"
+        " (lowercase). The beat scheduler's 6-field leading-seconds form is"
+        " not pg_cron syntax.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
 
 
 def test_pg_cron_cleanup_rejects_empty_schedule(
@@ -74,7 +85,16 @@ def test_pg_cron_cleanup_rejects_empty_schedule(
     settings: Settings,
 ) -> None:
     out = run_pg_cron_cleanup_check(settings, capsys, {"schedule": ""})
-    assert "absurd.E010" in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E010) django-absurd: invalid CLEANUP option.\n"
+        "\tHINT: Set CLEANUP to a dict with a single 'schedule' key:"
+        ' OPTIONS["CLEANUP"] = {"schedule": "<cron>"}.\n'
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
 
 
 def test_pg_cron_task_import_raise_reports_e007_not_crash(
@@ -98,8 +118,18 @@ def test_pg_cron_task_import_raise_reports_e007_not_crash(
             },
         },
     )
-    assert E007_MSG in out
-    assert "could not be imported" in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E007) django-absurd: invalid SCHEDULE entry. Schedule"
+        " 'boom': task 'tests.raises_on_import.anything' could not be"
+        " imported: RuntimeError('boom at import')\n"
+        "\tHINT: Ensure the task path is importable and points to a"
+        " @task-decorated function.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
 
 
 @pytest.mark.parametrize("cron", ["30 seconds", "@daily", "0 2 * * *"])
@@ -134,8 +164,20 @@ def test_pg_cron_rejects_beats_six_field_cron_at_check_time(
             "schedule": {"s": {"task": "tests.tasks.add", "cron": "*/30 * * * * *"}},
         },
     )
-    assert "absurd.E007" in out
-    assert "Expected a 5-field cron expression; got 6 fields." in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E007) django-absurd: invalid SCHEDULE entry. Schedule 's':"
+        " Expected a 5-field cron expression; got 6 fields.\n"
+        "\tHINT: Use a 5-field cron expression, an interval such as"
+        " '30 seconds' (1-59), or one of"
+        " @hourly/@daily/@weekly/@monthly/@yearly/@annually/@midnight"
+        " (lowercase). The beat scheduler's 6-field leading-seconds form is"
+        " not pg_cron syntax.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
 
 
 def test_pg_cron_bad_name_charset_rejected(
@@ -156,8 +198,18 @@ def test_pg_cron_bad_name_charset_rejected(
             },
         },
     )
-    assert "absurd.E007" in out
-    assert "Schedule name contains characters other than [A-Za-z0-9_-]." in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E007) django-absurd: invalid SCHEDULE entry. Schedule"
+        " 'bad name!': Schedule name contains characters other than"
+        " [A-Za-z0-9_-].\n"
+        "\tHINT: Schedule names must match [A-Za-z0-9_-]+ when using the"
+        " pg_cron scheduler.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
 
 
 def test_pg_cron_undeclared_task_queue_rejected(
@@ -182,8 +234,17 @@ def test_pg_cron_undeclared_task_queue_rejected(
             },
         },
     )
-    assert "absurd.E007" in out
-    assert "queue 'reports' is not declared" in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E007) django-absurd: invalid SCHEDULE entry. Schedule"
+        " 'ghostly': queue 'reports' is not declared.\n"
+        "\tHINT: Declare the queue under OPTIONS['QUEUES'] or correct the"
+        " queue name.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
 
 
 def test_pg_cron_undeclared_explicit_queue_single_error(
@@ -205,8 +266,17 @@ def test_pg_cron_undeclared_explicit_queue_single_error(
             },
         },
     )
-    assert "absurd.E007" in out
-    assert out.count("queue 'ghost' is not declared") == 1
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E007) django-absurd: invalid SCHEDULE entry. Schedule"
+        " 'nightly': queue 'ghost' is not declared.\n"
+        "\tHINT: Declare the queue under OPTIONS['QUEUES'] or correct the"
+        " queue name.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
 
 
 def test_pg_cron_non_mapping_schedule_single_error(
@@ -222,7 +292,17 @@ def test_pg_cron_non_mapping_schedule_single_error(
             "schedule": ["nightly"],
         },
     )
-    assert out.count('OPTIONS["SCHEDULE"] must be a mapping of name -> spec') == 1
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E007) django-absurd: invalid SCHEDULE entry."
+        ' OPTIONS["SCHEDULE"] must be a mapping of name -> spec.\n'
+        "\tHINT: Set SCHEDULE to a dict mapping schedule names to spec"
+        " dicts.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
 
 
 def test_pg_cron_non_mapping_entry_single_error(
@@ -238,7 +318,17 @@ def test_pg_cron_non_mapping_entry_single_error(
             "schedule": {"nightly": "0 2 * * *"},
         },
     )
-    assert out.count("Schedule 'nightly' must be a mapping.") == 1
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E007) django-absurd: invalid SCHEDULE entry. Schedule"
+        " 'nightly' must be a mapping.\n"
+        "\tHINT: Set the schedule entry to a dict with task, cron, and"
+        " optional queue/args/kwargs.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
 
 
 def test_pg_cron_missing_task_no_queue_error(
@@ -254,8 +344,18 @@ def test_pg_cron_missing_task_no_queue_error(
             "schedule": {"nightly": {"cron": "0 2 * * *"}},
         },
     )
-    assert "could not be imported" in out
-    assert "is not declared" not in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E007) django-absurd: invalid SCHEDULE entry. Schedule"
+        " 'nightly': task '' could not be imported: ImportError(\" doesn't"
+        ' look like a module path")\n'
+        "\tHINT: Ensure the task path is importable and points to a"
+        " @task-decorated function.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
 
 
 def test_pg_cron_unimportable_task_no_queue_error(
@@ -271,8 +371,19 @@ def test_pg_cron_unimportable_task_no_queue_error(
             "schedule": {"nightly": {"task": "tests.tasks.nope", "cron": "0 2 * * *"}},
         },
     )
-    assert "could not be imported" in out
-    assert "is not declared" not in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E007) django-absurd: invalid SCHEDULE entry. Schedule"
+        " 'nightly': task 'tests.tasks.nope' could not be imported:"
+        ' ImportError(\'Module "tests.tasks" does not define a "nope"'
+        " attribute/class')\n"
+        "\tHINT: Ensure the task path is importable and points to a"
+        " @task-decorated function.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
 
 
 def test_pg_cron_non_task_no_queue_error(
@@ -290,8 +401,16 @@ def test_pg_cron_non_task_no_queue_error(
             },
         },
     )
-    assert "is not a Django task" in out
-    assert "is not declared" not in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E007) django-absurd: invalid SCHEDULE entry. Schedule"
+        " 'nightly': 'tests.tasks.Payload' is not a Django task.\n"
+        "\tHINT: The path must point to a Django @task-decorated callable.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
 
 
 @pytest.mark.parametrize("cron", ["", 300])
@@ -310,8 +429,17 @@ def test_pg_cron_structurally_absent_cron_rejected(
             "schedule": {"nightly": {"task": "tests.tasks.add", "cron": cron}},
         },
     )
-    assert "absurd.E007" in out
-    assert "cron must be a non-empty string." in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E007) django-absurd: invalid SCHEDULE entry. Schedule"
+        " 'nightly': cron must be a non-empty string.\n"
+        "\tHINT: Set cron to a non-empty schedule string; the pg_cron app"
+        " checks its grammar.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
 
 
 def test_pg_cron_trailing_newline_name_rejected(
@@ -332,8 +460,18 @@ def test_pg_cron_trailing_newline_name_rejected(
             },
         },
     )
-    assert "absurd.E007" in out
-    assert "Schedule name contains characters other than [A-Za-z0-9_-]." in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E007) django-absurd: invalid SCHEDULE entry. Schedule"
+        " 'nightly\\n': Schedule name contains characters other than"
+        " [A-Za-z0-9_-].\n"
+        "\tHINT: Schedule names must match [A-Za-z0-9_-]+ when using the"
+        " pg_cron scheduler.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
 
 
 def test_pg_cron_empty_string_queue_resolves_via_effective_queue(
@@ -360,7 +498,17 @@ def test_pg_cron_empty_string_queue_resolves_via_effective_queue(
             },
         },
     )
-    assert out.count("queue '' is not declared") == 1
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E007) django-absurd: invalid SCHEDULE entry. Schedule"
+        " 'nightly': queue '' is not declared.\n"
+        "\tHINT: Declare the queue under OPTIONS['QUEUES'] or correct the"
+        " queue name.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
 
 
 def test_pg_cron_valid_five_field_cron_no_error(
@@ -397,8 +545,17 @@ def test_pg_cron_non_string_name_yields_e007_not_typeerror(
             "schedule": {5: {"task": "tests.tasks.add", "cron": "0 2 * * *"}},
         },
     )
-    assert "absurd.E007" in out
-    assert "TypeError" not in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E007) django-absurd: invalid SCHEDULE entry. Schedule 5:"
+        " Schedule name contains characters other than [A-Za-z0-9_-].\n"
+        "\tHINT: Schedule names must match [A-Za-z0-9_-]+ when using the"
+        " pg_cron scheduler.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
 
 
 def test_pg_cron_cleanup_cron_grammar_is_checked(
@@ -409,8 +566,20 @@ def test_pg_cron_cleanup_cron_grammar_is_checked(
     # SCHEDULE entry: beat's 6-field form would otherwise reach sync, where pg_cron
     # accepts it and silently drops the sixth field.
     out = run_pg_cron_cleanup_check(settings, capsys, {"schedule": "*/30 * * * * *"})
-    assert "absurd.E010" in out
-    assert "Expected a 5-field cron expression; got 6 fields." in out
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E010) django-absurd: invalid CLEANUP option. Expected a"
+        " 5-field cron expression; got 6 fields.\n"
+        "\tHINT: Use a 5-field cron expression, an interval such as"
+        " '30 seconds' (1-59), or one of"
+        " @hourly/@daily/@weekly/@monthly/@yearly/@annually/@midnight"
+        " (lowercase). The beat scheduler's 6-field leading-seconds form is"
+        " not pg_cron syntax.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
 
 
 @pytest.mark.parametrize("cleanup", [{"schedule": 5}, {"schedule": "   "}])
@@ -422,7 +591,16 @@ def test_pg_cron_cleanup_defers_a_non_grammar_problem_to_core(
     # Core already reports shape/emptiness as absurd.E010; reporting it again from the
     # grammar check would show one field's problem twice.
     out = run_pg_cron_cleanup_check(settings, capsys, cleanup)
-    assert out.count("absurd.E010") == 1
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E010) django-absurd: invalid CLEANUP option.\n"
+        "\tHINT: Set CLEANUP to a dict with a single 'schedule' key:"
+        ' OPTIONS["CLEANUP"] = {"schedule": "<cron>"}.\n'
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
 
 
 def test_pg_cron_schedule_defers_an_empty_cron_to_core(
@@ -437,7 +615,17 @@ def test_pg_cron_schedule_defers_an_empty_cron_to_core(
             "schedule": {"s": {"task": "tests.tasks.add", "cron": "   "}},
         },
     )
-    assert out.count("absurd.E007") == 1
+    assert out == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E007) django-absurd: invalid SCHEDULE entry. Schedule 's':"
+        " cron must be a non-empty string.\n"
+        "\tHINT: Set cron to a non-empty schedule string; the pg_cron app"
+        " checks its grammar.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
 
 
 def test_queues_option_as_a_list_errors_without_crashing_the_schedule_check(
@@ -454,8 +642,18 @@ def test_queues_option_as_a_list_errors_without_crashing_the_schedule_check(
     }
     with pytest.raises(SystemCheckError) as excinfo:
         call_command("check", "django_absurd")
-    assert "absurd.E014" in str(excinfo.value)
-    assert (
-        "django-absurd: OPTIONS['QUEUES'] must be a mapping of queue name to"
-        " policy options." in str(excinfo.value)
+    assert str(excinfo.value) == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E007) django-absurd: invalid SCHEDULE entry. Schedule 's':"
+        " queue 'default' is not declared.\n"
+        "\tHINT: Declare the queue under OPTIONS['QUEUES'] or correct the"
+        " queue name.\n"
+        "?: (absurd.E014) django-absurd: OPTIONS['QUEUES'] must be a mapping"
+        " of queue name to policy options.\n"
+        "\tHINT: Write OPTIONS['QUEUES'] = {'a': {}}, or declare names only"
+        " with the top-level QUEUES list.\n"
+        "\n"
+        "System check identified 2 issues (0 silenced)."
     )

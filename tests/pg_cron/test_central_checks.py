@@ -21,12 +21,17 @@ def test_composition_check_rejects_sync_on_test_db_without_opt_in(
     settings.TASKS["default"]["OPTIONS"]["SYNC_SCHEDULES_ON_TEST_DB"] = True
     with pytest.raises(SystemCheckError) as excinfo:
         call_command("check", "django_absurd")
-    assert (
-        "?: (absurd.E011) django-absurd: OPTIONS['SYNC_SCHEDULES_ON_TEST_DB'] is True"
-        " without OPTIONS['PG_CRON_ON_TEST_DB'].\n"
-        "\tHINT: Set OPTIONS['PG_CRON_ON_TEST_DB'] = True as well, or turn off"
-        " SYNC_SCHEDULES_ON_TEST_DB."
-    ) in str(excinfo.value)
+    assert str(excinfo.value) == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E011) django-absurd: OPTIONS['SYNC_SCHEDULES_ON_TEST_DB']"
+        " is True without OPTIONS['PG_CRON_ON_TEST_DB'].\n"
+        "\tHINT: Set OPTIONS['PG_CRON_ON_TEST_DB'] = True as well, or turn"
+        " off SYNC_SCHEDULES_ON_TEST_DB.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
 
 
 def test_composition_check_passes_with_both_opted_in(
@@ -69,6 +74,7 @@ def test_central_extension_check_stays_inert_without_the_test_db_opt_in(
 
 
 def test_central_extension_check_skips_beat_scheduler_backend(
+    capsys: pytest.CaptureFixture[str],
     settings: Settings,
 ) -> None:
     """When pg_cron is uninstalled process-wide, backend.scheduler resolves to
@@ -78,15 +84,22 @@ def test_central_extension_check_skips_beat_scheduler_backend(
     ]
     settings.TASKS = utils.build_pg_cron_tasks({}, pg_cron_on_test_db=True)
     call_command("check", "django_absurd", "--database", "default")
+    assert capsys.readouterr().out == (
+        "System check identified no issues (0 silenced).\n"
+    )
 
 
 def test_central_extension_check_skips_backend_on_other_database(
+    capsys: pytest.CaptureFixture[str],
     settings: Settings,
 ) -> None:
     """The backend's DATABASE is "default"; checking a different alias ("replica")
     must not touch it, exercising the databases-filter branch."""
     settings.TASKS = utils.build_pg_cron_tasks({}, pg_cron_on_test_db=True)
     call_command("check", "django_absurd", "--database", "replica")
+    assert capsys.readouterr().out == (
+        "System check identified no issues (0 silenced).\n"
+    )
 
 
 def test_central_extension_check_reports_a_database_without_the_extension(
@@ -98,6 +111,32 @@ def test_central_extension_check_reports_a_database_without_the_extension(
     settings.TASKS = utils.build_pg_cron_tasks({}, pg_cron_on_test_db=True)
     monkeypatch.setattr(
         connection, "resolve_cron_database", lambda _alias: utils.fetch_live_database()
+    )
+    with pytest.raises(SystemCheckError) as excinfo:
+        call_command("check", "django_absurd", "--database", "default")
+    assert str(excinfo.value) == (
+        "SystemCheckError: System check identified some issues:\n"
+        "\n"
+        "ERRORS:\n"
+        "?: (absurd.E012) django-absurd: the central pg_cron catalog is unreachable"
+        " or missing the pg_cron extension.\n"
+        "\tHINT: Install pg_cron on the database named by cron.database_name"
+        " (CREATE EXTENSION pg_cron) and ensure it's reachable from this server.\n"
+        "\n"
+        "System check identified 1 issue (0 silenced)."
+    )
+
+
+def test_central_extension_check_reports_an_unreachable_database(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+) -> None:
+    """Opted in, central lookup pointed at a database that does not exist, so opening
+    the connection fails — the probe's except arm, where the test above answers with a
+    real query against a database that merely lacks the extension."""
+    settings.TASKS = utils.build_pg_cron_tasks({}, pg_cron_on_test_db=True)
+    monkeypatch.setattr(
+        connection, "resolve_cron_database", lambda _alias: "absurd_no_such_database"
     )
     with pytest.raises(SystemCheckError) as excinfo:
         call_command("check", "django_absurd", "--database", "default")
