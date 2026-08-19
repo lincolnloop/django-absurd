@@ -46,7 +46,7 @@ else:
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
-class AbsurdTask(TaskBase):  # type: ignore[misc]  # stub declares Task non-frozen
+class AbsurdTask(TaskBase):
     """A Task that carries its resolved Absurd spawn params.
 
     The params are a dataclass FIELD rather than a ``__slots__`` entry because
