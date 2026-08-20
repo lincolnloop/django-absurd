@@ -95,9 +95,9 @@ exists. `absurd_sync_crons` brings the settings-declared schedules back;
     admin-authored schedule. Re-provision your declared queues afterward with `migrate`
     or `absurd_sync_queues`.
 
-    On the [beat process](cron-jobs.md#application-side-beat) instead, schedules live in settings, so
-    beat keeps enqueuing and **errors on each fire** until the queues exist again —
-    re-provision promptly.
+    On the [beat process](cron-jobs.md#application-side-beat) instead, schedules live
+    in settings, so beat keeps enqueuing and **errors on each fire** until the queues
+    exist again — re-provision promptly.
 
     Per-queue Absurd maintenance jobs from `absurdctl cron --enable <queue>` are dropped
     with their queue.

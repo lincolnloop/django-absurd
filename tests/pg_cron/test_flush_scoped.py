@@ -49,6 +49,7 @@ def test_flush_command_removes_owned_pg_cron_jobs_and_rows(
         source=Source.ADMIN,
         task="tests.tasks.add",
         cron="0 4 * * *",
+        queue="default",
     )
     call_command("absurd_sync_crons")
     call_command("absurd_sync_queues")
@@ -60,8 +61,8 @@ def test_flush_command_removes_owned_pg_cron_jobs_and_rows(
 
     assert capsys.readouterr().out == (
         "This will DROP 3 queue(s) and ALL their data: default, other, reports\n"
-        "This will also UNSCHEDULE django-absurd's pg_cron jobs and delete ALL"
-        " schedule rows, including admin-authored ones.\n"
+        "This will UNSCHEDULE django-absurd's pg_cron jobs and delete ALL schedule"
+        " rows, including admin-authored ones.\n"
         "Type 'yes' to continue, or 'no' to cancel: "
         "Unscheduled django-absurd's pg_cron jobs and removed 2 schedule row(s).\n"
         "Dropped 3 queue(s): default, other, reports\n"
@@ -88,8 +89,8 @@ def test_flush_command_clears_pg_cron_state_with_no_queues_provisioned(
         call_command("absurd_flush")
 
     assert capsys.readouterr().out == (
-        "This will also UNSCHEDULE django-absurd's pg_cron jobs and delete ALL"
-        " schedule rows, including admin-authored ones.\n"
+        "This will UNSCHEDULE django-absurd's pg_cron jobs and delete ALL schedule"
+        " rows, including admin-authored ones.\n"
         "Type 'yes' to continue, or 'no' to cancel: "
         "Unscheduled django-absurd's pg_cron jobs and removed 1 schedule row(s).\n"
         "Re-provision with: manage.py absurd_sync_queues,"

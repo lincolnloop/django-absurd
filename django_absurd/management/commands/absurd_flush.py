@@ -3,13 +3,13 @@ from django.core.management.base import CommandParser
 
 from django_absurd.backends import PG_CRON_APP_NAME, get_absurd_backends
 from django_absurd.exceptions import BackendNotConfiguredError
-from django_absurd.flush import clear_queues, teardown_owned_pg_cron_jobs
+from django_absurd.flush import clear_provisioned_queues, teardown_owned_pg_cron_jobs
 from django_absurd.management.base import AbsurdCommand
 from django_absurd.queues import list_provisioned_queues
 
 PG_CRON_WARNING = (
-    "This will also UNSCHEDULE django-absurd's pg_cron jobs and delete ALL"
-    " schedule rows, including admin-authored ones."
+    "This will UNSCHEDULE django-absurd's pg_cron jobs and delete ALL schedule rows,"
+    " including admin-authored ones."
 )
 
 
@@ -34,8 +34,8 @@ class Command(AbsurdCommand):
             raise BackendNotConfiguredError
         queues = list_provisioned_queues()
         pg_cron_installed = apps.is_installed(PG_CRON_APP_NAME)
-        # With pg_cron installed there is always state to clear even at zero queues —
-        # the CLEANUP job is invisible to this count and outlives every queue.
+        # Zero queues is not nothing to do under pg_cron: the CLEANUP job is invisible
+        # to this count and outlives every queue.
         if not queues and not pg_cron_installed:
             self.stdout.write("No queues to flush.")
             return
@@ -67,6 +67,8 @@ class Command(AbsurdCommand):
                 f" {removed} schedule row(s)."
             )
         if queues:
-            clear_queues(drop_schema=True)
-            self.stdout.write(f"Dropped {len(queues)} queue(s): {names}")
+            # Reported off what came back, not off the pre-prompt listing: the two can
+            # differ, and only the first is what actually went.
+            dropped = clear_provisioned_queues(drop_schema=True)
+            self.stdout.write(f"Dropped {len(dropped)} queue(s): {', '.join(dropped)}")
         self.stdout.write(f"Re-provision with: {', '.join(commands)}")
