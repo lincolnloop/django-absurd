@@ -23,6 +23,7 @@ import os
 import pprint
 from urllib.parse import quote as url_quote
 
+import dj_database_url
 from django import forms
 from django.contrib.admin.utils import quote
 from django.http import HttpRequest, HttpResponse
@@ -40,15 +41,14 @@ from django_absurd import emit_event, get_absurd_context
 app = Django(
     ADMIN_URL="admin/",
     EXTRA_APPS=["django_absurd"],
+    # Managed platforms inject DATABASE_URL and rotate the credentials inside it, so
+    # PG* vars would go stale.
     DATABASES={
-        "default": {
-            "ENGINE": "django.db.backends.postgresql",
-            "NAME": os.environ.get("PGDATABASE", "postgres"),
-            "USER": os.environ.get("PGUSER", "postgres"),
-            "PASSWORD": os.environ.get("PGPASSWORD", "postgres"),
-            "HOST": os.environ.get("PGHOST", "localhost"),
-            "PORT": os.environ.get("PGPORT", "5432"),
-        }
+        "default": dj_database_url.parse(
+            os.environ.get(
+                "DATABASE_URL", "postgres://postgres:postgres@localhost:5432/postgres"
+            )
+        )
     },
     TASKS={
         "default": {

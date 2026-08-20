@@ -24,11 +24,7 @@ services:
       db:
         condition: service_healthy
     environment: &env
-      - PGHOST=db
-      - PGPORT=5432
-      - PGUSER=postgres
-      - PGPASSWORD=postgres
-      - PGDATABASE=postgres
+      - DATABASE_URL=postgres://postgres:postgres@db:5432/postgres
     volumes: &mounts
       - ./:/app
       - ../../django_absurd:/src/django_absurd

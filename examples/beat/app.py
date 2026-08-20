@@ -10,6 +10,7 @@ it and logs 'tock ⏰'. Watch Tasks/Runs fill in the admin.
 import logging
 import os
 
+import dj_database_url
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import redirect
 from django.tasks import task
@@ -18,15 +19,14 @@ from nanodjango import Django
 app = Django(
     ADMIN_URL="admin/",
     EXTRA_APPS=["django_absurd"],
+    # Managed platforms inject DATABASE_URL and rotate the credentials inside it, so
+    # PG* vars would go stale.
     DATABASES={
-        "default": {
-            "ENGINE": "django.db.backends.postgresql",
-            "NAME": os.environ.get("PGDATABASE", "postgres"),
-            "USER": os.environ.get("PGUSER", "postgres"),
-            "PASSWORD": os.environ.get("PGPASSWORD", "postgres"),
-            "HOST": os.environ.get("PGHOST", "localhost"),
-            "PORT": os.environ.get("PGPORT", "5432"),
-        }
+        "default": dj_database_url.parse(
+            os.environ.get(
+                "DATABASE_URL", "postgres://postgres:postgres@localhost:5432/postgres"
+            )
+        )
     },
     TASKS={
         "default": {

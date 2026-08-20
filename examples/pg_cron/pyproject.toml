@@ -7,6 +7,7 @@ dev = [
 
 [project]
 dependencies = [
+  "dj-database-url==3.1.2",
   "django-absurd",
   "django==6.1",
   "nanodjango==0.16.3",
