@@ -187,10 +187,10 @@ dev = [
     { name = "pytest-socket", specifier = "==0.8.0" },
     { name = "pytest-timeout", specifier = "==2.4.0" },
     { name = "pytest-xdist", specifier = "==3.8.0" },
-    { name = "ruff", specifier = "==0.16.2" },
+    { name = "ruff", specifier = "==0.16.3" },
     { name = "time-machine", specifier = "==3.4.0" },
     { name = "types-croniter", specifier = "==6.2.4.20260711" },
-    { name = "zensical", specifier = "==0.0.53" },
+    { name = "zensical", specifier = "==0.0.54" },
 ]
 
 [[package]]
