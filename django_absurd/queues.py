@@ -43,6 +43,10 @@ INTERVAL_OPTION_KEYS = frozenset(
 # never across servers or versions.
 PROVISION_LOCK_KEY = zlib.crc32(b"django_absurd.provision")
 
+# Shared by the sync and async schema probes below: the connection plumbing cannot be,
+# but the question must be, or the two doors could classify one database differently.
+SCHEMA_ABSENT_SQL = "select to_regnamespace('absurd') is null"
+
 
 @dataclass
 class SyncResult:
@@ -87,15 +91,12 @@ def get_absurd_client(using: str | None = None) -> Absurd:
 
 
 def list_provisioned_queues(using: str | None = None) -> list[str]:
-    client = get_absurd_client(using)
-    try:
-        return sorted(client.list_queues())
-    except (
-        psycopg.errors.InvalidSchemaName,
-        psycopg.errors.UndefinedFunction,
-        psycopg.errors.UndefinedTable,
-    ) as exc:
-        raise SchemaNotInstalledError from exc
+    alias = using or resolve_absurd_database()
+    # Asked before the read, not classified off it: a present schema missing only one
+    # relation raises the same error as an absent one, and only the first is what
+    # SchemaNotInstalledError's "run migrate" advice can fix.
+    require_installed_schema(alias)
+    return sorted(get_absurd_client(alias).list_queues())
 
 
 def names_a_queue_table(exc: psycopg.errors.UndefinedTable, queue: str) -> bool:
@@ -220,8 +221,24 @@ def require_installed_schema(using: str) -> None:
     declaring no queues reads no queue at all and still rebuilds views off that table.
     """
     with connections[using].cursor() as cursor:
-        cursor.execute("select to_regnamespace('absurd') is null")
+        cursor.execute(SCHEMA_ABSENT_SQL)
         if cursor.fetchone()[0]:
+            raise SchemaNotInstalledError
+
+
+async def arequire_installed_schema(
+    conn: "psycopg.AsyncConnection[t.Any]",
+) -> None:
+    """``require_installed_schema``, asked on a worker's own async connection.
+
+    A twin body, not a shared one: a worker holds a raw async connection, and asking on
+    the connection it is about to use cannot disagree with what that connection sees.
+    Only the plumbing differs — the query itself is shared.
+    """
+    async with conn.cursor() as cursor:
+        await cursor.execute(SCHEMA_ABSENT_SQL)
+        row = t.cast("tuple[bool]", await cursor.fetchone())
+        if row[0]:
             raise SchemaNotInstalledError
 
 

@@ -42,7 +42,6 @@ from django_absurd.deferred import DEFER_NAME_SUFFIX, build_deferred_handler
 from django_absurd.exceptions import (
     QueueNotDeclaredError,
     QueueNotProvisionedError,
-    SchemaNotInstalledError,
 )
 from django_absurd.hooks import (
     log_before_spawn,
@@ -50,7 +49,11 @@ from django_absurd.hooks import (
     read_sdk_claimed_task,
 )
 from django_absurd.management.base import resolve_backend
-from django_absurd.queues import afind_missing_queue_tables, names_a_queue_table
+from django_absurd.queues import (
+    afind_missing_queue_tables,
+    arequire_installed_schema,
+    names_a_queue_table,
+)
 from django_absurd.scheduler import run_beat
 
 logger = logging.getLogger(__name__)
@@ -307,15 +310,11 @@ async def aworker_client(
             ),
         )
         client._registry = LazyTaskRegistry(queue, backend)  # noqa: SLF001 -- SDK has no public fallback-resolver hook; install lazy import_string resolution
-        try:
-            # Probes for the schema-absent guard; raises if Absurd is not migrated.
-            provisioned = await client.list_queues()
-        except (
-            psycopg.errors.InvalidSchemaName,
-            psycopg.errors.UndefinedTable,
-            psycopg.errors.UndefinedFunction,
-        ) as err:
-            raise SchemaNotInstalledError from err
+        # Asked before the read, not classified off it: a present schema missing one
+        # relation raises the same error as an absent one, and only the first is what
+        # SchemaNotInstalledError's "run migrate" advice can fix.
+        await arequire_installed_schema(conn)
+        provisioned = await client.list_queues()
         # Both refusals belong before the banner: this is where "may this worker start"
         # is decided, and open_worker_runtime logs `worker started` one frame out.
         if queue not in provisioned:

@@ -686,3 +686,26 @@ def test_run_worker_without_on_stop_requested_writes_nothing_to_stdout(
         signal.signal(signal.SIGTERM, previous_handler)
 
     assert capsys.readouterr().out == ""
+
+
+def test_worker_client_propagates_a_torn_install() -> None:
+    """Schema present, only ``absurd.queues`` gone. Relabelling that as absence names a
+    fix that replays no DDL — the migration is already recorded applied — so the advice
+    loops instead of resolving anything.
+    """
+    with connection.cursor() as cursor:
+        cursor.execute("alter table absurd.queues rename to queues_hidden")
+
+    async def _enter() -> None:
+        async with contextlib.AsyncExitStack() as stack:
+            await stack.enter_async_context(aworker_client(backend(), "default"))
+
+    try:
+        with pytest.raises(psycopg.errors.UndefinedTable) as excinfo:
+            asyncio.run(_enter())
+    finally:
+        with connection.cursor() as cursor:
+            cursor.execute("alter table absurd.queues_hidden rename to queues")
+    assert (
+        excinfo.value.diag.message_primary == 'relation "absurd.queues" does not exist'
+    )
