@@ -19,6 +19,7 @@ from django_absurd.models import Queue
 from django_absurd.queues import (
     PROVISION_LOCK_KEY,
     get_absurd_client,
+    list_provisioned_queues,
     resolve_absurd_database,
 )
 from tests import utils
@@ -470,3 +471,20 @@ def test_concurrent_sync_survives_the_admin_views_being_absent() -> None:
     with connection.cursor() as cur:
         cur.execute("SELECT count(*) FROM pg_views WHERE schemaname = 'absurd'")
         assert cur.fetchone() == (5,)
+
+
+def test_list_provisioned_queues_propagates_a_torn_install() -> None:
+    """Same door as the worker's, on Django's own connection: a present schema missing
+    only ``absurd.queues`` must not be reported as an absent one.
+    """
+    with connection.cursor() as cursor:
+        cursor.execute("alter table absurd.queues rename to queues_hidden")
+    try:
+        with pytest.raises(psycopg.errors.UndefinedTable) as excinfo:
+            list_provisioned_queues()
+    finally:
+        with connection.cursor() as cursor:
+            cursor.execute("alter table absurd.queues_hidden rename to queues")
+    assert (
+        excinfo.value.diag.message_primary == 'relation "absurd.queues" does not exist'
+    )
