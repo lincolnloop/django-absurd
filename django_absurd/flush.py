@@ -113,12 +113,17 @@ def clear_queues(*, drop_schema: bool) -> None:
         return  # absurd schema not present (unmigrated / schema-absent)
 
 
-def teardown_owned_pg_cron_jobs() -> None:
-    # Scoped clear (drop_schema=False) — the existing, already-tested
-    # teardown_crons(include_admin=True), never a hand-rolled parallel implementation.
+def teardown_owned_pg_cron_jobs() -> int:
+    """Unschedule every pg_cron job django-absurd owns and delete every schedule row,
+    admin-authored included. Returns the number of rows deleted.
+
+    Shared by the post-test flush and ``absurd_flush``.
+    """
+    # The existing, already-tested teardown_crons(include_admin=True), never a
+    # hand-rolled parallel implementation.
     from django_absurd.pg_cron.reconcile import teardown_crons  # noqa: PLC0415
 
-    teardown_crons(include_admin=True)
+    return teardown_crons(include_admin=True)
 
 
 def truncate_queue_tables(queue: str) -> None:

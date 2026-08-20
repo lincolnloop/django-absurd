@@ -1,6 +1,8 @@
 import contextlib
+import io
 import os
 import signal
+import sys
 import threading
 import time
 import typing as t
@@ -326,3 +328,14 @@ def connect_receiver(
         yield
     finally:
         signal.disconnect(receiver, sender=sender)
+
+
+@contextlib.contextmanager
+def answer(text: str) -> t.Iterator[None]:
+    """Feed a line to the next input() prompt via a real stdin (no mock)."""
+    original = sys.stdin
+    sys.stdin = io.StringIO(text)
+    try:
+        yield
+    finally:
+        sys.stdin = original

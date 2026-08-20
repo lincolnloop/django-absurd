@@ -72,7 +72,7 @@ def test_sync_unschedules_cleanup_job_when_cleanup_dropped(
     assert fetch_cleanup_lane() == []
 
 
-def test_cleanup_job_survives_absurd_flush_command(
+def test_absurd_flush_command_removes_cleanup_job(
     settings: Settings,
 ) -> None:
     settings.TASKS = build_cleanup_tasks("17 * * * *")
@@ -83,9 +83,7 @@ def test_cleanup_job_survives_absurd_flush_command(
 
     call_command("absurd_flush", "--noinput")
 
-    assert fetch_cleanup_lane() == [
-        (build_cleanup_jobname(), "17 * * * *", CLEANUP_COMMAND, True)
-    ]
+    assert fetch_cleanup_lane() == []
 
 
 def test_teardown_removes_cleanup_job(
