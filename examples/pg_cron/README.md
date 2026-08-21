@@ -36,6 +36,6 @@ This suite is only meaningful **in-stack** — a host run reaches the repo's pla
 database on 5432, which has no `pg_cron` extension:
 
 ```
-docker compose up -d --build db
+docker compose up -d --build --wait db
 docker compose run --rm --build app sh -c "cd /app && pytest"
 ```

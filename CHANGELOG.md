@@ -3,6 +3,46 @@ Never `git cliff -o`: it discards every hand edit, and no regeneration can repro
 
 # Changelog
 
+## [1.0.0b1](https://github.com/lincolnloop/django-absurd/compare/v0.1.0a8...v1.0.0b1) - 2026-08-21
+
+**First beta, and the first release on the 1.0 line.** The alpha series is over: the
+feature set for 1.0 is settled and the API is not expected to move again before it. This
+is still a pre-release, so `pip install --pre` / `uv add --prerelease allow` is still
+how you get it — but the reason has changed. Alpha meant "this may be reshaped"; beta
+means "this is what 1.0 will be, please tell us where it's wrong." Feedback on the
+public surface is the point of this release, and now is the cheap time to give it:
+[open an issue](https://github.com/lincolnloop/django-absurd/issues).
+
+**`absurd_flush` now clears pg_cron state too.** With `django_absurd.pg_cron` installed,
+a flush unschedules every pg_cron job the package owns — the schedule lanes and the
+`OPTIONS["CLEANUP"]` job — and deletes every `ScheduledTask` row, before dropping the
+queues rather than after. Previously they survived and fired at queues that no longer
+existed. This deletes **admin-authored** schedules, which no earlier release did: the
+confirmation prompt names it, but `--noinput` does it silently, so check any automation
+that flushes unattended. Restore settings-declared schedules with
+`manage.py absurd_sync_crons`; admin-authored ones are gone. The command now also prints
+the commands needed to re-provision.
+
+### Breaking changes
+
+- absurd_flush clears the pg_cron state django-absurd owns
+  ([#233](https://github.com/lincolnloop/django-absurd/pull/233)) — admin-authored
+  schedules are deleted along with the settings-declared ones and the cleanup job.
+
+### Bug fixes
+
+- absurd_flush surfaces a failed queue drop instead of reporting success
+  ([#233](https://github.com/lincolnloop/django-absurd/pull/233)) — a drop that failed
+  could print `Dropped N queue(s)` regardless.
+- Stop reporting a torn install as an absent schema
+  ([#230](https://github.com/lincolnloop/django-absurd/pull/230)) — a schema present but
+  missing a relation no longer advises `migrate`, which could not fix it.
+
+### Documentation
+
+- Document the grants a non-superuser pg_cron role needs
+  ([#224](https://github.com/lincolnloop/django-absurd/pull/224))
+
 ## [0.1.0a8](https://github.com/lincolnloop/django-absurd/compare/v0.1.0a7...v0.1.0a8) - 2026-08-19
 
 **Partitioned queues are refused, not experimental.** Declaring

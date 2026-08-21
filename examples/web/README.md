@@ -29,6 +29,9 @@ Tear down: `docker compose down -v`
 
 ## Test
 
+Runs in the demo's own Docker stack, the way CI runs it:
+
 ```
-uv run pytest
+docker compose up -d --build --wait db
+docker compose run --rm --build app sh -c "cd /app && pytest"
 ```

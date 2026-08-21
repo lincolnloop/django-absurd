@@ -1343,4 +1343,4 @@ Django cannot detect. Verify the versions line up first.
 
 ---
 
-Alpha software: APIs may change between versions.
+Beta software: the API is settling ahead of 1.0 and behavior may still change.

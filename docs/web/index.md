@@ -14,9 +14,9 @@ workflow engine, into Django's built-in
 [Tasks framework](https://docs.djangoproject.com/en/6.0/topics/tasks/) and reuses your
 existing database connection.
 
-!!! warning "Alpha"
+!!! warning "Beta"
 
-    APIs and behavior may change between releases.
+    The API is settling ahead of 1.0; behavior may still change.
 
 ## Install
 
@@ -32,7 +32,7 @@ existing database connection.
     pip install --pre django-absurd
     ```
 
-Only pre-releases are published during alpha, hence the flags. Needs Python **3.12+**,
+Only pre-releases are published before 1.0, hence the flags. Needs Python **3.12+**,
 Django **6.0+**, and PostgreSQL on the **psycopg (v3)** driver — Absurd reuses Django's
 connection, so psycopg2 won't work.
 
