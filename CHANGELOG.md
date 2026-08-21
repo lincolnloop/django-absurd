@@ -42,6 +42,9 @@ the commands needed to re-provision.
 
 - Document the grants a non-superuser pg_cron role needs
   ([#224](https://github.com/lincolnloop/django-absurd/pull/224))
+- Fix the dead `examples/` and `LICENSE` links on the PyPI project page — PyPI resolves
+  a README's relative links against pypi.org, not the repository
+  ([#236](https://github.com/lincolnloop/django-absurd/pull/236))
 
 ## [0.1.0a8](https://github.com/lincolnloop/django-absurd/compare/v0.1.0a7...v0.1.0a8) - 2026-08-19
 
