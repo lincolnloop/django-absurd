@@ -883,6 +883,12 @@ The release body is sliced out of the checked-in file rather than out of the gen
 output, so there is one artifact to edit and hand-written prose reaches the published
 notes without a second step.
 
+The repository's front page doubles as the package's published description, so a link
+written relative to the repository resolves against the index host instead and arrives
+dead for every visitor who never sees the repository. The packaging metadata check does
+not catch this — it verifies the description renders, not that its links point anywhere
+— so links in that file are absolute by rule rather than by review.
+
 ## Deliberately not doing (yet)
 
 Task **priority** is unsupported because Absurd has no notion of it — we won't fake it
