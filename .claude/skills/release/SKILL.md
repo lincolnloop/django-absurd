@@ -76,6 +76,8 @@ section headings in `CHANGELOG.md`.
      `git fetch origin && git log --oneline origin/main -1`.
    - CI is green on that commit (`gh run list --branch main --limit 5`). Don't release
      red `main`.
+   - **Write that commit's SHA down.** Everything below is verified against it, and step
+     7 tags it by SHA — not by `main`, which keeps moving (see Guardrails).
 2. **Summarize what changed** since the last tag:
 
    ```bash
@@ -196,21 +198,44 @@ section headings in `CHANGELOG.md`.
 7. **Create the release** (creates the tag AND triggers `publish.yml`):
 
    ```bash
-   gh release create v1.0.0bN --target main --prerelease \
+   gh release create v1.0.0bN --target <verified-sha> --prerelease \
      --title v1.0.0bN --notes-file /tmp/release-notes.md
    ```
 
-   Use `--prerelease` for any `a`/`b`/`rc`; omit it only for a final release.
-   `--target main` ties the tag to `main`'s HEAD. Never `--generate-notes` — it would
-   ignore the notes the changelog PR just reviewed and re-derive its own from commit
-   titles.
+   `<verified-sha>` is the commit from step 1 — the one whose CI you checked and whose
+   range you sliced the notes from. **Never `--target main`**: it re-resolves at
+   creation time, so a merge landing in the gap gets tagged instead (see Guardrails).
+   Use `--prerelease` for any `a`/`b`/`rc`; omit it only for a final release. Never
+   `--generate-notes` — it would ignore the notes the changelog PR just reviewed and
+   re-derive its own from commit titles.
 
 8. **GATE 3 — approve the PyPI deployment (human, in GitHub).** The publish job waits on
    the `pypi` environment reviewer. Tell the human: **Actions → the running "Publish to
    PyPI" run → Review deployments → approve `pypi`.** The assistant cannot approve it.
 9. **Verify.** The workflow attaches wheel + sdist to the release and PyPI shows the
-   version. Confirm `pip install --pre django-absurd==<version>` resolves (pre-releases
-   need `--pre`) and the release page has the two assets.
+   version. Confirm the install resolves (pre-releases need `--pre`) and the release
+   page has the two assets.
+
+   **Run that install check from OUTSIDE this checkout**, in a throwaway venv:
+
+   ```bash
+   cd $(mktemp -d) && uv venv -q v && VIRTUAL_ENV=$PWD/v \
+     uv pip install --prerelease allow "django-absurd==<version>"
+   ```
+
+   Two traps, both of which report a wrong answer rather than failing, and both only
+   inside the checkout:
+
+   - `[tool.uv] exclude-newer = "7 days"` applies to this package too, so uv refuses a
+     release younger than a week as `unsatisfiable` — which reads exactly like a broken
+     publish. Verifying elsewhere avoids it; from in here, add
+     `--exclude-newer-package "django-absurd=0 days"`.
+   - A stale `django_absurd.egg-info/` in the repo root is found by `importlib.metadata`
+     (the working directory is on `sys.path`), so it reports that directory's version
+     for whatever you actually installed. Read the version from outside the checkout, or
+     delete the directory.
+
+   Neither is a packaging defect — don't "fix" the cooloff or the metadata in response.
 
 ## Guardrails
 
@@ -231,6 +256,14 @@ section headings in `CHANGELOG.md`.
   expression and the `long_description` all ship, and `uvx twine check --strict dist/*`
   passed on both artifacts at the `v1.0.0b1` cut. Re-run that check rather than assuming
   it still holds.
+- **Tag the SHA, never the branch.** `--target main` is resolved by GitHub when the
+  release is created, not when you checked it, and Renovate auto-merges — so a commit
+  can land between the pre-flight and the cut and get tagged in place of the verified
+  one. That happened at `v1.0.0b1`: the tag went to a lockfile-only `chore(deps)` merge
+  one commit past the checked SHA. It was harmless there, and would not have been if the
+  interloper were a `feat` — that commit is then inside the released range but absent
+  from the notes, and below the next release's boundary, so no later run ever renders
+  it. Pass the SHA and the race cannot happen.
 - A mistaken release: you can delete the GitHub release + its tag, but a published PyPI
   version is permanent — yank it, never reuse the number; cut the next pre-release
   instead.
