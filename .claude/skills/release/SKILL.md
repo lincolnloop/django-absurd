@@ -44,28 +44,30 @@ reasoning, then ask** — present the change summary, map it to candidate versio
 let the human choose. Surface disagreement (e.g. "these look like breaking changes, so
 I'd lean beta over another alpha — your call").
 
-**Where we are:** pre-1.0, the `0.1.0` line, shipping **alpha** pre-releases (`v0.1.0a1`
-→ `a2` → … → `a5`). The history: `git tag --list 'v*' | sort -V`, or the section
-headings in `CHANGELOG.md`.
+**Where we are:** the `1.0.0` line, shipping **beta** pre-releases. The `0.1.0` alpha
+series (`v0.1.0a1` → … → `a8`) is closed; `v1.0.0b1` opened the beta and jumped the
+target line at the same time. The history: `git tag --list 'v*' | sort -V`, or the
+section headings in `CHANGELOG.md`.
 
 **PEP 440 pre-release suffixes** (what `pip` does):
 
 - `aN` (alpha), `bN` (beta), `rcN` (release candidate) — all install only with
   `pip install --pre`. Tag each with the GitHub **"pre-release"** flag.
-- no suffix (`v0.1.0`) — the real release; installs by default.
+- no suffix (`v1.0.0`) — the real release; installs by default.
 
 **How to reason about the next number (present these, let the human pick):**
 
-- **Another alpha** (`a(N+1)`) — still iterating toward `0.1.0`; API/behavior still
-  moving. The default during this phase.
-- **Move to beta / rc** (`b1` / `rc1`) — feature-set for `0.1.0` is settling; you want
-  wider testing without more API churn. A deliberate phase change — confirm intent.
-- **Bump the target line** (`0.2.0aN`, etc.) — only if scope grew enough that `0.1.0` no
-  longer names it.
-- **Semantic versioning** governs the target line. Pre-1.0 (`0.x`): the API is unstable,
-  so a `0.MINOR` bump may include breaking changes; `0.x.PATCH` is for fixes. Post-1.0:
-  MAJOR = breaking, MINOR = backward-compatible features, PATCH = fixes. The first
-  stable cut is `v0.1.0` (no suffix) — a separate, explicit decision (see Guardrails).
+- **Another beta** (`b(N+1)`) — the 1.0.0 feature set is settled but feedback is still
+  arriving and the API may still need a correction. The default during this phase.
+- **Move to rc** (`rc1`) — nothing left you expect to change; the cut is a formality
+  pending a final soak. A deliberate phase change — confirm intent.
+- **The stable cut** (`v1.0.0`, no suffix) — see Guardrails; its own explicit decision.
+- **Back to alpha, or a new target line** (`1.1.0aN`, `2.0.0aN`) — only if scope grew
+  enough that `1.0.0` no longer names what is shipping.
+- **Semantic versioning** governs the target line, and from `1.0.0` onward it binds:
+  MAJOR = breaking, MINOR = backward-compatible features, PATCH = fixes. The 0.x licence
+  to break things in a minor bump is gone, so a breaking change after `v1.0.0` is
+  `v2.0.0` — price that in before agreeing to one.
 
 ## Steps
 
@@ -95,8 +97,8 @@ headings in `CHANGELOG.md`.
 
    ```bash
    git fetch origin
-   git checkout -b changelog-v0.1.0aN origin/main
-   uv run git-cliff --unreleased --tag v0.1.0aN --prepend CHANGELOG.md
+   git checkout -b changelog-v1.0.0bN origin/main
+   uv run git-cliff --unreleased --tag v1.0.0bN --prepend CHANGELOG.md
    ```
 
    `--tag` supplies the heading for a tag that does not exist yet. `--prepend` inserts
@@ -123,23 +125,17 @@ headings in `CHANGELOG.md`.
      printed one. Rerun with `-vv` to see which. Anything that isn't a pre-mandate
      Renovate subject is user-visible work that would otherwise be omitted permanently:
      once the tag lands, that commit is below the next release's range boundary and no
-     later run will ever see it. Add an entry by hand.
-
-     _One-time, for the first release cut this way:_ the range reaches back before
-     conventional commits were mandated (~#131), so this warning covers 13 commits.
-     Twelve are Renovate; the thirteenth,
-     `Cross-database pg_cron scheduling (restore xdist + test isolation) (#107)`, is
-     real runtime work in `django_absurd/pg_cron/` and **must** get a hand-written
-     entry. Afterwards the warning should be rare — treat any occurrence as something to
-     look at, not as routine.
+     later run will ever see it. Add an entry by hand. Every range now sits well after
+     conventional commits were mandated, so the warning should be rare — treat any
+     occurrence as something to look at, not as routine.
 
    Then, with the section final (prettier reflows the generated one-line bullets, so run
    this last):
 
    ```bash
    uv run pre-commit run --all-files
-   git commit -am "chore: changelog for v0.1.0aN"
-   git push -u origin changelog-v0.1.0aN && gh pr create --fill
+   git commit -am "chore: changelog for v1.0.0bN"
+   git push -u origin changelog-v1.0.0bN && gh pr create --fill
    ```
 
    `chore:` is deliberate — `--fill` makes this subject the PR title, squash-merge makes
@@ -153,7 +149,7 @@ headings in `CHANGELOG.md`.
    **That merge is the last time `--prepend` runs for this version.** Everything after
    it — a missed commit found in step 5, a wording change asked for at GATE 2 — is a
    hand-edit PR against the top section of `CHANGELOG.md`. Re-running the prepend would
-   render the identical range a second time and stack a duplicate `## [v0.1.0aN]`
+   render the identical range a second time and stack a duplicate `## [v1.0.0bN]`
    section above the merged one, because the tag still does not exist and the range has
    not moved. Steps 5 and 6 both send you back here; both mean the hand edit, neither
    means the command.
@@ -200,8 +196,8 @@ headings in `CHANGELOG.md`.
 7. **Create the release** (creates the tag AND triggers `publish.yml`):
 
    ```bash
-   gh release create v0.1.0aN --target main --prerelease \
-     --title v0.1.0aN --notes-file /tmp/release-notes.md
+   gh release create v1.0.0bN --target main --prerelease \
+     --title v1.0.0bN --notes-file /tmp/release-notes.md
    ```
 
    Use `--prerelease` for any `a`/`b`/`rc`; omit it only for a final release.
@@ -230,9 +226,11 @@ headings in `CHANGELOG.md`.
   project).
 - The `pypi` environment restricts deployments to `v*` tags and requires a reviewer
   (`marcgibbons`).
-- **First stable (non-pre) `v0.1.0`** is its own deliberate decision — confirm the API
-  is ready, and first ensure README + LICENSE + license metadata are in place (twine
-  warns on a missing long_description for pre-releases today).
+- **First stable (non-pre) `v1.0.0`** is its own deliberate decision — confirm the API
+  is ready. Packaging metadata is not a blocker: README, LICENSE, the MIT license
+  expression and the `long_description` all ship, and `uvx twine check --strict dist/*`
+  passed on both artifacts at the `v1.0.0b1` cut. Re-run that check rather than assuming
+  it still holds.
 - A mistaken release: you can delete the GitHub release + its tag, but a published PyPI
   version is permanent — yank it, never reuse the number; cut the next pre-release
   instead.
