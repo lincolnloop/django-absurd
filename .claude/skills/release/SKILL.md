@@ -213,8 +213,29 @@ section headings in `CHANGELOG.md`.
    the `pypi` environment reviewer. Tell the human: **Actions → the running "Publish to
    PyPI" run → Review deployments → approve `pypi`.** The assistant cannot approve it.
 9. **Verify.** The workflow attaches wheel + sdist to the release and PyPI shows the
-   version. Confirm `pip install --pre django-absurd==<version>` resolves (pre-releases
-   need `--pre`) and the release page has the two assets.
+   version. Confirm the install resolves (pre-releases need `--pre`) and the release
+   page has the two assets.
+
+   **Run that install check from OUTSIDE this checkout**, in a throwaway venv:
+
+   ```bash
+   cd $(mktemp -d) && uv venv -q v && VIRTUAL_ENV=$PWD/v \
+     uv pip install --prerelease allow "django-absurd==<version>"
+   ```
+
+   Two traps, both of which report a wrong answer rather than failing, and both only
+   inside the checkout:
+
+   - `[tool.uv] exclude-newer = "7 days"` applies to this package too, so uv refuses a
+     release younger than a week as `unsatisfiable` — which reads exactly like a broken
+     publish. Verifying elsewhere avoids it; from in here, add
+     `--exclude-newer-package "django-absurd=0 days"`.
+   - A stale `django_absurd.egg-info/` in the repo root is found by `importlib.metadata`
+     (the working directory is on `sys.path`), so it reports that directory's version
+     for whatever you actually installed. Read the version from outside the checkout, or
+     delete the directory.
+
+   Neither is a packaging defect — don't "fix" the cooloff or the metadata in response.
 
 ## Guardrails
 
