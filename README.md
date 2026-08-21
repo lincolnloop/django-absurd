@@ -9,11 +9,10 @@
 [![License](https://img.shields.io/pypi/l/django-absurd.svg)](https://github.com/lincolnloop/django-absurd/blob/main/LICENSE)
 <!-- prettier-ignore-end -->
 
-Run background tasks in Django on **Postgres** — no separate broker, no Redis, no
-Celery. Plugs [Absurd](https://earendil-works.github.io/absurd/), a Postgres-native
-workflow engine, into Django's
-[Tasks](https://docs.djangoproject.com/en/6.0/topics/tasks/) framework, reusing your
-existing database connection.
+Run background tasks and durable workflows in Django on **Postgres**. Plugs
+[Absurd](https://earendil-works.github.io/absurd/), a Postgres-native workflow engine,
+into Django's [Tasks](https://docs.djangoproject.com/en/6.0/topics/tasks/) framework,
+reusing the database connection your project already has.
 
 > **Beta.** The API is settling ahead of 1.0; behavior may still change.
 
