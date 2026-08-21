@@ -3,8 +3,7 @@
 django-absurd plugs [Absurd](https://earendil-works.github.io/absurd/), a
 Postgres-native workflow engine, into Django's
 [Tasks framework](https://docs.djangoproject.com/en/6.0/topics/tasks/), reusing Django's
-database connection and shipping Absurd's schema as Django migrations — no separate
-broker.
+database connection and shipping Absurd's schema as Django migrations.
 
 Ships inside the installed package (`site-packages/django_absurd/AGENTS.md`), complete
 on its own. Same material with navigation:
@@ -1343,4 +1342,4 @@ Django cannot detect. Verify the versions line up first.
 
 ---
 
-Alpha software: APIs may change between versions.
+Beta software: the API is settling ahead of 1.0 and behavior may still change.

@@ -53,6 +53,13 @@ replaced upstream by a function that falls back to what Postgres has built in, w
 what makes the package installable by an ordinary application role on a locked-down
 deployment.
 
+Whether that schema is installed is asked directly, never inferred from a failure. A
+schema that is present but missing a single relation raises the same error as one that
+was never installed, and only the second is fixed by running migrations — so classifying
+off the error tells an operator holding a half-applied install to do the one thing that
+cannot help them. The question is asked on the same connection that is about to do the
+work, so the answer cannot disagree with what that connection goes on to see.
+
 ### Queue provisioning: `migrate` or the command, never a runtime seam
 
 Provisioning per-queue tables from the declared queue list has been redesigned three
@@ -671,9 +678,17 @@ leaving the schema, functions, and migration history intact — the migration sy
 the sole owner of the schema, and since migrations do not run backwards, a reset that
 also removed the schema would leave no supported way to get it back. It follows the
 framework's own destructive-command convention (confirm interactively, skip with a
-no-input flag) so the safety model is one users already know. Dropping a queue removes
-only that queue's own maintenance jobs and data; user-defined recurring schedules live
-elsewhere and survive, so a reset never silently cancels recurring work.
+no-input flag) so the safety model is one users already know.
+
+That reset also clears the recurring schedules this package owns, and clears them before
+dropping the queues rather than after: a schedule left behind fires at a queue that no
+longer exists, and one that fires in the gap between the two steps spawns into the same
+hole. It costs the operator every hand-authored schedule, which is why the confirmation
+says so outright — the alternative, leaving them to fail on each fire, was the earlier
+behaviour and read as a bug every time it happened. The queue drop refuses to be
+tolerant here even though the identical operation is deliberately tolerant during test
+teardown, where a run that provisioned nothing must not fail on the way out; an operator
+needs the database's own error, not a success line naming queues that are still there.
 
 ## Admin & ORM introspection
 
@@ -867,6 +882,12 @@ content, and generation stays append-only from here.
 The release body is sliced out of the checked-in file rather than out of the generator's
 output, so there is one artifact to edit and hand-written prose reaches the published
 notes without a second step.
+
+The repository's front page doubles as the package's published description, so a link
+written relative to the repository resolves against the index host instead and arrives
+dead for every visitor who never sees the repository. The packaging metadata check does
+not catch this — it verifies the description renders, not that its links point anywhere
+— so links in that file are absolute by rule rather than by review.
 
 ## Deliberately not doing (yet)
 

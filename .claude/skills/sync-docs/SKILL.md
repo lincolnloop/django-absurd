@@ -96,7 +96,12 @@ A change triggers a doc pass if it touches any of:
 
 1. **README.md** — does the quickstart still reflect the happy path? If a step changed
    (e.g. a command became optional), fix it. If you're tempted to _add_ explanation, put
-   it in AGENTS.md and link instead.
+   it in AGENTS.md and link instead. **Every link in this file must be absolute:** it is
+   the published PyPI description, where a relative link resolves against pypi.org and
+   arrives dead. `twine check --strict` passes anyway — it checks that the description
+   renders, not that its links resolve — so nothing but review catches one. Introduce
+   the package by what it does, never by what it replaces; naming other projects to
+   define this one dates fast and sells against them instead of describing this.
 2. **AGENTS.md** — update the relevant section (Tasks / Workflows / Cron jobs / Workers
    / Cleanup / Monitoring / Testing / Configuration / Database setup). This is where
    completeness lives, and it must **stand alone**: it ships inside the installed
