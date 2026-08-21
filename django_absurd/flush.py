@@ -91,34 +91,48 @@ def reset_fake_now(alias: str) -> None:
 
 
 def clear_queues(*, drop_schema: bool) -> None:
-    """Drop (``drop_schema=True``) or truncate (``drop_schema=False``) every queue's
-    tables. Queue-only — never touches pg_cron. No-op on an unreachable database, an
-    unmigrated/absent schema, or a partial one — a queue whose catalog row survives
-    but one of its own tables does not.
+    """``clear_provisioned_queues``, made a no-op on an unreachable database, an
+    unmigrated/absent schema, or a partial one — a queue whose catalog row survives but
+    one of its own tables does not. The form post-test cleanup needs: a test that never
+    provisioned anything must not fail in teardown.
     """
-    try:
-        names = list_provisioned_queues()
-        client = get_absurd_client()
-        for name in names:
-            if drop_schema:
-                client.drop_queue(name)
-            else:
-                truncate_queue_tables(name)
-    except (
+    with contextlib.suppress(
         OperationalError,
         ProgrammingError,
         ImproperlyConfigured,
         SchemaNotInstalledError,
     ):
-        return  # absurd schema not present (unmigrated / schema-absent)
+        clear_provisioned_queues(drop_schema=drop_schema)
 
 
-def teardown_owned_pg_cron_jobs() -> None:
-    # Scoped clear (drop_schema=False) — the existing, already-tested
-    # teardown_crons(include_admin=True), never a hand-rolled parallel implementation.
+def clear_provisioned_queues(*, drop_schema: bool) -> list[str]:
+    """Drop (``drop_schema=True``) or truncate (``drop_schema=False``) every provisioned
+    queue's tables, returning the names cleared. Queue-only — never touches pg_cron.
+
+    Raises, unlike ``clear_queues``: an operator running ``absurd_flush`` needs the
+    Postgres error, not a silent success line naming queues that are still there.
+    """
+    names = list_provisioned_queues()
+    client = get_absurd_client()
+    for name in names:
+        if drop_schema:
+            client.drop_queue(name)
+        else:
+            truncate_queue_tables(name)
+    return names
+
+
+def teardown_owned_pg_cron_jobs() -> int:
+    """Unschedule every pg_cron job django-absurd owns and delete every schedule row,
+    admin-authored included. Returns the number of rows deleted.
+
+    Shared by the post-test flush and ``absurd_flush``.
+    """
+    # The existing, already-tested teardown_crons(include_admin=True), never a
+    # hand-rolled parallel implementation.
     from django_absurd.pg_cron.reconcile import teardown_crons  # noqa: PLC0415
 
-    teardown_crons(include_admin=True)
+    return teardown_crons(include_admin=True)
 
 
 def truncate_queue_tables(queue: str) -> None:

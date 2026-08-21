@@ -1,10 +1,6 @@
-import collections.abc
-import contextlib
 import datetime as dt
-import io
 import logging
 import re
-import sys
 import typing as t
 
 import psycopg.errors
@@ -91,17 +87,6 @@ def parse_cleanup_line(line: str) -> QueueCleanup:
         "tasks_deleted": int(match[2]),
         "events_deleted": int(match[3]),
     }
-
-
-@contextlib.contextmanager
-def answer(text: str) -> collections.abc.Iterator[None]:
-    """Feed a line to the next input() prompt via a real stdin (no mock)."""
-    original = sys.stdin
-    sys.stdin = io.StringIO(text)
-    try:
-        yield
-    finally:
-        sys.stdin = original
 
 
 def test_cleanup_deletes_aged_terminal_tasks(
@@ -249,7 +234,10 @@ def test_flush_noinput_drops_all_queues(
     sync_queue(settings, names=("default", "other"))
     capsys.readouterr()  # discard sync output
     call_command("absurd_flush", "--noinput")
-    assert capsys.readouterr().out == "Dropped 2 queue(s): default, other\n"
+    assert capsys.readouterr().out == (
+        "Dropped 2 queue(s): default, other\n"
+        "Re-provision with: manage.py absurd_sync_queues\n"
+    )
     assert get_absurd_client().list_queues() == []
 
 
@@ -259,12 +247,13 @@ def test_flush_interactive_yes_drops_all_queues(
 ) -> None:
     sync_queue(settings, names=("default", "other"))
     capsys.readouterr()  # discard sync output
-    with answer("yes\n"):
+    with utils.answer("yes\n"):
         call_command("absurd_flush")
     assert capsys.readouterr().out == (
         "This will DROP 2 queue(s) and ALL their data: default, other\n"
         "Type 'yes' to continue, or 'no' to cancel: "
         "Dropped 2 queue(s): default, other\n"
+        "Re-provision with: manage.py absurd_sync_queues\n"
     )
     assert get_absurd_client().list_queues() == []
 
@@ -275,7 +264,7 @@ def test_flush_interactive_no_keeps_queues(
 ) -> None:
     sync_queue(settings, names=("default", "other"))
     capsys.readouterr()  # discard sync output
-    with answer("no\n"):
+    with utils.answer("no\n"):
         call_command("absurd_flush")
     assert capsys.readouterr().out == (
         "This will DROP 2 queue(s) and ALL their data: default, other\n"
@@ -291,7 +280,7 @@ def test_flush_non_interactive_eof_keeps_queues(
 ) -> None:
     sync_queue(settings, names=("default", "other"))
     capsys.readouterr()  # discard sync output
-    with answer(""):  # empty stdin → input() raises EOFError
+    with utils.answer(""):  # empty stdin → input() raises EOFError
         call_command("absurd_flush")
     assert capsys.readouterr().out == (
         "This will DROP 2 queue(s) and ALL their data: default, other\n"

@@ -873,14 +873,19 @@ python manage.py absurd_flush            # prompts, then drops on 'yes'
 python manage.py absurd_flush --noinput  # drops without prompting
 ```
 
-**Destructive: this deletes all task history.** It removes every queue — its per-queue
-tables and registry entry — along with all tasks, runs, and events in them. It does not
+**Destructive: this deletes all task history, and every admin-authored schedule.** It
+removes every queue — its per-queue tables and registry entry — along with all tasks,
+runs, and events in them, then prints the commands to re-provision. It does not
 uninstall Absurd: the schema, migrations, and functions stay, so you never re-`migrate`,
 only re-provision the queues with `migrate` or `absurd_sync_queues`.
 
-- Scheduled jobs survive the flush and **error on each fire** until the queues exist
-  again, so re-provision promptly. The `OPTIONS["CLEANUP"]` job is the exception: it
-  survives and runs harmlessly, finding no eligible rows.
+- With `django_absurd.pg_cron` installed the flush also unschedules every pg_cron job
+  django-absurd owns — the schedule lanes and the `OPTIONS["CLEANUP"]` job — and deletes
+  every `ScheduledTask` row, so nothing fires at a queue that no longer exists.
+  `absurd_sync_crons` brings the settings-declared schedules back; admin-authored ones
+  are gone for good.
+- On the beat process instead, schedules live in settings, so beat keeps enqueuing and
+  **errors on each fire** until the queues exist again — re-provision promptly.
 - Per-queue Absurd maintenance jobs from `absurdctl cron --enable <queue>` are dropped
   with their queue.
 
