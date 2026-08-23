@@ -19,7 +19,11 @@ reusing the database connection your project already has.
 ## Install
 
 ```console
-uv add django-absurd --prerelease allow    # or: pip install --pre django-absurd
+uv add django-absurd --prerelease allow
+```
+
+```console
+pip install --pre django-absurd
 ```
 
 Only pre-releases are published before 1.0, hence the flags. Needs Python 3.12+, Django
@@ -43,7 +47,8 @@ TASKS = {
 ```
 
 ```console
-python manage.py migrate    # installs the Absurd schema, provisions declared queues
+# Installs the Absurd schema and provisions the queues you declared.
+python manage.py migrate
 ```
 
 ```python
@@ -55,7 +60,8 @@ def add(a: int, b: int) -> int:
     return a + b
 
 
-result = add.enqueue(2, 3)   # returns a TaskResult; a worker runs it
+# Returns a TaskResult straight away; a worker runs the task.
+result = add.enqueue(2, 3)
 ```
 
 ```console

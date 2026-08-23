@@ -59,7 +59,7 @@ alternate_style = true
 permalink = true
 
 [project.theme]
-custom_dir = "overrides"
+custom_dir = "docs/overrides"
 favicon = "assets/favicon.png"
 features = [
   "content.code.copy",
