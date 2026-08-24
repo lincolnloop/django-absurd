@@ -1339,7 +1339,3 @@ faking the migration records it as applied without re-running the DDL.
 Only do this when the existing `absurd` schema exactly matches the version this package
 targets (`django_absurd.ABSURD_SCHEMA_VERSION`) — a mismatch causes runtime failures
 Django cannot detect. Verify the versions line up first.
-
----
-
-Beta software: the API is settling ahead of 1.0 and behavior may still change.

@@ -14,21 +14,18 @@ Run background tasks and durable workflows in Django on **Postgres**. Plugs
 into Django's [Tasks](https://docs.djangoproject.com/en/6.0/topics/tasks/) framework,
 reusing the database connection your project already has.
 
-> **Beta.** The API is settling ahead of 1.0; behavior may still change.
-
 ## Install
 
 ```console
-uv add django-absurd --prerelease allow
+uv add django-absurd
 ```
 
 ```console
-pip install --pre django-absurd
+pip install django-absurd
 ```
 
-Only pre-releases are published before 1.0, hence the flags. Needs Python 3.12+, Django
-6.0+, and PostgreSQL on the **psycopg (v3)** driver — Absurd reuses Django's connection,
-so psycopg2 won't work.
+Needs Python 3.12+, Django 6.0+, and PostgreSQL on the **psycopg (v3)** driver — Absurd
+reuses Django's connection, so psycopg2 won't work.
 
 ## Quickstart
 

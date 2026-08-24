@@ -14,27 +14,22 @@ into Django's built-in
 [Tasks framework](https://docs.djangoproject.com/en/6.0/topics/tasks/) and reuses the
 database connection your project already has.
 
-!!! warning "Beta"
-
-    The API is settling ahead of 1.0; behavior may still change.
-
 ## Install
 
 === "uv"
 
     ```bash
-    uv add django-absurd --prerelease allow
+    uv add django-absurd
     ```
 
 === "pip"
 
     ```bash
-    pip install --pre django-absurd
+    pip install django-absurd
     ```
 
-Only pre-releases are published before 1.0, hence the flags. Needs Python **3.12+**,
-Django **6.0+**, and PostgreSQL on the **psycopg (v3)** driver — Absurd reuses Django's
-connection, so psycopg2 won't work.
+Needs Python **3.12+**, Django **6.0+**, and PostgreSQL on the **psycopg (v3)** driver —
+Absurd reuses Django's connection, so psycopg2 won't work.
 
 ## Quickstart
 

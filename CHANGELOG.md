@@ -3,6 +3,27 @@ Never `git cliff -o`: it discards every hand edit, and no regeneration can repro
 
 # Changelog
 
+## [1.0.0](https://github.com/lincolnloop/django-absurd/compare/v1.0.0b1...v1.0.0) - 2026-08-24
+
+**First stable release**, timed to coincide with DjangoConUS 2026.
+`pip install django-absurd` / `uv add django-absurd` now resolves without `--pre`. The
+1.0 API is frozen, and semantic versioning binds from here: a breaking change means
+2.0.0, not a minor bump.
+
+The beta needed no corrections, so the only functional change since `v1.0.0b1` is the
+admin performance fix below — upgrading from the beta is otherwise a no-op. Coming
+straight from an alpha, read the breaking changes under 1.0.0b1 and 0.1.0a8 below before
+you upgrade; they all still apply.
+
+### Performance
+
+- Build the admin state filter from static choices
+  ([#244](https://github.com/lincolnloop/django-absurd/pull/244)) — every entity
+  changelist ran a `SELECT DISTINCT` over the union view to populate the state dropdown.
+  The dropdown now lists all six states rather than only those present in the data, and
+  the checkpoint `status` filter is gone: the schema writes one value, so it could never
+  narrow anything.
+
 ## [1.0.0b1](https://github.com/lincolnloop/django-absurd/compare/v0.1.0a8...v1.0.0b1) - 2026-08-21
 
 **First beta, and the first release on the 1.0 line.** The alpha series is over: the
