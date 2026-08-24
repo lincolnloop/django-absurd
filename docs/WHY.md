@@ -703,6 +703,17 @@ wherever the declared catalog is provisioned — `migrate` or the sync command �
 queue declared but not yet provisioned is absent from them; the admin surfaces that gap
 rather than pretending the list is complete.
 
+Filter choices are static Python, never derived from the rows. A data-derived dropdown
+costs a `SELECT DISTINCT` over the union view on every render — at a few million rows, a
+quarter of the changelist's time — and it buys nothing, because the values are fixed by
+the schema. The task states are duplicated from the `CHECK` on `t_<queue>` and
+`r_<queue>` rather than imported from the SDK's `TaskResultState`: the admin reads
+tables the migration installed, so the choices should track that schema and not
+whichever SDK version happens to be importable. Each choice carries an explicit label
+because a bare `TextChoices` member title-cases it, and these pages show the string
+Postgres stores. The checkpoint `status` column gets no filter at all — one value is
+ever written, so the dropdown could only ever be a no-op.
+
 ## Routing & multiple databases
 
 The router claims only this app's models; it never dictates routing for the rest of a
