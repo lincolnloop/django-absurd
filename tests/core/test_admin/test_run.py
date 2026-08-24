@@ -9,7 +9,12 @@ from django.urls import reverse, reverse_lazy
 from django_absurd.models import Run
 from django_absurd.test import AbsurdTestRuntime
 from tests import tasks
-from tests.core.test_admin.utils import parse_html, result_rows, seed_mixed
+from tests.core.test_admin.utils import (
+    extract_filter_choices,
+    parse_html,
+    result_rows,
+    seed_mixed,
+)
 
 if t.TYPE_CHECKING:
     from bs4 import Tag
@@ -133,3 +138,19 @@ def test_detail_shows_failure_reason(
     assert failure is not None
     text = failure.get_text()
     assert "boom" in text or "ValueError" in text
+
+
+def test_state_filter_lists_all_states_with_no_rows(
+    admin_user: User, client: Client
+) -> None:
+    client.force_login(admin_user)
+    resp = client.get(CHANGELIST)
+    soup = parse_html(resp)
+    assert extract_filter_choices(soup, "state") == {
+        "pending",
+        "running",
+        "sleeping",
+        "completed",
+        "failed",
+        "cancelled",
+    }

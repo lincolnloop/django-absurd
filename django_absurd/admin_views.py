@@ -6,6 +6,7 @@ from django.apps.registry import Apps
 from django.db import connections, models, transaction
 from django.db.utils import OperationalError, ProgrammingError
 
+from django_absurd.choices import TaskState
 from django_absurd.exceptions import (
     ADMIN_VIEW_READONLY_MSG,
     QueueReadOnlyError,
@@ -25,7 +26,6 @@ class EntitySpec:
     natural_key_sql: psycopg.sql.Composable
     columns: tuple[tuple[str, str], ...]
     has_state: bool
-    has_status: bool
     list_display: tuple[str, ...]
     search_fields: tuple[str, ...]
 
@@ -56,7 +56,6 @@ ADMIN_ENTITY_SPECS: tuple[EntitySpec, ...] = (
             ("idempotency_key", "text"),
         ),
         has_state=True,
-        has_status=False,
         list_display=(
             "natural_key",
             "queue",
@@ -93,7 +92,6 @@ ADMIN_ENTITY_SPECS: tuple[EntitySpec, ...] = (
             ("created_at", "timestamptz"),
         ),
         has_state=True,
-        has_status=False,
         list_display=(
             "natural_key",
             "queue",
@@ -121,7 +119,6 @@ ADMIN_ENTITY_SPECS: tuple[EntitySpec, ...] = (
             ("updated_at", "timestamptz"),
         ),
         has_state=False,
-        has_status=True,
         list_display=("natural_key", "queue", "task_id", "checkpoint_name", "status"),
         search_fields=("task__task_id", "checkpoint_name"),
     ),
@@ -138,7 +135,6 @@ ADMIN_ENTITY_SPECS: tuple[EntitySpec, ...] = (
             ("emitted_at", "timestamptz"),
         ),
         has_state=False,
-        has_status=False,
         list_display=("natural_key", "queue", "event_name", "emitted_at"),
         search_fields=("event_name",),
     ),
@@ -158,7 +154,6 @@ ADMIN_ENTITY_SPECS: tuple[EntitySpec, ...] = (
             ("created_at", "timestamptz"),
         ),
         has_state=False,
-        has_status=False,
         list_display=("natural_key", "queue", "task_id", "run_id", "step_name"),
         search_fields=("task__task_id", "run_id", "step_name"),
     ),
@@ -307,6 +302,10 @@ def build_model_field(
             null=True,
             related_name="waits",
         )
+    # Sourcing the choices statically keeps Django on ChoicesFieldListFilter; a bare
+    # name picks AllValuesFieldListFilter, which SELECT DISTINCTs the whole view.
+    if spec.has_state and col_name == "state":
+        return col_name, models.TextField(null=True, choices=TaskState)
     return col_name, make_field(col_type)
 
 
