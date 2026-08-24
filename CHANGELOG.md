@@ -5,7 +5,7 @@ Never `git cliff -o`: it discards every hand edit, and no regeneration can repro
 
 ## [1.0.0](https://github.com/lincolnloop/django-absurd/compare/v1.0.0b1...v1.0.0) - 2026-08-24
 
-**First stable release**, timed to coincide with DjangoCon US 2026.
+**First stable release**, timed to coincide with DjangoConUS 2026.
 `pip install django-absurd` / `uv add django-absurd` now resolves without `--pre`. The
 1.0 API is frozen, and semantic versioning binds from here: a breaking change means
 2.0.0, not a minor bump.
