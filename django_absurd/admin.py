@@ -244,9 +244,6 @@ def build_entity_admin(
     list_filter: list[type[ListFilter] | str] = [AbsurdQueueListFilter]
     if spec.has_state:
         list_filter.append("state")
-    if spec.has_status:
-        list_filter.append("status")
-
     list_display = spec.list_display
     search_fields = spec.search_fields
     readonly_fields: tuple[str, ...] = ()

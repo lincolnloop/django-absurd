@@ -13,7 +13,13 @@ from django_absurd.admin_views import ADMIN_ENTITY_SPECS, build_admin_model
 from django_absurd.queues import get_absurd_client
 from django_absurd.test import AbsurdTestRuntime
 from tests import atasks, tasks, utils
-from tests.core.test_admin.utils import parse_html, result_rows, seed, seed_mixed
+from tests.core.test_admin.utils import (
+    extract_filter_choices,
+    parse_html,
+    result_rows,
+    seed,
+    seed_mixed,
+)
 
 if t.TYPE_CHECKING:
     from bs4 import ResultSet, Tag
@@ -303,3 +309,19 @@ def test_changelist_degrades_when_view_dropped(
     resp = client.get(CHANGELIST)
     assert resp.status_code == 200
     assert result_rows(parse_html(resp)) == []
+
+
+def test_state_filter_lists_all_states_with_no_rows(
+    admin_user: User, client: Client
+) -> None:
+    client.force_login(admin_user)
+    resp = client.get(CHANGELIST)
+    soup = parse_html(resp)
+    assert extract_filter_choices(soup, "state") == {
+        "pending",
+        "running",
+        "sleeping",
+        "completed",
+        "failed",
+        "cancelled",
+    }

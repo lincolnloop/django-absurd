@@ -2,6 +2,7 @@
 
 import importlib
 import typing as t
+import urllib.parse
 
 from bs4 import BeautifulSoup, ResultSet, Tag
 from django.conf import settings
@@ -50,3 +51,22 @@ def seed_mixed() -> tuple[
     worker.drain_queue("default")
     pending = tasks.add.enqueue(5, 6)  # enqueued after the drain → never claimed
     return completed, failed, pending
+
+
+def extract_filter_choices(soup: BeautifulSoup, param: str) -> set[str]:
+    """Labels the changelist sidebar offers for one filter parameter.
+
+    Keyed off the querystring rather than the link text so the "All" entry drops
+    out without matching a translated string.
+    """
+    links = soup.select(f'#changelist-filter details[data-filter-title="{param}"] a')
+    return {
+        a.get_text(strip=True)
+        for a in links
+        if names_param(t.cast("str", a.get("href", "")), param)
+    }
+
+
+def names_param(href: str, param: str) -> bool:
+    keys = urllib.parse.parse_qs(urllib.parse.urlparse(href).query)
+    return any(k == param or k.startswith(f"{param}__") for k in keys)
