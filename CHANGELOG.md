@@ -12,7 +12,8 @@ Never `git cliff -o`: it discards every hand edit, and no regeneration can repro
 
 The beta needed no corrections, so the only functional change since `v1.0.0b1` is the
 admin performance fix below — upgrading from the beta is otherwise a no-op. Coming
-straight from an alpha, read the breaking changes under 1.0.0b1 and 0.1.0a8 below before
+straight from an alpha, read the 1.0.0b1 and 0.1.0a8 breaking changes in the
+[changelog](https://github.com/lincolnloop/django-absurd/blob/main/CHANGELOG.md) before
 you upgrade; they all still apply.
 
 ### Performance
