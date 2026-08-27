@@ -24,7 +24,7 @@ dev = [
   "ruff==0.16.3",
   "time-machine==3.4.0",
   "types-croniter==6.2.4.20260711",
-  "zensical==0.0.55",
+  "zensical==0.0.56",
 ]
 
 [project]
