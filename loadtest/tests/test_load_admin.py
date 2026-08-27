@@ -94,7 +94,7 @@ def test_admin_probe_skips_the_deep_page_where_the_entity_cannot_paginate(
     assert deep_paged == {"tasks", "runs"}
 
 
-@pytest.mark.parametrize("entity", ["tasks", "runs", "checkpoints"])
+@pytest.mark.parametrize("entity", ["tasks", "runs"])
 def test_admin_probe_filters_on_a_state_value_the_data_carries(
     seeded: None, admin_client: Client, entity: str
 ) -> None:

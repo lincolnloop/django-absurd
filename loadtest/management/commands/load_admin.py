@@ -17,13 +17,13 @@ of the sort, though: ``natural_key`` is the pk, and Django appends the pk to eve
 changelist ordering as a deterministic tiebreaker, so it lands in every ``Sort Key``
 regardless. Read the dumps, not this paragraph, for what the planner then does with it.
 
-The ``state`` probe means "the entity's own state-ish list filter": ``?state=`` where
-the admin declares one, ``?status=`` on checkpoints, and no probe at all for events and
-waits, which have neither column and answer such a URL with a redirect rather than a
-page. Each filters on a value the seeded data really carries — see ``PROBE_STATUS``;
-an arm filtered to zero rows answers 200 and looks like the others while measuring
-nothing. Every entry records ``result_count`` for that reason: an arm says how many rows
-it measured rather than leaving it to be inferred from the seed.
+The ``state`` probe is the entity's own state list filter, which only tasks and runs
+declare (``EntitySpec.has_state``). Checkpoints, events and waits get no such arm:
+https://github.com/lincolnloop/django-absurd/pull/244 dropped the checkpoint status
+filter, since Absurd only ever writes one status. It filters on a value the seeded data
+really carries — an arm filtered to zero rows answers 200 and looks like the others
+while measuring nothing. Every entry records ``result_count`` for that reason: an arm
+says how many rows it measured rather than leaving that to be inferred from the seed.
 
 The ``deep-page`` probe is skipped on the same grounds wherever the entity is too small
 to paginate. ``ChangeList.get_results`` only honours ``?p=`` when ``multi_page`` — under
@@ -59,12 +59,6 @@ ENTITY_NAMES = tuple(spec.name for spec in ADMIN_ENTITY_SPECS)
 DEFAULT_DEEP_PAGE = 500
 PROBE_QUEUE = "bulk"
 PROBE_STATE = "completed"
-# Checkpoints do not have states, they have statuses — and Absurd only ever writes one
-# of them: 'committed' is the column default and the value every insert supplies
-# (django_absurd/migrations/0001_initial_0_4_0.sql). Filtering them on 'completed'
-# would answer 200 over an arm of zero rows, whose timing and plan would look
-# symmetrical with the tasks and runs state probes while measuring nothing.
-PROBE_STATUS = "committed"
 SLOWEST_QUERY_COUNT = 3
 SQL_EXCERPT_CHARS = 300
 
@@ -245,8 +239,6 @@ def build_probe_urls(spec: EntitySpec, deep_page: int) -> list[Arm]:
     probes = [Arm("unfiltered", url), Arm("queue", f"{url}?queue={PROBE_QUEUE}")]
     if spec.has_state:
         probes.append(Arm("state", f"{url}?state={PROBE_STATE}"))
-    elif spec.has_status:
-        probes.append(Arm("state", f"{url}?status={PROBE_STATUS}"))
     probes.append(Arm(DEEP_PAGE_LABEL, f"{url}?p={deep_page}"))
     return probes
 
