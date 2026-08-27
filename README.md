@@ -73,8 +73,8 @@ provisions it without any `QUEUES` setting of your own.
 - **[Documentation](https://lincolnloop.github.io/django-absurd/)** — tasks, workflows,
   cron jobs, workers, cleanup, monitoring, testing, and configuration.
 - **[Runnable examples](https://github.com/lincolnloop/django-absurd/tree/main/examples)**
-  — three dockerized nanodjango demos (`web` enqueue+result, `beat`, and `pg_cron`),
-  each with one `docker compose up`.
+  — four dockerized nanodjango demos (`web` enqueue+result, `sleep` durable sleep,
+  `beat`, and `pg_cron`), each with one `docker compose up`.
 
 ## License
 
