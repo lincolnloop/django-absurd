@@ -127,6 +127,7 @@ strict = true
 
 [tool.pytest.ini_options]
 addopts = [
+  "--ignore=loadtest",
   "--ignore=tests/core",
   "--ignore=tests/multidb",
   "--ignore=tests/pg_cron",

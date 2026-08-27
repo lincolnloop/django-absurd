@@ -1,0 +1,23 @@
+---
+services:
+  db_load:
+    # Plain Postgres for the load harness only. Its own server (and its own port) so a
+    # multi-million-row seed never lands in the suites' throwaway databases.
+    image: postgres:18
+    environment:
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=absurd_load
+    ports:
+      - "${PGPORT_LOAD:-5436}:5432"
+    volumes:
+      # postgres:18 puts PGDATA under /var/lib/postgresql/18/docker and declares the
+      # VOLUME one level up, so the named volume mounts /var/lib/postgresql — a seed
+      # that took an hour survives `docker compose down`.
+      - db_load_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+volumes:
+  db_load_data:
