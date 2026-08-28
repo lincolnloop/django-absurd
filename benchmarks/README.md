@@ -6,6 +6,33 @@ actually drains, what latency looks like under a fixed offered rate, and what th
 nothing here ships in the `django_absurd` wheel, and it is not a Django app: no models,
 no migrations, just a settings module, a task module, and two CLI drivers.
 
+## What it found
+
+Measured on one 8-core laptop with Postgres in Docker on the same box
+(`benchmarks/results/`, rendered by `python -m benchmarks.report`). **Absolute rates are
+a property of that machine; only the ratios travel.** A tasks/s figure quoted without
+its host context will be read as django-absurd's number rather than this laptop's.
+
+| finding                                                    | measured                                                                                 |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `--batch-size 1` throws away every extra slot              | a 16-slot worker drops to 68.1 tasks/s, matching `--concurrency 1` at 66.6               |
+| concurrency has sharply diminishing returns on short tasks | 16x the slots buys 2.35x the throughput                                                  |
+| worker processes scale, at falling efficiency              | 1 to 8 workers is 4.2x; per-worker efficiency 1.00 to 0.52                               |
+| `poll_interval` sets the latency floor                     | median wait is half the interval, and each idle worker costs `1/poll` claims/s           |
+| async and sync tasks perform the same                      | 0.99-1.00x at 50 ms of IO, across concurrency 4/16/32                                    |
+| a checkpoint costs about a whole task                      | a 4-step `ctx.step` workflow costs 4.55x a flat one                                      |
+| batching the enqueue side is the biggest single lever      | `transaction.atomic()` over 500-task chunks is 12x a plain loop (199 to 2398 enqueues/s) |
+| latency has a knee just above 75% utilisation              | p50 runs 51, 64, 91 ms at 25/50/75% of capacity, then 1244 ms at 90%                     |
+
+The last row is the one to design against: **keep workers under about 75% of measured
+capacity.** Between 75% and 90% the median rises 13.7x and p99 reaches 6.2 s. The 90%
+cell is flagged for a 57.7% spread across reps, and that instability is the finding
+rather than a bad measurement.
+
+The 0.52 efficiency figure earns its own caveat: 8 workers x 16 slots is 128 slots on an
+8-core box that is also running Postgres, so the number cannot separate claim contention
+from CPU starvation. A run with the database on its own host would likely look better.
+
 ## Reproducing from a clean checkout
 
 ```
@@ -19,13 +46,43 @@ uv run python -m benchmarks.report > /tmp/bench-report.md
 
 Step 4 is the smoke: it runs the whole harness end to end (real `absurd_worker`
 subprocesses, real enqueues, real SQL analysis) against a pytest-django test database,
-`test_absurd_bench`, so it is safe to run while committed results exist. Step 5 takes
-roughly two hours; `--stage A` (repeatable, `A`–`G`) runs one stage, and `--reps 1`
-turns any stage into a fast dry run.
+`test_absurd_bench`, so it is safe to run while committed results exist. Step 5 took 75
+minutes on the reference host; `--stage A` (repeatable, case-insensitive, `A`–`G`) runs
+one stage, and `--reps 1` turns any stage into a fast dry run.
 
 `db_bench` listens on `${PGPORT_BENCH:-5435}` and keeps a named volume, so it is a
 different server from the root `compose.yaml`'s `db` and `db_pg_cron`. Those two do not
 need to be running for anything in this directory.
+
+## The stages
+
+Times are from the 8-core reference run and scale with the host.
+
+| stage | question                                    | varies                                                | workload                   | ~time  |
+| ----- | ------------------------------------------- | ----------------------------------------------------- | -------------------------- | ------ |
+| A     | what one worker's knobs buy                 | `--concurrency` 1-16, then `--batch-size`, then async | 5,000 no-ops, saturation   | 20 min |
+| B     | how throughput scales with worker processes | worker count, at A's winning config                   | no-ops, saturation         | 10 min |
+| C     | what `--poll-interval` costs and buys       | 0.05 / 0.25 / 1.0 s, plus idle probes                 | 5 tasks/s offered for 60 s | 10 min |
+| D     | whether async tasks beat sync ones          | sync vs async x concurrency 4/16/32                   | 50 ms sleep, saturation    | 15 min |
+| E     | what a checkpoint costs                     | 4-step workflow vs flat task                          | 2,000 tasks, saturation    | 3 min  |
+| F     | how fast the producer can enqueue           | one connection / 8 threads / `atomic()` chunks        | 5,000 enqueues, no workers | 2 min  |
+| G     | what latency looks like under load          | 25/50/75/90% of B's ceiling                           | 60 s paced offer           | 14 min |
+
+**Worker counts scale with the host.** `build_worker_ladder` derives stage B's ladder
+from `os.cpu_count()`: 1 and 2 anchor the low end where per-worker efficiency is still
+readable, then quarter, half, three-quarter and full. Eight cores gives 1, 2, 4, 6, 8;
+thirty-two gives 1, 2, 8, 16, 24, 32.
+
+Stage G calibrates from the fastest stage B cell at or below `RATE_WORKER_CAP` (half the
+cores) rather than from the outright ceiling, because a rate cell's producer runs on the
+same machine as its workers. Calibrated off a full-core ceiling it asks for an offer the
+producer has no cores left to deliver, and the upper cells flag having measured a load
+that was never applied.
+
+The concurrency ladders are deliberately **not** scaled: concurrency is slots for
+overlapping IO waits rather than CPU parallelism, so an IO-bound task wants many slots
+whatever the core count, and scaling them would make the async-vs-sync ratio
+incomparable across machines.
 
 ## The measurement model
 

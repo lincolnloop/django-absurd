@@ -67,3 +67,40 @@ def test_summarizes_a_cell_whose_reps_were_all_discarded() -> None:
     assert sweep.summarize_cell(summary) == (
         "napped: 0.0 tasks/s, e2e p50 0.0ms, spread n/a [FLAGGED]"
     )
+
+
+@pytest.mark.internal
+def test_calibrates_a_rate_stage_from_a_cell_the_producer_can_outrun() -> None:
+    recorded = [
+        {
+            "spec": {"name": "b_workers_4", "workers": 4, "worker": {}},
+            "median": {"throughput_per_s": 375.5},
+            "flagged": False,
+        },
+        {
+            "spec": {"name": "b_workers_8", "workers": 8, "worker": {}},
+            "median": {"throughput_per_s": 657.4},
+            "flagged": False,
+        },
+    ]
+
+    # The fastest cell is the 8-worker one, but a rate stage must offer from the same
+    # box, so it calibrates on the fastest cell that leaves the producer some cores.
+    assert sweep.pick_best_cell(recorded)["spec"]["name"] == "b_workers_8"
+    assert sweep.pick_rate_calibration_cell(recorded)["spec"]["name"] == "b_workers_4"
+
+
+@pytest.mark.internal
+@pytest.mark.parametrize(
+    ("cores", "expected"),
+    [
+        (1, [1]),
+        (2, [1, 2]),
+        (4, [1, 2, 3, 4]),
+        (8, [1, 2, 4, 6, 8]),
+        (16, [1, 2, 4, 8, 12, 16]),
+        (32, [1, 2, 8, 16, 24, 32]),
+    ],
+)
+def test_sizes_the_worker_ladder_to_the_host(cores: int, expected: list[int]) -> None:
+    assert sweep.build_worker_ladder(cores) == expected

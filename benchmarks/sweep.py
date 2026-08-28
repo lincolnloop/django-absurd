@@ -22,6 +22,10 @@ STAGE_NAMES = ("a", "b", "c", "d", "e", "f", "g")
 SATURATION_TASKS = 5000
 SATURATION_TIMEOUT_S = 900.0
 RATE_OFFER_SECONDS = 60.0
+HOST_CPUS = os.cpu_count() or 1
+# A rate cell's producer runs on the same box as its workers, so calibrating off the
+# fastest saturation cell asks for an offer the producer has no cores left to deliver.
+RATE_WORKER_CAP = max(1, HOST_CPUS // 2)
 RATE_TIMEOUT_S = 300.0
 IDLE_PROBE_SECONDS = 30.0
 IDLE_PROBE_WORKERS = 4
@@ -209,8 +213,17 @@ def build_stage_b_cells(winner: runner.WorkerSpec) -> list[cells.CellSpec]:
             tasks=max(4000, 2000 * count),
             timeout_s=SATURATION_TIMEOUT_S,
         )
-        for count in (1, 2, 4, 6, 8)
+        for count in build_worker_ladder(HOST_CPUS)
     ]
+
+
+def build_worker_ladder(cores: int) -> list[int]:
+    """Worker counts to sweep on a host with ``cores`` usable CPUs."""
+    # 1 and 2 anchor the low end where per-worker efficiency is still readable; the
+    # quarter/half/three-quarter steps track the host so the curve means the same thing
+    # on any box, and nothing exceeds the core count.
+    steps = {1, 2, cores // 4, cores // 2, cores * 3 // 4, cores}
+    return sorted(step for step in steps if 1 <= step <= cores)
 
 
 def build_stage_c_cells(winner: runner.WorkerSpec) -> list[cells.CellSpec]:
@@ -357,7 +370,7 @@ def read_winning_worker(options: SweepOptions) -> runner.WorkerSpec:
 
 def read_ceiling(options: SweepOptions) -> tuple[runner.WorkerSpec, int, float]:
     recorded = read_stage_cells(options, "b")
-    best = pick_best_cell(recorded)
+    best = pick_rate_calibration_cell(recorded)
     return (
         runner.WorkerSpec(**best["spec"]["worker"]),
         best["spec"]["workers"],
@@ -385,6 +398,14 @@ def pick_best_cell(recorded: list[dict[str, t.Any]]) -> dict[str, t.Any]:
     if best["median"].get("throughput_per_s", 0.0) <= 0:
         raise UncalibratableStageError(len(recorded))
     return best
+
+
+def pick_rate_calibration_cell(recorded: list[dict[str, t.Any]]) -> dict[str, t.Any]:
+    """Pick the cell a rate stage calibrates from, leaving the producer some cores."""
+    # Falling back to the whole set keeps a stage B run that never went below the cap
+    # calibratable, at the cost of an offer its producer may not reach.
+    capped = [cell for cell in recorded if cell["spec"]["workers"] <= RATE_WORKER_CAP]
+    return pick_best_cell(capped or recorded)
 
 
 def main() -> None:
