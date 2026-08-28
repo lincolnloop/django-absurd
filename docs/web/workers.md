@@ -31,6 +31,8 @@ dropped from under a running worker fails on its next claim, with the same messa
 | `--beat`          | off            | Also run the [beat scheduler](cron-jobs.md#application-side-beat). |
 
 - **One worker per queue.** `--queue` takes a single name; run a process per queue.
+- Measured guidance on choosing `--concurrency`, `--batch-size` and `--poll-interval`:
+  [Performance](performance.md).
 - A run that makes no progress within `--claim-timeout` is re-claimed and replayed from
   its last [checkpoint](workflows.md#steps) — see [long steps](workflows.md#long-steps).
 - Run **exactly one** `--beat` across your fleet; there is no leader election.
