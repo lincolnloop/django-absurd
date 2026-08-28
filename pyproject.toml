@@ -127,6 +127,7 @@ strict = true
 
 [tool.pytest.ini_options]
 addopts = [
+  "--ignore=benchmarks",
   "--ignore=tests/core",
   "--ignore=tests/multidb",
   "--ignore=tests/pg_cron",
@@ -158,6 +159,11 @@ select = ["ALL"]
   "S101",  # Allow use of asserts
   "S603",  # Allow subprocess calls in tests
   "SLF001",  # Allow private member access in tests (e.g. _meta)
+]
+"benchmarks/**/*" = [
+  "S603",  # Allow subprocess calls: the harness spawns real worker processes
+  "S607",  # Allow `git`/`docker` by name: the harness runs on a developer PATH
+  "T201",  # Allow print: the sweep/report drivers are CLIs
 ]
 "examples/*/app.py" = [
   "INP001",  # single-file nanodjango demo apps are intentionally not packages

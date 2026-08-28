@@ -1,0 +1,709 @@
+{
+  "stage": "a",
+  "cells": [
+    {
+      "spec": {
+        "name": "a1_c1",
+        "mode": "saturation",
+        "task_path": "benchmarks.tasks.noop_sync",
+        "worker": {
+          "concurrency": 1,
+          "batch_size": null,
+          "poll_interval": 0.25,
+          "claim_timeout": 120,
+          "queue": "bench"
+        },
+        "workers": 1,
+        "tasks": 5000,
+        "rate_per_s": 0.0,
+        "duration_s": 0.0,
+        "task_kwargs": null,
+        "reps": 1,
+        "timeout_s": 900.0,
+        "spread_limit": 0.15
+      },
+      "reps": [
+        {
+          "valid": true,
+          "preload_s": 9.445572180004092,
+          "n_tasks": 5000,
+          "n_runs": 5000,
+          "total_runs": 5000,
+          "total_tasks": 5000,
+          "max_attempt": 1,
+          "extra_runs": 0,
+          "degenerate_window": false,
+          "throughput_per_s": 64.83010474848146,
+          "fairness": {
+            "bench-0": 5000
+          },
+          "fairness_ratio": 1.0,
+          "queue_wait_p50_s": 47.180765,
+          "queue_wait_p90_s": 72.23840480000001,
+          "queue_wait_p99_s": 77.13819873999999,
+          "execution_p50_s": 0.010718499999999999,
+          "execution_p90_s": 0.0140741,
+          "execution_p99_s": 0.016713300000000004,
+          "end_to_end_p50_s": 47.1892195,
+          "end_to_end_p90_s": 72.24542140000001,
+          "end_to_end_p99_s": 77.14690458,
+          "missing_tasks": 0
+        }
+      ],
+      "median": {
+        "valid": true,
+        "preload_s": 9.445572180004092,
+        "n_tasks": 5000,
+        "n_runs": 5000,
+        "total_runs": 5000,
+        "total_tasks": 5000,
+        "max_attempt": 1,
+        "extra_runs": 0,
+        "degenerate_window": false,
+        "throughput_per_s": 64.83010474848146,
+        "fairness": {
+          "bench-0": 5000
+        },
+        "fairness_ratio": 1.0,
+        "queue_wait_p50_s": 47.180765,
+        "queue_wait_p90_s": 72.23840480000001,
+        "queue_wait_p99_s": 77.13819873999999,
+        "execution_p50_s": 0.010718499999999999,
+        "execution_p90_s": 0.0140741,
+        "execution_p99_s": 0.016713300000000004,
+        "end_to_end_p50_s": 47.1892195,
+        "end_to_end_p90_s": 72.24542140000001,
+        "end_to_end_p99_s": 77.14690458,
+        "missing_tasks": 0
+      },
+      "spread": 0.0,
+      "flagged": false,
+      "host": {
+        "absurd_sdk": "0.5.0",
+        "captured_at": "2026-08-28T03:59:32.222393+00:00",
+        "cpu_count": 8,
+        "django": "6.1",
+        "git_sha": "a5a9e558bccbda42f3c44cbec19a61eecbe56365",
+        "load_avg_1m": 2.52587890625,
+        "postgres": "PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+        "python": "3.14.3"
+      }
+    },
+    {
+      "spec": {
+        "name": "a1_c2",
+        "mode": "saturation",
+        "task_path": "benchmarks.tasks.noop_sync",
+        "worker": {
+          "concurrency": 2,
+          "batch_size": null,
+          "poll_interval": 0.25,
+          "claim_timeout": 120,
+          "queue": "bench"
+        },
+        "workers": 1,
+        "tasks": 5000,
+        "rate_per_s": 0.0,
+        "duration_s": 0.0,
+        "task_kwargs": null,
+        "reps": 1,
+        "timeout_s": 900.0,
+        "spread_limit": 0.15
+      },
+      "reps": [
+        {
+          "valid": true,
+          "preload_s": 9.800194449024275,
+          "n_tasks": 5000,
+          "n_runs": 5000,
+          "total_runs": 5000,
+          "total_tasks": 5000,
+          "max_attempt": 1,
+          "extra_runs": 0,
+          "degenerate_window": false,
+          "throughput_per_s": 70.16534325333132,
+          "fairness": {
+            "bench-0": 5000
+          },
+          "fairness_ratio": 1.0,
+          "queue_wait_p50_s": 41.382436999999996,
+          "queue_wait_p90_s": 65.51517550000001,
+          "queue_wait_p99_s": 70.68090688,
+          "execution_p50_s": 0.016104,
+          "execution_p90_s": 0.021506300000000002,
+          "execution_p99_s": 0.025871140000000004,
+          "end_to_end_p50_s": 41.400445,
+          "end_to_end_p90_s": 65.5304357,
+          "end_to_end_p99_s": 70.69260127000001,
+          "missing_tasks": 0
+        }
+      ],
+      "median": {
+        "valid": true,
+        "preload_s": 9.800194449024275,
+        "n_tasks": 5000,
+        "n_runs": 5000,
+        "total_runs": 5000,
+        "total_tasks": 5000,
+        "max_attempt": 1,
+        "extra_runs": 0,
+        "degenerate_window": false,
+        "throughput_per_s": 70.16534325333132,
+        "fairness": {
+          "bench-0": 5000
+        },
+        "fairness_ratio": 1.0,
+        "queue_wait_p50_s": 41.382436999999996,
+        "queue_wait_p90_s": 65.51517550000001,
+        "queue_wait_p99_s": 70.68090688,
+        "execution_p50_s": 0.016104,
+        "execution_p90_s": 0.021506300000000002,
+        "execution_p99_s": 0.025871140000000004,
+        "end_to_end_p50_s": 41.400445,
+        "end_to_end_p90_s": 65.5304357,
+        "end_to_end_p99_s": 70.69260127000001,
+        "missing_tasks": 0
+      },
+      "spread": 0.0,
+      "flagged": false,
+      "host": {
+        "absurd_sdk": "0.5.0",
+        "captured_at": "2026-08-28T04:00:53.622294+00:00",
+        "cpu_count": 8,
+        "django": "6.1",
+        "git_sha": "a5a9e558bccbda42f3c44cbec19a61eecbe56365",
+        "load_avg_1m": 2.42724609375,
+        "postgres": "PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+        "python": "3.14.3"
+      }
+    },
+    {
+      "spec": {
+        "name": "a1_c4",
+        "mode": "saturation",
+        "task_path": "benchmarks.tasks.noop_sync",
+        "worker": {
+          "concurrency": 4,
+          "batch_size": null,
+          "poll_interval": 0.25,
+          "claim_timeout": 120,
+          "queue": "bench"
+        },
+        "workers": 1,
+        "tasks": 5000,
+        "rate_per_s": 0.0,
+        "duration_s": 0.0,
+        "task_kwargs": null,
+        "reps": 1,
+        "timeout_s": 900.0,
+        "spread_limit": 0.15
+      },
+      "reps": [
+        {
+          "valid": true,
+          "preload_s": 9.891602679999778,
+          "n_tasks": 5000,
+          "n_runs": 5000,
+          "total_runs": 5000,
+          "total_tasks": 5000,
+          "max_attempt": 1,
+          "extra_runs": 0,
+          "degenerate_window": false,
+          "throughput_per_s": 105.59597191391012,
+          "fairness": {
+            "bench-0": 5000
+          },
+          "fairness_ratio": 1.0,
+          "queue_wait_p50_s": 29.196691,
+          "queue_wait_p90_s": 43.94622820000001,
+          "queue_wait_p99_s": 47.4958552,
+          "execution_p50_s": 0.02017,
+          "execution_p90_s": 0.0253728,
+          "execution_p99_s": 0.029528130000000003,
+          "end_to_end_p50_s": 29.215787,
+          "end_to_end_p90_s": 43.967771600000006,
+          "end_to_end_p99_s": 47.51574432,
+          "missing_tasks": 0
+        }
+      ],
+      "median": {
+        "valid": true,
+        "preload_s": 9.891602679999778,
+        "n_tasks": 5000,
+        "n_runs": 5000,
+        "total_runs": 5000,
+        "total_tasks": 5000,
+        "max_attempt": 1,
+        "extra_runs": 0,
+        "degenerate_window": false,
+        "throughput_per_s": 105.59597191391012,
+        "fairness": {
+          "bench-0": 5000
+        },
+        "fairness_ratio": 1.0,
+        "queue_wait_p50_s": 29.196691,
+        "queue_wait_p90_s": 43.94622820000001,
+        "queue_wait_p99_s": 47.4958552,
+        "execution_p50_s": 0.02017,
+        "execution_p90_s": 0.0253728,
+        "execution_p99_s": 0.029528130000000003,
+        "end_to_end_p50_s": 29.215787,
+        "end_to_end_p90_s": 43.967771600000006,
+        "end_to_end_p99_s": 47.51574432,
+        "missing_tasks": 0
+      },
+      "spread": 0.0,
+      "flagged": false,
+      "host": {
+        "absurd_sdk": "0.5.0",
+        "captured_at": "2026-08-28T04:01:51.558781+00:00",
+        "cpu_count": 8,
+        "django": "6.1",
+        "git_sha": "a5a9e558bccbda42f3c44cbec19a61eecbe56365",
+        "load_avg_1m": 2.97802734375,
+        "postgres": "PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+        "python": "3.14.3"
+      }
+    },
+    {
+      "spec": {
+        "name": "a1_c8",
+        "mode": "saturation",
+        "task_path": "benchmarks.tasks.noop_sync",
+        "worker": {
+          "concurrency": 8,
+          "batch_size": null,
+          "poll_interval": 0.25,
+          "claim_timeout": 120,
+          "queue": "bench"
+        },
+        "workers": 1,
+        "tasks": 5000,
+        "rate_per_s": 0.0,
+        "duration_s": 0.0,
+        "task_kwargs": null,
+        "reps": 1,
+        "timeout_s": 900.0,
+        "spread_limit": 0.15
+      },
+      "reps": [
+        {
+          "valid": true,
+          "preload_s": 9.464824446011335,
+          "n_tasks": 5000,
+          "n_runs": 5000,
+          "total_runs": 5000,
+          "total_tasks": 5000,
+          "max_attempt": 1,
+          "extra_runs": 0,
+          "degenerate_window": false,
+          "throughput_per_s": 131.5324416431382,
+          "fairness": {
+            "bench-0": 5000
+          },
+          "fairness_ratio": 1.0,
+          "queue_wait_p50_s": 23.746387499999997,
+          "queue_wait_p90_s": 35.455898,
+          "queue_wait_p99_s": 37.901241029999994,
+          "execution_p50_s": 0.0298625,
+          "execution_p90_s": 0.044663400000000006,
+          "execution_p99_s": 0.053017270000000005,
+          "end_to_end_p50_s": 23.7787065,
+          "end_to_end_p90_s": 35.4779973,
+          "end_to_end_p99_s": 37.93339272,
+          "missing_tasks": 0
+        }
+      ],
+      "median": {
+        "valid": true,
+        "preload_s": 9.464824446011335,
+        "n_tasks": 5000,
+        "n_runs": 5000,
+        "total_runs": 5000,
+        "total_tasks": 5000,
+        "max_attempt": 1,
+        "extra_runs": 0,
+        "degenerate_window": false,
+        "throughput_per_s": 131.5324416431382,
+        "fairness": {
+          "bench-0": 5000
+        },
+        "fairness_ratio": 1.0,
+        "queue_wait_p50_s": 23.746387499999997,
+        "queue_wait_p90_s": 35.455898,
+        "queue_wait_p99_s": 37.901241029999994,
+        "execution_p50_s": 0.0298625,
+        "execution_p90_s": 0.044663400000000006,
+        "execution_p99_s": 0.053017270000000005,
+        "end_to_end_p50_s": 23.7787065,
+        "end_to_end_p90_s": 35.4779973,
+        "end_to_end_p99_s": 37.93339272,
+        "missing_tasks": 0
+      },
+      "spread": 0.0,
+      "flagged": false,
+      "host": {
+        "absurd_sdk": "0.5.0",
+        "captured_at": "2026-08-28T04:02:39.546110+00:00",
+        "cpu_count": 8,
+        "django": "6.1",
+        "git_sha": "a5a9e558bccbda42f3c44cbec19a61eecbe56365",
+        "load_avg_1m": 2.54150390625,
+        "postgres": "PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+        "python": "3.14.3"
+      }
+    },
+    {
+      "spec": {
+        "name": "a1_c16",
+        "mode": "saturation",
+        "task_path": "benchmarks.tasks.noop_sync",
+        "worker": {
+          "concurrency": 16,
+          "batch_size": null,
+          "poll_interval": 0.25,
+          "claim_timeout": 120,
+          "queue": "bench"
+        },
+        "workers": 1,
+        "tasks": 5000,
+        "rate_per_s": 0.0,
+        "duration_s": 0.0,
+        "task_kwargs": null,
+        "reps": 1,
+        "timeout_s": 900.0,
+        "spread_limit": 0.15
+      },
+      "reps": [
+        {
+          "valid": true,
+          "preload_s": 9.604372880974552,
+          "n_tasks": 5000,
+          "n_runs": 5000,
+          "total_runs": 5000,
+          "total_tasks": 5000,
+          "max_attempt": 1,
+          "extra_runs": 0,
+          "degenerate_window": false,
+          "throughput_per_s": 163.02183892194094,
+          "fairness": {
+            "bench-0": 5000
+          },
+          "fairness_ratio": 1.0,
+          "queue_wait_p50_s": 20.2903145,
+          "queue_wait_p90_s": 28.7690939,
+          "queue_wait_p99_s": 30.66455197,
+          "execution_p50_s": 0.049715,
+          "execution_p90_s": 0.07823030000000002,
+          "execution_p99_s": 0.08964828000000001,
+          "end_to_end_p50_s": 20.341009,
+          "end_to_end_p90_s": 28.813774000000002,
+          "end_to_end_p99_s": 30.71408278,
+          "missing_tasks": 0
+        }
+      ],
+      "median": {
+        "valid": true,
+        "preload_s": 9.604372880974552,
+        "n_tasks": 5000,
+        "n_runs": 5000,
+        "total_runs": 5000,
+        "total_tasks": 5000,
+        "max_attempt": 1,
+        "extra_runs": 0,
+        "degenerate_window": false,
+        "throughput_per_s": 163.02183892194094,
+        "fairness": {
+          "bench-0": 5000
+        },
+        "fairness_ratio": 1.0,
+        "queue_wait_p50_s": 20.2903145,
+        "queue_wait_p90_s": 28.7690939,
+        "queue_wait_p99_s": 30.66455197,
+        "execution_p50_s": 0.049715,
+        "execution_p90_s": 0.07823030000000002,
+        "execution_p99_s": 0.08964828000000001,
+        "end_to_end_p50_s": 20.341009,
+        "end_to_end_p90_s": 28.813774000000002,
+        "end_to_end_p99_s": 30.71408278,
+        "missing_tasks": 0
+      },
+      "spread": 0.0,
+      "flagged": false,
+      "host": {
+        "absurd_sdk": "0.5.0",
+        "captured_at": "2026-08-28T04:03:20.643446+00:00",
+        "cpu_count": 8,
+        "django": "6.1",
+        "git_sha": "a5a9e558bccbda42f3c44cbec19a61eecbe56365",
+        "load_avg_1m": 2.4697265625,
+        "postgres": "PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+        "python": "3.14.3"
+      }
+    },
+    {
+      "spec": {
+        "name": "a2_batch_1",
+        "mode": "saturation",
+        "task_path": "benchmarks.tasks.noop_sync",
+        "worker": {
+          "concurrency": 16,
+          "batch_size": 1,
+          "poll_interval": 0.25,
+          "claim_timeout": 120,
+          "queue": "bench"
+        },
+        "workers": 1,
+        "tasks": 5000,
+        "rate_per_s": 0.0,
+        "duration_s": 0.0,
+        "task_kwargs": null,
+        "reps": 1,
+        "timeout_s": 900.0,
+        "spread_limit": 0.15
+      },
+      "reps": [
+        {
+          "valid": true,
+          "preload_s": 9.460520512016956,
+          "n_tasks": 5000,
+          "n_runs": 5000,
+          "total_runs": 5000,
+          "total_tasks": 5000,
+          "max_attempt": 1,
+          "extra_runs": 0,
+          "degenerate_window": false,
+          "throughput_per_s": 71.13250004161391,
+          "fairness": {
+            "bench-0": 5000
+          },
+          "fairness_ratio": 1.0,
+          "queue_wait_p50_s": 40.938655,
+          "queue_wait_p90_s": 64.72897540000001,
+          "queue_wait_p99_s": 69.36080112,
+          "execution_p50_s": 0.036907999999999996,
+          "execution_p90_s": 0.0426502,
+          "execution_p99_s": 0.04936317,
+          "end_to_end_p50_s": 40.98184,
+          "end_to_end_p90_s": 64.7673587,
+          "end_to_end_p99_s": 69.39012455000001,
+          "missing_tasks": 0
+        }
+      ],
+      "median": {
+        "valid": true,
+        "preload_s": 9.460520512016956,
+        "n_tasks": 5000,
+        "n_runs": 5000,
+        "total_runs": 5000,
+        "total_tasks": 5000,
+        "max_attempt": 1,
+        "extra_runs": 0,
+        "degenerate_window": false,
+        "throughput_per_s": 71.13250004161391,
+        "fairness": {
+          "bench-0": 5000
+        },
+        "fairness_ratio": 1.0,
+        "queue_wait_p50_s": 40.938655,
+        "queue_wait_p90_s": 64.72897540000001,
+        "queue_wait_p99_s": 69.36080112,
+        "execution_p50_s": 0.036907999999999996,
+        "execution_p90_s": 0.0426502,
+        "execution_p99_s": 0.04936317,
+        "end_to_end_p50_s": 40.98184,
+        "end_to_end_p90_s": 64.7673587,
+        "end_to_end_p99_s": 69.39012455000001,
+        "missing_tasks": 0
+      },
+      "spread": 0.0,
+      "flagged": false,
+      "host": {
+        "absurd_sdk": "0.5.0",
+        "captured_at": "2026-08-28T04:04:40.166175+00:00",
+        "cpu_count": 8,
+        "django": "6.1",
+        "git_sha": "a5a9e558bccbda42f3c44cbec19a61eecbe56365",
+        "load_avg_1m": 2.76171875,
+        "postgres": "PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+        "python": "3.14.3"
+      }
+    },
+    {
+      "spec": {
+        "name": "a2_batch_32",
+        "mode": "saturation",
+        "task_path": "benchmarks.tasks.noop_sync",
+        "worker": {
+          "concurrency": 16,
+          "batch_size": 32,
+          "poll_interval": 0.25,
+          "claim_timeout": 120,
+          "queue": "bench"
+        },
+        "workers": 1,
+        "tasks": 5000,
+        "rate_per_s": 0.0,
+        "duration_s": 0.0,
+        "task_kwargs": null,
+        "reps": 1,
+        "timeout_s": 900.0,
+        "spread_limit": 0.15
+      },
+      "reps": [
+        {
+          "valid": true,
+          "preload_s": 8.972776526003145,
+          "n_tasks": 5000,
+          "n_runs": 5000,
+          "total_runs": 5000,
+          "total_tasks": 5000,
+          "max_attempt": 1,
+          "extra_runs": 0,
+          "degenerate_window": false,
+          "throughput_per_s": 158.1106178041252,
+          "fairness": {
+            "bench-0": 5000
+          },
+          "fairness_ratio": 1.0,
+          "queue_wait_p50_s": 20.480272999999997,
+          "queue_wait_p90_s": 29.5959757,
+          "queue_wait_p99_s": 31.29344437,
+          "execution_p50_s": 0.050576499999999996,
+          "execution_p90_s": 0.08043630000000002,
+          "execution_p99_s": 0.09385308,
+          "end_to_end_p50_s": 20.5264795,
+          "end_to_end_p90_s": 29.637107500000003,
+          "end_to_end_p99_s": 31.3391561,
+          "missing_tasks": 0
+        }
+      ],
+      "median": {
+        "valid": true,
+        "preload_s": 8.972776526003145,
+        "n_tasks": 5000,
+        "n_runs": 5000,
+        "total_runs": 5000,
+        "total_tasks": 5000,
+        "max_attempt": 1,
+        "extra_runs": 0,
+        "degenerate_window": false,
+        "throughput_per_s": 158.1106178041252,
+        "fairness": {
+          "bench-0": 5000
+        },
+        "fairness_ratio": 1.0,
+        "queue_wait_p50_s": 20.480272999999997,
+        "queue_wait_p90_s": 29.5959757,
+        "queue_wait_p99_s": 31.29344437,
+        "execution_p50_s": 0.050576499999999996,
+        "execution_p90_s": 0.08043630000000002,
+        "execution_p99_s": 0.09385308,
+        "end_to_end_p50_s": 20.5264795,
+        "end_to_end_p90_s": 29.637107500000003,
+        "end_to_end_p99_s": 31.3391561,
+        "missing_tasks": 0
+      },
+      "spread": 0.0,
+      "flagged": false,
+      "host": {
+        "absurd_sdk": "0.5.0",
+        "captured_at": "2026-08-28T04:05:21.126148+00:00",
+        "cpu_count": 8,
+        "django": "6.1",
+        "git_sha": "a5a9e558bccbda42f3c44cbec19a61eecbe56365",
+        "load_avg_1m": 2.763671875,
+        "postgres": "PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+        "python": "3.14.3"
+      }
+    },
+    {
+      "spec": {
+        "name": "a3_async",
+        "mode": "saturation",
+        "task_path": "benchmarks.tasks.noop_async",
+        "worker": {
+          "concurrency": 16,
+          "batch_size": null,
+          "poll_interval": 0.25,
+          "claim_timeout": 120,
+          "queue": "bench"
+        },
+        "workers": 1,
+        "tasks": 5000,
+        "rate_per_s": 0.0,
+        "duration_s": 0.0,
+        "task_kwargs": null,
+        "reps": 1,
+        "timeout_s": 900.0,
+        "spread_limit": 0.15
+      },
+      "reps": [
+        {
+          "valid": true,
+          "preload_s": 9.442844153003534,
+          "n_tasks": 5000,
+          "n_runs": 5000,
+          "total_runs": 5000,
+          "total_tasks": 5000,
+          "max_attempt": 1,
+          "extra_runs": 0,
+          "degenerate_window": false,
+          "throughput_per_s": 156.2238668035159,
+          "fairness": {
+            "bench-0": 5000
+          },
+          "fairness_ratio": 1.0,
+          "queue_wait_p50_s": 20.932023,
+          "queue_wait_p90_s": 29.9918375,
+          "queue_wait_p99_s": 31.94833963,
+          "execution_p50_s": 0.0517185,
+          "execution_p90_s": 0.0820106,
+          "execution_p99_s": 0.09313818,
+          "end_to_end_p50_s": 20.9856895,
+          "end_to_end_p90_s": 30.032372700000003,
+          "end_to_end_p99_s": 31.99683395,
+          "missing_tasks": 0
+        }
+      ],
+      "median": {
+        "valid": true,
+        "preload_s": 9.442844153003534,
+        "n_tasks": 5000,
+        "n_runs": 5000,
+        "total_runs": 5000,
+        "total_tasks": 5000,
+        "max_attempt": 1,
+        "extra_runs": 0,
+        "degenerate_window": false,
+        "throughput_per_s": 156.2238668035159,
+        "fairness": {
+          "bench-0": 5000
+        },
+        "fairness_ratio": 1.0,
+        "queue_wait_p50_s": 20.932023,
+        "queue_wait_p90_s": 29.9918375,
+        "queue_wait_p99_s": 31.94833963,
+        "execution_p50_s": 0.0517185,
+        "execution_p90_s": 0.0820106,
+        "execution_p99_s": 0.09313818,
+        "end_to_end_p50_s": 20.9856895,
+        "end_to_end_p90_s": 30.032372700000003,
+        "end_to_end_p99_s": 31.99683395,
+        "missing_tasks": 0
+      },
+      "spread": 0.0,
+      "flagged": false,
+      "host": {
+        "absurd_sdk": "0.5.0",
+        "captured_at": "2026-08-28T04:06:03.059814+00:00",
+        "cpu_count": 8,
+        "django": "6.1",
+        "git_sha": "a5a9e558bccbda42f3c44cbec19a61eecbe56365",
+        "load_avg_1m": 2.77294921875,
+        "postgres": "PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+        "python": "3.14.3"
+      }
+    }
+  ]
+}

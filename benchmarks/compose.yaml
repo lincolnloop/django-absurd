@@ -1,0 +1,34 @@
+---
+services:
+  db_bench:
+    # Separate from the root compose services on purpose: a persistent volume and a
+    # pinned config, so a re-run months later measures the same server.
+    image: postgres:18
+    command:
+      - postgres
+      - -c
+      - shared_buffers=1GB
+      - -c
+      - max_connections=100
+      - -c
+      - synchronous_commit=on
+      - -c
+      - fsync=on
+      - -c
+      - autovacuum=on
+      - -c
+      - log_min_messages=warning
+    environment:
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - "${PGPORT_BENCH:-5435}:5432"
+    volumes:
+      - bench_pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  bench_pgdata:
