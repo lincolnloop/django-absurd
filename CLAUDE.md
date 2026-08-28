@@ -103,6 +103,13 @@ writing or editing any test file. Running the suites:
   connection is refused / `pg_isready` fails, the container is stopped (they don't
   survive a machine restart or a new session) — bring it up FIRST; don't diagnose it as
   anything cleverer.
+- **Copy `.envrc.example` to `.envrc` before your first run** (it is git-ignored, so a
+  fresh clone and every new worktree starts without it). It sets `PGPORT` /
+  `PGPORT_PGCRON` and pins `PYTEST_XDIST_AUTO_NUM_WORKERS` to CI's 2. Skipping it fails
+  suites in ways that read like real regressions: unset `PGPORT` sends `tests/core` at
+  whatever owns 5432 — a system Postgres with pg_cron makes `test_central_connection`'s
+  "no pg_cron" assertion never raise — and an unpinned `auto` takes every core, which
+  `tests/multidb` cannot survive because it creates a pair of databases per worker.
 - **The two gates to run before a commit** — not five separate commands:
   - `uvx --with tox-uv tox -e dev` — all three suites against the dev env only. Reach
     for the bare `uvx --with tox-uv tox` (full Python×Django matrix + min-max mypy) only

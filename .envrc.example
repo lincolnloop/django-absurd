@@ -1,0 +1,16 @@
+# Copy to `.envrc` (git-ignored) and run `direnv allow`.
+
+# PGPORT is read by BOTH compose (the port `db` publishes on) and the test
+# settings (the port they connect to), so one value keeps the two consistent.
+# Override the 5432 default whenever a system Postgres already owns that port:
+# otherwise the suites connect to that server instead of the container, and
+# tests/core/test_central_connection.py fails because a system cluster with
+# pg_cron installed makes the "no pg_cron" assertion never raise.
+export PGPORT=5433
+export PGPORT_PGCRON=5434
+
+# `-n auto` consults this for `auto` alone. CI pins 2 (.github/workflows/test.yml);
+# matching it locally keeps runs comparable and stops tests/multidb's per-worker
+# database creation from timing out on a many-core box. Changing the worker count
+# strands `test_*_gwN` databases — re-run once with `--create-db` after you do.
+export PYTEST_XDIST_AUTO_NUM_WORKERS=2
