@@ -1,12 +1,12 @@
 import pytest
 
-from benchmarks import cells, runner
+from benchmarks import measurement, runner
 
 
 @pytest.mark.functional
 @pytest.mark.django_db(transaction=True)
-def test_saturation_cell_drains_backlog_and_reports_sql_metrics() -> None:
-    spec = cells.CellSpec(
+def test_saturation_measurement_drains_backlog_and_reports_sql_metrics() -> None:
+    spec = measurement.MeasurementSpec(
         name="smoke",
         mode="saturation",
         task_path="benchmarks.tasks.noop_sync",
@@ -17,7 +17,7 @@ def test_saturation_cell_drains_backlog_and_reports_sql_metrics() -> None:
         timeout_s=60,
     )
 
-    result = cells.run_cell(spec)
+    result = measurement.run_measurement(spec)
 
     assert result["median"]["n_runs"] == 50
     assert result["median"]["extra_runs"] == 0
@@ -29,8 +29,8 @@ def test_saturation_cell_drains_backlog_and_reports_sql_metrics() -> None:
 
 @pytest.mark.functional
 @pytest.mark.django_db(transaction=True)
-def test_rate_cell_reports_latency_percentiles() -> None:
-    spec = cells.CellSpec(
+def test_rate_measurement_reports_latency_percentiles() -> None:
+    spec = measurement.MeasurementSpec(
         name="smoke-rate",
         mode="rate",
         task_path="benchmarks.tasks.noop_sync",
@@ -42,7 +42,7 @@ def test_rate_cell_reports_latency_percentiles() -> None:
         timeout_s=60,
     )
 
-    result = cells.run_cell(spec)
+    result = measurement.run_measurement(spec)
 
     assert (result["median"]["end_to_end_p50_s"] > 0) is True
     assert result["median"]["offered_ok"] is True
@@ -51,8 +51,8 @@ def test_rate_cell_reports_latency_percentiles() -> None:
 
 @pytest.mark.functional
 @pytest.mark.django_db(transaction=True)
-def test_saturation_cell_flags_a_task_that_outlived_its_claim_lease() -> None:
-    spec = cells.CellSpec(
+def test_saturation_measurement_flags_a_task_that_outlived_its_claim_lease() -> None:
+    spec = measurement.MeasurementSpec(
         name="smoke-redelivery",
         mode="saturation",
         task_path="benchmarks.tests.utils.sleep_past_claim_lease",
@@ -63,7 +63,7 @@ def test_saturation_cell_flags_a_task_that_outlived_its_claim_lease() -> None:
         timeout_s=60,
     )
 
-    result = cells.run_cell(spec)
+    result = measurement.run_measurement(spec)
 
     assert result["median"]["extra_runs"] == 1
     assert result["median"]["max_attempt"] == 2
@@ -72,8 +72,8 @@ def test_saturation_cell_flags_a_task_that_outlived_its_claim_lease() -> None:
 
 @pytest.mark.functional
 @pytest.mark.django_db(transaction=True)
-def test_rate_cell_fairness_agrees_with_its_windowed_run_count() -> None:
-    spec = cells.CellSpec(
+def test_rate_measurement_fairness_agrees_with_its_windowed_run_count() -> None:
+    spec = measurement.MeasurementSpec(
         name="smoke-fairness",
         mode="rate",
         task_path="benchmarks.tasks.noop_sync",
@@ -85,7 +85,7 @@ def test_rate_cell_fairness_agrees_with_its_windowed_run_count() -> None:
         timeout_s=60,
     )
 
-    result = cells.run_cell(spec)
+    result = measurement.run_measurement(spec)
 
     assert sum(result["median"]["fairness"].values()) == result["median"]["n_runs"]
     assert (result["median"]["n_runs"] < result["median"]["offered"]) is True
@@ -93,8 +93,8 @@ def test_rate_cell_fairness_agrees_with_its_windowed_run_count() -> None:
 
 @pytest.mark.functional
 @pytest.mark.django_db(transaction=True)
-def test_rate_cell_offers_the_task_kwargs_it_was_given() -> None:
-    spec = cells.CellSpec(
+def test_rate_measurement_offers_the_task_kwargs_it_was_given() -> None:
+    spec = measurement.MeasurementSpec(
         name="smoke-kwargs",
         mode="rate",
         task_path="benchmarks.tasks.sleep_sync",
@@ -107,15 +107,15 @@ def test_rate_cell_offers_the_task_kwargs_it_was_given() -> None:
         timeout_s=60,
     )
 
-    result = cells.run_cell(spec)
+    result = measurement.run_measurement(spec)
 
     assert (result["median"]["execution_p50_s"] > 0.15) is True
 
 
 @pytest.mark.functional
 @pytest.mark.django_db(transaction=True)
-def test_saturation_cell_flags_tasks_that_never_completed() -> None:
-    spec = cells.CellSpec(
+def test_saturation_measurement_flags_tasks_that_never_completed() -> None:
+    spec = measurement.MeasurementSpec(
         name="smoke-missing",
         mode="saturation",
         task_path="benchmarks.tests.utils.fail_on_its_only_attempt",
@@ -126,7 +126,7 @@ def test_saturation_cell_flags_tasks_that_never_completed() -> None:
         timeout_s=60,
     )
 
-    result = cells.run_cell(spec)
+    result = measurement.run_measurement(spec)
 
     assert result["median"]["missing_tasks"] == 1
     assert result["median"]["extra_runs"] == 0

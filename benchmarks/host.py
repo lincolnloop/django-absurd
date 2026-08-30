@@ -23,7 +23,8 @@ class SuspendedPhaseError(Exception):
         super().__init__(
             f"Wall clock advanced {wall_s:.1f}s over a phase the monotonic clock "
             f"measured at {elapsed_s:.1f}s: the host suspended or stalled mid-phase, "
-            f"so every number this phase produced is fiction. Re-run the cell on a "
+            f"so every number this phase produced is fiction. Re-run the measurement "
+            f"on a "
             f"machine that stays awake."
         )
 
@@ -68,11 +69,16 @@ def collect_host_context() -> dict[str, t.Any]:
 
 
 def read_git_sha() -> str:
-    completed = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        capture_output=True,
-        check=True,
-        cwd=REPO_ROOT,
-        text=True,
-    )
+    # Provenance is best-effort: the compose `bench` container has no git binary and
+    # no .git directory, and a missing SHA should not abort a measurement.
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            check=True,
+            cwd=REPO_ROOT,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
     return completed.stdout.strip()

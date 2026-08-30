@@ -8,17 +8,17 @@ from django_absurd.flush import truncate_queue_tables
 DRAIN_POLL_INTERVAL_S = 0.5
 
 
-class CellTimeoutError(Exception):
+class MeasurementTimeoutError(Exception):
     def __init__(self, name: str, timeout_s: float) -> None:
         super().__init__(
-            f"Cell '{name}' still had unfinished tasks after {timeout_s:.0f}s. A cell "
-            f"that never drains is refused rather than recorded: raise timeout_s, cut "
-            f"the task count, or find out why the workers stalled."
+            f"Measurement '{name}' still had unfinished tasks after {timeout_s:.0f}s. "
+            f"A measurement that never drains is refused rather than recorded: raise "
+            f"timeout_s, cut the task count, or find out why the workers stalled."
         )
 
 
 @dataclasses.dataclass(frozen=True)
-class CellSpec:
+class MeasurementSpec:
     name: str
     mode: t.Literal["saturation", "rate"]
     task_path: str
@@ -33,8 +33,8 @@ class CellSpec:
     spread_limit: float = 0.15
 
 
-def run_cell(spec: CellSpec) -> dict[str, t.Any]:
-    """Run one cell's reps from a clean queue and reduce them to a median + flags."""
+def run_measurement(spec: MeasurementSpec) -> dict[str, t.Any]:
+    """Run one measurement's reps from a clean queue, reduce to a median + flags."""
     reps = []
     for _ in range(spec.reps):
         truncate_queue_tables(spec.worker.queue)
@@ -42,7 +42,7 @@ def run_cell(spec: CellSpec) -> dict[str, t.Any]:
     return summarize_reps(spec, reps)
 
 
-def run_one_rep(spec: CellSpec) -> dict[str, t.Any]:
+def run_one_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
     try:
         if spec.mode == "saturation":
             metrics = run_saturation_rep(spec)
@@ -54,7 +54,7 @@ def run_one_rep(spec: CellSpec) -> dict[str, t.Any]:
         return {"valid": True, **metrics}
 
 
-def run_saturation_rep(spec: CellSpec) -> dict[str, t.Any]:
+def run_saturation_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
     preload_s = producer.preload_tasks(
         spec.task_path, spec.tasks, kwargs=spec.task_kwargs
     )
@@ -66,12 +66,12 @@ def run_saturation_rep(spec: CellSpec) -> dict[str, t.Any]:
         runner.stop_workers(procs)
     metrics = analysis.analyze_saturation(spec.worker.queue)
     # A terminally failed task still satisfies the drain predicate, so without this
-    # the cell silently measures a smaller sample than it was asked to.
+    # the measurement silently covers a smaller sample than it was asked to.
     metrics["missing_tasks"] = spec.tasks - metrics["n_tasks"]
     return {"preload_s": preload_s, **metrics}
 
 
-def run_rate_rep(spec: CellSpec) -> dict[str, t.Any]:
+def run_rate_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
     procs = runner.start_workers(spec.worker, spec.workers)
     try:
         with host.measure_phase():
@@ -92,15 +92,17 @@ def run_rate_rep(spec: CellSpec) -> dict[str, t.Any]:
     }
 
 
-def wait_until_drained(spec: CellSpec) -> None:
+def wait_until_drained(spec: MeasurementSpec) -> None:
     deadline = time.monotonic() + spec.timeout_s
     while analysis.count_unfinished_tasks(spec.worker.queue) > 0:
         if time.monotonic() > deadline:
-            raise CellTimeoutError(spec.name, spec.timeout_s)
+            raise MeasurementTimeoutError(spec.name, spec.timeout_s)
         time.sleep(DRAIN_POLL_INTERVAL_S)
 
 
-def summarize_reps(spec: CellSpec, reps: list[dict[str, t.Any]]) -> dict[str, t.Any]:
+def summarize_reps(
+    spec: MeasurementSpec, reps: list[dict[str, t.Any]]
+) -> dict[str, t.Any]:
     ranking_key = (
         "throughput_per_s" if spec.mode == "saturation" else "end_to_end_p50_s"
     )
@@ -108,7 +110,7 @@ def summarize_reps(spec: CellSpec, reps: list[dict[str, t.Any]]) -> dict[str, t.
         (rep for rep in reps if rep["valid"]), key=lambda rep: rep[ranking_key]
     )
     # Lower of the two middles at an even rep count: the upper one is the BEST rep,
-    # and a cell must not be summarized by its luckiest run.
+    # and a measurement must not be summarized by its luckiest rep.
     median: dict[str, t.Any] = valid[(len(valid) - 1) // 2] if valid else {}
     spread = measure_spread(valid, median, ranking_key)
     return {
@@ -116,7 +118,7 @@ def summarize_reps(spec: CellSpec, reps: list[dict[str, t.Any]]) -> dict[str, t.
         "reps": reps,
         "median": median,
         "spread": spread,
-        "flagged": is_cell_unreliable(spec, reps, valid, spread),
+        "flagged": is_measurement_unreliable(spec, reps, valid, spread),
         "host": host.collect_host_context(),
     }
 
@@ -126,8 +128,8 @@ def measure_spread(
 ) -> float | None:
     """Relative spread, or ``None`` when there is no positive median to divide by.
 
-    Never 0.0 for that case: a cell that measured nothing would then read as the most
-    stable one in its stage.
+    Never 0.0 for that case: a measurement that measured nothing would then read as
+    the most stable one in its stage.
     """
     if not valid or median.get(ranking_key, 0.0) <= 0:
         return None
@@ -135,8 +137,8 @@ def measure_spread(
     return float((max(values) - min(values)) / median[ranking_key])
 
 
-def is_cell_unreliable(
-    spec: CellSpec,
+def is_measurement_unreliable(
+    spec: MeasurementSpec,
     reps: list[dict[str, t.Any]],
     valid: list[dict[str, t.Any]],
     spread: float | None,

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import django
 
-from benchmarks import analysis, cells, host, producer, runner
+from benchmarks import analysis, host, measurement, producer, runner
 from benchmarks.report import DEFAULT_RESULTS_DIR, format_spread
 from django_absurd.flush import truncate_queue_tables
 
@@ -19,19 +19,35 @@ SLEEP_SYNC = "benchmarks.tasks.sleep_sync"
 
 STAGE_NAMES = ("a", "b", "c", "d", "e", "f", "g")
 
+STAGE_DESCRIPTIONS = {
+    "a": "one worker's knobs: concurrency ladder, then batch size, then async dispatch",
+    "b": "throughput scaling across worker processes, at stage A's winning config",
+    "c": "poll_interval: latency under a paced offer, plus idle claim-rate probes",
+    "d": "async vs sync task bodies at the same 50 ms of simulated IO",
+    "e": "checkpoint cost: a 4-step workflow against a flat task",
+    "f": "the producer's own ceiling: one connection, eight threads, batched commits",
+    "g": "end-to-end latency at fractions of stage B's measured ceiling",
+}
+
+# Sized so the slowest stage A measurement (concurrency 1, ~67 tasks/s) drains a rep
+# in about 75 s; throughput divides a p10-p90 window; a small backlog is mostly ramp.
 SATURATION_TASKS = 5000
 SATURATION_TIMEOUT_S = 900.0
 RATE_OFFER_SECONDS = 60.0
 HOST_CPUS = os.cpu_count() or 1
-# A rate cell's producer runs on the same box as its workers, so calibrating off the
-# fastest saturation cell asks for an offer the producer has no cores left to deliver.
+# A rate measurement's producer runs on the same box as its workers, so calibrating
+# off the fastest saturation result asks for an offer it has no cores left to give.
 RATE_WORKER_CAP = max(1, HOST_CPUS // 2)
 RATE_TIMEOUT_S = 300.0
 IDLE_PROBE_SECONDS = 30.0
 IDLE_PROBE_WORKERS = 4
 POLL_INTERVALS = (0.05, 0.25, 1.0)
+# ~25 s per rep at the slowest mode's ~200 enqueues/s: enough for stable percentiles
+# while 3 reps x 3 modes still finish in a couple of minutes.
 PRODUCER_ENQUEUE_COUNT = 5000
 PRODUCER_SPREAD_LIMIT = 0.15
+# The 4-checkpoint task runs ~4.5x slower than a flat one, so SATURATION_TASKS would
+# push a rep past two minutes; 2000 keeps stage E on the same per-rep budget.
 WORKFLOW_TASKS = 2000
 
 
@@ -39,32 +55,34 @@ class MissingStageError(Exception):
     def __init__(self, path: Path, required_stage: str) -> None:
         super().__init__(
             f"{path} is missing, and this stage is calibrated from it. "
-            f"Run `python -m benchmarks.sweep --stage {required_stage}` first."
+            f"Run `python -m benchmarks.stages --stage {required_stage}` first."
         )
 
 
 class UncalibratableStageError(Exception):
     def __init__(self, stage_size: int) -> None:
         super().__init__(
-            f"None of the {stage_size} recorded cell(s) measured any throughput, so "
-            f"there is no winning configuration to calibrate the next stage from. "
+            f"None of the {stage_size} recorded measurement(s) measured any "
+            f"throughput, so there is no winning configuration to calibrate the next "
+            f"stage from. "
             f"Re-run the earlier stage on a quiet machine and check its flags."
         )
 
 
 @dataclasses.dataclass(frozen=True)
-class SweepOptions:
+class StageOptions:
     results_dir: Path
     reps: int | None = None
 
 
-def run_sweep(stage_names: list[str], options: SweepOptions) -> None:
+def run_stages(stage_names: list[str], options: StageOptions) -> None:
     options.results_dir.mkdir(parents=True, exist_ok=True)
     for name in stage_names:
         run_stage(name, options)
 
 
-def run_stage(name: str, options: SweepOptions) -> None:
+def run_stage(name: str, options: StageOptions) -> None:
+    print(f"stage {name.upper()}: {STAGE_DESCRIPTIONS[name]}")
     if name == "a":
         run_stage_a(options)
     elif name == "b":
@@ -72,10 +90,10 @@ def run_stage(name: str, options: SweepOptions) -> None:
     elif name == "c":
         run_stage_c(options)
     elif name == "d":
-        record_cells("d", build_stage_d_cells(), [], options)
+        record_measurements("d", build_stage_d_measurements(), [], options)
     elif name == "e":
-        record_cells(
-            "e", build_stage_e_cells(read_winning_worker(options)), [], options
+        record_measurements(
+            "e", build_stage_e_measurements(read_winning_worker(options)), [], options
         )
     elif name == "f":
         run_stage_f(options)
@@ -83,31 +101,31 @@ def run_stage(name: str, options: SweepOptions) -> None:
         run_stage_g(options)
 
 
-def run_stage_a(options: SweepOptions) -> None:
-    """Claim amortization and slot parallelism, then the async dispatch ratio."""
+def run_stage_a(options: StageOptions) -> None:
+    """Claim amortization and concurrency scaling, then the async dispatch ratio."""
     recorded: list[dict[str, t.Any]] = []
-    record_cells("a", build_a1_cells(), recorded, options)
+    record_measurements("a", build_a1_measurements(), recorded, options)
     winner = pick_winning_worker(recorded)
-    record_cells("a", build_a2_cells(winner), recorded, options)
-    record_cells("a", build_a3_cells(winner), recorded, options)
+    record_measurements("a", build_a2_measurements(winner), recorded, options)
+    record_measurements("a", build_a3_measurements(winner), recorded, options)
 
 
-def run_stage_b(options: SweepOptions) -> None:
+def run_stage_b(options: StageOptions) -> None:
     """How throughput scales with worker processes at stage A's winning config."""
     worker = read_winning_worker(options)
-    record_cells("b", build_stage_b_cells(worker), [], options)
+    record_measurements("b", build_stage_b_measurements(worker), [], options)
 
 
-def run_stage_c(options: SweepOptions) -> None:
+def run_stage_c(options: StageOptions) -> None:
     """What poll_interval buys in latency and costs in idle transactions."""
     worker = read_winning_worker(options)
     recorded: list[dict[str, t.Any]] = []
-    record_cells("c", build_stage_c_cells(worker), recorded, options)
+    record_measurements("c", build_stage_c_measurements(worker), recorded, options)
     probes = measure_idle_probes(worker)
     write_stage_file("c", recorded, options, {"idle_probes": probes})
 
 
-def run_stage_f(options: SweepOptions) -> None:
+def run_stage_f(options: StageOptions) -> None:
     """The producer's own ceiling: one connection, eight threads, batched commits."""
     recorded: list[dict[str, t.Any]] = []
     for mode in ("single", "threaded", "atomic"):
@@ -138,13 +156,13 @@ def measure_producer_rep(
         return {"valid": True, **metrics}
 
 
-def run_stage_g(options: SweepOptions) -> None:
+def run_stage_g(options: StageOptions) -> None:
     """End-to-end latency at fractions of stage B's measured ceiling."""
     worker, workers, ceiling = read_ceiling(options)
-    record_cells(
+    record_measurements(
         "g",
         [
-            cells.CellSpec(
+            measurement.MeasurementSpec(
                 name=f"g_rate_{int(fraction * 100)}pct",
                 mode="rate",
                 task_path=NOOP_SYNC,
@@ -161,9 +179,9 @@ def run_stage_g(options: SweepOptions) -> None:
     )
 
 
-def build_a1_cells() -> list[cells.CellSpec]:
+def build_a1_measurements() -> list[measurement.MeasurementSpec]:
     return [
-        cells.CellSpec(
+        measurement.MeasurementSpec(
             name=f"a1_c{concurrency}",
             mode="saturation",
             task_path=NOOP_SYNC,
@@ -175,9 +193,11 @@ def build_a1_cells() -> list[cells.CellSpec]:
     ]
 
 
-def build_a2_cells(winner: runner.WorkerSpec) -> list[cells.CellSpec]:
+def build_a2_measurements(
+    winner: runner.WorkerSpec,
+) -> list[measurement.MeasurementSpec]:
     return [
-        cells.CellSpec(
+        measurement.MeasurementSpec(
             name=f"a2_batch_{batch_size}",
             mode="saturation",
             task_path=NOOP_SYNC,
@@ -189,9 +209,11 @@ def build_a2_cells(winner: runner.WorkerSpec) -> list[cells.CellSpec]:
     ]
 
 
-def build_a3_cells(winner: runner.WorkerSpec) -> list[cells.CellSpec]:
+def build_a3_measurements(
+    winner: runner.WorkerSpec,
+) -> list[measurement.MeasurementSpec]:
     return [
-        cells.CellSpec(
+        measurement.MeasurementSpec(
             name="a3_async",
             mode="saturation",
             task_path=NOOP_ASYNC,
@@ -202,9 +224,11 @@ def build_a3_cells(winner: runner.WorkerSpec) -> list[cells.CellSpec]:
     ]
 
 
-def build_stage_b_cells(winner: runner.WorkerSpec) -> list[cells.CellSpec]:
+def build_stage_b_measurements(
+    winner: runner.WorkerSpec,
+) -> list[measurement.MeasurementSpec]:
     return [
-        cells.CellSpec(
+        measurement.MeasurementSpec(
             name=f"b_workers_{count}",
             mode="saturation",
             task_path=NOOP_SYNC,
@@ -218,7 +242,7 @@ def build_stage_b_cells(winner: runner.WorkerSpec) -> list[cells.CellSpec]:
 
 
 def build_worker_ladder(cores: int) -> list[int]:
-    """Worker counts to sweep on a host with ``cores`` usable CPUs."""
+    """Worker counts stage B measures on a host with ``cores`` usable CPUs."""
     # 1 and 2 anchor the low end where per-worker efficiency is still readable; the
     # quarter/half/three-quarter steps track the host so the curve means the same thing
     # on any box, and nothing exceeds the core count.
@@ -226,9 +250,11 @@ def build_worker_ladder(cores: int) -> list[int]:
     return sorted(step for step in steps if 1 <= step <= cores)
 
 
-def build_stage_c_cells(winner: runner.WorkerSpec) -> list[cells.CellSpec]:
+def build_stage_c_measurements(
+    winner: runner.WorkerSpec,
+) -> list[measurement.MeasurementSpec]:
     return [
-        cells.CellSpec(
+        measurement.MeasurementSpec(
             name=f"c_poll_{poll_interval:g}",
             mode="rate",
             task_path=NOOP_SYNC,
@@ -241,9 +267,9 @@ def build_stage_c_cells(winner: runner.WorkerSpec) -> list[cells.CellSpec]:
     ]
 
 
-def build_stage_d_cells() -> list[cells.CellSpec]:
+def build_stage_d_measurements() -> list[measurement.MeasurementSpec]:
     return [
-        cells.CellSpec(
+        measurement.MeasurementSpec(
             name=f"d_{flavour}_c{concurrency}",
             mode="saturation",
             task_path=task_path,
@@ -256,9 +282,11 @@ def build_stage_d_cells() -> list[cells.CellSpec]:
     ]
 
 
-def build_stage_e_cells(winner: runner.WorkerSpec) -> list[cells.CellSpec]:
+def build_stage_e_measurements(
+    winner: runner.WorkerSpec,
+) -> list[measurement.MeasurementSpec]:
     return [
-        cells.CellSpec(
+        measurement.MeasurementSpec(
             name=name,
             mode="saturation",
             task_path=task_path,
@@ -294,19 +322,21 @@ def measure_idle_probes(winner: runner.WorkerSpec) -> list[dict[str, t.Any]]:
     return probes
 
 
-def record_cells(
+def record_measurements(
     stage: str,
-    specs: list[cells.CellSpec],
+    specs: list[measurement.MeasurementSpec],
     recorded: list[dict[str, t.Any]],
-    options: SweepOptions,
+    options: StageOptions,
 ) -> None:
     for spec in specs:
-        recorded.append(cells.run_cell(apply_reps_override(spec, options)))
+        recorded.append(measurement.run_measurement(apply_reps_override(spec, options)))
         write_stage_file(stage, recorded, options)
-        print(summarize_cell(recorded[-1]))
+        print(summarize_measurement(recorded[-1]))
 
 
-def apply_reps_override(spec: cells.CellSpec, options: SweepOptions) -> cells.CellSpec:
+def apply_reps_override(
+    spec: measurement.MeasurementSpec, options: StageOptions
+) -> measurement.MeasurementSpec:
     if options.reps is None:
         return spec
     return dataclasses.replace(spec, reps=options.reps)
@@ -315,12 +345,14 @@ def apply_reps_override(spec: cells.CellSpec, options: SweepOptions) -> cells.Ce
 def write_stage_file(
     stage: str,
     recorded: list[dict[str, t.Any]],
-    options: SweepOptions,
+    options: StageOptions,
     extra: dict[str, t.Any] | None = None,
 ) -> None:
-    # Rewritten after every cell so a sweep killed at hour two keeps what it measured.
+    # Rewritten after every measurement so a run killed at hour two keeps everything.
     path = options.results_dir / f"stage_{stage}.json"
     staged = path.with_suffix(".json.tmp")
+    # The JSON key stays "cells": renaming it would invalidate the committed
+    # reference results under benchmarks/results/.
     staged.write_text(
         json.dumps({"stage": stage, "cells": recorded, **(extra or {})}, indent=2)
         + "\n"
@@ -328,7 +360,7 @@ def write_stage_file(
     staged.replace(path)
 
 
-def summarize_cell(result: dict[str, t.Any]) -> str:
+def summarize_measurement(result: dict[str, t.Any]) -> str:
     median = result["median"]
     line = (
         f"{result['spec']['name']}: "
@@ -364,13 +396,13 @@ def summarize_producer_reps(
     }
 
 
-def read_winning_worker(options: SweepOptions) -> runner.WorkerSpec:
-    return pick_winning_worker(read_stage_cells(options, "a"))
+def read_winning_worker(options: StageOptions) -> runner.WorkerSpec:
+    return pick_winning_worker(read_stage_measurements(options, "a"))
 
 
-def read_ceiling(options: SweepOptions) -> tuple[runner.WorkerSpec, int, float]:
-    recorded = read_stage_cells(options, "b")
-    best = pick_rate_calibration_cell(recorded)
+def read_ceiling(options: StageOptions) -> tuple[runner.WorkerSpec, int, float]:
+    recorded = read_stage_measurements(options, "b")
+    best = pick_rate_calibration_measurement(recorded)
     return (
         runner.WorkerSpec(**best["spec"]["worker"]),
         best["spec"]["workers"],
@@ -378,7 +410,9 @@ def read_ceiling(options: SweepOptions) -> tuple[runner.WorkerSpec, int, float]:
     )
 
 
-def read_stage_cells(options: SweepOptions, stage: str) -> list[dict[str, t.Any]]:
+def read_stage_measurements(
+    options: StageOptions, stage: str
+) -> list[dict[str, t.Any]]:
     path = options.results_dir / f"stage_{stage}.json"
     if not path.exists():
         raise MissingStageError(path, stage.upper())
@@ -386,30 +420,38 @@ def read_stage_cells(options: SweepOptions, stage: str) -> list[dict[str, t.Any]
 
 
 def pick_winning_worker(recorded: list[dict[str, t.Any]]) -> runner.WorkerSpec:
-    return runner.WorkerSpec(**pick_best_cell(recorded)["spec"]["worker"])
+    return runner.WorkerSpec(**pick_best_measurement(recorded)["spec"]["worker"])
 
 
-def pick_best_cell(recorded: list[dict[str, t.Any]]) -> dict[str, t.Any]:
-    # Flagged cells are unreliable, but calibrating on nothing is worse than
+def pick_best_measurement(recorded: list[dict[str, t.Any]]) -> dict[str, t.Any]:
+    # Flagged measurements are unreliable, but calibrating on nothing is worse than
     # calibrating on a noisy best, so they are the fallback rather than an error.
-    candidates = [cell for cell in recorded if not cell["flagged"]] or recorded
-    best = max(candidates, key=lambda cell: cell["median"].get("throughput_per_s", 0.0))
+    candidates = [entry for entry in recorded if not entry["flagged"]] or recorded
+    best = max(
+        candidates, key=lambda entry: entry["median"].get("throughput_per_s", 0.0)
+    )
     # A zero-throughput winner would calibrate stages B/C/E/G on nothing at all.
     if best["median"].get("throughput_per_s", 0.0) <= 0:
         raise UncalibratableStageError(len(recorded))
     return best
 
 
-def pick_rate_calibration_cell(recorded: list[dict[str, t.Any]]) -> dict[str, t.Any]:
-    """Pick the cell a rate stage calibrates from, leaving the producer some cores."""
+def pick_rate_calibration_measurement(
+    recorded: list[dict[str, t.Any]],
+) -> dict[str, t.Any]:
+    """Pick what a rate stage calibrates from, leaving the producer some cores."""
     # Falling back to the whole set keeps a stage B run that never went below the cap
     # calibratable, at the cost of an offer its producer may not reach.
-    capped = [cell for cell in recorded if cell["spec"]["workers"] <= RATE_WORKER_CAP]
-    return pick_best_cell(capped or recorded)
+    capped = [
+        entry for entry in recorded if entry["spec"]["workers"] <= RATE_WORKER_CAP
+    ]
+    return pick_best_measurement(capped or recorded)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the django-absurd load sweep.")
+    parser = argparse.ArgumentParser(
+        description="Run the django-absurd benchmark stages."
+    )
     parser.add_argument("--stage", action="append", choices=STAGE_NAMES, type=str.lower)
     parser.add_argument("--all", action="store_true")
     parser.add_argument("--results-dir", default=DEFAULT_RESULTS_DIR, type=Path)
@@ -420,7 +462,7 @@ def main() -> None:
         parser.error("pass --stage <A-G> (repeatable) or --all")
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "benchmarks.settings")
     django.setup()
-    run_sweep(stages, SweepOptions(results_dir=args.results_dir, reps=args.reps))
+    run_stages(stages, StageOptions(results_dir=args.results_dir, reps=args.reps))
 
 
 if __name__ == "__main__":

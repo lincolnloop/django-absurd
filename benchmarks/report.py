@@ -6,7 +6,7 @@ from pathlib import Path
 DEFAULT_RESULTS_DIR = Path(__file__).resolve().parent / "results"
 
 TABLE_HEADER = (
-    "| cell | mode | workers | concurrency | batch | poll | tasks/s "
+    "| measurement | mode | workers | concurrency | batch | poll | tasks/s "
     "| e2e p50 s | e2e p90 s | e2e p99 s | spread | notes |"
 )
 TABLE_RULE = "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
@@ -27,9 +27,9 @@ def render_report(results_dir: Path) -> str:
 
 
 def describe_host(stages: list[dict[str, t.Any]]) -> list[str]:
-    # Every cell carries its own provenance, and a sweep can span a rebuild; reading
-    # only the first cell's would print one SHA for a mixed report.
-    contexts = [cell["host"] for stage in stages for cell in stage["cells"]]
+    # Every measurement carries its own provenance, and a benchmark run can span a
+    # rebuild; reading only the first would print one SHA for a mixed report.
+    contexts = [entry["host"] for stage in stages for entry in stage["cells"]]
     context = contexts[0]
     shas = sorted({entry["git_sha"] for entry in contexts})
     stamps = sorted(entry["captured_at"] for entry in contexts)
@@ -65,11 +65,12 @@ def describe_capture_window(stamps: list[str]) -> str:
 def render_stage(stage: dict[str, t.Any]) -> list[str]:
     if stage["stage"] == "f":
         return render_producer_stage(stage)
-    cells = stage["cells"]
+    # "cells" is the stored JSON key; see write_stage_file in benchmarks/stages.py.
+    measurements = stage["cells"]
     lines = ["", f"## Stage {stage['stage'].upper()}", "", TABLE_HEADER, TABLE_RULE]
-    lines += [render_cell_row(cell) for cell in cells]
+    lines += [render_measurement_row(entry) for entry in measurements]
     lines += render_idle_probes(stage)
-    lines += build_derived_lines(stage["stage"], cells)
+    lines += build_derived_lines(stage["stage"], measurements)
     return lines
 
 
@@ -88,24 +89,24 @@ def render_producer_stage(stage: dict[str, t.Any]) -> list[str]:
         *[
             render_row(
                 [
-                    cell["spec"]["name"],
-                    str(cell["median"].get("count", 0)),
-                    f"{cell['median'].get('enqueues_per_s', 0.0):.1f}",
-                    f"{cell['median'].get('enqueue_p50_s', 0.0):.5f}",
-                    f"{cell['median'].get('enqueue_p99_s', 0.0):.5f}",
-                    format_spread(cell["spread"]),
-                    "⚠ flagged" if cell["flagged"] else "",
+                    entry["spec"]["name"],
+                    str(entry["median"].get("count", 0)),
+                    f"{entry['median'].get('enqueues_per_s', 0.0):.1f}",
+                    f"{entry['median'].get('enqueue_p50_s', 0.0):.5f}",
+                    f"{entry['median'].get('enqueue_p99_s', 0.0):.5f}",
+                    format_spread(entry["spread"]),
+                    "⚠ flagged" if entry["flagged"] else "",
                 ]
             )
-            for cell in stage["cells"]
+            for entry in stage["cells"]
         ],
     ]
 
 
-def render_cell_row(cell: dict[str, t.Any]) -> str:
-    spec = cell["spec"]
+def render_measurement_row(entry: dict[str, t.Any]) -> str:
+    spec = entry["spec"]
     worker = spec["worker"]
-    median = cell["median"]
+    median = entry["median"]
     return render_row(
         [
             spec["name"],
@@ -118,8 +119,8 @@ def render_cell_row(cell: dict[str, t.Any]) -> str:
             f"{median.get('end_to_end_p50_s', 0.0):.4f}",
             f"{median.get('end_to_end_p90_s', 0.0):.4f}",
             f"{median.get('end_to_end_p99_s', 0.0):.4f}",
-            format_spread(cell["spread"]),
-            "⚠ flagged" if cell["flagged"] else "",
+            format_spread(entry["spread"]),
+            "⚠ flagged" if entry["flagged"] else "",
         ]
     )
 
@@ -149,61 +150,70 @@ def render_idle_probes(stage: dict[str, t.Any]) -> list[str]:
     return lines
 
 
-def build_derived_lines(stage: str, cells: list[dict[str, t.Any]]) -> list[str]:
-    unflagged = [cell for cell in cells if not cell["flagged"]]
+def build_derived_lines(stage: str, measurements: list[dict[str, t.Any]]) -> list[str]:
+    unflagged = [entry for entry in measurements if not entry["flagged"]]
     if not unflagged:
-        return ["", "No unflagged cells; nothing derived."]
+        return ["", "No unflagged measurements; nothing derived."]
     if stage == "b":
         return build_scaling_efficiency_lines(unflagged)
     if stage == "d":
         return build_async_ratio_lines(unflagged)
     if stage == "e":
         return build_checkpoint_multiplier_lines(unflagged)
-    if all(cell["spec"]["mode"] == "rate" for cell in unflagged):
+    if all(entry["spec"]["mode"] == "rate" for entry in unflagged):
         # In rate mode throughput is set by the OFFER, so a throughput ratio there
-        # only restates the configured rate; latency is what those cells vary.
-        return build_ratio_lines(unflagged, cells, "end_to_end_p50_s", "End-to-end p50")
-    return build_ratio_lines(unflagged, cells, "throughput_per_s", "Throughput")
+        # only restates the configured rate; latency is what those vary.
+        return build_ratio_lines(
+            unflagged, measurements, "end_to_end_p50_s", "End-to-end p50"
+        )
+    return build_ratio_lines(unflagged, measurements, "throughput_per_s", "Throughput")
 
 
-def build_scaling_efficiency_lines(cells: list[dict[str, t.Any]]) -> list[str]:
+def build_scaling_efficiency_lines(measurements: list[dict[str, t.Any]]) -> list[str]:
     single = next(
         (
-            cell["median"]["throughput_per_s"]
-            for cell in cells
-            if cell["spec"]["workers"] == 1
+            entry["median"]["throughput_per_s"]
+            for entry in measurements
+            if entry["spec"]["workers"] == 1
         ),
         None,
     )
     if not single:
-        return build_ratio_lines(cells, cells, "throughput_per_s", "Throughput")
+        return build_ratio_lines(
+            measurements, measurements, "throughput_per_s", "Throughput"
+        )
     return [
         "",
-        "Scaling efficiency `T(N) / (N x T(1))` (flagged cells excluded):",
+        "Scaling efficiency `T(N) / (N x T(1))` (flagged measurements excluded):",
         "",
         *[
-            f"- {cell['spec']['workers']} worker(s): "
-            f"{read_efficiency(cell, single):.2f}"
-            for cell in cells
+            f"- {entry['spec']['workers']} worker(s): "
+            f"{read_efficiency(entry, single):.2f}"
+            for entry in measurements
         ],
     ]
 
 
-def read_efficiency(cell: dict[str, t.Any], single_worker_throughput: float) -> float:
-    workers = cell["spec"]["workers"]
-    throughput = cell["median"]["throughput_per_s"]
+def read_efficiency(entry: dict[str, t.Any], single_worker_throughput: float) -> float:
+    workers = entry["spec"]["workers"]
+    throughput = entry["median"]["throughput_per_s"]
     return float(throughput / (workers * single_worker_throughput))
 
 
-def build_async_ratio_lines(cells: list[dict[str, t.Any]]) -> list[str]:
+def build_async_ratio_lines(measurements: list[dict[str, t.Any]]) -> list[str]:
     paired: dict[int, dict[str, float]] = {}
-    for cell in cells:
-        flavour = "async" if cell["spec"]["task_path"].endswith("_async") else "sync"
-        concurrency = cell["spec"]["worker"]["concurrency"]
-        paired.setdefault(concurrency, {})[flavour] = cell["median"]["throughput_per_s"]
+    for entry in measurements:
+        flavour = "async" if entry["spec"]["task_path"].endswith("_async") else "sync"
+        concurrency = entry["spec"]["worker"]["concurrency"]
+        paired.setdefault(concurrency, {})[flavour] = entry["median"][
+            "throughput_per_s"
+        ]
     return [
         "",
-        "Async / sync throughput ratio at the same IO wait (flagged cells excluded):",
+        (
+            "Async / sync throughput ratio at the same IO wait "
+            "(flagged measurements excluded):"
+        ),
         "",
         *[
             f"- concurrency {concurrency}: {pair['async'] / pair['sync']:.2f}x"
@@ -213,62 +223,68 @@ def build_async_ratio_lines(cells: list[dict[str, t.Any]]) -> list[str]:
     ]
 
 
-def build_checkpoint_multiplier_lines(cells: list[dict[str, t.Any]]) -> list[str]:
+def build_checkpoint_multiplier_lines(
+    measurements: list[dict[str, t.Any]],
+) -> list[str]:
     throughput = {
-        cell["spec"]["task_path"]: cell["median"]["throughput_per_s"] for cell in cells
+        entry["spec"]["task_path"]: entry["median"]["throughput_per_s"]
+        for entry in measurements
     }
     flat = throughput.get("benchmarks.tasks.noop_sync")
     workflow = throughput.get("benchmarks.tasks.run_steps")
     if not flat or not workflow:
-        return build_ratio_lines(cells, cells, "throughput_per_s", "Throughput")
+        return build_ratio_lines(
+            measurements, measurements, "throughput_per_s", "Throughput"
+        )
     return [
         "",
-        "Checkpoint cost (flagged cells excluded):",
+        "Checkpoint cost (flagged measurements excluded):",
         "",
         f"- one `run_steps` task costs {flat / workflow:.2f}x a flat no-op task",
     ]
 
 
 def build_ratio_lines(
-    cells: list[dict[str, t.Any]],
-    all_cells: list[dict[str, t.Any]],
+    measurements: list[dict[str, t.Any]],
+    all_measurements: list[dict[str, t.Any]],
     metric_key: str,
     label: str,
 ) -> list[str]:
-    reference = cells[0]
+    reference = measurements[0]
     base = reference["median"].get(metric_key, 0.0)
     if not base:
-        return ["", "Reference cell measured nothing; nothing derived."]
+        return ["", "Reference measurement measured nothing; nothing derived."]
     return [
         "",
         (
             f"{label} relative to `{reference['spec']['name']}` "
-            f"({describe_exclusions(cells, all_cells)}):"
+            f"({describe_exclusions(measurements, all_measurements)}):"
         ),
         "",
         *[
-            f"- `{cell['spec']['name']}`: {cell['median'][metric_key] / base:.2f}x"
-            for cell in cells
+            f"- `{entry['spec']['name']}`: {entry['median'][metric_key] / base:.2f}x"
+            for entry in measurements
         ],
     ]
 
 
 def describe_exclusions(
-    cells: list[dict[str, t.Any]], all_cells: list[dict[str, t.Any]]
+    measurements: list[dict[str, t.Any]], all_measurements: list[dict[str, t.Any]]
 ) -> str:
-    """Name a baseline that moved: dropping a flagged first cell silently rebases
+    """Name a baseline that moved: dropping a flagged first entry silently rebases
     every ratio in the block, which would otherwise be invisible between runs."""
-    first = all_cells[0]["spec"]["name"]
-    if first == cells[0]["spec"]["name"]:
-        return "flagged cells excluded"
+    first = all_measurements[0]["spec"]["name"]
+    if first == measurements[0]["spec"]["name"]:
+        return "flagged measurements excluded"
     return (
-        f"flagged cells excluded; the stage's first cell `{first}` is flagged, "
+        f"flagged measurements excluded; the stage's first measurement "
+        f"`{first}` is flagged, "
         f"so the baseline moved"
     )
 
 
 def format_spread(spread: float | None) -> str:
-    # None, not 0.0, when a cell had no positive median to divide by.
+    # None, not 0.0, when a measurement had no positive median to divide by.
     return "n/a" if spread is None else f"{spread:.1%}"
 
 
@@ -277,7 +293,7 @@ def render_row(fields: list[str]) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Render committed sweep results.")
+    parser = argparse.ArgumentParser(description="Render committed benchmark results.")
     parser.add_argument("--results-dir", default=DEFAULT_RESULTS_DIR, type=Path)
     print(render_report(parser.parse_args().results_dir), end="")
 

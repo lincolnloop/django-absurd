@@ -162,7 +162,7 @@ def build_metrics(
         "total_tasks": int(total_tasks),
         "max_attempt": int(max_attempt),
         # More run rows than tasks means a redelivery: a retry after a failure or an
-        # expired claim lease. Both pollute a cell, neither is visible in wall time.
+        # expired claim lease. Both pollute a measurement; neither shows in wall time.
         "extra_runs": int(total_runs) - int(total_tasks),
         "degenerate_window": degenerate,
         # 0.8 * n over the p10..p90 completion span: the trimmed window absorbs worker

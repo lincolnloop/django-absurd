@@ -45,7 +45,7 @@ def start_workers(spec: WorkerSpec, count: int) -> list[Worker]:
     try:
         for index in range(count):
             # A comprehension would discard the children already started when one
-            # of them fails, leaking them for the rest of the sweep.
+            # of them fails, leaking them for the rest of the benchmark run.
             started.append(spawn_worker(spec, index, environ))  # noqa: PERF401
     except BaseException:
         stop_workers(started)
@@ -69,8 +69,8 @@ def stop_workers(workers: list[Worker]) -> None:
     if crashed:
         last_output = "".join(line for worker in crashed for line in worker.tail)
         msg = (
-            f"{len(crashed)} absurd_worker child(ren) exited before the cell finished "
-            f"(codes {[worker.proc.returncode for worker in crashed]}); the cell "
+            f"{len(crashed)} absurd_worker child(ren) exited before the measurement "
+            f"finished (codes {[worker.proc.returncode for worker in crashed]}); it "
             f"measured a worker count it never had. Last output:\n{last_output}"
         )
         raise RuntimeError(msg)

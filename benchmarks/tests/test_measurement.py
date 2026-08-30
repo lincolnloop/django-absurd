@@ -2,13 +2,13 @@ import typing as t
 
 import pytest
 
-from benchmarks import cells, runner
+from benchmarks import measurement, runner
 
 
 def build_spec(
     mode: t.Literal["rate", "saturation"], spread_limit: float
-) -> cells.CellSpec:
-    return cells.CellSpec(
+) -> measurement.MeasurementSpec:
+    return measurement.MeasurementSpec(
         name="unit",
         mode=mode,
         task_path="benchmarks.tasks.noop_sync",
@@ -28,7 +28,7 @@ def build_spec(
         ("offered_ok", False),
     ],
 )
-def test_flags_a_cell_when_any_non_median_rep_is_defective(
+def test_flags_a_measurement_when_any_non_median_rep_is_defective(
     defect_key: str, defect_value: t.Any
 ) -> None:
     # The defect sits on the rep that sorts FURTHEST from the median, which is the
@@ -39,7 +39,7 @@ def test_flags_a_cell_when_any_non_median_rep_is_defective(
         {"valid": True, "end_to_end_p50_s": 0.12},
     ]
 
-    summary = cells.summarize_reps(build_spec("rate", 0.5), reps)
+    summary = measurement.summarize_reps(build_spec("rate", 0.5), reps)
 
     assert summary["median"]["end_to_end_p50_s"] == 0.11
     assert defect_key not in summary["median"]
@@ -54,19 +54,19 @@ def test_takes_the_lower_of_two_middle_reps() -> None:
         {"valid": True, "throughput_per_s": 20.0},
     ]
 
-    summary = cells.summarize_reps(build_spec("saturation", 5.0), reps)
+    summary = measurement.summarize_reps(build_spec("saturation", 5.0), reps)
 
     assert summary["median"]["throughput_per_s"] == 10.0
 
 
 @pytest.mark.functional
 @pytest.mark.django_db
-def test_refuses_to_read_a_zero_throughput_cell_as_stable() -> None:
+def test_refuses_to_read_a_zero_throughput_measurement_as_stable() -> None:
     reps: list[dict[str, t.Any]] = [
         {"valid": True, "throughput_per_s": 0.0, "degenerate_window": True}
     ]
 
-    summary = cells.summarize_reps(build_spec("saturation", 0.15), reps)
+    summary = measurement.summarize_reps(build_spec("saturation", 0.15), reps)
 
     assert summary["spread"] is None
     assert summary["flagged"] is True

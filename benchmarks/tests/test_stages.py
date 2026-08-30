@@ -2,7 +2,7 @@ import typing as t
 
 import pytest
 
-from benchmarks import cells, runner, sweep
+from benchmarks import measurement, runner, stages
 
 HEALTHY_REP = {
     "valid": True,
@@ -22,7 +22,7 @@ def test_flags_a_producer_stage_the_host_slept_through() -> None:
         {"valid": False, "error": "wall clock advanced 40.0s"},
     ]
 
-    summary = sweep.summarize_producer_reps("single", reps)
+    summary = stages.summarize_producer_reps("single", reps)
 
     assert summary["median"]["enqueues_per_s"] == 100.0
     assert summary["flagged"] is True
@@ -31,14 +31,16 @@ def test_flags_a_producer_stage_the_host_slept_through() -> None:
 @pytest.mark.functional
 @pytest.mark.django_db
 def test_summarizes_a_clean_producer_stage_without_flagging() -> None:
-    summary = sweep.summarize_producer_reps("single", [HEALTHY_REP])
+    summary = stages.summarize_producer_reps("single", [HEALTHY_REP])
 
     assert summary["spread"] == 0.0
     assert summary["flagged"] is False
 
 
 @pytest.mark.internal
-def test_refuses_to_calibrate_a_later_stage_from_cells_that_measured_nothing() -> None:
+def test_refuses_to_calibrate_a_later_stage_from_results_that_measured_nothing() -> (
+    None
+):
     degenerate = [
         {
             "spec": {"name": "a1_c1", "worker": {}},
@@ -47,30 +49,32 @@ def test_refuses_to_calibrate_a_later_stage_from_cells_that_measured_nothing() -
         }
     ]
 
-    with pytest.raises(sweep.UncalibratableStageError):
-        sweep.pick_best_cell(degenerate)
+    with pytest.raises(stages.UncalibratableStageError):
+        stages.pick_best_measurement(degenerate)
 
 
 @pytest.mark.functional
 @pytest.mark.django_db
-def test_summarizes_a_cell_whose_reps_were_all_discarded() -> None:
-    spec = cells.CellSpec(
+def test_summarizes_a_measurement_whose_reps_were_all_discarded() -> None:
+    spec = measurement.MeasurementSpec(
         name="napped",
         mode="saturation",
         task_path="benchmarks.tasks.noop_sync",
         worker=runner.WorkerSpec(),
     )
 
-    summary = cells.summarize_reps(spec, [{"valid": False, "error": "host suspended"}])
+    summary = measurement.summarize_reps(
+        spec, [{"valid": False, "error": "host suspended"}]
+    )
 
     assert summary["spread"] is None
-    assert sweep.summarize_cell(summary) == (
+    assert stages.summarize_measurement(summary) == (
         "napped: 0.0 tasks/s, e2e p50 0.0ms, spread n/a [FLAGGED]"
     )
 
 
 @pytest.mark.internal
-def test_calibrates_a_rate_stage_from_a_cell_the_producer_can_outrun() -> None:
+def test_calibrates_a_rate_stage_from_a_result_the_producer_can_outrun() -> None:
     recorded = [
         {
             "spec": {"name": "b_workers_4", "workers": 4, "worker": {}},
@@ -84,10 +88,13 @@ def test_calibrates_a_rate_stage_from_a_cell_the_producer_can_outrun() -> None:
         },
     ]
 
-    # The fastest cell is the 8-worker one, but a rate stage must offer from the same
-    # box, so it calibrates on the fastest cell that leaves the producer some cores.
-    assert sweep.pick_best_cell(recorded)["spec"]["name"] == "b_workers_8"
-    assert sweep.pick_rate_calibration_cell(recorded)["spec"]["name"] == "b_workers_4"
+    # The fastest result is the 8-worker one, but a rate stage must offer from the
+    # same box, so it calibrates on the fastest one leaving the producer some cores.
+    assert stages.pick_best_measurement(recorded)["spec"]["name"] == "b_workers_8"
+    assert (
+        stages.pick_rate_calibration_measurement(recorded)["spec"]["name"]
+        == "b_workers_4"
+    )
 
 
 @pytest.mark.internal
@@ -103,4 +110,4 @@ def test_calibrates_a_rate_stage_from_a_cell_the_producer_can_outrun() -> None:
     ],
 )
 def test_sizes_the_worker_ladder_to_the_host(cores: int, expected: list[int]) -> None:
-    assert sweep.build_worker_ladder(cores) == expected
+    assert stages.build_worker_ladder(cores) == expected

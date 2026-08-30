@@ -125,7 +125,7 @@ def enqueue_chunk(
             task_object.enqueue(**kwargs)
             latencies.append(time.perf_counter() - started)
     finally:
-        # Each pool thread opened its own connection; a sweep leaks past
+        # Each pool thread opened its own connection; a full benchmark run leaks past
         # max_connections without this.
         connections.close_all()
     return latencies

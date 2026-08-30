@@ -163,7 +163,7 @@ select = ["ALL"]
 "benchmarks/**/*" = [
   "S603",  # Allow subprocess calls: the harness spawns real worker processes
   "S607",  # Allow `git`/`docker` by name: the harness runs on a developer PATH
-  "T201",  # Allow print: the sweep/report drivers are CLIs
+  "T201",  # Allow print: the stage/report drivers are CLIs
 ]
 "examples/*/app.py" = [
   "INP001",  # single-file nanodjango demo apps are intentionally not packages
