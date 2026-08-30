@@ -5,53 +5,105 @@ icon: lucide/gauge
 # Performance
 
 Guidance for sizing a deployment and choosing [worker flags](workers.md#run-a-worker),
-drawn from a measured sweep rather than intuition.
+drawn from a measured benchmark rather than intuition.
 
-**Read the figures below as ratios.** They come from one 8-core laptop running Postgres
-in a container on the same machine, so the absolute rates are a property of that box.
-The relationships — what doubling a knob buys, where a curve bends — are what transfer.
-For a sense of scale: a single worker drained a trivial task at roughly 150/s there, and
-eight workers at roughly 650/s. Treat those as an order of magnitude, never a
-specification.
+**Read the benchmark numbers with a grain of salt.** They come from one eight-core
+laptop running Postgres, the workers, and the benchmark itself on the same machine. The
+absolute rates are a property of that box. What transfers is the ratios: what doubling a
+knob buys, and where a curve bends. For a sense of scale, a single worker drained a
+trivial task at roughly 150/s there, and eight workers at roughly 650/s. Treat those as
+an order of magnitude, never a specification.
 
-## What a worker does per task
+## Tasks, runs, claims, checkpoints
 
-A worker polls, claims a batch of runs in one query, executes them, and writes a
-completion row for each. So each task costs at least two database round trips, and the
-claim is shared across everything it claimed.
+Absurd's vocabulary, and when each concept touches Postgres:
 
-- `--concurrency` is how many tasks run at once: `async def` tasks on an event loop,
-  sync tasks in a thread pool of the same size.
-- `--batch-size` is how many tasks one claim query fetches. Unset, it equals
-  `--concurrency`.
-- `--poll-interval` is how long an idle worker waits before asking again.
+- A **task** is one unit of enqueued work. `enqueue()` calls Absurd's `spawn_task`,
+  which inserts the task row and its first **run** row in a single round trip. Inside
+  `transaction.atomic()`, workers see the rows at commit, not before.
+- A **run** is one attempt at a task. A retry inserts a new run row for the same task;
+  the failed row stays behind as history.
+- A **claim** is one `claim_task` query from a worker. It picks up to `--batch-size` due
+  runs, marks each `running`, stamps who claimed it and when it started, and gives each
+  a lease that expires `--claim-timeout` seconds later.
+- A **checkpoint** is a saved step result. Each `ctx.step` that executes writes its
+  result to Postgres immediately, one round trip per step.
 
-A slot is refilled as soon as it frees, so one slow task never stalls the others it was
-claimed alongside.
+The life of a claimed batch, in order:
+
+1. The worker sends one claim query and receives up to `--batch-size` runs.
+2. Each run starts executing as soon as the worker has free execution capacity (see the
+   knobs below).
+3. Each run finishes on its own: one `complete_run` (or `fail_run`) write at the moment
+   that run ends. Runs claimed together do not wait for each other, and they do not
+   report their results together.
+4. If a worker dies mid-run, the lease expires. A later claim query, from any worker,
+   notices the expired lease, fails that run, and inserts a fresh run for the retry. The
+   new run loads the task's committed checkpoints in one query and skips every step that
+   already ran.
+
+Runs in one claim therefore share exactly two things: the fetch query, and the lease
+clock, which starts at claim time for the whole batch. They share no state, and one
+run's failure has no effect on its batch-mates.
+
+The floor for a trivial task is two round trips: its share of one claim, plus its own
+completion write.
+
+## The three worker knobs
+
+- `--concurrency` is the worker's **execution capacity**: how many claimed runs it
+  executes at once. One worker process runs one event loop, whatever the concurrency.
+  `async def` tasks run on that loop, up to `--concurrency` at a time; sync tasks run in
+  a thread pool of the same size. Raising concurrency never adds event loops or
+  processes.
+
+  Coming from Celery: there the meaning of `--concurrency` depends on the pool, and the
+  default prefork pool makes it child processes. django-absurd has one execution model,
+  and `--concurrency` is always in-process, closest to Celery's threads or gevent pools.
+  To add processes, start more `absurd_worker` commands; that is what the scaling table
+  below measures.
+
+- `--batch-size` is the **claim capacity**: the most runs one claim query returns.
+  Unset, it equals `--concurrency`. Above `--concurrency 1`, a claim also never fetches
+  more runs than the worker has free execution capacity. `--concurrency 1` is the
+  exception: that worker claims its whole `--batch-size` in one query and executes the
+  runs one after another.
+
+- `--poll-interval` is how long an idle worker sleeps before asking again. It paces
+  nothing under load: a busy worker claims again the moment a run finishes. The interval
+  only applies when the previous claim came back empty.
+
+Execution capacity refills as soon as a run finishes, so one slow run never stalls the
+others it was claimed alongside.
 
 ## Don't set `--batch-size` to 1
 
-A worker with 16 slots and `--batch-size 1` ran at the same rate as a worker with
-**one** slot — 68 tasks/s against 67. Claiming a single task per query throws away every
-extra slot you paid for, because the claim round trip dominates a short task.
+A worker with `--concurrency 16` and `--batch-size 1` ran at the same rate as a worker
+with `--concurrency 1`: 68 tasks/s against 67. The execution capacity is not discarded:
+the worker re-claims the moment capacity frees, so runs still overlap. What changes is
+the price. Filling sixteen units of capacity now takes sixteen claim round trips instead
+of one, and on a short task the claim round trip is the dominant cost, so throughput
+collapses to the rate of a single claim query. The measured penalty is round-trip cost,
+not idle capacity.
 
 The default is already right. Doubling it to 32 changed nothing measurable (2.36x versus
 2.35x). Leave it unset unless you have a specific reason, and never lower it hoping to
-reduce latency — `--poll-interval` is the knob for that.
+reduce latency. `--poll-interval` is the knob for that.
 
 ## Concurrency pays off, then flattens
 
-Going from 1 to 16 slots on one worker bought **2.35x** the throughput, not 16x. For a
-short task almost all the elapsed time is database round trips, and concurrency can only
-overlap those.
+Going from `--concurrency 1` to `16` on one worker bought **2.35x** the throughput, not
+16x. For a short task almost all the elapsed time is database round trips, and
+concurrency can only overlap those.
 
 Tasks that wait on something external go further, but still not indefinitely. At 50 ms
-of simulated IO per task, a worker reached 60% of its theoretical ceiling at 4 slots,
-34% at 16, and 22% at 32. Past roughly 16 slots the claim and completion writes become
-the constraint rather than the waiting.
+of simulated IO per task, a worker reached 60% of its theoretical ceiling at concurrency
+4, 34% at 16, and 22% at 32. Past roughly 16 concurrent runs the claim and completion
+writes become the constraint rather than the waiting.
 
-Start at `--concurrency 4` for IO-bound work, `1`–`2` for CPU-bound work, and raise it
-only if you can see slots sitting idle.
+Concurrency is capacity for overlapping IO waits, not CPU parallelism, so it does not
+scale with core count. Start at `--concurrency 4` for IO-bound work and `1` to `2` for
+CPU-bound work, and raise it only if you can see spare capacity going unused.
 
 ## Scale out with processes
 
@@ -63,18 +115,18 @@ only if you can see slots sitting idle.
 | 6       | 3.22x      | 0.54       |
 | 8       | 4.18x      | 0.52       |
 
-Throughput keeps climbing as you add worker processes, but each one returns less: by
-eight workers you get about half a worker's worth per worker.
+Throughput keeps rising as workers are added, but with diminishing returns on each new
+worker: by eight, each one contributes about half of what the first did. No hard ceiling
+appeared within the eight processes this host could hold.
 
-Expect this curve to look better than the table when your database is on its own host.
-These numbers were taken with eight workers, their slots, and Postgres all competing for
-the same eight cores, so they cannot separate claim contention from plain CPU
-starvation.
+Expect this curve to look better when your database is on its own host. These numbers
+were taken with eight workers, their concurrent runs, and Postgres all competing for the
+same eight cores, so they cannot separate claim contention from plain CPU starvation.
 
 ## `--poll-interval` sets your latency floor
 
-An idle worker only notices work on its next poll, so median wait on an otherwise empty
-queue is about **half** the interval:
+The interval is the idle cadence: how often a worker with nothing to do asks again. A
+task that arrives on an idle queue waits, on average, half of it:
 
 | `--poll-interval` | Median wait | Claims/s per idle worker |
 | ----------------- | ----------- | ------------------------ |
@@ -82,14 +134,14 @@ queue is about **half** the interval:
 | `0.25` (default)  | 139 ms      | 4.2                      |
 | `1.0`             | 513 ms      | 1.2                      |
 
-The cost is one query per worker per interval, forever. At `0.05` a fleet of eight
-workers issues about 160 queries a second into an idle database. Lower it when latency
+The cost is one query per idle worker per interval, forever. At `0.05` a fleet of eight
+workers issues about 160 queries a second into an empty database. Lower it when latency
 on a quiet queue matters; raise it when it doesn't and you would rather not pay the
-polling tax.
+polling tax. It has no effect on a saturated worker, which never sleeps.
 
 ## Sync or async, whichever reads better
 
-At the same IO wait, async and sync tasks performed identically — within 1% across
+At the same IO wait, async and sync tasks performed identically, within 1% across
 concurrency 4, 16 and 32. The thread pool that runs sync tasks is not a bottleneck at
 these sizes.
 
@@ -102,11 +154,14 @@ A task with four [steps](workflows.md#steps) cost **4.55x** a flat task doing th
 trivial work, so each `ctx.step` costs roughly as much as running a whole task. Each one
 is a durable write; that is what buys you resumption.
 
-Checkpoint at boundaries worth not repeating — an external charge, a slow import —
+Checkpoint at boundaries worth not repeating, like an external charge or a slow import,
 rather than at every line. Four checkpoints on a task that already takes a second are
 free in relative terms; four on a task that takes a millisecond are the whole cost.
 
 ## The enqueue side is often the bottleneck
+
+The producer is whatever code calls `enqueue()`. Usually that is your existing
+application, a web process for example, not something extra you write.
 
 | How you enqueue                   | Rate    | Per call |
 | --------------------------------- | ------- | -------- |
@@ -115,7 +170,7 @@ free in relative terms; four on a task that takes a millisecond are the whole co
 | Batched in `transaction.atomic()` | **12x** | 0.4 ms   |
 
 Each `enqueue()` is its own round trip, so a single-threaded producer topped out well
-below what eight workers could consume — it could not keep more than about three workers
+below what eight workers could consume. It could not keep more than about three workers
 busy.
 
 **Wrapping bulk enqueues in `transaction.atomic()` is the largest single improvement
@@ -130,68 +185,71 @@ with transaction.atomic():
         process_order.enqueue(order.id)
 ```
 
-Enqueuing one task inside a web request is fine — it is a few milliseconds. Enqueuing
+The trade is atomicity. If anything makes the transaction roll back (an exception inside
+the block, a lost connection, a crash before commit), every enqueue in it is gone
+together, and workers see none of them until the commit lands. Batch in chunks of a few
+hundred and retry a failed chunk, rather than putting one giant batch in one
+transaction.
+
+Enqueuing one task inside a web request is fine; it is a few milliseconds. Enqueuing
 thousands in a loop without a transaction is not.
 
-## Leave headroom
+## Keep steady-state load under 75% of capacity
 
-End-to-end latency stays flat until the fleet is busy, then rises sharply:
+End-to-end latency stays flat while the fleet has headroom, then rises sharply:
 
-| Load (share of capacity) | Median | p99    |
-| ------------------------ | ------ | ------ |
-| 25%                      | 51 ms  | 94 ms  |
-| 50%                      | 64 ms  | 146 ms |
-| 75%                      | 91 ms  | 165 ms |
-| 90%                      | 1.24 s | 6.2 s  |
+| Load (share of capacity) | Offered tasks/s | Median | p99    |
+| ------------------------ | --------------- | ------ | ------ |
+| 25%                      | 94              | 51 ms  | 94 ms  |
+| 50%                      | 188             | 64 ms  | 146 ms |
+| 75%                      | 282             | 91 ms  | 165 ms |
+| 90%                      | 338             | 1.24 s | 6.2 s  |
 
-**Capacity** here is the rate at which the same fleet drained an already-full queue —
-375.5 tasks/s for the four workers these rows were measured on. Each row then offers
-tasks at a fixed share of that rate for 60 seconds and measures how long each one took
-from `enqueue()` to completion. A saturation run cannot answer this: when the queue
-starts full, every task but the first waits behind the whole backlog, so its latency is
-just drain time.
+**Capacity** is the rate at which the same fleet drained an already-full queue: 375.5
+tasks/s for the four workers these rows were measured on. Each row then offers tasks at
+a fixed percentage of that capacity for 60 seconds and measures how long each task took
+from `enqueue()` to completion. A saturation run cannot answer this question: when the
+queue starts full, every task but the first waits behind the whole backlog, so its
+latency is just drain time.
 
-Between 75% and 90% the median rose **13.7x**. That is ordinary queueing behaviour
-rather than anything specific to Absurd — as utilisation approaches capacity, waiting
-time grows without bound — but it is worth designing against.
+Between 75% and 90% the median rose **13.7x**. That is ordinary queueing behaviour, not
+anything specific to Absurd: as utilisation approaches capacity, waiting time grows
+without bound. It is still worth designing against.
 
-**Size your fleet so steady-state load sits under about 75% of measured capacity.** The
-90% measurement also varied by 57% between repeats: near saturation the system is not
-merely slower, it is unpredictable.
+The 90% measurement also varied by 57% between repeats. Near saturation the system is
+not merely slower, it is unpredictable.
 
-To measure this for your own workload and hardware:
+## Running the benchmark
 
-```bash
-docker compose -f benchmarks/compose.yaml up -d db_bench
-uv run python benchmarks/manage.py migrate
-uv run python -m benchmarks.sweep --stage b --stage g
-```
-
-Stage B measures the ceiling and stage G offers against it, so B has to run first — on
-its own, `--stage g` reads the stored `benchmarks/results/stage_b.json` and errors if it
-is absent. Budget about 25 minutes for both, on an otherwise idle machine.
-
-## Reproducing this
-
-Every figure above comes from
-[`benchmarks/`](https://github.com/lincolnloop/django-absurd/tree/main/benchmarks) in
-the repository. From a checkout of it:
+The numbers above describe one laptop. To understand your own limits, run the benchmark
+on your own hardware, against your own Postgres. The secret is to measure, measure, and
+measure again. From a checkout of
+[the repository](https://github.com/lincolnloop/django-absurd/tree/main/benchmarks):
 
 ```bash
 docker compose -f benchmarks/compose.yaml up -d db_bench
 uv run python benchmarks/manage.py migrate
-uv run python -m benchmarks.sweep --all
+uv run python -m benchmarks.stages --all
 uv run python -m benchmarks.report
 ```
 
-The full sweep took 75 minutes on the reference host and wants an otherwise idle
-machine; `--stage a` (repeatable, `a`–`g`) runs one stage and `--reps 1` turns any of
-them into a quick dry run. Results land in `benchmarks/results/` as JSON, and the report
-renders them as the tables above.
+The full run took 75 minutes on the reference host and wants an otherwise idle machine.
+Two flags shorten it:
+
+- `--stage a` (repeatable, `a` to `g`) runs one stage instead of all seven. Stages
+  calibrate from their predecessors' result files, so for the latency table above run
+  `--stage b --stage g`.
+- `--reps N` overrides how many times each measurement repeats. The default is 3; the
+  median repeat is kept and the spread across repeats decides whether the result is
+  trustworthy. `--reps 1` turns any stage into a quick dry run whose numbers are
+  indicative only.
+
+Results land in `benchmarks/results/` as JSON, and the report renders them as the tables
+above.
 
 Every timing is read from Absurd's own `enqueue_at`, `started_at` and `completed_at`
 columns rather than from the harness, so the producer and the workers are measured on
-one clock. A cell whose repeats disagree by more than 15%, or that the host slept
+one clock. A measurement whose repeats disagree by more than 15%, or that the host slept
 through, is flagged and excluded from the ratios rather than published.
 
 Reference host: 8 cores, Postgres 18.6 in Docker on the same machine, Python 3.14,
