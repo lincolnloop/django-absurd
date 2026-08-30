@@ -238,7 +238,7 @@ Two flags shorten it:
 
 - `--stage a` (repeatable, `a` to `g`) runs one stage instead of all seven. Stages
   calibrate from their predecessors' result files, so for the latency table above run
-  `--stage b --stage g`.
+  `--stage a --stage b --stage g`.
 - `--reps N` overrides how many times each measurement repeats. The default is 3; the
   median repeat is kept and the spread across repeats decides whether the result is
   trustworthy. `--reps 1` turns any stage into a quick dry run whose numbers are

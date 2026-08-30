@@ -29,7 +29,7 @@ def render_report(results_dir: Path) -> str:
 def describe_host(stages: list[dict[str, t.Any]]) -> list[str]:
     # Every measurement carries its own provenance, and a benchmark run can span a
     # rebuild; reading only the first would print one SHA for a mixed report.
-    contexts = [entry["host"] for stage in stages for entry in stage["cells"]]
+    contexts = [entry["host"] for stage in stages for entry in stage["measurements"]]
     context = contexts[0]
     shas = sorted({entry["git_sha"] for entry in contexts})
     stamps = sorted(entry["captured_at"] for entry in contexts)
@@ -65,8 +65,7 @@ def describe_capture_window(stamps: list[str]) -> str:
 def render_stage(stage: dict[str, t.Any]) -> list[str]:
     if stage["stage"] == "f":
         return render_producer_stage(stage)
-    # "cells" is the stored JSON key; see write_stage_file in benchmarks/stages.py.
-    measurements = stage["cells"]
+    measurements = stage["measurements"]
     lines = ["", f"## Stage {stage['stage'].upper()}", "", TABLE_HEADER, TABLE_RULE]
     lines += [render_measurement_row(entry) for entry in measurements]
     lines += render_idle_probes(stage)
@@ -98,7 +97,7 @@ def render_producer_stage(stage: dict[str, t.Any]) -> list[str]:
                     "⚠ flagged" if entry["flagged"] else "",
                 ]
             )
-            for entry in stage["cells"]
+            for entry in stage["measurements"]
         ],
     ]
 
@@ -293,7 +292,9 @@ def render_row(fields: list[str]) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Render committed benchmark results.")
+    parser = argparse.ArgumentParser(
+        description="Render a benchmark results directory as markdown."
+    )
     parser.add_argument("--results-dir", default=DEFAULT_RESULTS_DIR, type=Path)
     print(render_report(parser.parse_args().results_dir), end="")
 

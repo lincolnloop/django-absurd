@@ -351,10 +351,10 @@ def write_stage_file(
     # Rewritten after every measurement so a run killed at hour two keeps everything.
     path = options.results_dir / f"stage_{stage}.json"
     staged = path.with_suffix(".json.tmp")
-    # The JSON key stays "cells": renaming it would invalidate the committed
-    # reference results under benchmarks/results/.
     staged.write_text(
-        json.dumps({"stage": stage, "cells": recorded, **(extra or {})}, indent=2)
+        json.dumps(
+            {"stage": stage, "measurements": recorded, **(extra or {})}, indent=2
+        )
         + "\n"
     )
     staged.replace(path)
@@ -416,7 +416,9 @@ def read_stage_measurements(
     path = options.results_dir / f"stage_{stage}.json"
     if not path.exists():
         raise MissingStageError(path, stage.upper())
-    return t.cast("list[dict[str, t.Any]]", json.loads(path.read_text())["cells"])
+    return t.cast(
+        "list[dict[str, t.Any]]", json.loads(path.read_text())["measurements"]
+    )
 
 
 def pick_winning_worker(recorded: list[dict[str, t.Any]]) -> runner.WorkerSpec:

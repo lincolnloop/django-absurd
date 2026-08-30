@@ -68,7 +68,7 @@ def render(
     tmp_path: Path, stage: str, entries: list[dict[str, t.Any]], **extra: t.Any
 ) -> str:
     (tmp_path / f"stage_{stage}.json").write_text(
-        json.dumps({"stage": stage, "cells": entries, **extra})
+        json.dumps({"stage": stage, "measurements": entries, **extra})
     )
     return report.render_report(tmp_path)
 

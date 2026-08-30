@@ -51,10 +51,11 @@ workers run in.
 
 ## What it found
 
-Measured on one 8-core laptop with Postgres in Docker on the same box
-(`benchmarks/results/`, rendered by `python -m benchmarks.report`). **Absolute rates are
-a property of that machine; only the ratios travel.** A tasks/s figure quoted without
-its host context will be read as django-absurd's number rather than this laptop's.
+Measured on one 8-core laptop with Postgres in Docker on the same box; the tables in
+[`docs/web/performance.md`](../docs/web/performance.md) render that run. **Absolute
+rates are a property of that machine; only the ratios travel.** A tasks/s figure quoted
+without its host context will be read as django-absurd's number rather than this
+laptop's.
 
 | finding                                                    | measured                                                                                 |
 | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
@@ -102,10 +103,10 @@ container runs.
 
 Step 4 is the test suite AND the smoke: `uv run pytest benchmarks` runs the whole
 harness end to end (real `absurd_worker` subprocesses, real enqueues, real SQL analysis)
-against a pytest-django test database, `test_absurd_bench`, so it is safe to run while
-committed results exist. It needs `db_bench` up, and nothing else. Step 5 took 75
-minutes on the reference host; `--stage A` (repeatable, case-insensitive, `A` to `G`)
-runs one stage, and `--reps 1` turns any stage into a fast dry run.
+against a pytest-django test database, `test_absurd_bench`, so it never touches a
+results directory you already have. It needs `db_bench` up, and nothing else. Step 5
+took 75 minutes on the reference host; `--stage A` (repeatable, case-insensitive, `A` to
+`G`) runs one stage, and `--reps 1` turns any stage into a fast dry run.
 
 `db_bench` listens on `${PGPORT_BENCH:-5435}` and keeps a named volume, so it is a
 different server from the root `compose.yaml`'s `db` and `db_pg_cron`. Those two do not
@@ -148,11 +149,11 @@ incomparable across machines.
 `benchmarks/results/stage_a.json` through `stage_g.json` are written by
 `python -m benchmarks.stages`, and by nothing else. The driver rewrites the stage's file
 after every finished measurement (atomically, via a temp file), so a run killed at hour
-two keeps everything it measured. Inside each file the list key is `"cells"`, the
-pre-rename name, kept so the committed files stay valid. The files are committed to git
-by whoever ran the benchmark: they are the source the report renders and the baseline a
-later run is diffed against. The test suite never touches them; it works against a
-throwaway test database and temporary directories.
+two keeps everything it measured. The directory is git-ignored on purpose: the numbers
+are a property of whatever machine produced them, and a committed set would read as
+django-absurd's official figures. The findings that travel live in the guide instead.
+The test suite never touches these files; it works against a throwaway test database and
+temporary directories.
 
 ## The measurement model
 
@@ -217,16 +218,17 @@ uv run pytest benchmarks
 
 The suite has its own `pytest.toml` (a bare `uv run pytest` at repo root collects
 nothing on purpose). It creates and reuses `test_absurd_bench` on the `db_bench` server,
-so the committed results and the persistent benchmark database are never touched by a
-test run.
+so an existing results directory and the persistent benchmark database are never touched
+by a test run.
 
 ## When the `absurd-sdk` pin moves
 
-Re-run `uv run python -m benchmarks.stages --all` and diff `benchmarks/results/`. The
-stage filenames are stable (`stage_a.json` through `stage_g.json`) so a throughput
-regression shows up as a plain `git diff`. Stages B, C and E calibrate themselves from
-`stage_a.json` and stage G from `stage_b.json`, so a partial re-run must include the
-stage it depends on, or it errors saying so.
+Copy `benchmarks/results/` aside, re-run `uv run python -m benchmarks.stages --all`, and
+diff the two directories: the stage filenames are stable (`stage_a.json` through
+`stage_g.json`), so a throughput regression shows up in a plain `diff -r`. Stages B, C
+and E calibrate themselves from `stage_a.json` and stage G from `stage_b.json`, so a
+partial re-run must include the stage it depends on (on a fresh checkout that means
+starting with stage A), or it errors saying so.
 
 ## Layout
 
@@ -242,7 +244,7 @@ stage it depends on, or it errors saying so.
 | `analysis.py`    | the SQL that turns Absurd's own columns into metrics                              |
 | `measurement.py` | one measurement: reps, drain detection, median, flags                             |
 | `stages.py`      | runs the benchmark stages (`--stage`, `--all`, `--reps`)                          |
-| `report.py`      | renders committed results as markdown                                             |
+| `report.py`      | renders a results directory as markdown                                           |
 
 Worker children inherit the database the parent is actually using (the runner serializes
 `connections["default"].settings_dict` into their environment), which is what lets the

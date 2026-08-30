@@ -9,6 +9,7 @@
 .python-version
 .ruff_cache/
 .venv/
+/benchmarks/results/
 /site/
 __pycache__/
 build/
