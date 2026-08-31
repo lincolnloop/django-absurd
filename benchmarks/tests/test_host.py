@@ -28,6 +28,8 @@ def test_collects_host_context_fields() -> None:
         "git_sha",
         "load_avg_1m",
         "postgres",
+        "postgres_uptime_s",
         "python",
     }
+    assert context["postgres_uptime_s"] >= 0.0
     assert context["cpu_count"] >= 1

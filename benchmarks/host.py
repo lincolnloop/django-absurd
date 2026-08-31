@@ -54,8 +54,13 @@ def check_phase_uninterrupted(elapsed_s: float, wall_s: float) -> None:
 
 def collect_host_context() -> dict[str, t.Any]:
     with connections["default"].cursor() as cursor:
-        cursor.execute("select version()")
-        postgres = cursor.fetchone()[0]
+        # Uptime rides along with the version: a server hammered for hours measures
+        # slower than a freshly started one, and nothing else records which you got.
+        cursor.execute(
+            "select version(), "
+            "extract(epoch from now() - pg_postmaster_start_time())::float8"
+        )
+        postgres, postgres_uptime_s = cursor.fetchone()
     return {
         "absurd_sdk": importlib.metadata.version("absurd-sdk"),
         "captured_at": dt.datetime.now(tz=dt.UTC).isoformat(),
@@ -64,6 +69,7 @@ def collect_host_context() -> dict[str, t.Any]:
         "git_sha": read_git_sha(),
         "load_avg_1m": os.getloadavg()[0],
         "postgres": postgres,
+        "postgres_uptime_s": float(postgres_uptime_s),
         "python": platform.python_version(),
     }
 

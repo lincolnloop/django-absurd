@@ -101,6 +101,30 @@ results land in `benchmarks/results/` through the bind mount. Numbers measured i
 the container include the container's own overhead, so compare them only with other
 container runs.
 
+### Restarting Postgres between stages
+
+How long the database process has been running changes what you measure. Reps at 90% of
+capacity read 680-998 ms after an hour of continuous load, and 67-173 ms immediately
+after a restart, and only in the restarted case did the workers reach the offered rate
+at all. The effect returns within a single stage, so it is drift across a long run, not
+a one-off warm-up.
+
+To take that variable out of a comparison, run each stage against a fresh server:
+
+```
+benchmarks/run_stages_cold.sh          # all seven stages
+benchmarks/run_stages_cold.sh b g      # just these, in this order
+```
+
+It restarts `db_bench`, waits for `pg_isready`, then runs one stage in the `bench`
+container, repeating per stage. Stage order still matters: B, C and E calibrate from A
+and G calibrates from B, each reading the earlier stage back off disk.
+
+This is deliberately not the default. Nobody restarts Postgres between workloads in
+production, so a cold run measures a best case rather than a representative one. Both
+are legitimate, and every result records `postgres_uptime_s` so a reader can tell which
+regime produced a number.
+
 Step 4 is the test suite AND the smoke: `uv run pytest benchmarks` runs the whole
 harness end to end (real `absurd_worker` subprocesses, real enqueues, real SQL analysis)
 against a pytest-django test database, `test_absurd_bench`, so it never touches a
