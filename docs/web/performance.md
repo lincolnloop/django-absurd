@@ -11,8 +11,13 @@ drawn from a measured benchmark rather than intuition.
 laptop running Postgres, the workers, and the benchmark itself on the same machine. The
 absolute rates are a property of that box. What transfers is the ratios: what doubling a
 knob buys, and where a curve bends. For a sense of scale, a single worker drained a
-trivial task at roughly 150/s there, and eight workers at roughly 650/s. Treat those as
-an order of magnitude, never a specification.
+trivial task at roughly 140 to 190/s there, and eight workers at roughly 700 to 810/s.
+Treat those as an order of magnitude, never a specification.
+
+Those ranges are wide on purpose. The same measurement moved by 15% to 47% depending on
+how long the Postgres process had been running, which is worth reading about before
+comparing any number here against your own: see
+[Database uptime changes what you measure](#database-uptime-changes-what-you-measure).
 
 ## Tasks, runs, claims, checkpoints
 
@@ -194,30 +199,50 @@ transaction.
 Enqueuing one task inside a web request is fine; it is a few milliseconds. Enqueuing
 thousands in a loop without a transaction is not.
 
-## Keep steady-state load under 75% of capacity
+## Leave headroom, and measure your own cliff
 
-End-to-end latency stays flat while the fleet has headroom, then rises sharply:
+End-to-end latency stays flat while the fleet has headroom, then rises. How sharply it
+rises turned out to depend less on Absurd than on how long the Postgres process had been
+running. The same four stage G rows, measured twice:
 
-| Load (share of capacity) | Offered tasks/s | Median | p99    |
-| ------------------------ | --------------- | ------ | ------ |
-| 25%                      | 94              | 51 ms  | 94 ms  |
-| 50%                      | 188             | 64 ms  | 146 ms |
-| 75%                      | 282             | 91 ms  | 165 ms |
-| 90%                      | 338             | 1.24 s | 6.2 s  |
+| Load | Postgres up 75 min | Postgres up 3 min |
+| ---- | ------------------ | ----------------- |
+| 25%  | 51 ms              | 49 ms             |
+| 50%  | 64 ms              | 46 ms             |
+| 75%  | 91 ms              | 63 ms             |
+| 90%  | **1.24 s**         | **140 ms**        |
 
-**Capacity** is the rate at which the same fleet drained an already-full queue: 375.5
-tasks/s for the four workers these rows were measured on. Each row then offers tasks at
-a fixed percentage of that capacity for 60 seconds and measures how long each task took
-from `enqueue()` to completion. A saturation run cannot answer this question: when the
-queue starts full, every task but the first waits behind the whole backlog, so its
-latency is just drain time.
+Median end-to-end latency, `enqueue()` to completion. The left column offered up to 338
+tasks/s against a measured capacity of 375.5; the right offered up to 445 against a
+capacity of 494.5, because a freshly started server also measured a 32% higher ceiling.
 
-Between 75% and 90% the median rose **13.7x**. That is ordinary queueing behaviour, not
-anything specific to Absurd: as utilisation approaches capacity, waiting time grows
-without bound. It is still worth designing against.
+On the long-running server the median rose **13.7x** between 75% and 90%, and repeats of
+the 90% row disagreed by 57%. On the fresh one the same step cost **2.2x**, the workers
+kept up with the full offered rate, and repeats held within 114 ms of each other.
 
-The 90% measurement also varied by 57% between repeats. Near saturation the system is
-not merely slower, it is unpredictable.
+**Capacity** is the rate at which the same fleet drained an already-full queue. Each row
+then offers tasks at a fixed percentage of that capacity for 60 seconds. A saturation
+run cannot answer this question: when the queue starts full, every task but the first
+waits behind the whole backlog, so its latency is just drain time.
+
+Two things to take from this. Latency does rise as you approach capacity, which is
+ordinary queueing behaviour and worth designing against whatever your hardware does. And
+the size of the cliff is a property of your database's state, not a constant you can
+copy from this page. Measure it where you run it.
+
+### Database uptime changes what you measure
+
+Every worker-side result improved by 15% to 47% when each stage ran against a freshly
+restarted Postgres instead of one that had been under load for the preceding hour. Pure
+enqueue throughput, with no workers involved at all, improved by 20% to 30%, so this is
+not specific to claiming. The effect returns within a single stage.
+
+We did not isolate the cause. Buffer eviction pressure on a fully populated
+`shared_buffers` is the likeliest candidate, but it is inference, not a measurement.
+
+Every result file records `postgres_uptime_s`, so a number can always be traced back to
+the regime that produced it, and `benchmarks/run_stages_cold.sh` restarts the server
+between stages when you want that variable held still.
 
 ## Running the benchmark
 
@@ -244,13 +269,21 @@ Two flags shorten it:
   trustworthy. `--reps 1` turns any stage into a quick dry run whose numbers are
   indicative only.
 
+To hold database uptime still across the whole sweep, `benchmarks/run_stages_cold.sh`
+restarts Postgres before each stage and runs them in order. It measures a best case
+rather than a representative one, since nothing restarts a production database between
+workloads, so prefer it for comparing runs against each other rather than for sizing.
+
 Results land in `benchmarks/results/` as JSON, and the report renders them as the tables
 above.
 
 Every timing is read from Absurd's own `enqueue_at`, `started_at` and `completed_at`
 columns rather than from the harness, so the producer and the workers are measured on
 one clock. A measurement whose repeats disagree by more than 15%, or that the host slept
-through, is flagged and excluded from the ratios rather than published.
+through, is flagged and excluded from the ratios rather than published. Latency
+measurements carry a 150 ms floor under that check, because relative spread divides by
+the median and so grows as a measurement gets faster: repeats of 88, 139 and 202 ms read
+as 82% apart while being tight enough to quote.
 
 Reference host: 8 cores, Postgres 18.6 in Docker on the same machine, Python 3.14,
 Django 6.1, absurd-sdk 0.5.0.
