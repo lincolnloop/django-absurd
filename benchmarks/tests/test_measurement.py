@@ -6,7 +6,9 @@ from benchmarks import measurement, runner
 
 
 def build_spec(
-    mode: t.Literal["rate", "saturation"], spread_limit: float
+    mode: t.Literal["rate", "saturation"],
+    spread_limit: float,
+    spread_floor: float = 0.0,
 ) -> measurement.MeasurementSpec:
     return measurement.MeasurementSpec(
         name="unit",
@@ -14,6 +16,7 @@ def build_spec(
         task_path="benchmarks.tasks.noop_sync",
         worker=runner.WorkerSpec(),
         spread_limit=spread_limit,
+        spread_floor=spread_floor,
     )
 
 
@@ -69,4 +72,40 @@ def test_refuses_to_read_a_zero_throughput_measurement_as_stable() -> None:
     summary = measurement.summarize_reps(build_spec("saturation", 0.15), reps)
 
     assert summary["spread"] is None
+    assert summary["flagged"] is True
+
+
+@pytest.mark.functional
+@pytest.mark.django_db
+def test_spares_a_relatively_noisy_measurement_whose_reps_are_absolutely_tight() -> (
+    None
+):
+    # 0.067/0.089/0.173s spans 159% of its median but only 106ms end to end. Relative
+    # spread RISES as a measurement gets faster, so without the floor the harness
+    # flags its own best results.
+    reps: list[dict[str, t.Any]] = [
+        {"valid": True, "end_to_end_p50_s": 0.067},
+        {"valid": True, "end_to_end_p50_s": 0.089},
+        {"valid": True, "end_to_end_p50_s": 0.173},
+    ]
+
+    summary = measurement.summarize_reps(build_spec("rate", 0.15, 0.15), reps)
+
+    assert summary["spread"] > 0.15
+    assert summary["absolute_spread"] == pytest.approx(0.106)
+    assert summary["flagged"] is False
+
+
+@pytest.mark.functional
+@pytest.mark.django_db
+def test_still_flags_a_measurement_that_clears_the_limit_and_the_floor() -> None:
+    reps: list[dict[str, t.Any]] = [
+        {"valid": True, "end_to_end_p50_s": 0.680},
+        {"valid": True, "end_to_end_p50_s": 0.771},
+        {"valid": True, "end_to_end_p50_s": 0.911},
+    ]
+
+    summary = measurement.summarize_reps(build_spec("rate", 0.15, 0.15), reps)
+
+    assert summary["absolute_spread"] == pytest.approx(0.231)
     assert summary["flagged"] is True

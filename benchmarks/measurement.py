@@ -31,6 +31,11 @@ class MeasurementSpec:
     reps: int = 3
     timeout_s: float = 300.0
     spread_limit: float = 0.15
+    # Absolute max-min, in the ranking key's own units, under which `spread_limit` no
+    # longer applies. Relative spread divides by the median, so it RISES as a
+    # measurement gets faster: reps of 67/89/173ms read as 119%. Zero keeps the pure
+    # relative test, which is the historical behaviour.
+    spread_floor: float = 0.0
 
 
 def run_measurement(spec: MeasurementSpec) -> dict[str, t.Any]:
@@ -113,12 +118,16 @@ def summarize_reps(
     # and a measurement must not be summarized by its luckiest rep.
     median: dict[str, t.Any] = valid[(len(valid) - 1) // 2] if valid else {}
     spread = measure_spread(valid, median, ranking_key)
+    absolute_spread = measure_absolute_spread(valid, ranking_key)
     return {
         "spec": dataclasses.asdict(spec),
         "reps": reps,
         "median": median,
         "spread": spread,
-        "flagged": is_measurement_unreliable(spec, reps, valid, spread),
+        "absolute_spread": absolute_spread,
+        "flagged": is_measurement_unreliable(
+            spec, reps, valid, spread, absolute_spread
+        ),
         "host": host.collect_host_context(),
     }
 
@@ -137,11 +146,26 @@ def measure_spread(
     return float((max(values) - min(values)) / median[ranking_key])
 
 
+def measure_absolute_spread(
+    valid: list[dict[str, t.Any]], ranking_key: str
+) -> float | None:
+    """``max - min`` in the ranking key's own units, or ``None`` with nothing valid.
+
+    Recorded alongside the relative spread because the two disagree exactly where it
+    matters: a fast measurement can be tight here and still read as noisy there.
+    """
+    if not valid:
+        return None
+    values = [rep[ranking_key] for rep in valid]
+    return float(max(values) - min(values))
+
+
 def is_measurement_unreliable(
     spec: MeasurementSpec,
     reps: list[dict[str, t.Any]],
     valid: list[dict[str, t.Any]],
     spread: float | None,
+    absolute_spread: float | None,
 ) -> bool:
     """Every rep votes, not only the median one: a rep that under-offered has a LOWER
     latency, so it sorts away from the median and would never be looked at.
@@ -149,7 +173,7 @@ def is_measurement_unreliable(
     if not valid or len(valid) != len(reps) or spread is None:
         return True
     return (
-        spread > spec.spread_limit
+        (spread > spec.spread_limit and (absolute_spread or 0.0) > spec.spread_floor)
         or any(rep.get("extra_runs", 0) > 0 for rep in valid)
         or any(rep.get("missing_tasks", 0) != 0 for rep in valid)
         or any(rep.get("degenerate_window", False) for rep in valid)

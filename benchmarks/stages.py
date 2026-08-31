@@ -39,6 +39,10 @@ HOST_CPUS = os.cpu_count() or 1
 # off the fastest saturation result asks for an offer it has no cores left to give.
 RATE_WORKER_CAP = max(1, HOST_CPUS // 2)
 RATE_TIMEOUT_S = 300.0
+# Reps within 150 ms of each other are not called unstable however far apart they read
+# relatively. A rate measurement ranks on `end_to_end_p50_s`, and relative spread
+# divides by that median, so it RISES as the measurement gets faster.
+RATE_SPREAD_FLOOR_S = 0.15
 IDLE_PROBE_SECONDS = 30.0
 IDLE_PROBE_WORKERS = 4
 POLL_INTERVALS = (0.05, 0.25, 1.0)
@@ -171,6 +175,7 @@ def run_stage_g(options: StageOptions) -> None:
                 rate_per_s=ceiling * fraction,
                 duration_s=RATE_OFFER_SECONDS,
                 timeout_s=RATE_TIMEOUT_S,
+                spread_floor=RATE_SPREAD_FLOOR_S,
             )
             for fraction in (0.25, 0.50, 0.75, 0.90)
         ],
@@ -262,6 +267,7 @@ def build_stage_c_measurements(
             rate_per_s=5.0,
             duration_s=RATE_OFFER_SECONDS,
             timeout_s=RATE_TIMEOUT_S,
+            spread_floor=RATE_SPREAD_FLOOR_S,
         )
         for poll_interval in POLL_INTERVALS
     ]
