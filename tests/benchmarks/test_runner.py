@@ -1,3 +1,14 @@
+"""The only tests here that enter below the command line, and why.
+
+Every other file drives `stages.main`. These cover what the runner does when a child
+misbehaves — never reporting readiness, talking past its deadline, ignoring its stop
+signal, dying before the ladder finishes — and no stage can ask for that. A driver
+flag that broke its own workers would exist for nothing but these tests.
+
+So the child is a real process that misbehaves on purpose. Nothing is mocked; only
+which program it runs is substituted, and the protocol under test is the real one.
+"""
+
 import re
 import subprocess
 import sys

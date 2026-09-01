@@ -197,7 +197,23 @@ database up, and `--cov-append` folds it into the merged coverage number. No sep
 job, no separate flag, no container coverage-path rewrite — all of which the earlier
 draft specified because it assumed the tests needed the benchmark server.
 
-## 1.9 Sweep: every test through the command line
+## 1.9 Sweep: every test through the command line — DONE
+
+Outcome: 38 tests, of which every one drives `stages.main` or `report.main` except the
+runner file, which covers what happens when a worker child misbehaves. Recorded in that
+file's own docstring rather than here.
+
+The premise below was wrong in one respect worth keeping: the guards were called
+unreachable, and all of them turned out reachable — a child that traps its stop signal,
+one that talks past its deadline, one that refuses an undeclared queue, a backlog that
+outlives its drain deadline, and a thread that moves the wall clock while the monotonic
+one stays put. `benchmarks/` is at 100% statement and branch. One guard was deleted
+rather than covered, because the only input that reached it turned nonsense into a
+plausible number.
+
+Superseded, kept for the reasoning:
+
+## 1.9 (original) Sweep: every test through the command line
 
 After 1.1 and 1.4 land. Enumerate every call in `tests/benchmarks` that reaches below
 `stages.main` / `report.main` and resolve each one. Four are known to remain, each with
