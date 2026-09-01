@@ -275,6 +275,10 @@ def run_latency_under_load(options: StageOptions) -> None:
 
 
 def build_concurrency_measurements() -> list[measurement.MeasurementSpec]:
+    # The rungs are fixed while the worker ladder in process_scaling tracks the host,
+    # so that a concurrency result means the same thing on every machine. Scale these
+    # and the async-vs-sync ratio stops being comparable across hosts, which is the
+    # only thing that ratio is for.
     return [
         measurement.MeasurementSpec(
             name=f"concurrency_{concurrency}",

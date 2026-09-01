@@ -84,7 +84,8 @@ would likely look better.
 ```
 docker compose -f benchmarks/compose.yaml run --rm bench
 docker compose -f benchmarks/compose.yaml run --rm bench \
-  python -m benchmarks.report > /tmp/bench-report.md
+  python -m benchmarks.report \
+  > "benchmarks/results/report-$(date -u +%Y%m%dT%H%M%SZ).md"
 ```
 
 Runs happen only in the container. `db_bench` publishes no port, so there is one
@@ -186,12 +187,15 @@ the cores), which leaves the producer room to hit its target.
 ## The results files
 
 `benchmarks/results/stage_<name>.json` files are written by
-`python -m benchmarks.stages`, and by nothing else. The driver rewrites the stage's file
-after every finished measurement (atomically, via a temp file), so a run killed at hour
-two keeps everything it measured. The directory is git-ignored on purpose: the numbers
-are a property of whatever machine produced them, and a committed set would read as
-django-absurd's official figures. The test suite never touches these files; it works
-against a throwaway test database and temporary directories.
+`python -m benchmarks.stages`, and by nothing else. A rendered `report-<UTC stamp>.md`
+lands beside them so a run and its reading stay together, stamped because a second run
+would otherwise overwrite the first reading while its own JSON sat right there. The
+driver rewrites the stage's file after every finished measurement (atomically, via a
+temp file), so a run killed at hour two keeps everything it measured. The directory is
+git-ignored on purpose: the numbers are a property of whatever machine produced them,
+and a committed set would read as django-absurd's official figures. The test suite never
+touches these files; it works against a throwaway test database and temporary
+directories.
 
 ## The measurement model
 
@@ -246,6 +250,14 @@ one that measured nothing cannot read as the most stable in its stage. Flagged
 measurements are still written to the results file; the report marks them and excludes
 them from every derived ratio. Measure on a quiet machine on AC power; ambient load is
 recorded per measurement precisely because it pollutes.
+
+**It does not pollute every stage equally.** A rate stage offers a few tasks a second
+and never approaches the machine's ceiling, so whatever else the box is doing barely
+reaches it. A saturation stage drives the machine to its limit, which is exactly where
+sharing cores with anything else stops being ignorable. On a busy workstation the paced
+stages came back unflagged while nearly every saturation measurement did not — so a run
+on a machine you are also using is worth reading for its rate stages and worth
+distrusting for the rest.
 
 ## Running the tests
 
