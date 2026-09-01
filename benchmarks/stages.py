@@ -17,7 +17,15 @@ RUN_STEPS = "benchmarks.tasks.run_steps"
 SLEEP_ASYNC = "benchmarks.tasks.sleep_async"
 SLEEP_SYNC = "benchmarks.tasks.sleep_sync"
 
-STAGE_NAMES = ("a", "b", "c", "d", "e", "f", "g")
+STAGE_NAMES = (
+    "worker_knobs",
+    "process_scaling",
+    "poll_interval",
+    "sync_vs_async",
+    "checkpoint_cost",
+    "producer_ceiling",
+    "latency_under_load",
+)
 
 # Which stage each one reads back off disk to calibrate itself. A partial order, not a
 # sequence: D and F depend on nothing, so the letters imply an ordering that is not
@@ -25,23 +33,31 @@ STAGE_NAMES = ("a", "b", "c", "d", "e", "f", "g")
 # in; a stage named alone whose prerequisite is missing still refuses rather than
 # quietly running it.
 STAGE_DEPENDS_ON = {
-    "b": "a",
-    "c": "a",
-    "e": "a",
-    "g": "b",
+    "process_scaling": "worker_knobs",
+    "poll_interval": "worker_knobs",
+    "checkpoint_cost": "worker_knobs",
+    "latency_under_load": "process_scaling",
 }
 
 STAGE_DESCRIPTIONS = {
-    "a": "one worker's knobs: concurrency ladder, then batch size, then async dispatch",
-    "b": "throughput scaling across worker processes, at stage A's winning config",
-    "c": "poll_interval: latency under a paced offer, plus idle claim-rate probes",
-    "d": "async vs sync task bodies at the same 50 ms of simulated IO",
-    "e": "checkpoint cost: a 4-step workflow against a flat task",
-    "f": "the producer's own ceiling: one connection, eight threads, batched commits",
-    "g": "end-to-end latency at fractions of stage B's measured ceiling",
+    "worker_knobs": (
+        "one worker's knobs: concurrency ladder, then batch size, then async dispatch"
+    ),
+    "process_scaling": (
+        "throughput scaling across worker processes, at the winning worker config"
+    ),
+    "poll_interval": ("latency under a paced offer, plus idle claim-rate probes"),
+    "sync_vs_async": "async vs sync task bodies at the same 50 ms of simulated IO",
+    "checkpoint_cost": "checkpoint cost: a 4-step workflow against a flat task",
+    "producer_ceiling": (
+        "the producer's own ceiling: one connection, eight threads, batched commits"
+    ),
+    "latency_under_load": (
+        "end-to-end latency at fractions of the measured process-scaling ceiling"
+    ),
 }
 
-# Sized so the slowest stage A measurement (concurrency 1, ~67 tasks/s) drains a rep
+# Sized so the slowest worker_knobs measurement (concurrency 1, ~67 tasks/s) drains
 # in about 75 s; throughput divides a p10-p90 window; a small backlog is mostly ramp.
 SATURATION_TASKS = 5000
 SATURATION_TIMEOUT_S = 900.0
@@ -63,7 +79,7 @@ POLL_INTERVALS = (0.05, 0.25, 1.0)
 PRODUCER_ENQUEUE_COUNT = 5000
 PRODUCER_SPREAD_LIMIT = 0.15
 # The 4-checkpoint task runs ~4.5x slower than a flat one, so SATURATION_TASKS would
-# push a rep past two minutes; 2000 keeps stage E on the same per-rep budget.
+# push a rep past two minutes; 2000 keeps checkpoint_cost on the same per-rep budget.
 WORKFLOW_TASKS = 2000
 
 
@@ -71,7 +87,7 @@ class MissingStageError(Exception):
     def __init__(self, path: Path, required_stage: str) -> None:
         super().__init__(
             f"{path} is missing, and this stage is calibrated from it. "
-            f"Run `python -m benchmarks.stages --stage {required_stage}` first."
+            f"Run `python -m benchmarks.stages {required_stage}` first."
         )
 
 
@@ -115,49 +131,64 @@ def order_by_dependency(stage_names: list[str]) -> list[str]:
 
 def run_stage(name: str, options: StageOptions) -> None:
     print(f"stage {name.upper()}: {STAGE_DESCRIPTIONS[name]}")
-    if name == "a":
-        run_stage_a(options)
-    elif name == "b":
-        run_stage_b(options)
-    elif name == "c":
-        run_stage_c(options)
-    elif name == "d":
-        record_measurements("d", build_stage_d_measurements(), [], options)
-    elif name == "e":
+    if name == "worker_knobs":
+        run_worker_knobs(options)
+    elif name == "process_scaling":
+        run_process_scaling(options)
+    elif name == "poll_interval":
+        run_poll_interval(options)
+    elif name == "sync_vs_async":
         record_measurements(
-            "e", build_stage_e_measurements(read_winning_worker(options)), [], options
+            "sync_vs_async", build_sync_vs_async_measurements(), [], options
         )
-    elif name == "f":
-        run_stage_f(options)
+    elif name == "checkpoint_cost":
+        record_measurements(
+            "checkpoint_cost",
+            build_checkpoint_cost_measurements(read_winning_worker(options)),
+            [],
+            options,
+        )
+    elif name == "producer_ceiling":
+        run_producer_ceiling(options)
     else:
-        run_stage_g(options)
+        run_latency_under_load(options)
 
 
-def run_stage_a(options: StageOptions) -> None:
+def run_worker_knobs(options: StageOptions) -> None:
     """Claim amortization and concurrency scaling, then the async dispatch ratio."""
     recorded: list[dict[str, t.Any]] = []
-    record_measurements("a", build_a1_measurements(), recorded, options)
+    record_measurements(
+        "worker_knobs", build_concurrency_measurements(), recorded, options
+    )
     winner = pick_winning_worker(recorded)
-    record_measurements("a", build_a2_measurements(winner), recorded, options)
-    record_measurements("a", build_a3_measurements(winner), recorded, options)
+    record_measurements(
+        "worker_knobs", build_batch_size_measurements(winner), recorded, options
+    )
+    record_measurements(
+        "worker_knobs", build_async_dispatch_measurements(winner), recorded, options
+    )
 
 
-def run_stage_b(options: StageOptions) -> None:
-    """How throughput scales with worker processes at stage A's winning config."""
+def run_process_scaling(options: StageOptions) -> None:
+    """How throughput scales with worker processes at the winning worker config."""
     worker = read_winning_worker(options)
-    record_measurements("b", build_stage_b_measurements(worker), [], options)
+    record_measurements(
+        "process_scaling", build_process_scaling_measurements(worker), [], options
+    )
 
 
-def run_stage_c(options: StageOptions) -> None:
+def run_poll_interval(options: StageOptions) -> None:
     """What poll_interval buys in latency and costs in idle transactions."""
     worker = read_winning_worker(options)
     recorded: list[dict[str, t.Any]] = []
-    record_measurements("c", build_stage_c_measurements(worker), recorded, options)
+    record_measurements(
+        "poll_interval", build_poll_interval_measurements(worker), recorded, options
+    )
     probes = measure_idle_probes(worker, options.duration_s or IDLE_PROBE_SECONDS)
-    write_stage_file("c", recorded, options, {"idle_probes": probes})
+    write_stage_file("poll_interval", recorded, options, {"idle_probes": probes})
 
 
-def run_stage_f(options: StageOptions) -> None:
+def run_producer_ceiling(options: StageOptions) -> None:
     """The producer's own ceiling: one connection, eight threads, batched commits."""
     recorded: list[dict[str, t.Any]] = []
     enqueues = options.tasks or PRODUCER_ENQUEUE_COUNT
@@ -167,7 +198,7 @@ def run_stage_f(options: StageOptions) -> None:
             truncate_queue_tables("bench")
             reps.append(measure_producer_rep(mode, enqueues))
         recorded.append(summarize_producer_reps(mode, reps))
-        write_stage_file("f", recorded, options)
+        write_stage_file("producer_ceiling", recorded, options)
         median = recorded[-1]["median"]
         print(f"f_{mode}: {median.get('enqueues_per_s', 0.0):.1f} enqueues/s")
 
@@ -176,10 +207,11 @@ def measure_producer_rep(
     mode: t.Literal["single", "threaded", "atomic"],
     enqueues: int = PRODUCER_ENQUEUE_COUNT,
 ) -> dict[str, t.Any]:
-    """One stage F rep, bracketed like every other measured phase.
+    """One producer rep, bracketed like every other measured phase.
 
     Not because a nap deflates the numbers — perf_counter stops with the host — but so
-    stage F refuses a slept-through rep instead of being the one stage that keeps it.
+    the producer stage refuses a slept-through rep rather than being the one that
+    keeps it.
     """
     try:
         with host.measure_phase():
@@ -190,14 +222,14 @@ def measure_producer_rep(
         return {"valid": True, **metrics}
 
 
-def run_stage_g(options: StageOptions) -> None:
-    """End-to-end latency at fractions of stage B's measured ceiling."""
+def run_latency_under_load(options: StageOptions) -> None:
+    """End-to-end latency at fractions of the measured process-scaling ceiling."""
     worker, workers, ceiling = read_ceiling(options)
     record_measurements(
-        "g",
+        "latency_under_load",
         [
             measurement.MeasurementSpec(
-                name=f"g_rate_{int(fraction * 100)}pct",
+                name=f"rate_{int(fraction * 100)}pct",
                 mode="rate",
                 task_path=NOOP_SYNC,
                 worker=worker,
@@ -214,10 +246,10 @@ def run_stage_g(options: StageOptions) -> None:
     )
 
 
-def build_a1_measurements() -> list[measurement.MeasurementSpec]:
+def build_concurrency_measurements() -> list[measurement.MeasurementSpec]:
     return [
         measurement.MeasurementSpec(
-            name=f"a1_c{concurrency}",
+            name=f"concurrency_{concurrency}",
             mode="saturation",
             task_path=NOOP_SYNC,
             worker=runner.WorkerSpec(concurrency=concurrency),
@@ -228,12 +260,12 @@ def build_a1_measurements() -> list[measurement.MeasurementSpec]:
     ]
 
 
-def build_a2_measurements(
+def build_batch_size_measurements(
     winner: runner.WorkerSpec,
 ) -> list[measurement.MeasurementSpec]:
     return [
         measurement.MeasurementSpec(
-            name=f"a2_batch_{batch_size}",
+            name=f"batch_{batch_size}",
             mode="saturation",
             task_path=NOOP_SYNC,
             worker=dataclasses.replace(winner, batch_size=batch_size),
@@ -244,12 +276,12 @@ def build_a2_measurements(
     ]
 
 
-def build_a3_measurements(
+def build_async_dispatch_measurements(
     winner: runner.WorkerSpec,
 ) -> list[measurement.MeasurementSpec]:
     return [
         measurement.MeasurementSpec(
-            name="a3_async",
+            name="async_dispatch",
             mode="saturation",
             task_path=NOOP_ASYNC,
             worker=winner,
@@ -259,12 +291,12 @@ def build_a3_measurements(
     ]
 
 
-def build_stage_b_measurements(
+def build_process_scaling_measurements(
     winner: runner.WorkerSpec,
 ) -> list[measurement.MeasurementSpec]:
     return [
         measurement.MeasurementSpec(
-            name=f"b_workers_{count}",
+            name=f"workers_{count}",
             mode="saturation",
             task_path=NOOP_SYNC,
             worker=winner,
@@ -277,7 +309,7 @@ def build_stage_b_measurements(
 
 
 def build_worker_ladder(cores: int) -> list[int]:
-    """Worker counts stage B measures on a host with ``cores`` usable CPUs."""
+    """Worker counts process_scaling measures on a host with ``cores`` usable CPUs."""
     # 1 and 2 anchor the low end where per-worker efficiency is still readable; the
     # quarter/half/three-quarter steps track the host so the curve means the same thing
     # on any box, and nothing exceeds the core count.
@@ -285,12 +317,12 @@ def build_worker_ladder(cores: int) -> list[int]:
     return sorted(step for step in steps if 1 <= step <= cores)
 
 
-def build_stage_c_measurements(
+def build_poll_interval_measurements(
     winner: runner.WorkerSpec,
 ) -> list[measurement.MeasurementSpec]:
     return [
         measurement.MeasurementSpec(
-            name=f"c_poll_{poll_interval:g}",
+            name=f"poll_{poll_interval:g}",
             mode="rate",
             task_path=NOOP_SYNC,
             worker=dataclasses.replace(winner, poll_interval=poll_interval),
@@ -303,10 +335,10 @@ def build_stage_c_measurements(
     ]
 
 
-def build_stage_d_measurements() -> list[measurement.MeasurementSpec]:
+def build_sync_vs_async_measurements() -> list[measurement.MeasurementSpec]:
     return [
         measurement.MeasurementSpec(
-            name=f"d_{flavour}_c{concurrency}",
+            name=f"{flavour}_c{concurrency}",
             mode="saturation",
             task_path=task_path,
             worker=runner.WorkerSpec(concurrency=concurrency),
@@ -318,7 +350,7 @@ def build_stage_d_measurements() -> list[measurement.MeasurementSpec]:
     ]
 
 
-def build_stage_e_measurements(
+def build_checkpoint_cost_measurements(
     winner: runner.WorkerSpec,
 ) -> list[measurement.MeasurementSpec]:
     return [
@@ -330,7 +362,7 @@ def build_stage_e_measurements(
             tasks=WORKFLOW_TASKS,
             timeout_s=SATURATION_TIMEOUT_S,
         )
-        for name, task_path in (("e_flat", NOOP_SYNC), ("e_workflow", RUN_STEPS))
+        for name, task_path in (("flat", NOOP_SYNC), ("workflow", RUN_STEPS))
     ]
 
 
@@ -433,7 +465,7 @@ def summarize_producer_reps(
     # its own, so the "one rep has no spread" guard had to be fixed twice.
     spread = measurement.measure_spread(valid, median, "enqueues_per_s")
     return {
-        "spec": {"name": f"f_{mode}", "mode": "producer"},
+        "spec": {"name": mode, "mode": "producer"},
         "reps": reps,
         "median": median,
         "spread": spread,
@@ -445,11 +477,11 @@ def summarize_producer_reps(
 
 
 def read_winning_worker(options: StageOptions) -> runner.WorkerSpec:
-    return pick_winning_worker(read_stage_measurements(options, "a"))
+    return pick_winning_worker(read_stage_measurements(options, "worker_knobs"))
 
 
 def read_ceiling(options: StageOptions) -> tuple[runner.WorkerSpec, int, float]:
-    recorded = read_stage_measurements(options, "b")
+    recorded = read_stage_measurements(options, "process_scaling")
     best = pick_rate_calibration_measurement(recorded)
     return (
         runner.WorkerSpec(**best["spec"]["worker"]),
@@ -490,7 +522,8 @@ def pick_rate_calibration_measurement(
     recorded: list[dict[str, t.Any]],
 ) -> dict[str, t.Any]:
     """Pick what a rate stage calibrates from, leaving the producer some cores."""
-    # Falling back to the whole set keeps a stage B run that never went below the cap
+    # Falling back to the whole set keeps a process_scaling run that stayed above the
+    # cap
     # calibratable, at the cost of an offer its producer may not reach.
     capped = [
         entry for entry in recorded if entry["spec"]["workers"] <= RATE_WORKER_CAP

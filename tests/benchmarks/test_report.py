@@ -88,9 +88,9 @@ def test_renders_stage_tables_from_result_files(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     entries = [
-        build_measurement("a1_c1", {}, {"throughput_per_s": 412.5}),
+        build_measurement("concurrency_1", {}, {"throughput_per_s": 412.5}),
         build_measurement(
-            "a1_c2",
+            "concurrency_2",
             {"worker": {"concurrency": 2, "batch_size": 4, "poll_interval": 0.25}},
             {"throughput_per_s": 800.0},
             flagged=True,
@@ -98,17 +98,19 @@ def test_renders_stage_tables_from_result_files(
         ),
     ]
 
-    assert render(capsys, tmp_path, "a", entries) == (
+    assert render(capsys, tmp_path, "worker_knobs", entries) == (
         HEADER + "\n"
-        "## Stage A\n"
-        "\n" + MEASUREMENT_TABLE_HEAD + "| a1_c1 | saturation | 1 | 1 | default | 0.25 "
+        "## Worker knobs\n"
+        "\n"
+        + MEASUREMENT_TABLE_HEAD
+        + "| concurrency_1 | saturation | 1 | 1 | default | 0.25 "
         "| 412.5 |  |  |  | 4.0% |  |\n"
-        "| a1_c2 | saturation | 1 | 2 | 4 | 0.25 "
+        "| concurrency_2 | saturation | 1 | 2 | 4 | 0.25 "
         "| 800.0 |  |  |  | 22.0% | ⚠ flagged |\n"
         "\n"
-        "Throughput relative to `a1_c1` (flagged measurements excluded):\n"
+        "Throughput relative to `concurrency_1` (flagged measurements excluded):\n"
         "\n"
-        "- `a1_c1`: 1.00x\n"
+        "- `concurrency_1`: 1.00x\n"
     )
 
 
@@ -122,22 +124,24 @@ def test_leaves_latency_columns_empty_for_a_saturation_measurement(
     tells the reader not to make.
     """
     entries = [
-        build_measurement("a1_c1", {}, {"throughput_per_s": 412.5}),
-        build_measurement("g_rate_25pct", {"mode": "rate"}, {"throughput_per_s": 90.0}),
+        build_measurement("concurrency_1", {}, {"throughput_per_s": 412.5}),
+        build_measurement("rate_25pct", {"mode": "rate"}, {"throughput_per_s": 90.0}),
     ]
 
-    assert render(capsys, tmp_path, "a", entries) == (
+    assert render(capsys, tmp_path, "worker_knobs", entries) == (
         HEADER + "\n"
-        "## Stage A\n"
-        "\n" + MEASUREMENT_TABLE_HEAD + "| a1_c1 | saturation | 1 | 1 | default | 0.25 "
+        "## Worker knobs\n"
+        "\n"
+        + MEASUREMENT_TABLE_HEAD
+        + "| concurrency_1 | saturation | 1 | 1 | default | 0.25 "
         "| 412.5 |  |  |  | 4.0% |  |\n"
-        "| g_rate_25pct | rate | 1 | 1 | default | 0.25 "
+        "| rate_25pct | rate | 1 | 1 | default | 0.25 "
         "| 90.0 | 0.0120 | 0.0300 | 0.0500 | 4.0% |  |\n"
         "\n"
-        "Throughput relative to `a1_c1` (flagged measurements excluded):\n"
+        "Throughput relative to `concurrency_1` (flagged measurements excluded):\n"
         "\n"
-        "- `a1_c1`: 1.00x\n"
-        "- `g_rate_25pct`: 0.22x\n"
+        "- `concurrency_1`: 1.00x\n"
+        "- `rate_25pct`: 0.22x\n"
     )
 
 
@@ -146,14 +150,16 @@ def test_renders_an_unmeasurable_spread_as_unavailable(
 ) -> None:
     entries = [
         build_measurement(
-            "a1_c1", {}, {"throughput_per_s": 0.0}, flagged=True, spread=None
+            "concurrency_1", {}, {"throughput_per_s": 0.0}, flagged=True, spread=None
         )
     ]
 
-    assert render(capsys, tmp_path, "a", entries) == (
+    assert render(capsys, tmp_path, "worker_knobs", entries) == (
         HEADER + "\n"
-        "## Stage A\n"
-        "\n" + MEASUREMENT_TABLE_HEAD + "| a1_c1 | saturation | 1 | 1 | default | 0.25 "
+        "## Worker knobs\n"
+        "\n"
+        + MEASUREMENT_TABLE_HEAD
+        + "| concurrency_1 | saturation | 1 | 1 | default | 0.25 "
         "| 0.0 |  |  |  | n/a | ⚠ flagged |\n"
         "\n"
         "No unflagged measurements; nothing derived.\n"
@@ -164,25 +170,28 @@ def test_names_the_moved_baseline_when_the_first_measurement_is_flagged(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     entries = [
-        build_measurement("a1_c1", {}, {"throughput_per_s": 412.5}, flagged=True),
-        build_measurement("a1_c2", {}, {"throughput_per_s": 800.0}),
+        build_measurement(
+            "concurrency_1", {}, {"throughput_per_s": 412.5}, flagged=True
+        ),
+        build_measurement("concurrency_2", {}, {"throughput_per_s": 800.0}),
     ]
 
     assert (
-        "Throughput relative to `a1_c2` (flagged measurements excluded; the "
-        "stage's first measurement `a1_c1` is flagged, so the baseline moved):\n"
+        "Throughput relative to `concurrency_2` (flagged measurements excluded; the "
+        "stage's first measurement `concurrency_1` is flagged, so the baseline "
+        "moved):\n"
         "\n"
-        "- `a1_c2`: 1.00x\n"
-    ) in render(capsys, tmp_path, "a", entries)
+        "- `concurrency_2`: 1.00x\n"
+    ) in render(capsys, tmp_path, "worker_knobs", entries)
 
 
 def test_reports_mixed_provenance_when_measurements_disagree(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     entries = [
-        build_measurement("a1_c1", {}, {}, host={**HOST, "git_sha": "bbb222"}),
+        build_measurement("concurrency_1", {}, {}, host={**HOST, "git_sha": "bbb222"}),
         build_measurement(
-            "a1_c2",
+            "concurrency_2",
             {},
             {},
             host={
@@ -193,7 +202,7 @@ def test_reports_mixed_provenance_when_measurements_disagree(
         ),
     ]
 
-    rendered = render(capsys, tmp_path, "a", entries)
+    rendered = render(capsys, tmp_path, "worker_knobs", entries)
 
     assert "- git sha: mixed (`aaa111`, `bbb222`)\n" in rendered
     assert (
@@ -201,12 +210,12 @@ def test_reports_mixed_provenance_when_measurements_disagree(
     ) in rendered
 
 
-def test_renders_scaling_efficiency_for_stage_b(
+def test_renders_scaling_efficiency_for_process_scaling(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     entries = [
-        build_measurement("b_workers_1", {"workers": 1}, {"throughput_per_s": 100.0}),
-        build_measurement("b_workers_2", {"workers": 2}, {"throughput_per_s": 180.0}),
+        build_measurement("workers_1", {"workers": 1}, {"throughput_per_s": 100.0}),
+        build_measurement("workers_2", {"workers": 2}, {"throughput_per_s": 180.0}),
     ]
 
     assert (
@@ -214,15 +223,15 @@ def test_renders_scaling_efficiency_for_stage_b(
         "\n"
         "- 1 worker(s): 1.00\n"
         "- 2 worker(s): 0.90\n"
-    ) in render(capsys, tmp_path, "b", entries)
+    ) in render(capsys, tmp_path, "process_scaling", entries)
 
 
-def test_renders_async_over_sync_ratio_for_stage_d(
+def test_renders_async_over_sync_ratio_for_sync_vs_async(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     entries = [
         build_measurement(
-            "d_async_c4",
+            "async_c4",
             {
                 "task_path": "benchmarks.tasks.sleep_async",
                 "worker": {
@@ -234,7 +243,7 @@ def test_renders_async_over_sync_ratio_for_stage_d(
             {"throughput_per_s": 200.0},
         ),
         build_measurement(
-            "d_sync_c4",
+            "sync_c4",
             {
                 "task_path": "benchmarks.tasks.sleep_sync",
                 "worker": {
@@ -252,16 +261,16 @@ def test_renders_async_over_sync_ratio_for_stage_d(
         "(flagged measurements excluded):\n"
         "\n"
         "- concurrency 4: 2.00x\n"
-    ) in render(capsys, tmp_path, "d", entries)
+    ) in render(capsys, tmp_path, "sync_vs_async", entries)
 
 
-def test_renders_checkpoint_multiplier_for_stage_e(
+def test_renders_checkpoint_multiplier_for_checkpoint_cost(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     entries = [
-        build_measurement("e_flat", {}, {"throughput_per_s": 400.0}),
+        build_measurement("flat", {}, {"throughput_per_s": 400.0}),
         build_measurement(
-            "e_workflow",
+            "workflow",
             {"task_path": "benchmarks.tasks.run_steps"},
             {"throughput_per_s": 100.0},
         ),
@@ -271,15 +280,15 @@ def test_renders_checkpoint_multiplier_for_stage_e(
         "Checkpoint cost (flagged measurements excluded):\n"
         "\n"
         "- one `run_steps` task costs 4.00x a flat no-op task\n"
-    ) in render(capsys, tmp_path, "e", entries)
+    ) in render(capsys, tmp_path, "checkpoint_cost", entries)
 
 
-def test_renders_producer_columns_for_stage_f(
+def test_renders_producer_columns_for_producer_ceiling(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     entries = [
         build_measurement(
-            "f_single",
+            "single",
             {"mode": "producer"},
             {
                 "count": 5000,
@@ -291,18 +300,18 @@ def test_renders_producer_columns_for_stage_f(
         )
     ]
 
-    assert render(capsys, tmp_path, "f", entries) == (
+    assert render(capsys, tmp_path, "producer_ceiling", entries) == (
         HEADER + "\n"
-        "## Stage F\n"
+        "## Producer ceiling\n"
         "\n"
         "| mode | enqueues | enqueues/s | enqueue p50 s | enqueue p99 s "
         "| spread | notes |\n"
         "| --- | --- | --- | --- | --- | --- | --- |\n"
-        "| f_single | 5000 | 250.0 | 0.00400 | 0.00900 | 3.0% |  |\n"
+        "| single | 5000 | 250.0 | 0.00400 | 0.00900 | 3.0% |  |\n"
     )
 
 
-def test_renders_idle_polling_tax_and_latency_ratios_for_stage_c(
+def test_renders_idle_polling_tax_and_latency_ratios_for_poll_interval(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     entries = [
@@ -325,7 +334,7 @@ def test_renders_idle_polling_tax_and_latency_ratios_for_stage_c(
         {"poll_interval": 1.0, "workers": 4, "claims_per_s_per_worker": 0.99},
     ]
 
-    rendered = render(capsys, tmp_path, "c", entries, idle_probes=probes)
+    rendered = render(capsys, tmp_path, "poll_interval", entries, idle_probes=probes)
 
     assert (
         "Idle polling tax (workers parked on an empty queue):\n"

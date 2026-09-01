@@ -13,7 +13,7 @@ no migrations, just a settings module, a task module, and two CLI drivers.
                                    |
                                    v
    +--------------------------- stages.py ----------------------------+
-   | stage A..G definitions, calibration between stages, per-stage    |
+   | stage definitions, calibration between stages, per-stage         |
    | console output, results/stage_*.json writes                      |
    +---------------------------------|--------------------------------+
                                      v
@@ -111,13 +111,14 @@ To take that variable out of a comparison, run each stage against a fresh server
 
 ```
 docker compose -f benchmarks/compose.yaml restart db_bench
-docker compose -f benchmarks/compose.yaml run --rm bench python -m benchmarks.stages b
+docker compose -f benchmarks/compose.yaml run --rm bench \
+  python -m benchmarks.stages process_scaling
 ```
 
 Two commands per stage, rather than a script that loops them: the driver runs inside a
 container with no docker socket, so restarting the database is necessarily the caller's
-job. Order still matters when you pick stages by hand — B, C and E calibrate from A and
-G calibrates from B, each reading the earlier stage back off disk.
+job. Prerequisites still have to exist when you pick stages by hand — the driver orders
+what you name, but it will not run a stage you did not ask for.
 
 This is deliberately not the default. Nobody restarts Postgres between workloads in
 production, so a cold run measures a best case rather than a representative one. Both
@@ -139,32 +140,36 @@ need to be running for anything in this directory.
 
 Times are from the 8-core reference run and scale with the host.
 
-| stage | question                                    | varies                                                | workload                   | ~time  |
-| ----- | ------------------------------------------- | ----------------------------------------------------- | -------------------------- | ------ |
-| A     | what each worker knob buys                  | `--concurrency` 1-16, then `--batch-size`, then async | 5,000 no-ops, saturation   | 20 min |
-| B     | how throughput scales with worker processes | worker count, at A's winning config                   | no-ops, saturation         | 10 min |
-| C     | what `--poll-interval` costs and buys       | 0.05 / 0.25 / 1.0 s, plus idle probes                 | 5 tasks/s offered for 60 s | 10 min |
-| D     | whether async tasks beat sync ones          | sync vs async x concurrency 4/16/32                   | 50 ms sleep, saturation    | 15 min |
-| E     | what a checkpoint costs                     | 4-step workflow vs flat task                          | 2,000 tasks, saturation    | 3 min  |
-| F     | how fast the producer can enqueue           | one connection / 8 threads / `atomic()` chunks        | 5,000 enqueues, no workers | 2 min  |
-| G     | what latency looks like under load          | 25/50/75/90% of B's ceiling                           | 60 s paced offer           | 14 min |
+| stage                | question                                    | calibrates from   | workload                   | ~time  |
+| -------------------- | ------------------------------------------- | ----------------- | -------------------------- | ------ |
+| `worker_knobs`       | what each worker knob buys                  | —                 | 5,000 no-ops, saturation   | 20 min |
+| `process_scaling`    | how throughput scales with worker processes | `worker_knobs`    | no-ops, saturation         | 10 min |
+| `poll_interval`      | what `--poll-interval` costs and buys       | `worker_knobs`    | 5 tasks/s offered for 60 s | 10 min |
+| `sync_vs_async`      | whether async tasks beat sync ones          | —                 | 50 ms sleep, saturation    | 15 min |
+| `checkpoint_cost`    | what a checkpoint costs                     | `worker_knobs`    | 2,000 tasks, saturation    | 3 min  |
+| `producer_ceiling`   | how fast the producer can enqueue           | —                 | 5,000 enqueues, no workers | 2 min  |
+| `latency_under_load` | what latency looks like under load          | `process_scaling` | 60 s paced offer           | 14 min |
 
-**Worker counts scale with the host.** `build_worker_ladder` derives stage B's ladder
-from `os.cpu_count()`: 1 and 2 anchor the low end where per-worker efficiency is still
-readable, then quarter, half, three-quarter and full. Eight cores gives 1, 2, 4, 6, 8;
-thirty-two gives 1, 2, 8, 16, 24, 32.
+Three stages depend on nothing, so the set is a partial order rather than a sequence —
+which is why they carry names instead of letters. Naming several runs them in dependency
+order whatever order you type.
+
+**Worker counts scale with the host.** `build_worker_ladder` derives the process_scaling
+ladder from `os.cpu_count()`: 1 and 2 anchor the low end where per-worker efficiency is
+still readable, then quarter, half, three-quarter and full. Eight cores gives 1, 2, 4,
+6, 8; thirty-two gives 1, 2, 8, 16, 24, 32.
 
 **Stage G does not calibrate from the outright ceiling.** A rate measurement's producer
-runs on the same machine as its workers. If stage G aimed at the throughput of a stage B
-result that used every core, the producer would have no CPU left to actually offer tasks
-that fast. The measurement would then describe a load that was never applied and be
-flagged for under-offering. So stage G calibrates from the fastest stage B result at or
-below `RATE_WORKER_CAP` (half the cores), which leaves the producer room to hit its
-target.
+runs on the same machine as its workers. If latency_under_load aimed at the throughput
+of a process_scaling result that used every core, the producer would have no CPU left to
+actually offer tasks that fast. The measurement would then describe a load that was
+never applied and be flagged for under-offering. So it calibrates from the fastest
+process_scaling result at or below `RATE_WORKER_CAP` (half the cores), which leaves the
+producer room to hit its target.
 
 ## The results files
 
-`benchmarks/results/stage_a.json` through `stage_g.json` are written by
+`benchmarks/results/stage_<name>.json` files are written by
 `python -m benchmarks.stages`, and by nothing else. The driver rewrites the stage's file
 after every finished measurement (atomically, via a temp file), so a run killed at hour
 two keeps everything it measured. The directory is git-ignored on purpose: the numbers
@@ -246,11 +251,11 @@ number is not something a test can assert without becoming a flake.
 ## When the `absurd-sdk` pin moves
 
 Copy `benchmarks/results/` aside, re-run `uv run python -m benchmarks.stages`, and diff
-the two directories: the stage filenames are stable (`stage_a.json` through
-`stage_g.json`), so a throughput regression shows up in a plain `diff -r`. Stages B, C
-and E calibrate themselves from `stage_a.json` and stage G from `stage_b.json`, so a
-partial re-run must include the stage it depends on (on a fresh checkout that means
-starting with stage A), or it errors saying so.
+the two directories: the stage filenames are stable, so a throughput regression shows up
+in a plain `diff -r`. `process_scaling`, `poll_interval` and `checkpoint_cost` calibrate
+from `stage_worker_knobs.json` and `latency_under_load` from
+`stage_process_scaling.json`, so a partial re-run must include the stage it depends on
+(on a fresh checkout that means starting with worker_knobs), or it errors saying so.
 
 ## Layout
 

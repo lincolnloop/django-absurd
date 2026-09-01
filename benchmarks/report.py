@@ -63,22 +63,33 @@ def describe_capture_window(stamps: list[str]) -> str:
 
 
 def render_stage(stage: dict[str, t.Any]) -> list[str]:
-    if stage["stage"] == "f":
+    if stage["stage"] == "producer_ceiling":
         return render_producer_stage(stage)
     measurements = stage["measurements"]
-    lines = ["", f"## Stage {stage['stage'].upper()}", "", TABLE_HEADER, TABLE_RULE]
+    lines = [
+        "",
+        f"## {render_heading(stage['stage'])}",
+        "",
+        TABLE_HEADER,
+        TABLE_RULE,
+    ]
     lines += [render_measurement_row(entry) for entry in measurements]
     lines += render_idle_probes(stage)
     lines += build_derived_lines(stage["stage"], measurements)
     return lines
 
 
+def render_heading(stage: str) -> str:
+    """A stage name is already words, so it reads as a heading rather than shouting."""
+    return stage.replace("_", " ").capitalize()
+
+
 def render_producer_stage(stage: dict[str, t.Any]) -> list[str]:
-    """Stage F measures the ENQUEUE side, so it gets its own columns rather than
-    borrowing an execution-throughput table it would have to fake."""
+    """The producer stage measures the ENQUEUE side, so it gets its own columns rather
+    than borrowing an execution-throughput table it would have to fake."""
     return [
         "",
-        "## Stage F",
+        f"## {render_heading(stage['stage'])}",
         "",
         (
             "| mode | enqueues | enqueues/s | enqueue p50 s | enqueue p99 s "
@@ -157,11 +168,11 @@ def build_derived_lines(stage: str, measurements: list[dict[str, t.Any]]) -> lis
     unflagged = [entry for entry in measurements if not entry["flagged"]]
     if not unflagged:
         return ["", "No unflagged measurements; nothing derived."]
-    if stage == "b":
+    if stage == "process_scaling":
         return build_scaling_efficiency_lines(unflagged)
-    if stage == "d":
+    if stage == "sync_vs_async":
         return build_async_ratio_lines(unflagged)
-    if stage == "e":
+    if stage == "checkpoint_cost":
         return build_checkpoint_multiplier_lines(unflagged)
     if all(entry["spec"]["mode"] == "rate" for entry in unflagged):
         # In rate mode throughput is set by the OFFER, so a throughput ratio there

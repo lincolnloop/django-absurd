@@ -15,9 +15,19 @@ MEASURABLE_TASKS = "60"
 def test_runs_the_producer_stage_at_the_size_it_was_asked_for(
     tmp_path: pathlib.Path,
 ) -> None:
-    stages.main(["f", "--reps", "1", "--tasks", "10", "--results-dir", str(tmp_path)])
+    stages.main(
+        [
+            "producer_ceiling",
+            "--reps",
+            "1",
+            "--tasks",
+            "10",
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
 
-    result = utils.read_stage(tmp_path, "f")
+    result = utils.read_stage(tmp_path, "producer_ceiling")
     assert [
         {
             "name": entry["spec"]["name"],
@@ -27,9 +37,9 @@ def test_runs_the_producer_stage_at_the_size_it_was_asked_for(
         }
         for entry in result["measurements"]
     ] == [
-        {"name": "f_single", "count": 10, "spread": None, "flagged": True},
-        {"name": "f_threaded", "count": 10, "spread": None, "flagged": True},
-        {"name": "f_atomic", "count": 10, "spread": None, "flagged": True},
+        {"name": "single", "count": 10, "spread": None, "flagged": True},
+        {"name": "threaded", "count": 10, "spread": None, "flagged": True},
+        {"name": "atomic", "count": 10, "spread": None, "flagged": True},
     ]
 
 
@@ -37,9 +47,11 @@ def test_runs_the_producer_stage_at_the_size_it_was_asked_for(
 def test_runs_a_saturation_stage_at_the_size_it_was_asked_for(
     tmp_path: pathlib.Path,
 ) -> None:
-    stages.main(["d", "--reps", "1", "--tasks", "8", "--results-dir", str(tmp_path)])
+    stages.main(
+        ["sync_vs_async", "--reps", "1", "--tasks", "8", "--results-dir", str(tmp_path)]
+    )
 
-    result = utils.read_stage(tmp_path, "d")
+    result = utils.read_stage(tmp_path, "sync_vs_async")
     assert [
         {
             "name": entry["spec"]["name"],
@@ -49,12 +61,12 @@ def test_runs_a_saturation_stage_at_the_size_it_was_asked_for(
         }
         for entry in result["measurements"]
     ] == [
-        {"name": "d_async_c4", "tasks": 8, "spread": None, "flagged": True},
-        {"name": "d_sync_c4", "tasks": 8, "spread": None, "flagged": True},
-        {"name": "d_async_c16", "tasks": 8, "spread": None, "flagged": True},
-        {"name": "d_sync_c16", "tasks": 8, "spread": None, "flagged": True},
-        {"name": "d_async_c32", "tasks": 8, "spread": None, "flagged": True},
-        {"name": "d_sync_c32", "tasks": 8, "spread": None, "flagged": True},
+        {"name": "async_c4", "tasks": 8, "spread": None, "flagged": True},
+        {"name": "sync_c4", "tasks": 8, "spread": None, "flagged": True},
+        {"name": "async_c16", "tasks": 8, "spread": None, "flagged": True},
+        {"name": "sync_c16", "tasks": 8, "spread": None, "flagged": True},
+        {"name": "async_c32", "tasks": 8, "spread": None, "flagged": True},
+        {"name": "sync_c32", "tasks": 8, "spread": None, "flagged": True},
     ]
 
 
@@ -69,11 +81,11 @@ def test_runs_a_rate_stage_and_its_idle_probes_at_the_duration_it_was_asked_for(
     out in a second is not fixed, so the count is not part of the result here.
     """
     size = ["--reps", "1", "--tasks", MEASURABLE_TASKS, "--duration", "1"]
-    stages.main(["a", *size, "--results-dir", str(tmp_path)])
+    stages.main(["worker_knobs", *size, "--results-dir", str(tmp_path)])
 
-    stages.main(["c", *size, "--results-dir", str(tmp_path)])
+    stages.main(["poll_interval", *size, "--results-dir", str(tmp_path)])
 
-    result = utils.read_stage(tmp_path, "c")
+    result = utils.read_stage(tmp_path, "poll_interval")
     assert [
         {
             "name": entry["spec"]["name"],
@@ -83,9 +95,9 @@ def test_runs_a_rate_stage_and_its_idle_probes_at_the_duration_it_was_asked_for(
         }
         for entry in result["measurements"]
     ] == [
-        {"name": "c_poll_0.05", "duration_s": 1.0, "spread": None, "flagged": True},
-        {"name": "c_poll_0.25", "duration_s": 1.0, "spread": None, "flagged": True},
-        {"name": "c_poll_1", "duration_s": 1.0, "spread": None, "flagged": True},
+        {"name": "poll_0.05", "duration_s": 1.0, "spread": None, "flagged": True},
+        {"name": "poll_0.25", "duration_s": 1.0, "spread": None, "flagged": True},
+        {"name": "poll_1", "duration_s": 1.0, "spread": None, "flagged": True},
     ]
     assert [
         {"poll_interval": probe["poll_interval"], "seconds": probe["seconds"]}
@@ -107,24 +119,24 @@ def test_runs_every_calibrated_stage_from_its_prerequisite(
     stage back off disk, so a stage that runs alone proves nothing about the chain.
     """
     size = ["--reps", "1", "--tasks", MEASURABLE_TASKS, "--duration", "1"]
-    stages.main(["a", *size, "--results-dir", str(tmp_path)])
+    stages.main(["worker_knobs", *size, "--results-dir", str(tmp_path)])
 
-    for stage in ("b", "e", "g"):
+    for stage in ("process_scaling", "checkpoint_cost", "latency_under_load"):
         stages.main([stage, *size, "--results-dir", str(tmp_path)])
 
     assert [
         entry["spec"]["name"]
-        for entry in utils.read_stage(tmp_path, "e")["measurements"]
-    ] == ["e_flat", "e_workflow"]
+        for entry in utils.read_stage(tmp_path, "checkpoint_cost")["measurements"]
+    ] == ["flat", "workflow"]
     assert [
         entry["spec"]["name"]
-        for entry in utils.read_stage(tmp_path, "g")["measurements"]
-    ] == ["g_rate_25pct", "g_rate_50pct", "g_rate_75pct", "g_rate_90pct"]
+        for entry in utils.read_stage(tmp_path, "latency_under_load")["measurements"]
+    ] == ["rate_25pct", "rate_50pct", "rate_75pct", "rate_90pct"]
     # Stage B's ladder is derived from the host's core count, so its names are not
     # fixed. What is fixed is that it anchors at one worker and climbs.
     workers = [
         entry["spec"]["workers"]
-        for entry in utils.read_stage(tmp_path, "b")["measurements"]
+        for entry in utils.read_stage(tmp_path, "process_scaling")["measurements"]
     ]
     assert workers[:2] == [1, 2]
     assert sorted(set(workers)) == workers
@@ -141,8 +153,8 @@ def test_runs_a_prerequisite_before_the_stage_that_calibrates_from_it(
     """
     stages.main(
         [
-            "e",
-            "a",
+            "checkpoint_cost",
+            "worker_knobs",
             "--reps",
             "1",
             "--tasks",
@@ -154,8 +166,8 @@ def test_runs_a_prerequisite_before_the_stage_that_calibrates_from_it(
 
     assert [
         entry["spec"]["name"]
-        for entry in utils.read_stage(tmp_path, "e")["measurements"]
-    ] == ["e_flat", "e_workflow"]
+        for entry in utils.read_stage(tmp_path, "checkpoint_cost")["measurements"]
+    ] == ["flat", "workflow"]
 
 
 @pytest.mark.django_db(transaction=True)
@@ -168,9 +180,19 @@ def test_reports_a_spread_once_there_are_reps_to_compare(
     not something the harness can promise, and demanding it would fail the suite on an
     honest measurement.
     """
-    stages.main(["f", "--reps", "2", "--tasks", "10", "--results-dir", str(tmp_path)])
+    stages.main(
+        [
+            "producer_ceiling",
+            "--reps",
+            "2",
+            "--tasks",
+            "10",
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
 
-    result = utils.read_stage(tmp_path, "f")
+    result = utils.read_stage(tmp_path, "producer_ceiling")
     assert [isinstance(entry["spread"], float) for entry in result["measurements"]] == [
         True,
         True,
