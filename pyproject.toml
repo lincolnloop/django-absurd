@@ -99,7 +99,7 @@ patch = ["subprocess"]
 plugins = [
   "django_coverage_plugin",
 ]
-source = ["django_absurd", "tests"]
+source = ["benchmarks", "django_absurd", "tests"]
 
 [tool.django-stubs]
 django_settings_module = "tests.pg_cron.settings"
@@ -128,6 +128,7 @@ strict = true
 [tool.pytest.ini_options]
 addopts = [
   "--ignore=benchmarks",
+  "--ignore=tests/benchmarks",
   "--ignore=tests/core",
   "--ignore=tests/multidb",
   "--ignore=tests/pg_cron",

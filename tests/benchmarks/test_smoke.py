@@ -52,7 +52,7 @@ def test_saturation_measurement_flags_a_task_that_outlived_its_claim_lease() -> 
     spec = measurement.MeasurementSpec(
         name="smoke-redelivery",
         mode="saturation",
-        task_path="benchmarks.tests.utils.sleep_past_claim_lease",
+        task_path="tests.benchmarks.utils.sleep_past_claim_lease",
         tasks=1,
         workers=1,
         worker=runner.WorkerSpec(concurrency=2, poll_interval=0.05, claim_timeout=1),
@@ -112,7 +112,7 @@ def test_saturation_measurement_flags_tasks_that_never_completed() -> None:
     spec = measurement.MeasurementSpec(
         name="smoke-missing",
         mode="saturation",
-        task_path="benchmarks.tests.utils.fail_on_its_only_attempt",
+        task_path="tests.benchmarks.utils.fail_on_its_only_attempt",
         tasks=1,
         workers=1,
         worker=runner.WorkerSpec(concurrency=2, poll_interval=0.05),

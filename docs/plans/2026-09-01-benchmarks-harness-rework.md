@@ -47,9 +47,9 @@ Mirror `examples/web`. Working directory `benchmarks/`.
   database instead of the test one: the suite then hangs to timeout, or drains real
   data. This is the mechanism the README credits for letting tests run against a
   throwaway database, so it is not incidental.
-- `pytest.toml` — `pythonpath = ["."]`, `testpaths = ["."]`, `--confcutdir`. Delete the
-  empty `tests/conftest.py` standing in for it.
-- Root `pyproject.toml` keeps its benchmarks ignore.
+- Root `pyproject.toml` — coverage source gains `benchmarks`, so the harness sits inside
+  the repo-wide gate rather than a flag of its own, and the root addopts ignore the new
+  suite alongside the other three.
 - `renovate.json` — add the benchmarks project to `postUpgradeTasks` commands and its
   lockfile to `fileFilters`. Without it every root bump stales the lock and
   `uv sync --locked` fails the build.
@@ -147,9 +147,24 @@ round-trip-bound. Tighten the framing; keep the number.
 - Correct the `CLAUDE.md` claim about bare root `pytest`: exit code 4, an
   `ImproperlyConfigured` raised while importing auth models from the root test conftest.
 
-## 1.7 Tests — entrypoint only, happy path first
+## 1.7 Tests — a fourth suite, entrypoint only, happy path first
 
-Replace the existing suite. Delete unit tests on internal helpers.
+The suite lives at `tests/benchmarks`, beside the other three, not inside the harness.
+Nothing in the harness imports its tests, and the suite measures nothing — it asserts
+files written, counts and flags, never a rate — so the tuned benchmark server buys it
+nothing and it runs against the parent compose database like every other suite.
+Confirmed by running it with that server stopped.
+
+Same shape as `tests/multidb`: own settings inheriting `tests.settings`, own
+`pytest.toml` with `--confcutdir=..` and `--cov-append`, one more line in both tox envs.
+Worker children still reach the right database — `build_worker_env` hands them the
+parent's connection settings, so they load the harness settings module while pointing at
+the suite's test database.
+
+That leaves the benchmark server with exactly one purpose, real runs in the container,
+instead of two.
+
+Replace the existing tests. Delete unit tests on internal helpers.
 
 Through the entrypoint, at small sizes:
 
@@ -173,12 +188,10 @@ of you — not in advance.
 
 ## 1.8 CI
 
-New job, working directory `benchmarks/`, mirroring the examples job: bring the database
-up, run the suite in the container, rewrite container coverage paths to repo-relative,
-upload coverage under its own flag. Register the flag.
-
-One environment, so the union-across-flags rescue that saves per-version branches
-elsewhere does not apply here. No Python × Django matrix — dev tooling.
+Nothing new. The suite is a tox line in both envs, CI already runs tox with the parent
+database up, and `--cov-append` folds it into the merged coverage number. No separate
+job, no separate flag, no container coverage-path rewrite — all of which the earlier
+draft specified because it assumed the tests needed the benchmark server.
 
 ## Sequencing note
 
