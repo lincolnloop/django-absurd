@@ -3,7 +3,6 @@ dev = [
   "pytest-cov==7.1.0",
   "pytest-django==4.14.0",
   "pytest==9.1.1",
-  # Freezing durable time is opt-in: django-absurd never bundles it.
   "time-machine==3.4.0",
 ]
 

@@ -79,25 +79,29 @@ would likely look better.
 ## Reproducing from a clean checkout
 
 ```
-docker compose -f benchmarks/compose.yaml up -d db_bench
-uv sync
-uv run python benchmarks/manage.py migrate
-uv run pytest tests/benchmarks
-uv run python -m benchmarks.stages
-uv run python -m benchmarks.report > /tmp/bench-report.md
-```
-
-Or run the whole benchmark inside a container instead of on the host:
-
-```
 docker compose -f benchmarks/compose.yaml run --rm bench
+docker compose -f benchmarks/compose.yaml run --rm bench \
+  python -m benchmarks.report > /tmp/bench-report.md
 ```
+
+Runs happen only in the container. `db_bench` publishes no port, so there is one
+measurement regime instead of two and the "container numbers are only comparable with
+container numbers" caveat is uniformly true rather than a footnote.
+
+`bench` builds `benchmarks/Dockerfile` against `benchmarks/uv.lock`, so the whole
+dependency set is pinned and `uv sync --locked` fails the build if the lock has drifted.
+The one-shot `migrate` service creates Absurd's tables first; `bench` waits for it to
+exit cleanly. Results land in `benchmarks/results/` through the bind mount.
 
 The `bench` service is behind a compose profile, so a plain `up -d` never starts a
-75-minute run by accident. It installs the project with uv, migrates, and runs every
-stage; results land in `benchmarks/results/` through the bind mount. Numbers measured
-inside the container include the container's own overhead, so compare them only with
-other container runs.
+75-minute run by accident. A full run took 75 minutes on the reference host; naming
+stages runs only those, and `--tasks`, `--duration` and `--reps` shrink a stage to a dry
+run. The test suite is the separate, host-run smoke described under
+[Running the tests](#running-the-tests).
+
+`db_bench` keeps a named volume, so it is a different server from the root
+`compose.yaml`'s `db` and `db_pg_cron`. Those two do not need to be running for a
+benchmark run.
 
 ### Restarting Postgres between stages
 
@@ -124,17 +128,6 @@ This is deliberately not the default. Nobody restarts Postgres between workloads
 production, so a cold run measures a best case rather than a representative one. Both
 are legitimate, and every result records `postgres_uptime_s` so a reader can tell which
 regime produced a number.
-
-Step 4 is the test suite AND the smoke: `pytest tests/benchmarks` drives every stage end
-to end through this driver — real `absurd_worker` subprocesses, real enqueues, real SQL
-analysis — at a handful of tasks apiece. It runs against the root compose database like
-the other three suites, so `db_bench` need not be up for it. Step 5 took 75 minutes on
-the reference host; naming stages runs only those, and `--tasks`, `--duration` and
-`--reps` shrink a stage to a dry run.
-
-`db_bench` listens on `${PGPORT_BENCH:-5435}` and keeps a named volume, so it is a
-different server from the root `compose.yaml`'s `db` and `db_pg_cron`. Those two do not
-need to be running for anything in this directory.
 
 ## The stages
 
@@ -250,30 +243,34 @@ number is not something a test can assert without becoming a flake.
 
 ## When the `absurd-sdk` pin moves
 
-Copy `benchmarks/results/` aside, re-run `uv run python -m benchmarks.stages`, and diff
-the two directories: the stage filenames are stable, so a throughput regression shows up
-in a plain `diff -r`. `process_scaling`, `poll_interval` and `checkpoint_cost` calibrate
-from `stage_worker_knobs.json` and `latency_under_load` from
-`stage_process_scaling.json`, so a partial re-run must include the stage it depends on
-(on a fresh checkout that means starting with worker_knobs), or it errors saying so.
+Copy `benchmarks/results/` aside, re-run
+`docker compose -f benchmarks/compose.yaml run --rm bench`, and diff the two
+directories: the stage filenames are stable, so a throughput regression shows up in a
+plain `diff -r`. `process_scaling`, `poll_interval` and `checkpoint_cost` calibrate from
+`stage_worker_knobs.json` and `latency_under_load` from `stage_process_scaling.json`, so
+a partial re-run must include the stage it depends on (on a fresh checkout that means
+starting with worker_knobs), or it errors saying so.
 
 ## Layout
 
-| file             | what it is                                                                            |
-| ---------------- | ------------------------------------------------------------------------------------- |
-| `compose.yaml`   | the `db_bench` Postgres (pinned config, own volume) and the `bench` runner            |
-| `settings.py`    | Django settings; reads `PGDATABASE`/`PGHOST`/`PGPORT_BENCH`/`PGUSER`/`PGPASSWORD`     |
-| `manage.py`      | for `migrate` and for the worker children                                             |
-| `tasks.py`       | the five workloads: two no-ops, two sleeps, one 4-step workflow                       |
-| `host.py`        | host context capture and the suspension guard                                         |
-| `runner.py`      | spawns and reaps `absurd_worker` subprocesses                                         |
-| `producer.py`    | the enqueue side: preload, paced offer, producer benchmark                            |
-| `analysis.py`    | the SQL that turns Absurd's own columns into metrics                                  |
-| `measurement.py` | one measurement: reps, drain detection, median, flags                                 |
-| `stages.py`      | runs the stages (positional names, `--tasks`, `--duration`, `--io-seconds`, `--reps`) |
-| `report.py`      | renders a results directory as markdown                                               |
+| file             | what it is                                                                             |
+| ---------------- | -------------------------------------------------------------------------------------- |
+| `compose.yaml`   | the `db_bench` Postgres (pinned config, own volume), `migrate`, and the `bench` runner |
+| `Dockerfile`     | the runner image; build context is the repo root                                       |
+| `pyproject.toml` | the harness's own project: django-absurd by path, everything else pinned               |
+| `uv.lock`        | the pinned resolution `uv sync --locked` installs in the image                         |
+| `settings.py`    | Django settings; reads `DATABASE_URL`                                                  |
+| `manage.py`      | for `migrate` and for the worker children                                              |
+| `tasks.py`       | the five workloads: two no-ops, two sleeps, one 4-step workflow                        |
+| `host.py`        | host context capture and the suspension guard                                          |
+| `runner.py`      | spawns and reaps `absurd_worker` subprocesses                                          |
+| `producer.py`    | the enqueue side: preload, paced offer, producer benchmark                             |
+| `analysis.py`    | the SQL that turns Absurd's own columns into metrics                                   |
+| `measurement.py` | one measurement: reps, drain detection, median, flags                                  |
+| `stages.py`      | runs the stages (positional names, `--tasks`, `--duration`, `--io-seconds`, `--reps`)  |
+| `report.py`      | renders a results directory as markdown                                                |
 
-Worker children inherit the database the parent is actually using (the runner serializes
-`connections["default"].settings_dict` into their environment), which is what lets the
-smoke run against a throwaway test database while a standalone benchmark runs against
-the persistent one.
+Worker children inherit the database the parent is actually using: the runner renders
+`connections["default"].settings_dict` back into a `DATABASE_URL` and hands them that,
+which is what lets the smoke run against a throwaway test database while a benchmark run
+uses the persistent one.

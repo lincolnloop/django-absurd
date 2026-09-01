@@ -116,7 +116,11 @@ restart sequence per stage in the README instead.
 - RED: invoke a stage whose prerequisite file is absent; assert a clean message,
   non-zero exit, and that **no subsequent stage runs**. The failing stage's own header
   printing first is current behaviour and not the defect.
-- Cover the uncalibratable case too, not only the missing-file one.
+- Cover the uncalibratable case too, not only the missing-file one. Provoke it with a
+  ONE-task run: a single completion puts p10 and p90 at the same instant, so the window
+  is empty by construction whatever the worker config. Four tasks does not do it — the
+  low-concurrency rungs of the ladder still measure, so the stage calibrates and the
+  error never fires. That premise was wrong in an earlier draft of this plan.
 - Fix: catch both at the CLI boundary.
 
 ## 1.5 Claim deletions
@@ -192,6 +196,27 @@ Nothing new. The suite is a tox line in both envs, CI already runs tox with the 
 database up, and `--cov-append` folds it into the merged coverage number. No separate
 job, no separate flag, no container coverage-path rewrite — all of which the earlier
 draft specified because it assumed the tests needed the benchmark server.
+
+## 1.9 Sweep: every test through the command line
+
+After 1.1 and 1.4 land. Enumerate every call in `tests/benchmarks` that reaches below
+`stages.main` / `report.main` and resolve each one. Four are known to remain, each with
+a recorded reason:
+
+- **redelivery** — needs a claim-timeout AND a max-attempts flag, because the workloads
+  carry no retry params and would end failed rather than redelivered. Two knobs whose
+  only use is breaking the harness.
+- **never-completes** — no workload fails. The only CLI route trips CPython's own sleep
+  validation, which is coverage resting on an accident.
+- **worker readiness** — reachable honestly: a queue that is not declared makes the
+  worker exit before its readiness line. Needs the producer to enqueue with an explicit
+  queue rather than through the task object, which is a real capability the harness
+  lacks. **Take this one.**
+- **crashed worker** — needs a worker dying after readiness. No input produces it.
+
+For each survivor: route it through the CLI, delete it as covered elsewhere, or record
+it as a documented exception. Do NOT delete a guard to make the sweep finish — they are
+load-bearing for a 75-minute run, which is the run nobody is watching.
 
 ## Sequencing note
 

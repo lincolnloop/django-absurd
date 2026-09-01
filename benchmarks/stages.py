@@ -2,6 +2,7 @@ import argparse
 import dataclasses
 import json
 import os
+import sys
 import typing as t
 from pathlib import Path
 
@@ -505,7 +506,7 @@ def read_stage_measurements(
 ) -> list[dict[str, t.Any]]:
     path = options.results_dir / f"stage_{stage}.json"
     if not path.exists():
-        raise MissingStageError(path, stage.upper())
+        raise MissingStageError(path, stage)
     return t.cast(
         "list[dict[str, t.Any]]", json.loads(path.read_text())["measurements"]
     )
@@ -569,16 +570,20 @@ def main(argv: list[str] | None = None) -> None:
     stages = args.stages or list(STAGE_NAMES)
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "benchmarks.settings")
     django.setup()
-    run_stages(
-        stages,
-        StageOptions(
-            results_dir=args.results_dir,
-            reps=args.reps,
-            tasks=args.tasks,
-            duration_s=args.duration,
-            io_seconds=args.io_seconds,
-        ),
+    options = StageOptions(
+        results_dir=args.results_dir,
+        reps=args.reps,
+        tasks=args.tasks,
+        duration_s=args.duration,
+        io_seconds=args.io_seconds,
     )
+    # Both are the caller's to fix — a stage named before its prerequisite, or one
+    # whose measurements came back empty — so they print as errors, not as crashes.
+    try:
+        run_stages(stages, options)
+    except (MissingStageError, UncalibratableStageError) as exc:
+        print(exc, file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -6,9 +6,15 @@ from benchmarks import stages
 from tests.benchmarks import utils
 
 # Above the degenerate-window floor: below about fifty tasks the trimmed completion
-# window collapses, every measurement reports zero throughput, and a stage flags for
-# that rather than for whatever the test is about.
+# Comfortably above the floor where a trimmed completion window still divides. How
+# low that floor sits depends on the worker: at four tasks a concurrency-1 rung still
+# measures while the concurrency-16 rung collapses, so a ladder sized near it flags
+# for that rather than for whatever the test is about.
 MEASURABLE_TASKS = "60"
+# The other end of that floor: a single task completes at a single instant, so the
+# p10-p90 window a throughput divides by is empty and every measurement in a ladder
+# reports zero, however the worker is configured.
+UNMEASURABLE_TASKS = "1"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -197,4 +203,79 @@ def test_reports_a_spread_once_there_are_reps_to_compare(
         True,
         True,
         True,
+    ]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_refuses_a_stage_whose_prerequisite_was_never_run(
+    capsys: pytest.CaptureFixture[str], tmp_path: pathlib.Path
+) -> None:
+    """A missing prerequisite is the caller's mistake, so it reads as one."""
+    with pytest.raises(SystemExit) as exit_info:
+        stages.main(["checkpoint_cost", "--results-dir", str(tmp_path)])
+
+    assert (exit_info.value.code, capsys.readouterr().err) == (
+        1,
+        (
+            f"{tmp_path / 'stage_worker_knobs.json'} is missing, and this stage is "
+            "calibrated from it. Run `python -m benchmarks.stages worker_knobs` "
+            "first.\n"
+        ),
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_refuses_a_stage_whose_prerequisite_measured_no_throughput(
+    capsys: pytest.CaptureFixture[str], tmp_path: pathlib.Path
+) -> None:
+    """worker_knobs calibrates its own batch-size measurements from its concurrency
+    ladder, and at one task every rung of that ladder measures nothing."""
+    with pytest.raises(SystemExit) as exit_info:
+        stages.main(
+            [
+                "worker_knobs",
+                "--reps",
+                "1",
+                "--tasks",
+                UNMEASURABLE_TASKS,
+                "--results-dir",
+                str(tmp_path),
+            ]
+        )
+
+    assert (exit_info.value.code, capsys.readouterr().err) == (
+        1,
+        (
+            "None of the 5 recorded measurement(s) measured any throughput, so there "
+            "is no winning configuration to calibrate the next stage from. Re-run the "
+            "earlier stage on a quiet machine and check its flags.\n"
+        ),
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_stops_the_run_at_the_stage_that_could_not_calibrate(
+    tmp_path: pathlib.Path,
+) -> None:
+    """producer_ceiling depends on nothing and enqueues without measuring throughput.
+
+    It is named alongside worker_knobs and runs after it, so the only reason it wrote
+    no results file is that the run stopped where it broke.
+    """
+    with pytest.raises(SystemExit):
+        stages.main(
+            [
+                "worker_knobs",
+                "producer_ceiling",
+                "--reps",
+                "1",
+                "--tasks",
+                UNMEASURABLE_TASKS,
+                "--results-dir",
+                str(tmp_path),
+            ]
+        )
+
+    assert [path.name for path in sorted(tmp_path.iterdir())] == [
+        "stage_worker_knobs.json"
     ]
