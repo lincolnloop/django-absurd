@@ -20,8 +20,6 @@ def build_spec(
     )
 
 
-@pytest.mark.functional
-@pytest.mark.django_db
 @pytest.mark.parametrize(
     ("defect_key", "defect_value"),
     [
@@ -49,8 +47,6 @@ def test_flags_a_measurement_when_any_non_median_rep_is_defective(
     assert summary["flagged"] is True
 
 
-@pytest.mark.functional
-@pytest.mark.django_db
 def test_takes_the_lower_of_two_middle_reps() -> None:
     reps: list[dict[str, t.Any]] = [
         {"valid": True, "throughput_per_s": 10.0},
@@ -62,8 +58,6 @@ def test_takes_the_lower_of_two_middle_reps() -> None:
     assert summary["median"]["throughput_per_s"] == 10.0
 
 
-@pytest.mark.functional
-@pytest.mark.django_db
 def test_refuses_to_read_a_zero_throughput_measurement_as_stable() -> None:
     reps: list[dict[str, t.Any]] = [
         {"valid": True, "throughput_per_s": 0.0, "degenerate_window": True}
@@ -75,8 +69,6 @@ def test_refuses_to_read_a_zero_throughput_measurement_as_stable() -> None:
     assert summary["flagged"] is True
 
 
-@pytest.mark.functional
-@pytest.mark.django_db
 def test_spares_a_relatively_noisy_measurement_whose_reps_are_absolutely_tight() -> (
     None
 ):
@@ -96,8 +88,6 @@ def test_spares_a_relatively_noisy_measurement_whose_reps_are_absolutely_tight()
     assert summary["flagged"] is False
 
 
-@pytest.mark.functional
-@pytest.mark.django_db
 def test_still_flags_a_measurement_that_clears_the_limit_and_the_floor() -> None:
     reps: list[dict[str, t.Any]] = [
         {"valid": True, "end_to_end_p50_s": 0.680},

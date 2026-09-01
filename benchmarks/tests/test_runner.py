@@ -8,7 +8,6 @@ import pytest
 from benchmarks import runner
 
 
-@pytest.mark.functional
 def test_refuses_a_worker_that_never_reports_readiness() -> None:
     silent_child = subprocess.Popen(
         [sys.executable, "-c", "import time; time.sleep(30)"],
@@ -25,7 +24,6 @@ def test_refuses_a_worker_that_never_reports_readiness() -> None:
     assert (silent_child.poll() is not None) is True
 
 
-@pytest.mark.functional
 def test_reports_a_crashed_workers_last_output() -> None:
     crashing_child = subprocess.Popen(
         [

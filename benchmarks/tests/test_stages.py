@@ -14,8 +14,6 @@ HEALTHY_REP = {
 }
 
 
-@pytest.mark.functional
-@pytest.mark.django_db
 def test_flags_a_producer_stage_the_host_slept_through() -> None:
     reps: list[dict[str, t.Any]] = [
         HEALTHY_REP,
@@ -28,8 +26,6 @@ def test_flags_a_producer_stage_the_host_slept_through() -> None:
     assert summary["flagged"] is True
 
 
-@pytest.mark.functional
-@pytest.mark.django_db
 def test_summarizes_a_clean_producer_stage_without_flagging() -> None:
     summary = stages.summarize_producer_reps("single", [HEALTHY_REP])
 
@@ -37,7 +33,6 @@ def test_summarizes_a_clean_producer_stage_without_flagging() -> None:
     assert summary["flagged"] is False
 
 
-@pytest.mark.internal
 def test_refuses_to_calibrate_a_later_stage_from_results_that_measured_nothing() -> (
     None
 ):
@@ -53,8 +48,6 @@ def test_refuses_to_calibrate_a_later_stage_from_results_that_measured_nothing()
         stages.pick_best_measurement(degenerate)
 
 
-@pytest.mark.functional
-@pytest.mark.django_db
 def test_summarizes_a_measurement_whose_reps_were_all_discarded() -> None:
     spec = measurement.MeasurementSpec(
         name="napped",
@@ -73,7 +66,6 @@ def test_summarizes_a_measurement_whose_reps_were_all_discarded() -> None:
     )
 
 
-@pytest.mark.internal
 def test_calibrates_a_rate_stage_from_a_result_the_producer_can_outrun() -> None:
     recorded = [
         {
@@ -97,7 +89,6 @@ def test_calibrates_a_rate_stage_from_a_result_the_producer_can_outrun() -> None
     )
 
 
-@pytest.mark.internal
 @pytest.mark.parametrize(
     ("cores", "expected"),
     [

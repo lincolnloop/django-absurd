@@ -3,7 +3,6 @@ import pytest
 from benchmarks import measurement, runner
 
 
-@pytest.mark.functional
 @pytest.mark.django_db(transaction=True)
 def test_saturation_measurement_drains_backlog_and_reports_sql_metrics() -> None:
     spec = measurement.MeasurementSpec(
@@ -27,7 +26,6 @@ def test_saturation_measurement_drains_backlog_and_reports_sql_metrics() -> None
     assert result["flagged"] is False
 
 
-@pytest.mark.functional
 @pytest.mark.django_db(transaction=True)
 def test_rate_measurement_reports_latency_percentiles() -> None:
     spec = measurement.MeasurementSpec(
@@ -49,7 +47,6 @@ def test_rate_measurement_reports_latency_percentiles() -> None:
     assert result["median"]["missed_deadline_count"] == 0
 
 
-@pytest.mark.functional
 @pytest.mark.django_db(transaction=True)
 def test_saturation_measurement_flags_a_task_that_outlived_its_claim_lease() -> None:
     spec = measurement.MeasurementSpec(
@@ -70,7 +67,6 @@ def test_saturation_measurement_flags_a_task_that_outlived_its_claim_lease() -> 
     assert result["flagged"] is True
 
 
-@pytest.mark.functional
 @pytest.mark.django_db(transaction=True)
 def test_rate_measurement_fairness_agrees_with_its_windowed_run_count() -> None:
     spec = measurement.MeasurementSpec(
@@ -91,7 +87,6 @@ def test_rate_measurement_fairness_agrees_with_its_windowed_run_count() -> None:
     assert (result["median"]["n_runs"] < result["median"]["offered"]) is True
 
 
-@pytest.mark.functional
 @pytest.mark.django_db(transaction=True)
 def test_rate_measurement_offers_the_task_kwargs_it_was_given() -> None:
     spec = measurement.MeasurementSpec(
@@ -112,7 +107,6 @@ def test_rate_measurement_offers_the_task_kwargs_it_was_given() -> None:
     assert (result["median"]["execution_p50_s"] > 0.15) is True
 
 
-@pytest.mark.functional
 @pytest.mark.django_db(transaction=True)
 def test_saturation_measurement_flags_tasks_that_never_completed() -> None:
     spec = measurement.MeasurementSpec(

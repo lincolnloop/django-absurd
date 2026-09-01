@@ -77,6 +77,11 @@ class UncalibratableStageError(Exception):
 class StageOptions:
     results_dir: Path
     reps: int | None = None
+    # Override a stage's production size, so the suite can drive one end to end in
+    # seconds. Saturation stages are sized in tasks and rate stages in seconds, so
+    # one flag scaling both would hide which mode a stage is in.
+    tasks: int | None = None
+    duration_s: float | None = None
 
 
 def run_stages(stage_names: list[str], options: StageOptions) -> None:
@@ -125,18 +130,19 @@ def run_stage_c(options: StageOptions) -> None:
     worker = read_winning_worker(options)
     recorded: list[dict[str, t.Any]] = []
     record_measurements("c", build_stage_c_measurements(worker), recorded, options)
-    probes = measure_idle_probes(worker)
+    probes = measure_idle_probes(worker, options.duration_s or IDLE_PROBE_SECONDS)
     write_stage_file("c", recorded, options, {"idle_probes": probes})
 
 
 def run_stage_f(options: StageOptions) -> None:
     """The producer's own ceiling: one connection, eight threads, batched commits."""
     recorded: list[dict[str, t.Any]] = []
+    enqueues = options.tasks or PRODUCER_ENQUEUE_COUNT
     for mode in ("single", "threaded", "atomic"):
         reps = []
         for _ in range(options.reps or 3):
             truncate_queue_tables("bench")
-            reps.append(measure_producer_rep(mode))
+            reps.append(measure_producer_rep(mode, enqueues))
         recorded.append(summarize_producer_reps(mode, reps))
         write_stage_file("f", recorded, options)
         median = recorded[-1]["median"]
@@ -145,6 +151,7 @@ def run_stage_f(options: StageOptions) -> None:
 
 def measure_producer_rep(
     mode: t.Literal["single", "threaded", "atomic"],
+    enqueues: int = PRODUCER_ENQUEUE_COUNT,
 ) -> dict[str, t.Any]:
     """One stage F rep, bracketed like every other measured phase.
 
@@ -153,7 +160,7 @@ def measure_producer_rep(
     """
     try:
         with host.measure_phase():
-            metrics = producer.run_producer_benchmark(mode, PRODUCER_ENQUEUE_COUNT)
+            metrics = producer.run_producer_benchmark(mode, enqueues)
     except host.SuspendedPhaseError as exc:
         return {"valid": False, "error": str(exc)}
     else:
@@ -304,7 +311,9 @@ def build_stage_e_measurements(
     ]
 
 
-def measure_idle_probes(winner: runner.WorkerSpec) -> list[dict[str, t.Any]]:
+def measure_idle_probes(
+    winner: runner.WorkerSpec, seconds: float = IDLE_PROBE_SECONDS
+) -> list[dict[str, t.Any]]:
     probes: list[dict[str, t.Any]] = []
     for poll_interval in POLL_INTERVALS:
         truncate_queue_tables(winner.queue)
@@ -313,7 +322,7 @@ def measure_idle_probes(winner: runner.WorkerSpec) -> list[dict[str, t.Any]]:
             IDLE_PROBE_WORKERS,
         )
         try:
-            commits_per_s = analysis.measure_idle_commit_rate(IDLE_PROBE_SECONDS)
+            commits_per_s = analysis.measure_idle_commit_rate(seconds)
         finally:
             runner.stop_workers(procs)
         per_worker = commits_per_s / IDLE_PROBE_WORKERS
@@ -321,6 +330,7 @@ def measure_idle_probes(winner: runner.WorkerSpec) -> list[dict[str, t.Any]]:
             {
                 "poll_interval": poll_interval,
                 "workers": IDLE_PROBE_WORKERS,
+                "seconds": seconds,
                 "claims_per_s_per_worker": per_worker,
             }
         )
@@ -335,17 +345,29 @@ def record_measurements(
     options: StageOptions,
 ) -> None:
     for spec in specs:
-        recorded.append(measurement.run_measurement(apply_reps_override(spec, options)))
+        recorded.append(
+            measurement.run_measurement(apply_size_overrides(spec, options))
+        )
         write_stage_file(stage, recorded, options)
         print(summarize_measurement(recorded[-1]))
 
 
-def apply_reps_override(
+def apply_size_overrides(
     spec: measurement.MeasurementSpec, options: StageOptions
 ) -> measurement.MeasurementSpec:
-    if options.reps is None:
-        return spec
-    return dataclasses.replace(spec, reps=options.reps)
+    """Shrink a production-sized spec to whatever the caller asked for.
+
+    ``tasks`` only reaches a saturation spec and ``duration`` only a rate one: the two
+    modes are sized in different units, and one flag scaling both would hide that.
+    """
+    replacements: dict[str, t.Any] = {}
+    if options.reps is not None:
+        replacements["reps"] = options.reps
+    if options.tasks is not None and spec.mode == "saturation":
+        replacements["tasks"] = options.tasks
+    if options.duration_s is not None and spec.mode == "rate":
+        replacements["duration_s"] = options.duration_s
+    return dataclasses.replace(spec, **replacements) if replacements else spec
 
 
 def write_stage_file(
@@ -456,7 +478,7 @@ def pick_rate_calibration_measurement(
     return pick_best_measurement(capped or recorded)
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description="Run the django-absurd benchmark stages."
     )
@@ -464,13 +486,23 @@ def main() -> None:
     parser.add_argument("--all", action="store_true")
     parser.add_argument("--results-dir", default=DEFAULT_RESULTS_DIR, type=Path)
     parser.add_argument("--reps", default=None, type=int)
-    args = parser.parse_args()
+    parser.add_argument("--tasks", default=None, type=int)
+    parser.add_argument("--duration", default=None, type=float)
+    args = parser.parse_args(argv)
     stages = list(STAGE_NAMES) if args.all else (args.stage or [])
     if not stages:
         parser.error("pass --stage <A-G> (repeatable) or --all")
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "benchmarks.settings")
     django.setup()
-    run_stages(stages, StageOptions(results_dir=args.results_dir, reps=args.reps))
+    run_stages(
+        stages,
+        StageOptions(
+            results_dir=args.results_dir,
+            reps=args.reps,
+            tasks=args.tasks,
+            duration_s=args.duration,
+        ),
+    )
 
 
 if __name__ == "__main__":

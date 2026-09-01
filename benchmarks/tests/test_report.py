@@ -2,8 +2,6 @@ import json
 import typing as t
 from pathlib import Path
 
-import pytest
-
 from benchmarks import report
 
 HOST = {
@@ -73,7 +71,6 @@ def render(
     return report.render_report(tmp_path)
 
 
-@pytest.mark.functional
 def test_renders_stage_tables_from_result_files(tmp_path: Path) -> None:
     entries = [
         build_measurement("a1_c1", {}, {"throughput_per_s": 412.5}),
@@ -100,7 +97,6 @@ def test_renders_stage_tables_from_result_files(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.functional
 def test_renders_an_unmeasurable_spread_as_unavailable(tmp_path: Path) -> None:
     entries = [
         build_measurement(
@@ -118,7 +114,6 @@ def test_renders_an_unmeasurable_spread_as_unavailable(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.functional
 def test_names_the_moved_baseline_when_the_first_measurement_is_flagged(
     tmp_path: Path,
 ) -> None:
@@ -135,7 +130,6 @@ def test_names_the_moved_baseline_when_the_first_measurement_is_flagged(
     ) in render(tmp_path, "a", entries)
 
 
-@pytest.mark.functional
 def test_reports_mixed_provenance_when_measurements_disagree(tmp_path: Path) -> None:
     entries = [
         build_measurement("a1_c1", {}, {}, host={**HOST, "git_sha": "bbb222"}),
@@ -159,7 +153,6 @@ def test_reports_mixed_provenance_when_measurements_disagree(tmp_path: Path) -> 
     ) in rendered
 
 
-@pytest.mark.functional
 def test_renders_scaling_efficiency_for_stage_b(tmp_path: Path) -> None:
     entries = [
         build_measurement("b_workers_1", {"workers": 1}, {"throughput_per_s": 100.0}),
@@ -174,7 +167,6 @@ def test_renders_scaling_efficiency_for_stage_b(tmp_path: Path) -> None:
     ) in render(tmp_path, "b", entries)
 
 
-@pytest.mark.functional
 def test_renders_async_over_sync_ratio_for_stage_d(tmp_path: Path) -> None:
     entries = [
         build_measurement(
@@ -211,7 +203,6 @@ def test_renders_async_over_sync_ratio_for_stage_d(tmp_path: Path) -> None:
     ) in render(tmp_path, "d", entries)
 
 
-@pytest.mark.functional
 def test_renders_checkpoint_multiplier_for_stage_e(tmp_path: Path) -> None:
     entries = [
         build_measurement("e_flat", {}, {"throughput_per_s": 400.0}),
@@ -229,7 +220,6 @@ def test_renders_checkpoint_multiplier_for_stage_e(tmp_path: Path) -> None:
     ) in render(tmp_path, "e", entries)
 
 
-@pytest.mark.functional
 def test_renders_producer_columns_for_stage_f(tmp_path: Path) -> None:
     entries = [
         build_measurement(
@@ -256,7 +246,6 @@ def test_renders_producer_columns_for_stage_f(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.functional
 def test_renders_idle_polling_tax_and_latency_ratios_for_stage_c(
     tmp_path: Path,
 ) -> None:
