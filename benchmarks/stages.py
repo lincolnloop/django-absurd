@@ -115,6 +115,10 @@ class StageOptions:
     tasks: int | None = None
     duration_s: float | None = None
     io_seconds: float | None = None
+    # The size flags above bound the WORK; this one bounds the TOPOLOGY. Fleet size
+    # otherwise tracks the host, so a 128-core box spawns hundreds of worker processes
+    # across a stage with no way to ask for fewer.
+    max_workers: int | None = None
 
 
 def run_stages(stage_names: list[str], options: StageOptions) -> None:
@@ -181,7 +185,10 @@ def run_process_scaling(options: StageOptions) -> None:
     """How throughput scales with worker processes at the winning worker config."""
     worker = read_winning_worker(options)
     record_measurements(
-        "process_scaling", build_process_scaling_measurements(worker), [], options
+        "process_scaling",
+        build_process_scaling_measurements(worker, bound_fleet(HOST_CPUS, options)),
+        [],
+        options,
     )
 
 
@@ -192,7 +199,11 @@ def run_poll_interval(options: StageOptions) -> None:
     record_measurements(
         "poll_interval", build_poll_interval_measurements(worker), recorded, options
     )
-    probes = measure_idle_probes(worker, options.duration_s or IDLE_PROBE_SECONDS)
+    probes = measure_idle_probes(
+        worker,
+        options.duration_s or IDLE_PROBE_SECONDS,
+        bound_fleet(IDLE_PROBE_WORKERS, options),
+    )
     write_stage_file("poll_interval", recorded, options, {"idle_probes": probes})
 
 
@@ -300,7 +311,7 @@ def build_async_dispatch_measurements(
 
 
 def build_process_scaling_measurements(
-    winner: runner.WorkerSpec,
+    winner: runner.WorkerSpec, max_workers: int
 ) -> list[measurement.MeasurementSpec]:
     return [
         measurement.MeasurementSpec(
@@ -312,17 +323,22 @@ def build_process_scaling_measurements(
             tasks=max(4000, 2000 * count),
             timeout_s=SATURATION_TIMEOUT_S,
         )
-        for count in build_worker_ladder(HOST_CPUS)
+        for count in build_worker_ladder(max_workers)
     ]
 
 
-def build_worker_ladder(cores: int) -> list[int]:
-    """Worker counts process_scaling measures on a host with ``cores`` usable CPUs."""
+def build_worker_ladder(ceiling: int) -> list[int]:
+    """Worker counts process_scaling measures, topping out at ``ceiling``.
+
+    The host's core count unless ``--max-workers`` asks for less. The steps are
+    derived from the ceiling rather than clamped to it, so a bounded ladder is still a
+    ladder instead of the same rung repeated.
+    """
     # 1 and 2 anchor the low end where per-worker efficiency is still readable; the
-    # quarter/half/three-quarter steps track the host so the curve means the same thing
-    # on any box, and nothing exceeds the core count.
-    steps = {1, 2, cores // 4, cores // 2, cores * 3 // 4, cores}
-    return sorted(step for step in steps if 1 <= step <= cores)
+    # quarter/half/three-quarter steps track the ceiling so the curve means the same
+    # thing on any box, and nothing exceeds it.
+    steps = {1, 2, ceiling // 4, ceiling // 2, ceiling * 3 // 4, ceiling}
+    return sorted(step for step in steps if 1 <= step <= ceiling)
 
 
 def build_poll_interval_measurements(
@@ -378,24 +394,25 @@ def build_checkpoint_cost_measurements(
 
 
 def measure_idle_probes(
-    winner: runner.WorkerSpec, seconds: float = IDLE_PROBE_SECONDS
+    winner: runner.WorkerSpec,
+    seconds: float = IDLE_PROBE_SECONDS,
+    workers: int = IDLE_PROBE_WORKERS,
 ) -> list[dict[str, t.Any]]:
     probes: list[dict[str, t.Any]] = []
     for poll_interval in POLL_INTERVALS:
         truncate_queue_tables(winner.queue)
         procs = runner.start_workers(
-            dataclasses.replace(winner, poll_interval=poll_interval),
-            IDLE_PROBE_WORKERS,
+            dataclasses.replace(winner, poll_interval=poll_interval), workers
         )
         try:
             commits_per_s = analysis.measure_idle_commit_rate(seconds)
         finally:
             runner.stop_workers(procs)
-        per_worker = commits_per_s / IDLE_PROBE_WORKERS
+        per_worker = commits_per_s / workers
         probes.append(
             {
                 "poll_interval": poll_interval,
-                "workers": IDLE_PROBE_WORKERS,
+                "workers": workers,
                 "seconds": seconds,
                 "claims_per_s_per_worker": per_worker,
             }
@@ -434,6 +451,11 @@ def apply_size_overrides(
     if options.duration_s is not None and spec.mode == "rate":
         replacements["duration_s"] = options.duration_s
     return dataclasses.replace(spec, **replacements) if replacements else spec
+
+
+def bound_fleet(count: int, options: StageOptions) -> int:
+    """How many worker processes a stage may spawn, after ``--max-workers``."""
+    return count if options.max_workers is None else min(count, options.max_workers)
 
 
 def write_stage_file(
@@ -493,7 +515,9 @@ def read_winning_worker(options: StageOptions) -> runner.WorkerSpec:
 
 def read_ceiling(options: StageOptions) -> tuple[runner.WorkerSpec, int, float]:
     recorded = read_stage_measurements(options, "process_scaling")
-    best = pick_rate_calibration_measurement(recorded)
+    best = pick_rate_calibration_measurement(
+        recorded, bound_fleet(RATE_WORKER_CAP, options)
+    )
     return (
         runner.WorkerSpec(**best["spec"]["worker"]),
         best["spec"]["workers"],
@@ -530,15 +554,15 @@ def pick_best_measurement(recorded: list[dict[str, t.Any]]) -> dict[str, t.Any]:
 
 
 def pick_rate_calibration_measurement(
-    recorded: list[dict[str, t.Any]],
+    recorded: list[dict[str, t.Any]], worker_cap: int
 ) -> dict[str, t.Any]:
     """Pick what a rate stage calibrates from, leaving the producer some cores."""
-    # Falling back to the whole set keeps a process_scaling run that stayed above the
-    # cap
-    # calibratable, at the cost of an offer its producer may not reach.
-    capped = [
-        entry for entry in recorded if entry["spec"]["workers"] <= RATE_WORKER_CAP
-    ]
+    # Capping the SELECTION rather than the chosen fleet keeps the offered rate and the
+    # workers asked to absorb it the same measurement; clamping afterwards would aim a
+    # smaller fleet at a bigger fleet's ceiling. Falling back to the whole set keeps a
+    # process_scaling run that stayed above the cap calibratable, at the cost of an
+    # offer its producer may not reach.
+    capped = [entry for entry in recorded if entry["spec"]["workers"] <= worker_cap]
     return pick_best_measurement(capped or recorded)
 
 
@@ -558,6 +582,17 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--tasks", default=None, type=int)
     parser.add_argument("--duration", default=None, type=float)
     parser.add_argument(
+        "--max-workers",
+        default=None,
+        type=int,
+        help=(
+            "Most worker processes any one stage may spawn at once: bounds the "
+            "process_scaling ladder, the poll_interval idle probes, and the fleet "
+            "latency_under_load calibrates from. Unset, fleet size tracks the host's "
+            f"core count ({HOST_CPUS} here)."
+        ),
+    )
+    parser.add_argument(
         "--io-seconds",
         default=None,
         type=float,
@@ -576,6 +611,7 @@ def main(argv: list[str] | None = None) -> None:
         tasks=args.tasks,
         duration_s=args.duration,
         io_seconds=args.io_seconds,
+        max_workers=args.max_workers,
     )
     # Both are the caller's to fix — a stage named before its prerequisite, or one
     # whose measurements came back empty — so they print as errors, not as crashes.

@@ -5,12 +5,15 @@ import pytest
 from benchmarks import measurement, runner, stages
 from tests.benchmarks import utils
 
+# Every test here runs real `absurd_worker` children: separate processes on their own
+# connections, which cannot see rows the test has not committed.
+pytestmark = pytest.mark.django_db(transaction=True)
+
 # Above the degenerate-window floor: below about fifty tasks the trimmed completion
 # window collapses and every measurement reports zero throughput.
 MEASURABLE_TASKS = "60"
 
 
-@pytest.mark.django_db(transaction=True)
 def test_reports_the_sql_metrics_of_the_backlog_a_stage_drained(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -64,7 +67,6 @@ def test_reports_the_sql_metrics_of_the_backlog_a_stage_drained(
     ]
 
 
-@pytest.mark.django_db(transaction=True)
 def test_reports_the_latency_of_the_paced_offer_a_rate_stage_made(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -75,7 +77,18 @@ def test_reports_the_latency_of_the_paced_offer_a_rate_stage_made(
     asserted as measured at all, never as fast: a rate is not something a test can
     demand.
     """
-    size = ["--reps", "1", "--tasks", MEASURABLE_TASKS, "--duration", "1"]
+    size = [
+        "--reps",
+        "1",
+        "--tasks",
+        MEASURABLE_TASKS,
+        "--duration",
+        "1",
+        # Nothing here reads the idle probes, which are what the default fleet of four
+        # is spent on; the paced offer under test runs on one worker either way.
+        "--max-workers",
+        "1",
+    ]
     stages.main(["worker_knobs", *size, "--results-dir", str(tmp_path)])
 
     stages.main(["poll_interval", *size, "--results-dir", str(tmp_path)])
@@ -111,7 +124,6 @@ def test_reports_the_latency_of_the_paced_offer_a_rate_stage_made(
 # completes, one that never drains — and every workload the driver offers is a task
 # that succeeds; the last two want a single measurement repeated, which the smallest
 # stage would charge six of.
-@pytest.mark.django_db(transaction=True)
 def test_saturation_measurement_flags_a_task_that_outlived_its_claim_lease() -> None:
     spec = measurement.MeasurementSpec(
         name="smoke-redelivery",
@@ -131,7 +143,6 @@ def test_saturation_measurement_flags_a_task_that_outlived_its_claim_lease() -> 
     assert result["flagged"] is True
 
 
-@pytest.mark.django_db(transaction=True)
 def test_saturation_measurement_flags_tasks_that_never_completed() -> None:
     spec = measurement.MeasurementSpec(
         name="smoke-missing",
@@ -151,7 +162,6 @@ def test_saturation_measurement_flags_tasks_that_never_completed() -> None:
     assert result["flagged"] is True
 
 
-@pytest.mark.django_db(transaction=True)
 def test_saturation_measurement_refuses_a_backlog_that_never_drained() -> None:
     """A backlog still moving when the clock runs out is refused, not recorded.
 
@@ -179,7 +189,6 @@ def test_saturation_measurement_refuses_a_backlog_that_never_drained() -> None:
     )
 
 
-@pytest.mark.django_db(transaction=True)
 def test_saturation_measurement_refuses_a_rep_the_host_slept_through() -> None:
     """A napped rep leaves nothing behind: no median, no spread, and a flag.
 
@@ -225,7 +234,6 @@ def test_saturation_measurement_refuses_a_rep_the_host_slept_through() -> None:
     }
 
 
-@pytest.mark.django_db(transaction=True)
 def test_saturation_measurement_spreads_its_reps_two_ways() -> None:
     """Both spreads are recorded once there are reps to compare, never one of them.
 

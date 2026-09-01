@@ -5,6 +5,11 @@ import pytest
 from benchmarks import stages
 from tests.benchmarks import utils
 
+# Every test here drives a stage, and a stage spawns real `absurd_worker` children:
+# separate processes on their own connections, which cannot see rows the test has
+# not committed.
+pytestmark = pytest.mark.django_db(transaction=True)
+
 # Comfortably above the floor where a trimmed completion window still divides. How
 # low that floor sits depends on the worker: at four tasks a concurrency-1 rung still
 # measures while the concurrency-16 rung collapses, so a ladder sized near it flags
@@ -16,7 +21,6 @@ MEASURABLE_TASKS = "60"
 UNMEASURABLE_TASKS = "1"
 
 
-@pytest.mark.django_db(transaction=True)
 def test_runs_the_producer_stage_at_the_size_it_was_asked_for(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -48,7 +52,6 @@ def test_runs_the_producer_stage_at_the_size_it_was_asked_for(
     ]
 
 
-@pytest.mark.django_db(transaction=True)
 def test_runs_a_saturation_stage_at_the_size_it_was_asked_for(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -75,7 +78,6 @@ def test_runs_a_saturation_stage_at_the_size_it_was_asked_for(
     ]
 
 
-@pytest.mark.django_db(transaction=True)
 def test_runs_a_rate_stage_and_its_idle_probes_at_the_duration_it_was_asked_for(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -84,8 +86,20 @@ def test_runs_a_rate_stage_and_its_idle_probes_at_the_duration_it_was_asked_for(
     The probes carry their own hardcoded duration that neither size flag reaches, and
     they outlast every measurement they sit beside. How many tasks a paced offer gets
     out in a second is not fixed, so the count is not part of the result here.
+
+    `--max-workers` is the probes' other size: a probe spawns four workers per poll
+    interval by default, and its per-worker rate is divided by however many it got.
     """
-    size = ["--reps", "1", "--tasks", MEASURABLE_TASKS, "--duration", "1"]
+    size = [
+        "--reps",
+        "1",
+        "--tasks",
+        MEASURABLE_TASKS,
+        "--duration",
+        "1",
+        "--max-workers",
+        "1",
+    ]
     stages.main(["worker_knobs", *size, "--results-dir", str(tmp_path)])
 
     stages.main(["poll_interval", *size, "--results-dir", str(tmp_path)])
@@ -105,16 +119,19 @@ def test_runs_a_rate_stage_and_its_idle_probes_at_the_duration_it_was_asked_for(
         {"name": "poll_1", "duration_s": 1.0, "spread": None, "flagged": True},
     ]
     assert [
-        {"poll_interval": probe["poll_interval"], "seconds": probe["seconds"]}
+        {
+            "poll_interval": probe["poll_interval"],
+            "seconds": probe["seconds"],
+            "workers": probe["workers"],
+        }
         for probe in result["idle_probes"]
     ] == [
-        {"poll_interval": 0.05, "seconds": 1.0},
-        {"poll_interval": 0.25, "seconds": 1.0},
-        {"poll_interval": 1.0, "seconds": 1.0},
+        {"poll_interval": 0.05, "seconds": 1.0, "workers": 1},
+        {"poll_interval": 0.25, "seconds": 1.0, "workers": 1},
+        {"poll_interval": 1.0, "seconds": 1.0, "workers": 1},
     ]
 
 
-@pytest.mark.django_db(transaction=True)
 def test_runs_every_calibrated_stage_from_its_prerequisite(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -122,8 +139,20 @@ def test_runs_every_calibrated_stage_from_its_prerequisite(
 
     B, C and E calibrate from A and G calibrates from B, each reading the earlier
     stage back off disk, so a stage that runs alone proves nothing about the chain.
+
+    Three workers is the smallest bound that leaves stage B's ladder a ladder — at two
+    it is only the anchors, and asserting it climbs would then be vacuous.
     """
-    size = ["--reps", "1", "--tasks", MEASURABLE_TASKS, "--duration", "1"]
+    size = [
+        "--reps",
+        "1",
+        "--tasks",
+        MEASURABLE_TASKS,
+        "--duration",
+        "1",
+        "--max-workers",
+        "3",
+    ]
     stages.main(["worker_knobs", *size, "--results-dir", str(tmp_path)])
 
     for stage in ("process_scaling", "checkpoint_cost", "latency_under_load"):
@@ -138,16 +167,22 @@ def test_runs_every_calibrated_stage_from_its_prerequisite(
         for entry in utils.read_stage(tmp_path, "latency_under_load")["measurements"]
     ] == ["rate_25pct", "rate_50pct", "rate_75pct", "rate_90pct"]
     # Stage B's ladder is derived from the host's core count, so its names are not
-    # fixed. What is fixed is that it anchors at one worker and climbs.
+    # fixed. What is fixed is that it anchors at one worker, climbs, and honours the
+    # bound — which a two-core host reaches before `--max-workers` does.
     workers = [
         entry["spec"]["workers"]
         for entry in utils.read_stage(tmp_path, "process_scaling")["measurements"]
     ]
     assert workers[:2] == [1, 2]
     assert sorted(set(workers)) == workers
+    assert max(workers) <= 3
+    # Stage G calibrates from one of those rungs, so the bound carries into its fleet.
+    assert {
+        entry["spec"]["workers"]
+        for entry in utils.read_stage(tmp_path, "latency_under_load")["measurements"]
+    } <= set(workers)
 
 
-@pytest.mark.django_db(transaction=True)
 def test_runs_a_prerequisite_before_the_stage_that_calibrates_from_it(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -175,7 +210,6 @@ def test_runs_a_prerequisite_before_the_stage_that_calibrates_from_it(
     ] == ["flat", "workflow"]
 
 
-@pytest.mark.django_db(transaction=True)
 def test_reports_a_spread_once_there_are_reps_to_compare(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -205,7 +239,6 @@ def test_reports_a_spread_once_there_are_reps_to_compare(
     ]
 
 
-@pytest.mark.django_db(transaction=True)
 def test_repeats_a_measurement_three_times_when_no_rep_count_is_given(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -231,7 +264,6 @@ def test_repeats_a_measurement_three_times_when_no_rep_count_is_given(
     ] == [3, 3, 3, 3, 3]
 
 
-@pytest.mark.django_db(transaction=True)
 def test_records_an_unknown_git_sha_when_git_is_out_of_reach(
     monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
 ) -> None:
@@ -263,7 +295,6 @@ def test_records_an_unknown_git_sha_when_git_is_out_of_reach(
     ]
 
 
-@pytest.mark.django_db(transaction=True)
 def test_refuses_every_producer_rep_the_host_slept_through(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -317,7 +348,6 @@ def test_refuses_every_producer_rep_the_host_slept_through(
     ]
 
 
-@pytest.mark.django_db(transaction=True)
 def test_refuses_a_stage_whose_prerequisite_was_never_run(
     capsys: pytest.CaptureFixture[str], tmp_path: pathlib.Path
 ) -> None:
@@ -335,7 +365,6 @@ def test_refuses_a_stage_whose_prerequisite_was_never_run(
     )
 
 
-@pytest.mark.django_db(transaction=True)
 def test_refuses_a_stage_whose_prerequisite_measured_no_throughput(
     capsys: pytest.CaptureFixture[str], tmp_path: pathlib.Path
 ) -> None:
@@ -364,7 +393,6 @@ def test_refuses_a_stage_whose_prerequisite_measured_no_throughput(
     )
 
 
-@pytest.mark.django_db(transaction=True)
 def test_stops_the_run_at_the_stage_that_could_not_calibrate(
     tmp_path: pathlib.Path,
 ) -> None:

@@ -95,8 +95,8 @@ exit cleanly. Results land in `benchmarks/results/` through the bind mount.
 
 The `bench` service is behind a compose profile, so a plain `up -d` never starts a
 75-minute run by accident. A full run took 75 minutes on the reference host; naming
-stages runs only those, and `--tasks`, `--duration` and `--reps` shrink a stage to a dry
-run. The test suite is the separate, host-run smoke described under
+stages runs only those, and `--tasks`, `--duration`, `--reps` and `--max-workers` shrink
+a stage to a dry run. The test suite is the separate, host-run smoke described under
 [Running the tests](#running-the-tests).
 
 `db_bench` keeps a named volume, so it is a different server from the root
@@ -151,6 +151,20 @@ order whatever order you type.
 ladder from `os.cpu_count()`: 1 and 2 anchor the low end where per-worker efficiency is
 still readable, then quarter, half, three-quarter and full. Eight cores gives 1, 2, 4,
 6, 8; thirty-two gives 1, 2, 8, 16, 24, 32.
+
+**`--max-workers` is the size flag for topology.** `--tasks`, `--duration` and
+`--io-seconds` size the work; nothing sized the fleet, and the fleet tracked the host.
+Thirty-two cores means 1 + 2 + 8 + 16 + 24 + 32 = 83 worker processes spawned across
+process_scaling alone, and 128 cores means 323. `--max-workers N` lowers the ceiling the
+ladder is derived from, so a bounded ladder is still a ladder rather than the same rung
+repeated: `--max-workers 3` gives 1, 2, 3. The same bound caps the poll_interval idle
+probes (four per interval otherwise) and the fleet latency_under_load calibrates from —
+it narrows which process_scaling rung stage G may pick, so the offered rate stays the
+throughput that fleet actually measured. Unset, everything behaves exactly as above.
+
+Bound both stages together. `--max-workers` on latency_under_load alone reads back a
+`stage_process_scaling.json` measured on a larger fleet, and the rungs it is allowed to
+pick from are whatever that unbounded run recorded.
 
 **Stage G does not calibrate from the outright ceiling.** A rate measurement's producer
 runs on the same machine as its workers. If latency_under_load aimed at the throughput
@@ -253,22 +267,22 @@ starting with worker_knobs), or it errors saying so.
 
 ## Layout
 
-| file             | what it is                                                                             |
-| ---------------- | -------------------------------------------------------------------------------------- |
-| `compose.yaml`   | the `db_bench` Postgres (pinned config, own volume), `migrate`, and the `bench` runner |
-| `Dockerfile`     | the runner image; build context is the repo root                                       |
-| `pyproject.toml` | the harness's own project: django-absurd by path, everything else pinned               |
-| `uv.lock`        | the pinned resolution `uv sync --locked` installs in the image                         |
-| `settings.py`    | Django settings; reads `DATABASE_URL`                                                  |
-| `manage.py`      | for `migrate` and for the worker children                                              |
-| `tasks.py`       | the five workloads: two no-ops, two sleeps, one 4-step workflow                        |
-| `host.py`        | host context capture and the suspension guard                                          |
-| `runner.py`      | spawns and reaps `absurd_worker` subprocesses                                          |
-| `producer.py`    | the enqueue side: preload, paced offer, producer benchmark                             |
-| `analysis.py`    | the SQL that turns Absurd's own columns into metrics                                   |
-| `measurement.py` | one measurement: reps, drain detection, median, flags                                  |
-| `stages.py`      | runs the stages (positional names, `--tasks`, `--duration`, `--io-seconds`, `--reps`)  |
-| `report.py`      | renders a results directory as markdown                                                |
+| file             | what it is                                                                                             |
+| ---------------- | ------------------------------------------------------------------------------------------------------ |
+| `compose.yaml`   | the `db_bench` Postgres (pinned config, own volume), `migrate`, and the `bench` runner                 |
+| `Dockerfile`     | the runner image; build context is the repo root                                                       |
+| `pyproject.toml` | the harness's own project: django-absurd by path, everything else pinned                               |
+| `uv.lock`        | the pinned resolution `uv sync --locked` installs in the image                                         |
+| `settings.py`    | Django settings; reads `DATABASE_URL`                                                                  |
+| `manage.py`      | for `migrate` and for the worker children                                                              |
+| `tasks.py`       | the five workloads: two no-ops, two sleeps, one 4-step workflow                                        |
+| `host.py`        | host context capture and the suspension guard                                                          |
+| `runner.py`      | spawns and reaps `absurd_worker` subprocesses                                                          |
+| `producer.py`    | the enqueue side: preload, paced offer, producer benchmark                                             |
+| `analysis.py`    | the SQL that turns Absurd's own columns into metrics                                                   |
+| `measurement.py` | one measurement: reps, drain detection, median, flags                                                  |
+| `stages.py`      | runs the stages (positional names, `--tasks`, `--duration`, `--io-seconds`, `--max-workers`, `--reps`) |
+| `report.py`      | renders a results directory as markdown                                                                |
 
 Worker children inherit the database the parent is actually using: the runner renders
 `connections["default"].settings_dict` back into a `DATABASE_URL` and hands them that,
