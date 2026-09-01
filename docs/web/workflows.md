@@ -53,6 +53,10 @@ context **inside** a running task — `get_absurd_context()` when sync,
 - Async `fn` must return an awaitable — an `async def`, not a lambda.
 - Results go through `json.dumps`: no sets, custom classes, or `datetime`, and `tuple`
   returns as `list`.
+- **Each step is a durable write, and it is not cheap.** A 4-step workflow cost 4.55x a
+  flat task doing the same trivial work (8-core laptop, Postgres on the same box).
+  Checkpoint at boundaries worth not repeating — an external charge, a slow import — not
+  at every line.
 
 →
 [Absurd: Concepts — Steps (Checkpoints)](https://earendil-works.github.io/absurd/concepts/#steps-checkpoints)

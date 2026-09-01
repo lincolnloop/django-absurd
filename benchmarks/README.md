@@ -51,20 +51,23 @@ workers run in.
 
 ## What it found
 
-Measured on one 8-core laptop with Postgres in Docker on the same box. **Absolute rates
-are a property of that machine.** A tasks/s figure quoted without its host context will
-be read as django-absurd's number rather than this laptop's.
+**Every row below predates this harness and nothing in the repo backs it.** They were
+measured on one 8-core laptop with Postgres in Docker on the same box, by an earlier
+host-run driver talking to a published database port — a regime this harness abolished,
+and one no code here reproduces. Results are git-ignored, so no evidence for a row
+survives anywhere. Read them as the shape of what each stage measures, not as numbers to
+quote, and re-measure on your own host before you rely on one.
 
-| finding                                                  | measured                                                                              |
-| -------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `--batch-size 1` pays one claim round trip per run       | a concurrency-16 worker drops to 68.1 tasks/s, matching `--concurrency 1` at 66.6     |
-| a no-op task is bound by round trips, not by concurrency | 16x the concurrency buys 2.35x the throughput                                         |
-| worker processes scale, at falling efficiency            | 1 to 8 workers is 4.2x; per-worker efficiency 1.00 to 0.52                            |
-| `poll_interval` sets the latency floor                   | median wait is half the interval, and each idle worker costs `1/poll` claims/s        |
-| async and sync tasks perform the same                    | 0.99-1.00x at 50 ms of IO, across concurrency 4/16/32                                 |
-| a checkpoint costs about a whole task                    | a 4-step `ctx.step` workflow costs 4.55x a flat one                                   |
-| batching the enqueue side raises producer throughput     | `transaction.atomic()` over 500-task chunks reaches 2398 enqueues/s, a plain loop 199 |
-| latency climbs steeply just above 75% utilisation        | p50 runs 51, 64, 91 ms at 25/50/75% of capacity, then 1244 ms at 90%                  |
+| finding                                                  | measured                                                                          |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `--batch-size 1` pays one claim round trip per run       | a concurrency-16 worker drops to 68.1 tasks/s, matching `--concurrency 1` at 66.6 |
+| a no-op task is bound by round trips, not by concurrency | 16x the concurrency buys 2.35x the throughput                                     |
+| worker processes scale, at falling efficiency            | 1 to 8 workers is 4.2x; per-worker efficiency 1.00 to 0.52                        |
+| `poll_interval` sets the latency floor                   | median wait is half the interval, and each idle worker costs `1/poll` claims/s    |
+| async and sync tasks perform the same                    | 0.99-1.00x at 50 ms of IO, across concurrency 4/16/32                             |
+| a checkpoint costs about a whole task                    | a 4-step `ctx.step` workflow costs 4.55x a flat one                               |
+| batching the enqueue side raises producer throughput     | `transaction.atomic()` over 500-task chunks reaches 2398 enqueues/s               |
+| latency climbs steeply just above 75% utilisation        | p50 runs 51, 64, 91 ms at 25/50/75% of capacity, then 1244 ms at 90%              |
 
 The last row is the one to design against: **keep workers under about 75% of measured
 capacity.** Between 75% and 90% the median rises 13.7x and p99 reaches 6.2 s. The 90%
@@ -159,20 +162,26 @@ process_scaling alone, and 128 cores means 323. `--max-workers N` lowers the cei
 ladder is derived from, so a bounded ladder is still a ladder rather than the same rung
 repeated: `--max-workers 3` gives 1, 2, 3. The same bound caps the poll_interval idle
 probes (four per interval otherwise) and the fleet latency_under_load calibrates from —
-it narrows which process_scaling rung stage G may pick, so the offered rate stays the
-throughput that fleet actually measured. Unset, everything behaves exactly as above.
+it narrows which process_scaling rung latency_under_load may pick, so the offered rate
+stays the throughput that fleet actually measured. Unset, everything behaves exactly as
+above.
 
 Bound both stages together. `--max-workers` on latency_under_load alone reads back a
 `stage_process_scaling.json` measured on a larger fleet, and the rungs it is allowed to
 pick from are whatever that unbounded run recorded.
 
-**Stage G does not calibrate from the outright ceiling.** A rate measurement's producer
-runs on the same machine as its workers. If latency_under_load aimed at the throughput
-of a process_scaling result that used every core, the producer would have no CPU left to
-actually offer tasks that fast. The measurement would then describe a load that was
-never applied and be flagged for under-offering. So it calibrates from the fastest
-process_scaling result at or below `RATE_WORKER_CAP` (half the cores), which leaves the
-producer room to hit its target.
+A size below what a stage can measure is refused before anything runs, rather than
+crashing partway or writing a number describing work that never happened: fewer than one
+worker, fewer than one task, or a rate window of no length. `--io-seconds 0` is the
+exception and stays legal — no simulated IO is a real point on that experiment's axis.
+
+**`latency_under_load` does not calibrate from the outright ceiling.** A rate
+measurement's producer runs on the same machine as its workers. If latency_under_load
+aimed at the throughput of a process_scaling result that used every core, the producer
+would have no CPU left to actually offer tasks that fast. The measurement would then
+describe a load that was never applied and be flagged for under-offering. So it
+calibrates from the fastest process_scaling result at or below `RATE_WORKER_CAP` (half
+the cores), which leaves the producer room to hit its target.
 
 ## The results files
 

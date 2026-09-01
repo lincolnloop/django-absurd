@@ -107,6 +107,11 @@ writing or editing any test file. Running the suites:
   connection is refused / `pg_isready` fails, the container is stopped (they don't
   survive a machine restart or a new session) — bring it up FIRST; don't diagnose it as
   anything cleverer.
+- **`PGPORT` is read by both sides** — the port `db` publishes and the port the test
+  settings connect to — so one value keeps them consistent. Set it whenever a system
+  Postgres already owns 5432: otherwise `tests/core` runs against that server, and a
+  system cluster with pg_cron installed makes `test_central_connection.py`'s "no
+  pg_cron" assertion never fire. `PGPORT_PGCRON` does the same for `db_pg_cron`.
 - **The two gates to run before a commit** — not five separate commands:
   - `uvx --with tox-uv tox -e dev` — all four suites against the dev env only. Reach for
     the bare `uvx --with tox-uv tox` (full Python×Django matrix + min-max mypy) only
@@ -130,10 +135,11 @@ writing or editing any test file. Running the suites:
   `pytest` command line, mypy envs excluded), so parallel safety is exercised on every
   push instead of only when someone remembers to pass `-n`. Worker count is xdist's own
   `PYTEST_XDIST_AUTO_NUM_WORKERS`, which applies to `auto` only: CI pins it to 2 in
-  `test.yml`, a workstation sets it in a git-ignored `.envrc`, and unset takes every
-  core. `tox -e dev -- -n0` gives a serial baseline for telling a real failure from an
-  xdist-only one. A bare `uv run pytest <path>` is unaffected — `-n` is in no suite's
-  `addopts`, so pass it there yourself.
+  `test.yml`, and unset it takes every core. **Pin it in your environment too** —
+  `tests/multidb` creates a pair of databases per worker, and an unpinned `auto` on a
+  many-core box times that out. `tox -e dev -- -n0` gives a serial baseline for telling
+  a real failure from an xdist-only one. A bare `uv run pytest <path>` is unaffected —
+  `-n` is in no suite's `addopts`, so pass it there yourself.
 - Each suite runs with `--reuse-db` (addopts); add `--create-db` to rebuild after a
   migration change — including `tests/pg_cron`: its test DB is an ordinary one that
   pg_cron's launcher holds no session on (the launcher only ever connects to the central

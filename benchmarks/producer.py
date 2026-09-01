@@ -89,7 +89,7 @@ def run_rate_producer(
 def run_producer_benchmark(
     mode: t.Literal["single", "threaded", "atomic"], count: int
 ) -> dict[str, t.Any]:
-    """Stage F: enqueue ``count`` tasks three ways, reporting the producer's cost."""
+    """Enqueue ``count`` tasks three ways, reporting the producer's own cost."""
     task_object = import_string(PRODUCER_TASK_PATH)
     started = time.monotonic()
     if mode == "single":

@@ -381,9 +381,9 @@ def test_renders_idle_polling_tax_and_latency_ratios_for_poll_interval(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     entries = [
-        build_measurement("c_poll_0.25", {"mode": "rate"}, {"end_to_end_p50_s": 0.02}),
+        build_measurement("poll_0.25", {"mode": "rate"}, {"end_to_end_p50_s": 0.02}),
         build_measurement(
-            "c_poll_1",
+            "poll_1",
             {
                 "mode": "rate",
                 "worker": {
@@ -411,8 +411,8 @@ def test_renders_idle_polling_tax_and_latency_ratios_for_poll_interval(
         "| 1 | 4 | 0.99 | 1.00 |\n"
     ) in rendered
     assert (
-        "End-to-end p50 relative to `c_poll_0.25` (flagged measurements excluded):\n"
+        "End-to-end p50 relative to `poll_0.25` (flagged measurements excluded):\n"
         "\n"
-        "- `c_poll_0.25`: 1.00x\n"
-        "- `c_poll_1`: 3.00x\n"
+        "- `poll_0.25`: 1.00x\n"
+        "- `poll_1`: 3.00x\n"
     ) in rendered

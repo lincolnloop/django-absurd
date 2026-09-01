@@ -26,6 +26,22 @@ module. `async def` works the same — `await send_report.aenqueue(42)`.
 - Delivery is **at-least-once** — keep handlers idempotent. See
   [runs & retries](workers.md#runs-retries).
 
+### Enqueue in bulk
+
+```python
+from django.db import transaction
+
+with transaction.atomic():
+    for order in batch:
+        process_order.enqueue(order.id)
+```
+
+Each `enqueue()` is its own round trip, so a bare loop commits once per task; one
+transaction amortises that across the batch. The trade is the rule above at batch scale
+— a rollback drops every enqueue in the block together, and workers see none of them
+until it commits. Chunk a few hundred at a time and retry a failed chunk, rather than
+wrapping the whole batch in one transaction.
+
 ## Read the result
 
 ```python

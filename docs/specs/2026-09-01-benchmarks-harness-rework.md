@@ -120,6 +120,11 @@ Everything through the public entrypoint at small sizes so CI stays fast. Direct
 flags, not a scale multiplier — the saturation/rate split stays explicit rather than
 hidden behind one number.
 
+As implemented this is a default, not an absolute: ten of the 38 tests enter below the
+entrypoint, either because no CLI input reaches the failure they exercise or because the
+smallest stage that would is six measurements to observe one. Each says so where it
+sits; the plan's §1.9 lists them.
+
 **Coverage: 100%, reached in that order.** Cover the happy path through the entrypoint
 first, then triage whatever remains. Each leftover branch is reachable with more
 entrypoint effort, dead and deleted, or a guard whose contract should be asserted

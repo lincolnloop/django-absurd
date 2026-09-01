@@ -33,7 +33,8 @@ dropped from under a running worker fails on its next claim, with the same messa
 - **One worker per queue.** `--queue` takes a single name; run a process per queue.
 - **`--concurrency`** — default `1`. Runs in flight per worker; also the sync
   thread-pool size. Raise it when tasks wait — on the database, an HTTP call, a sleep.
-  Pure Python compute won't go faster; add worker processes for that.
+  The overlap is partial, and thins out as it rises: each run still pays for its own
+  claim and completion, and those do not overlap away.
 - **`--batch-size`** — defaults to `--concurrency`. A claim never fetches more than the
   worker has free, so this only bites at `--concurrency 1`, where a bigger batch means
   fewer claims. Setting it to 1 costs a round trip per task and buys nothing.

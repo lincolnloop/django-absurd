@@ -18,6 +18,12 @@ RUN_STEPS = "benchmarks.tasks.run_steps"
 SLEEP_ASYNC = "benchmarks.tasks.sleep_async"
 SLEEP_SYNC = "benchmarks.tasks.sleep_sync"
 
+# Declared in dependency order: a stage that calibrates itself from another reads that
+# one back off disk, so it is listed after it. Naming several stages runs them in this
+# order whatever order they arrive in; a stage named alone whose prerequisite is missing
+# still refuses rather than quietly running it. The dependency itself is written once,
+# at the `read_*` call site that needs it — a second table naming the same edges is one
+# more thing to keep in step, and this list is the only ordering anything reads.
 STAGE_NAMES = (
     "worker_knobs",
     "process_scaling",
@@ -27,18 +33,6 @@ STAGE_NAMES = (
     "producer_ceiling",
     "latency_under_load",
 )
-
-# Which stage each one reads back off disk to calibrate itself. A partial order, not a
-# sequence: D and F depend on nothing, so the letters imply an ordering that is not
-# real. Naming several stages runs them in dependency order whatever order they arrive
-# in; a stage named alone whose prerequisite is missing still refuses rather than
-# quietly running it.
-STAGE_DEPENDS_ON = {
-    "process_scaling": "worker_knobs",
-    "poll_interval": "worker_knobs",
-    "checkpoint_cost": "worker_knobs",
-    "latency_under_load": "process_scaling",
-}
 
 STAGE_DESCRIPTIONS = {
     "worker_knobs": (
@@ -73,6 +67,8 @@ RATE_TIMEOUT_S = 300.0
 # divides by that median, so it RISES as the measurement gets faster.
 RATE_SPREAD_FLOOR_S = 0.15
 IDLE_PROBE_SECONDS = 30.0
+# A rate is divided by its own window, so a zero-length one has nothing to report.
+SMALLEST_MEASURABLE_DURATION_S = 0.001
 IDLE_PROBE_WORKERS = 4
 POLL_INTERVALS = (0.05, 0.25, 1.0)
 # What the sleep tasks simulate as IO. The stage's finding is only true AT a duration,
@@ -81,6 +77,7 @@ SLEEP_IO_SECONDS = 0.05
 # ~25 s per rep at the slowest mode's ~200 enqueues/s: enough for stable percentiles
 # while 3 reps x 3 modes still finish in a couple of minutes.
 PRODUCER_ENQUEUE_COUNT = 5000
+PRODUCER_REP_COUNT = 3
 PRODUCER_SPREAD_LIMIT = 0.15
 # The 4-checkpoint task runs ~4.5x slower than a flat one, so SATURATION_TASKS would
 # push a rep past two minutes; 2000 keeps checkpoint_cost on the same per-rep budget.
@@ -102,6 +99,15 @@ class UncalibratableStageError(Exception):
             f"throughput, so there is no winning configuration to calibrate the next "
             f"stage from. "
             f"Re-run the earlier stage on a quiet machine and check its flags."
+        )
+
+
+class InvalidSizeError(Exception):
+    def __init__(self, flag: str, value: float, floor: float) -> None:
+        super().__init__(
+            f"{flag} {value:g} is below {floor:g}, which leaves a stage nothing to "
+            f"measure — no worker to spawn, no task to drain, or no window to divide "
+            f"by. Every number it recorded would describe work that never happened."
         )
 
 
@@ -149,7 +155,9 @@ def run_stage(name: str, options: StageOptions) -> None:
     elif name == "sync_vs_async":
         record_measurements(
             "sync_vs_async",
-            build_sync_vs_async_measurements(options.io_seconds or SLEEP_IO_SECONDS),
+            build_sync_vs_async_measurements(
+                SLEEP_IO_SECONDS if options.io_seconds is None else options.io_seconds
+            ),
             [],
             options,
         )
@@ -201,7 +209,7 @@ def run_poll_interval(options: StageOptions) -> None:
     )
     probes = measure_idle_probes(
         worker,
-        options.duration_s or IDLE_PROBE_SECONDS,
+        IDLE_PROBE_SECONDS if options.duration_s is None else options.duration_s,
         bound_fleet(IDLE_PROBE_WORKERS, options),
     )
     write_stage_file("poll_interval", recorded, options, {"idle_probes": probes})
@@ -210,16 +218,17 @@ def run_poll_interval(options: StageOptions) -> None:
 def run_producer_ceiling(options: StageOptions) -> None:
     """The producer's own ceiling: one connection, eight threads, batched commits."""
     recorded: list[dict[str, t.Any]] = []
-    enqueues = options.tasks or PRODUCER_ENQUEUE_COUNT
+    enqueues = PRODUCER_ENQUEUE_COUNT if options.tasks is None else options.tasks
+    rep_count = PRODUCER_REP_COUNT if options.reps is None else options.reps
     for mode in ("single", "threaded", "atomic"):
         reps = []
-        for _ in range(options.reps or 3):
+        for _ in range(rep_count):
             truncate_queue_tables("bench")
             reps.append(measure_producer_rep(mode, enqueues))
         recorded.append(summarize_producer_reps(mode, reps))
         write_stage_file("producer_ceiling", recorded, options)
         median = recorded[-1]["median"]
-        print(f"f_{mode}: {median.get('enqueues_per_s', 0.0):.1f} enqueues/s")
+        print(f"{mode}: {median.get('enqueues_per_s', 0.0):.1f} enqueues/s")
 
 
 def measure_producer_rep(
@@ -478,10 +487,18 @@ def write_stage_file(
 
 def summarize_measurement(result: dict[str, t.Any]) -> str:
     median = result["median"]
+    # A saturation run starts with a full queue, so every task but the first waited
+    # behind the whole backlog: its percentiles are drain time wearing latency's name.
+    # The report's table drops them for the same reason.
+    latency = (
+        f"e2e p50 {median.get('end_to_end_p50_s', 0.0) * 1000:.1f}ms, "
+        if result["spec"]["mode"] == "rate"
+        else ""
+    )
     line = (
         f"{result['spec']['name']}: "
         f"{median.get('throughput_per_s', 0.0):.1f} tasks/s, "
-        f"e2e p50 {median.get('end_to_end_p50_s', 0.0) * 1000:.1f}ms, "
+        f"{latency}"
         f"spread {format_spread(result['spread'])}"
     )
     return f"{line} [FLAGGED]" if result["flagged"] else line
@@ -547,7 +564,7 @@ def pick_best_measurement(recorded: list[dict[str, t.Any]]) -> dict[str, t.Any]:
     best = max(
         candidates, key=lambda entry: entry["median"].get("throughput_per_s", 0.0)
     )
-    # A zero-throughput winner would calibrate stages B/C/E/G on nothing at all.
+    # A zero-throughput winner calibrates every stage reading it back on nothing at all.
     if best["median"].get("throughput_per_s", 0.0) <= 0:
         raise UncalibratableStageError(len(recorded))
     return best
@@ -559,11 +576,11 @@ def pick_rate_calibration_measurement(
     """Pick what a rate stage calibrates from, leaving the producer some cores."""
     # Capping the SELECTION rather than the chosen fleet keeps the offered rate and the
     # workers asked to absorb it the same measurement; clamping afterwards would aim a
-    # smaller fleet at a bigger fleet's ceiling. Falling back to the whole set keeps a
-    # process_scaling run that stayed above the cap calibratable, at the cost of an
-    # offer its producer may not reach.
+    # smaller fleet at a bigger fleet's ceiling. No fallback to the uncapped set: every
+    # ladder anchors at one worker and every cap is at least one, so a rung under the
+    # cap always exists.
     capped = [entry for entry in recorded if entry["spec"]["workers"] <= worker_cap]
-    return pick_best_measurement(capped or recorded)
+    return pick_best_measurement(capped)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -586,10 +603,10 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         type=int,
         help=(
-            "Most worker processes any one stage may spawn at once: bounds the "
-            "process_scaling ladder, the poll_interval idle probes, and the fleet "
-            "latency_under_load calibrates from. Unset, fleet size tracks the host's "
-            f"core count ({HOST_CPUS} here)."
+            "Most worker processes any one stage may spawn at once, at least 1: "
+            "bounds the process_scaling ladder, the poll_interval idle probes, and the "
+            "fleet latency_under_load calibrates from. Unset, fleet size tracks the "
+            f"host's core count ({HOST_CPUS} here)."
         ),
     )
     parser.add_argument(
@@ -605,7 +622,37 @@ def main(argv: list[str] | None = None) -> None:
     stages = args.stages or list(STAGE_NAMES)
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "benchmarks.settings")
     django.setup()
-    options = StageOptions(
+    # All three are the caller's to fix — a size nothing could measure, a stage named
+    # before its prerequisite, or one whose measurements came back empty — so they
+    # print as errors, not as crashes.
+    try:
+        run_stages(stages, build_stage_options(args))
+    except (
+        InvalidSizeError,
+        MissingStageError,
+        UncalibratableStageError,
+    ) as exc:
+        print(exc, file=sys.stderr)
+        sys.exit(1)
+
+
+def build_stage_options(args: argparse.Namespace) -> StageOptions:
+    """The parsed flags as one stage's options, refusing a size nothing could measure.
+
+    Each of these goes wrong in its own way downstream and none of them announces it:
+    an empty ladder writes no results file while reporting success, a negative fleet
+    divides an idle probe's claim rate into a rate no worker produced, no tasks leaves
+    a percentile with nothing to sort, and a zero-second probe divides by its own
+    duration.
+    """
+    for flag, value, floor in (
+        ("--max-workers", args.max_workers, 1),
+        ("--tasks", args.tasks, 1),
+        ("--duration", args.duration, SMALLEST_MEASURABLE_DURATION_S),
+    ):
+        if value is not None and value < floor:
+            raise InvalidSizeError(flag, value, floor)
+    return StageOptions(
         results_dir=args.results_dir,
         reps=args.reps,
         tasks=args.tasks,
@@ -613,13 +660,6 @@ def main(argv: list[str] | None = None) -> None:
         io_seconds=args.io_seconds,
         max_workers=args.max_workers,
     )
-    # Both are the caller's to fix — a stage named before its prerequisite, or one
-    # whose measurements came back empty — so they print as errors, not as crashes.
-    try:
-        run_stages(stages, options)
-    except (MissingStageError, UncalibratableStageError) as exc:
-        print(exc, file=sys.stderr)
-        sys.exit(1)
 
 
 if __name__ == "__main__":

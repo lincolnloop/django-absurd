@@ -61,6 +61,15 @@ def nap_until_stopped(
         traveller.shift(dt.timedelta(seconds=NAP_SECONDS))
 
 
+def normalize_measured_numbers(output: str) -> str:
+    """Console output with every measured value blanked, so it reads as a literal.
+
+    Only a number carrying a unit is blanked: a measurement's own name has a decimal
+    in it too (`poll_0.05`), and erasing that would erase what the line is about.
+    """
+    return re.sub(r"\d+\.\d+(?=[ %]|ms)", "N", output)
+
+
 def normalize_measured_durations(rep: dict[str, t.Any]) -> dict[str, t.Any]:
     """A refused rep with the durations in its error blanked, so it reads as a literal.
 

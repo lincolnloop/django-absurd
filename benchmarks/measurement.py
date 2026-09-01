@@ -65,7 +65,7 @@ def run_saturation_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
     )
     procs = runner.start_workers(spec.worker, spec.workers)
     try:
-        with host.measure_phase():
+        with host.measure_phase() as phase:
             wait_until_drained(spec)
     finally:
         runner.stop_workers(procs)
@@ -73,13 +73,15 @@ def run_saturation_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
     # A terminally failed task still satisfies the drain predicate, so without this
     # the measurement silently covers a smaller sample than it was asked to.
     metrics["missing_tasks"] = spec.tasks - metrics["n_tasks"]
-    return {"preload_s": preload_s, **metrics}
+    # Every other number here comes off a trimmed window that excludes the ramp and the
+    # tail by construction, so without this a rep cannot say where its own time went.
+    return {"preload_s": preload_s, "phase_s": phase.elapsed_s, **metrics}
 
 
 def run_rate_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
     procs = runner.start_workers(spec.worker, spec.workers)
     try:
-        with host.measure_phase():
+        with host.measure_phase() as phase:
             window_start = analysis.capture_database_now()
             offer = producer.run_rate_producer(
                 spec.task_path,
@@ -91,7 +93,9 @@ def run_rate_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
             wait_until_drained(spec)
     finally:
         runner.stop_workers(procs)
+    # The offer and the drain that followed it, which the trimmed window excludes.
     return {
+        "phase_s": phase.elapsed_s,
         **analysis.analyze_rate(spec.worker.queue, window_start, window_end),
         **dataclasses.asdict(offer),
     }

@@ -132,22 +132,30 @@ From `benchmarks/README.md` and, where they appear, the docs page being deleted:
   context stay. Do not replace it with a ratio against the flagged baseline.
 - "only the ratios travel" where stated generally
 
-Not a deletion: the concurrency ladder result is already qualified in place as
-round-trip-bound. Tighten the framing; keep the number.
+Not a deletion in the harness README, which keeps the number under the provenance stamp.
+It does NOT go in the user guide: the same branch marks that whole regime as unbacked by
+anything in the repo, so citing one of its numbers as guidance two files away
+contradicts the stamp. The guide gets the mechanism — a run still pays for its own claim
+and completion, which do not overlap away — and phase 3 can put a number back with
+evidence behind it.
 
 ## 1.6 Docs
 
 - Delete `docs/web/performance.md`, its nav entry in `zensical.toml`, and the bullet in
   `docs/web/workers.md` pointing at it.
-- **Before deleting, rehome the supported findings.** The batch-size floor, the
-  poll-interval latency floor and the checkpoint cost go to the worker docs as terse
-  flag guidance in the pattern _default, then why you would change it_ — the flags table
-  already carries the defaults, so add only what it does not say. The enqueue-batching
-  guidance is a producer pattern rather than a worker flag and has no home yet; it needs
-  one, or it is lost with the page.
+- **Before deleting, rehome the supported findings.** The batch-size floor and the
+  poll-interval latency floor go to the worker docs as terse flag guidance in the
+  pattern _default, then why you would change it_ — the flags table already carries the
+  defaults, so add only what it does not say. The IO-bound concurrency ladder does NOT
+  go with them; see 1.5. Two are not worker flags: the checkpoint cost goes to
+  `workflows.md` beside `step`, and the enqueue-batching pattern to `tasks.md` beside
+  the rule that enqueuing rides the surrounding transaction, since it is a producer
+  pattern. Nothing is rehomed without its host context, and the batching pattern keeps
+  no ratio — the 12x divides by the baseline that failed to replicate.
 - Delete `.envrc.example` and revert the `CLAUDE.md` block instructing devs to copy it.
-  No local tool imposed; if a note is needed it says only that the port is
-  env-configurable, and it lives in the tests guide.
+  No local tool imposed. The two operational facts the file carried survive as prose in
+  `CLAUDE.md`'s Testing section, where a developer meets them: what an unset `PGPORT`
+  costs, and why the xdist worker count wants pinning.
 - Correct the `CLAUDE.md` claim about bare root `pytest`: exit code 4, an
   `ImproperlyConfigured` raised while importing auth models from the root test conftest.
 
@@ -199,9 +207,12 @@ draft specified because it assumed the tests needed the benchmark server.
 
 ## 1.9 Sweep: every test through the command line — DONE
 
-Outcome: 38 tests, of which every one drives `stages.main` or `report.main` except the
-runner file, which covers what happens when a worker child misbehaves. Recorded in that
-file's own docstring rather than here.
+Outcome: 38 tests. Two files enter below `stages.main` / `report.main`, each recording
+why in place rather than here: all five in `test_runner.py`, which cover what happens
+when a worker child misbehaves, and five of the seven in `test_smoke.py`, which build a
+`MeasurementSpec` and call `run_measurement` directly — three want a task that
+misbehaves and every workload the driver offers succeeds, two want one measurement
+repeated and the smallest stage would charge six of them.
 
 The premise below was wrong in one respect worth keeping: the guards were called
 unreachable, and all of them turned out reachable — a child that traps its stop signal,
