@@ -75,8 +75,9 @@ def collect_host_context() -> dict[str, t.Any]:
 
 
 def read_git_sha() -> str:
-    # Provenance is best-effort: the compose `bench` container has no git binary and
-    # no .git directory, and a missing SHA should not abort a measurement.
+    # Provenance is best-effort: an unpacked tarball has no .git directory and a
+    # machine may have no git at all, and a missing SHA should not abort a
+    # measurement.
     try:
         completed = subprocess.run(
             ["git", "rev-parse", "HEAD"],

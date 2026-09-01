@@ -29,7 +29,8 @@ def read_stage(results_dir: pathlib.Path, stage: str) -> dict[str, t.Any]:
 def nap_the_wall_clock() -> t.Iterator[None]:
     """Run the body on a host whose WALL clock keeps outrunning its monotonic one.
 
-    That disagreement is the only input `benchmarks.host.check_phase_uninterrupted`
+    That disagreement is the only input the harness's
+    `host.check_phase_uninterrupted`
     reads, and a test cannot suspend its own machine. time-machine moves `time.time`
     and leaves `perf_counter` alone, which is exactly the shape of a nap; the thread
     repeats the jump so a phase is suspended whenever inside the body it starts.

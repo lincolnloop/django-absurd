@@ -244,8 +244,8 @@ def build_checkpoint_multiplier_lines(
         entry["spec"]["task_path"]: entry["median"]["throughput_per_s"]
         for entry in measurements
     }
-    flat = throughput.get("benchmarks.tasks.noop_sync")
-    workflow = throughput.get("benchmarks.tasks.run_steps")
+    flat = throughput.get("tasks.noop_sync")
+    workflow = throughput.get("tasks.run_steps")
     if not flat or not workflow:
         return build_ratio_lines(
             measurements, measurements, "throughput_per_s", "Throughput"

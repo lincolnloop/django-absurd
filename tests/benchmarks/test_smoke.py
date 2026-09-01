@@ -2,7 +2,9 @@ import pathlib
 
 import pytest
 
-from benchmarks import measurement, runner, stages
+import measurement
+import runner
+import stages
 from tests.benchmarks import utils
 
 # Every test here runs real `absurd_worker` children: separate processes on their own
@@ -198,7 +200,7 @@ def test_saturation_measurement_refuses_a_rep_the_host_slept_through() -> None:
     spec = measurement.MeasurementSpec(
         name="smoke-napped",
         mode="saturation",
-        task_path="benchmarks.tasks.noop_sync",
+        task_path="tasks.noop_sync",
         tasks=int(MEASURABLE_TASKS),
         workers=1,
         worker=runner.WorkerSpec(concurrency=1, poll_interval=0.05),
@@ -245,7 +247,7 @@ def test_saturation_measurement_spreads_its_reps_two_ways() -> None:
     spec = measurement.MeasurementSpec(
         name="smoke-repeated",
         mode="saturation",
-        task_path="benchmarks.tasks.noop_sync",
+        task_path="tasks.noop_sync",
         tasks=int(MEASURABLE_TASKS),
         workers=1,
         worker=runner.WorkerSpec(concurrency=1, poll_interval=0.05),

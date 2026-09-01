@@ -6,12 +6,16 @@ SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "bench-only-not-secret")
 
 INSTALLED_APPS = ["django_absurd"]
 
-# The compose service name is the default because the harness only ever runs inside
-# that network; there is no published port to reach db_bench from the host.
+# `PGPORT_BENCH` is read by both sides — the port compose publishes and the port this
+# connects to — so one value keeps them consistent, as `PGPORT` does for the suites.
+# The database name is db_bench's own too: a stray run against a suite's server would
+# measure an untuned Postgres and still print numbers.
 DATABASES = {
     "default": dj_database_url.parse(
         os.environ.get(
-            "DATABASE_URL", "postgres://postgres:postgres@db_bench:5432/postgres"
+            "DATABASE_URL",
+            "postgres://postgres:postgres@localhost:"
+            f"{os.environ.get('PGPORT_BENCH', '5460')}/absurd_bench",
         )
     )
 }

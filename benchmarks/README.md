@@ -4,12 +4,15 @@ A repeatable measurement rig for three questions: how many tasks a worker topolo
 actually drains, what latency looks like under a fixed offered rate, and what the knobs
 (`--concurrency`, `--batch-size`, `--poll-interval`) buy. It is internal tooling.
 Nothing here ships in the `django_absurd` wheel, and it is not a Django app: no models,
-no migrations, just a settings module, a task module, and two CLI drivers.
+no migrations, just a settings module, a task module, and two CLI drivers. It is not a
+package either — no `__init__.py`, so this directory IS the import root and its modules
+are top-level (`import stages`, `import host`). Every command below therefore runs from
+inside `benchmarks/`.
 
 ## Architecture
 
 ```
-                    python -m benchmarks.stages [stage ...]
+                        python -m stages [stage ...]
                                    |
                                    v
    +--------------------------- stages.py ----------------------------+
@@ -29,7 +32,7 @@ no migrations, just a settings module, a task module, and two CLI drivers.
    +------------|-----------+           +--------------|-------------+
                 |        enqueue / claim / complete    |
                 v                                      v
-   +------------------- Postgres (compose: db_bench) ----------------+
+   +------- Postgres (compose: db_bench, on a published port) --------+
    | Absurd's own tables; t_bench.enqueue_at, r_bench.started_at and |
    | r_bench.completed_at carry every timestamp used                 |
    +---------------------------------|--------------------------------+
@@ -53,10 +56,10 @@ workers run in.
 
 **Every row below predates this harness and nothing in the repo backs it.** They were
 measured on one 8-core laptop with Postgres in Docker on the same box, by an earlier
-host-run driver talking to a published database port — a regime this harness abolished,
-and one no code here reproduces. Results are git-ignored, so no evidence for a row
-survives anywhere. Read them as the shape of what each stage measures, not as numbers to
-quote, and re-measure on your own host before you rely on one.
+driver whose stages, sizes and metrics are not the ones here — so no code in this
+directory reproduces them. Results are git-ignored, so no evidence for a row survives
+anywhere. Read them as the shape of what each stage measures, not as numbers to quote,
+and re-measure on your own host before you rely on one.
 
 | finding                                                  | measured                                                                          |
 | -------------------------------------------------------- | --------------------------------------------------------------------------------- |
@@ -81,27 +84,40 @@ would likely look better.
 
 ## Reproducing from a clean checkout
 
+From inside `benchmarks/`:
+
 ```
-docker compose -f benchmarks/compose.yaml run --rm bench
-docker compose -f benchmarks/compose.yaml run --rm bench \
-  python -m benchmarks.report \
-  > "benchmarks/results/report-$(date -u +%Y%m%dT%H%M%SZ).md"
+docker compose up -d --wait db_bench
+uv run python manage.py migrate
+uv run python -m stages
+uv run python -m report > "results/report-$(date -u +%Y%m%dT%H%M%SZ).md"
 ```
 
-Runs happen only in the container. `db_bench` publishes no port, so there is one
-measurement regime instead of two and the "container numbers are only comparable with
-container numbers" caveat is uniformly true rather than a footnote.
+Only Postgres is containerised. `db_bench` publishes `${PGPORT_BENCH:-5460}` and holds
+its own database, `absurd_bench`; `settings.py` reads the same variable, so one value
+moves both sides and a run cannot quietly land on a suite's server (5432/5434) and
+measure an untuned one. `DATABASE_URL` overrides the whole address.
 
-`bench` builds `benchmarks/Dockerfile` against `benchmarks/uv.lock`, so the whole
-dependency set is pinned and `uv sync --locked` fails the build if the lock has drifted.
-The one-shot `migrate` service creates Absurd's tables first; `bench` waits for it to
-exit cleanly. Results land in `benchmarks/results/` through the bind mount.
+`uv run` resolves `pyproject.toml` and `uv.lock` here, so the dependency set is the
+pinned one and the environment lands in `benchmarks/.venv`. django-absurd comes from the
+checkout above, editable, so the harness measures this branch. A `bench_pgdata` volume
+created before the harness moved to the host predates `POSTGRES_DB`, so it holds no
+`absurd_bench`: `docker compose down -v` and start again — the results files are what
+you keep, never the database.
 
-The `bench` service is behind a compose profile, so a plain `up -d` never starts a
-75-minute run by accident. A full run took 75 minutes on the reference host; naming
-stages runs only those, and `--tasks`, `--duration`, `--reps` and `--max-workers` shrink
-a stage to a dry run. The test suite is the separate, host-run smoke described under
+With no stage named, `python -m stages` runs all seven, which took 75 minutes on the
+reference host; naming stages runs only those, and `--tasks`, `--duration`, `--reps` and
+`--max-workers` shrink a stage to a dry run. Results land in `benchmarks/results/`. The
+test suite is separate and lives at the repo root — see
 [Running the tests](#running-the-tests).
+
+**One measurement regime, and it is a host one.** Driver, producer and workers all run
+on the host; only Postgres is in a container, reached over loopback. Half of that regime
+is still pinned hard — `db_bench` is an exact image tag with a fixed server config on a
+port nothing else uses, and `uv.lock` plus `requires-python` fix the Python and every
+dependency. The other half is now whichever machine you are on, which is why `host.py`
+stamps cores, load average and versions onto every measurement: numbers are comparable
+with numbers measured the same way, and a run against Postgres somewhere else is not.
 
 `db_bench` keeps a named volume, so it is a different server from the root
 `compose.yaml`'s `db` and `db_pg_cron`. Those two do not need to be running for a
@@ -118,15 +134,14 @@ a one-off warm-up.
 To take that variable out of a comparison, run each stage against a fresh server:
 
 ```
-docker compose -f benchmarks/compose.yaml restart db_bench
-docker compose -f benchmarks/compose.yaml run --rm bench \
-  python -m benchmarks.stages process_scaling
+docker compose restart db_bench
+uv run python -m stages process_scaling
 ```
 
-Two commands per stage, rather than a script that loops them: the driver runs inside a
-container with no docker socket, so restarting the database is necessarily the caller's
-job. Prerequisites still have to exist when you pick stages by hand — the driver orders
-what you name, but it will not run a stage you did not ask for.
+Both commands are now yours to run in one shell, so a loop over stages is a `for` loop
+rather than an appeal to a docker socket the driver could not reach. Prerequisites still
+have to exist when you pick stages by hand — the driver orders what you name, but it
+will not run a stage you did not ask for.
 
 This is deliberately not the default. Nobody restarts Postgres between workloads in
 production, so a cold run measures a best case rather than a representative one. Both
@@ -186,16 +201,15 @@ the cores), which leaves the producer room to hit its target.
 
 ## The results files
 
-`benchmarks/results/stage_<name>.json` files are written by
-`python -m benchmarks.stages`, and by nothing else. A rendered `report-<UTC stamp>.md`
-lands beside them so a run and its reading stay together, stamped because a second run
-would otherwise overwrite the first reading while its own JSON sat right there. The
-driver rewrites the stage's file after every finished measurement (atomically, via a
-temp file), so a run killed at hour two keeps everything it measured. The directory is
-git-ignored on purpose: the numbers are a property of whatever machine produced them,
-and a committed set would read as django-absurd's official figures. The test suite never
-touches these files; it works against a throwaway test database and temporary
-directories.
+`benchmarks/results/stage_<name>.json` files are written by `python -m stages`, and by
+nothing else. A rendered `report-<UTC stamp>.md` lands beside them so a run and its
+reading stay together, stamped because a second run would otherwise overwrite the first
+reading while its own JSON sat right there. The driver rewrites the stage's file after
+every finished measurement (atomically, via a temp file), so a run killed at hour two
+keeps everything it measured. The directory is git-ignored on purpose: the numbers are a
+property of whatever machine produced them, and a committed set would read as
+django-absurd's official figures. The test suite never touches these files; it works
+against a throwaway test database and temporary directories.
 
 ## The measurement model
 
@@ -261,13 +275,17 @@ distrusting for the rest.
 
 ## Running the tests
 
+From the repo root, not from here:
+
 ```
 docker compose up -d db
 uv run pytest tests/benchmarks
 ```
 
-The suite lives at `tests/benchmarks`, beside the other three, and runs against the root
-compose database like they do — `db_bench` is for real runs and need not be up. It
+The suite lives at `tests/benchmarks`, beside the other three, and runs from the repo
+root against the root compose database like they do — `db_bench` is for real runs and
+need not be up. It puts this directory on its `pythonpath` and imports the modules the
+way the harness does, top-level, so one file is never imported under two names. It
 enters through this driver's command line at a handful of tasks per stage, writes into a
 temporary directory, and so touches neither a results directory you already have nor the
 persistent benchmark database.
@@ -278,10 +296,9 @@ number is not something a test can assert without becoming a flake.
 
 ## When the `absurd-sdk` pin moves
 
-Copy `benchmarks/results/` aside, re-run
-`docker compose -f benchmarks/compose.yaml run --rm bench`, and diff the two
-directories: the stage filenames are stable, so a throughput regression shows up in a
-plain `diff -r`. `process_scaling`, `poll_interval` and `checkpoint_cost` calibrate from
+Copy `results/` aside, re-run `uv run python -m stages`, and diff the two directories:
+the stage filenames are stable, so a throughput regression shows up in a plain
+`diff -r`. `process_scaling`, `poll_interval` and `checkpoint_cost` calibrate from
 `stage_worker_knobs.json` and `latency_under_load` from `stage_process_scaling.json`, so
 a partial re-run must include the stage it depends on (on a fresh checkout that means
 starting with worker_knobs), or it errors saying so.
@@ -294,11 +311,10 @@ fields the current table reads. Re-measure rather than converting them.
 
 | file             | what it is                                                                                             |
 | ---------------- | ------------------------------------------------------------------------------------------------------ |
-| `compose.yaml`   | the `db_bench` Postgres (pinned config, own volume), `migrate`, and the `bench` runner                 |
-| `Dockerfile`     | the runner image; build context is the repo root                                                       |
-| `pyproject.toml` | the harness's own project: django-absurd by path, everything else pinned                               |
-| `uv.lock`        | the pinned resolution `uv sync --locked` installs in the image                                         |
-| `settings.py`    | Django settings; reads `DATABASE_URL`                                                                  |
+| `compose.yaml`   | the `db_bench` Postgres alone: pinned image and config, own volume, `${PGPORT_BENCH:-5460}`            |
+| `pyproject.toml` | the harness's own uv project: django-absurd by path, everything else pinned                            |
+| `uv.lock`        | the pinned resolution `uv run` installs into `benchmarks/.venv`                                        |
+| `settings.py`    | Django settings; reads `DATABASE_URL`, else `PGPORT_BENCH` against `absurd_bench`                      |
 | `manage.py`      | for `migrate` and for the worker children                                                              |
 | `tasks.py`       | the five workloads: two no-ops, two sleeps, one 4-step workflow                                        |
 | `host.py`        | host context capture and the suspension guard                                                          |
@@ -310,6 +326,7 @@ fields the current table reads. Re-measure rather than converting them.
 | `report.py`      | renders a results directory as markdown                                                                |
 
 Worker children inherit the database the parent is actually using: the runner renders
-`connections["default"].settings_dict` back into a `DATABASE_URL` and hands them that,
-which is what lets the smoke run against a throwaway test database while a benchmark run
-uses the persistent one.
+`connections["default"].settings_dict` back into a `DATABASE_URL` and hands it to a
+child running on this directory's `settings`, whatever settings the parent itself was
+started with. That is what lets the suite's workers reach its throwaway test database
+while a benchmark run reaches the persistent one.

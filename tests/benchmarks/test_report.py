@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from benchmarks import report
+import report
 
 HOST = {
     "absurd_sdk": "0.5.0",
@@ -47,7 +47,7 @@ def build_measurement(
             "name": name,
             "mode": "saturation",
             "workers": 1,
-            "task_path": "benchmarks.tasks.noop_sync",
+            "task_path": "tasks.noop_sync",
             "worker": {"concurrency": 1, "batch_size": None, "poll_interval": 0.25},
             **spec,
         },
@@ -277,7 +277,7 @@ def test_renders_async_over_sync_ratio_for_sync_vs_async(
         build_measurement(
             "async_c4",
             {
-                "task_path": "benchmarks.tasks.sleep_async",
+                "task_path": "tasks.sleep_async",
                 "worker": {
                     "concurrency": 4,
                     "batch_size": None,
@@ -289,7 +289,7 @@ def test_renders_async_over_sync_ratio_for_sync_vs_async(
         build_measurement(
             "sync_c4",
             {
-                "task_path": "benchmarks.tasks.sleep_sync",
+                "task_path": "tasks.sleep_sync",
                 "worker": {
                     "concurrency": 4,
                     "batch_size": None,
@@ -315,7 +315,7 @@ def test_renders_checkpoint_multiplier_for_checkpoint_cost(
         build_measurement("flat", {}, {"throughput_per_s": 400.0}),
         build_measurement(
             "workflow",
-            {"task_path": "benchmarks.tasks.run_steps"},
+            {"task_path": "tasks.run_steps"},
             {"throughput_per_s": 100.0},
         ),
     ]
@@ -336,7 +336,7 @@ def test_falls_back_to_ratios_when_checkpoint_cost_lost_half_its_pair(
         build_measurement("flat", {}, {"throughput_per_s": 400.0}),
         build_measurement(
             "workflow",
-            {"task_path": "benchmarks.tasks.run_steps"},
+            {"task_path": "tasks.run_steps"},
             {"throughput_per_s": 100.0},
             flagged=True,
         ),

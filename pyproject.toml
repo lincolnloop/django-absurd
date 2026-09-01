@@ -95,6 +95,11 @@ exclude_also = [
   # and a test that re-executed the module would measure the subprocess, not this line.
   'if __name__ == "__main__":',
 ]
+# The harness is a uv project of its own, so running it leaves a `.venv` inside a
+# measured directory. Omitting it here rather than only under `run` is what counts:
+# these files are never executed, so they reach the report through the scan for
+# unexecuted files under `source`, which reads this section and not that one.
+omit = ["benchmarks/.venv/*"]
 skip_covered = true
 
 [tool.coverage.run]
@@ -108,6 +113,8 @@ source = ["benchmarks", "django_absurd", "tests"]
 [tool.django-stubs]
 django_settings_module = "tests.pg_cron.settings"
 
+[tool.hatch]
+
 [tool.hatch.build.targets.sdist]
 # Allowlist — only the package ships in the sdist (plus the always-included
 # pyproject.toml, README, and LICENSE). No git-tracked-file sweep.
@@ -119,6 +126,9 @@ packages = ["django_absurd"]
 [tool.hatch.version]
 source = "vcs"
 
+# `benchmarks/` is its own import root (no `__init__.py`, so its commands run from
+# inside it), which without these two keys mypy reads BOTH ways — `stages` and
+# `benchmarks.stages` — and refuses the whole run over the duplicate.
 [tool.mypy]
 exclude = [
   "^build/",
@@ -126,6 +136,8 @@ exclude = [
   "^\\.tox/",
   "^examples/",
 ]
+explicit_package_bases = true
+mypy_path = ["benchmarks"]
 plugins = ["mypy_django_plugin.main"]
 strict = true
 
@@ -140,6 +152,9 @@ addopts = [
 ]
 
 [tool.ruff]
+# `benchmarks/` beside the repo root so isort files the harness's own top-level
+# modules (`import stages`, `import host`) as first-party wherever they are imported.
+src = [".", "benchmarks"]
 target-version = "py312"
 
 [tool.ruff.lint]
@@ -166,6 +181,7 @@ select = ["ALL"]
   "SLF001",  # Allow private member access in tests (e.g. _meta)
 ]
 "benchmarks/**/*" = [
+  "INP001",  # the harness IS the import root, so its commands run from inside it
   "S603",  # Allow subprocess calls: the harness spawns real worker processes
   "S607",  # Allow `git`/`docker` by name: the harness runs on a developer PATH
   "T201",  # Allow print: the stage/report drivers are CLIs

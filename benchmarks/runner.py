@@ -113,7 +113,7 @@ def build_worker_env() -> dict[str, str]:
     # test database, not the one benchmarks/settings.py falls back to.
     return {
         **os.environ,
-        "DJANGO_SETTINGS_MODULE": "benchmarks.settings",
+        "DJANGO_SETTINGS_MODULE": "settings",
         "DATABASE_URL": build_database_url(),
         # Without this the readiness line sits in the child's block-buffered pipe.
         "PYTHONUNBUFFERED": "1",

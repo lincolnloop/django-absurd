@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from django.db import connections, transaction
 from django.utils.module_loading import import_string
 
-PRODUCER_TASK_PATH = "benchmarks.tasks.noop_sync"
+PRODUCER_TASK_PATH = "tasks.noop_sync"
 ATOMIC_CHUNK_SIZE = 500
 PRODUCER_THREAD_COUNT = 8
 OFFER_ACHIEVED_FLOOR = 0.98

@@ -10,7 +10,7 @@ addopts = [
   "--reuse-db",
   "--strict-markers",
 ]
-pythonpath = ["../.."]
+pythonpath = ["../..", "../../benchmarks"]
 testpaths = ["."]
 # Real workers on real time; the whole suite is well under this.
 timeout = "120"

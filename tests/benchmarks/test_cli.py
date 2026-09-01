@@ -2,7 +2,7 @@ import pathlib
 
 import pytest
 
-from benchmarks import stages
+import stages
 from tests.benchmarks import utils
 
 # Every test here drives a stage, and a stage spawns real `absurd_worker` children:
@@ -408,11 +408,11 @@ def test_repeats_a_measurement_three_times_when_no_rep_count_is_given(
 def test_records_an_unknown_git_sha_when_git_is_out_of_reach(
     monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
 ) -> None:
-    """The compose `bench` container ships no git binary and no `.git` directory.
+    """A harness run is not always in a checkout with git on its PATH.
 
     Provenance is worth less than the measurement, so an unreachable git degrades the
-    field rather than aborting the run. A `PATH` with no git on it is the container's
-    condition, reproduced.
+    field rather than aborting the run. A `PATH` with no git on it is that condition,
+    reproduced.
     """
     monkeypatch.setenv("PATH", str(tmp_path / "no-binaries-here"))
 
@@ -500,7 +500,7 @@ def test_refuses_a_stage_whose_prerequisite_was_never_run(
         1,
         (
             f"{tmp_path / 'stage_worker_knobs.json'} is missing, and this stage is "
-            "calibrated from it. Run `python -m benchmarks.stages worker_knobs` "
+            "calibrated from it. Run `python -m stages worker_knobs` "
             "first.\n"
         ),
     )

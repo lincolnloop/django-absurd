@@ -8,15 +8,19 @@ from pathlib import Path
 
 import django
 
-from benchmarks import analysis, host, measurement, producer, runner
-from benchmarks.report import DEFAULT_RESULTS_DIR, format_spread
+import analysis
+import host
+import measurement
+import producer
+import runner
 from django_absurd.flush import truncate_queue_tables
+from report import DEFAULT_RESULTS_DIR, format_spread
 
-NOOP_ASYNC = "benchmarks.tasks.noop_async"
-NOOP_SYNC = "benchmarks.tasks.noop_sync"
-RUN_STEPS = "benchmarks.tasks.run_steps"
-SLEEP_ASYNC = "benchmarks.tasks.sleep_async"
-SLEEP_SYNC = "benchmarks.tasks.sleep_sync"
+NOOP_ASYNC = "tasks.noop_async"
+NOOP_SYNC = "tasks.noop_sync"
+RUN_STEPS = "tasks.run_steps"
+SLEEP_ASYNC = "tasks.sleep_async"
+SLEEP_SYNC = "tasks.sleep_sync"
 
 # Declared in dependency order: a stage that calibrates itself from another reads that
 # one back off disk, so it is listed after it. Naming several stages runs them in this
@@ -88,7 +92,7 @@ class MissingStageError(Exception):
     def __init__(self, path: Path, required_stage: str) -> None:
         super().__init__(
             f"{path} is missing, and this stage is calibrated from it. "
-            f"Run `python -m benchmarks.stages {required_stage}` first."
+            f"Run `python -m stages {required_stage}` first."
         )
 
 
@@ -624,7 +628,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
     stages = args.stages or list(STAGE_NAMES)
-    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "benchmarks.settings")
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "settings")
     django.setup()
     # All three are the caller's to fix — a size nothing could measure, a stage named
     # before its prerequisite, or one whose measurements came back empty — so they

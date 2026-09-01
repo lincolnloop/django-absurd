@@ -2,7 +2,10 @@ import dataclasses
 import time
 import typing as t
 
-from benchmarks import analysis, host, producer, runner
+import analysis
+import host
+import producer
+import runner
 from django_absurd.flush import truncate_queue_tables
 
 DRAIN_POLL_INTERVAL_S = 0.5

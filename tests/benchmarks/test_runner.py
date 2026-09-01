@@ -16,7 +16,7 @@ import time
 
 import pytest
 
-from benchmarks import runner
+import runner
 
 
 def test_refuses_a_worker_that_never_reports_readiness() -> None:
