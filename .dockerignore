@@ -10,4 +10,5 @@
 .tox
 .venv
 __pycache__
+benchmarks/results
 docs

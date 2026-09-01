@@ -274,6 +274,10 @@ plain `diff -r`. `process_scaling`, `poll_interval` and `checkpoint_cost` calibr
 a partial re-run must include the stage it depends on (on a fresh checkout that means
 starting with worker_knobs), or it errors saying so.
 
+Results from before the stages were named cannot be diffed against these, and the report
+will not render them — the filenames no longer line up and the producer entries lack
+fields the current table reads. Re-measure rather than converting them.
+
 ## Layout
 
 | file             | what it is                                                                                             |

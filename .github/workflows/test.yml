@@ -64,6 +64,17 @@ jobs:
           fail_ci_if_error: true
           files: junit-core.xml,junit-pg_cron.xml,junit-multidb.xml
 
+  benchmarks-image:
+    # The harness runs only in this image, and nothing else builds it. `uv sync
+    # --locked` is what makes a stale lockfile fail rather than resolve something
+    # else — a guard that fires on a developer's machine months later is no guard.
+    name: benchmarks image builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Build the benchmark runner
+        run: docker compose -f benchmarks/compose.yaml build bench
+
   examples:
     name: examples/${{ matrix.example }} pytest suite
     runs-on: ubuntu-latest
