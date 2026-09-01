@@ -106,9 +106,11 @@ def test_reports_the_latency_of_the_paced_offer_a_rate_stage_made(
     ]
 
 
-# The two below build their own measurement because no stage can ask for one. Both
-# want a task that misbehaves — one that outlives its claim lease, one that never
-# completes — and every workload the driver offers is a task that succeeds.
+# Everything below builds its own measurement rather than driving a stage. The first
+# three want a task that misbehaves — one that outlives its claim lease, one that never
+# completes, one that never drains — and every workload the driver offers is a task
+# that succeeds; the last two want a single measurement repeated, which the smallest
+# stage would charge six of.
 @pytest.mark.django_db(transaction=True)
 def test_saturation_measurement_flags_a_task_that_outlived_its_claim_lease() -> None:
     spec = measurement.MeasurementSpec(
@@ -147,3 +149,106 @@ def test_saturation_measurement_flags_tasks_that_never_completed() -> None:
     assert result["median"]["missing_tasks"] == 1
     assert result["median"]["extra_runs"] == 0
     assert result["flagged"] is True
+
+
+@pytest.mark.django_db(transaction=True)
+def test_saturation_measurement_refuses_a_backlog_that_never_drained() -> None:
+    """A backlog still moving when the clock runs out is refused, not recorded.
+
+    Its metrics would be read off whatever had finished by then, which is a smaller
+    measurement wearing the size it was asked for.
+    """
+    spec = measurement.MeasurementSpec(
+        name="smoke-stalled",
+        mode="saturation",
+        task_path="tests.benchmarks.utils.sleep_past_claim_lease",
+        tasks=1,
+        workers=1,
+        worker=runner.WorkerSpec(concurrency=1, poll_interval=0.05),
+        reps=1,
+        timeout_s=1.0,
+    )
+
+    with pytest.raises(measurement.MeasurementTimeoutError) as error_info:
+        measurement.run_measurement(spec)
+
+    assert str(error_info.value) == (
+        "Measurement 'smoke-stalled' still had unfinished tasks after 1s. A "
+        "measurement that never drains is refused rather than recorded: raise "
+        "timeout_s, cut the task count, or find out why the workers stalled."
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_saturation_measurement_refuses_a_rep_the_host_slept_through() -> None:
+    """A napped rep leaves nothing behind: no median, no spread, and a flag.
+
+    The drain phase is wall time, so a host that suspends mid-drain would publish a
+    throughput measured over a window it was unconscious for.
+    """
+    spec = measurement.MeasurementSpec(
+        name="smoke-napped",
+        mode="saturation",
+        task_path="benchmarks.tasks.noop_sync",
+        tasks=int(MEASURABLE_TASKS),
+        workers=1,
+        worker=runner.WorkerSpec(concurrency=1, poll_interval=0.05),
+        reps=1,
+        timeout_s=60,
+    )
+
+    with utils.nap_the_wall_clock():
+        result = measurement.run_measurement(spec)
+
+    assert {
+        "reps": [utils.normalize_measured_durations(rep) for rep in result["reps"]],
+        "median": result["median"],
+        "spread": result["spread"],
+        "absolute_spread": result["absolute_spread"],
+        "flagged": result["flagged"],
+    } == {
+        "reps": [
+            {
+                "valid": False,
+                "error": (
+                    "Wall clock advanced Ns over a phase the monotonic clock measured "
+                    "at Ns: the host suspended or stalled mid-phase, so every number "
+                    "this phase produced is fiction. Re-run the measurement on a "
+                    "machine that stays awake."
+                ),
+            }
+        ],
+        "median": {},
+        "spread": None,
+        "absolute_spread": None,
+        "flagged": True,
+    }
+
+
+@pytest.mark.django_db(transaction=True)
+def test_saturation_measurement_spreads_its_reps_two_ways() -> None:
+    """Both spreads are recorded once there are reps to compare, never one of them.
+
+    They disagree exactly where it matters — a fast measurement reads tight in absolute
+    terms and noisy in relative ones — which is why the flag consults both. Asserted as
+    measured at all, never as small: stability is not something a test can demand of a
+    real worker.
+    """
+    spec = measurement.MeasurementSpec(
+        name="smoke-repeated",
+        mode="saturation",
+        task_path="benchmarks.tasks.noop_sync",
+        tasks=int(MEASURABLE_TASKS),
+        workers=1,
+        worker=runner.WorkerSpec(concurrency=1, poll_interval=0.05),
+        reps=2,
+        timeout_s=60,
+    )
+
+    result = measurement.run_measurement(spec)
+
+    assert {
+        "reps": len(result["reps"]),
+        "measured_a_spread": isinstance(result["spread"], float),
+        "measured_an_absolute_spread": isinstance(result["absolute_spread"], float),
+    } == {"reps": 2, "measured_a_spread": True, "measured_an_absolute_spread": True}

@@ -181,7 +181,5 @@ def split_evenly(total: int, parts: int) -> list[int]:
 
 
 def read_percentile(values: list[float], fraction: float) -> float:
-    if not values:
-        return 0.0
     ordered = sorted(values)
     return ordered[min(len(ordered) - 1, int(fraction * len(ordered)))]

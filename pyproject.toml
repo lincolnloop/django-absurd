@@ -91,6 +91,9 @@ exclude_also = [
   # a `msg = "..."` line immediately followed by `raise NotImplementedError(msg)`
   # (the errmsg-lint idiom) — exclude the assignment too, not just the raise.
   'msg = [rf]?".*"\n\s*raise NotImplementedError\(msg\)',
+  # A script entrypoint only ever runs as `python -m`, never under the test runner,
+  # and a test that re-executed the module would measure the subprocess, not this line.
+  'if __name__ == "__main__":',
 ]
 skip_covered = true
 

@@ -5,7 +5,6 @@ import pytest
 from benchmarks import stages
 from tests.benchmarks import utils
 
-# Above the degenerate-window floor: below about fifty tasks the trimmed completion
 # Comfortably above the floor where a trimmed completion window still divides. How
 # low that floor sits depends on the worker: at four tasks a concurrency-1 rung still
 # measures while the concurrency-16 rung collapses, so a ladder sized near it flags
@@ -203,6 +202,118 @@ def test_reports_a_spread_once_there_are_reps_to_compare(
         True,
         True,
         True,
+    ]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_repeats_a_measurement_three_times_when_no_rep_count_is_given(
+    tmp_path: pathlib.Path,
+) -> None:
+    """`--reps` is the one size flag whose default the harness owns, not the caller.
+
+    Run at one task so the ladder is paying for nothing but that default; it cannot
+    calibrate what comes after it, which is why the run ends where it does.
+    """
+    with pytest.raises(SystemExit):
+        stages.main(
+            [
+                "worker_knobs",
+                "--tasks",
+                UNMEASURABLE_TASKS,
+                "--results-dir",
+                str(tmp_path),
+            ]
+        )
+
+    assert [
+        len(entry["reps"])
+        for entry in utils.read_stage(tmp_path, "worker_knobs")["measurements"]
+    ] == [3, 3, 3, 3, 3]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_records_an_unknown_git_sha_when_git_is_out_of_reach(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """The compose `bench` container ships no git binary and no `.git` directory.
+
+    Provenance is worth less than the measurement, so an unreachable git degrades the
+    field rather than aborting the run. A `PATH` with no git on it is the container's
+    condition, reproduced.
+    """
+    monkeypatch.setenv("PATH", str(tmp_path / "no-binaries-here"))
+
+    stages.main(
+        [
+            "producer_ceiling",
+            "--reps",
+            "1",
+            "--tasks",
+            "10",
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
+
+    result = utils.read_stage(tmp_path, "producer_ceiling")
+    assert [entry["host"]["git_sha"] for entry in result["measurements"]] == [
+        "unknown",
+        "unknown",
+        "unknown",
+    ]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_refuses_every_producer_rep_the_host_slept_through(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A napped rep timed nothing, so it is thrown away rather than summarized.
+
+    perf_counter stops with the host, so the enqueue rate a slept-through rep reports
+    looks perfectly ordinary — the wall clock is the only witness that it is fiction.
+    """
+    with utils.nap_the_wall_clock():
+        stages.main(
+            [
+                "producer_ceiling",
+                "--reps",
+                "1",
+                "--tasks",
+                "400",
+                "--results-dir",
+                str(tmp_path),
+            ]
+        )
+
+    result = utils.read_stage(tmp_path, "producer_ceiling")
+    assert [
+        {
+            "name": entry["spec"]["name"],
+            "reps": [utils.normalize_measured_durations(rep) for rep in entry["reps"]],
+            "median": entry["median"],
+            "spread": entry["spread"],
+            "flagged": entry["flagged"],
+        }
+        for entry in result["measurements"]
+    ] == [
+        {
+            "name": name,
+            "reps": [
+                {
+                    "valid": False,
+                    "error": (
+                        "Wall clock advanced Ns over a phase the monotonic clock "
+                        "measured at Ns: the host suspended or stalled mid-phase, so "
+                        "every number this phase produced is fiction. Re-run the "
+                        "measurement on a machine that stays awake."
+                    ),
+                }
+            ],
+            "median": {},
+            "spread": None,
+            "flagged": True,
+        }
+        for name in ("single", "threaded", "atomic")
     ]
 
 

@@ -84,6 +84,17 @@ def render(
     return capsys.readouterr().out
 
 
+def test_says_so_when_the_results_directory_holds_no_stage_files(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """An empty directory is the report's most likely first input, so it names it."""
+    report.main(["--results-dir", str(tmp_path)])
+
+    assert capsys.readouterr().out == (
+        f"No stage_*.json result files under {tmp_path}.\n"
+    )
+
+
 def test_renders_stage_tables_from_result_files(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
@@ -166,6 +177,21 @@ def test_renders_an_unmeasurable_spread_as_unavailable(
     )
 
 
+def test_derives_nothing_from_a_baseline_that_measured_nothing(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Every ratio in a block divides by the first measurement, so a zero there would
+    make the whole block infinities rather than one bad row."""
+    entries = [
+        build_measurement("concurrency_1", {}, {"throughput_per_s": 0.0}),
+        build_measurement("concurrency_2", {}, {"throughput_per_s": 800.0}),
+    ]
+
+    assert ("\nReference measurement measured nothing; nothing derived.\n") in render(
+        capsys, tmp_path, "worker_knobs", entries
+    )
+
+
 def test_names_the_moved_baseline_when_the_first_measurement_is_flagged(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
@@ -226,6 +252,24 @@ def test_renders_scaling_efficiency_for_process_scaling(
     ) in render(capsys, tmp_path, "process_scaling", entries)
 
 
+def test_falls_back_to_ratios_when_process_scaling_never_measured_one_worker(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Efficiency is measured against the single-worker rung, and that rung is the one
+    most likely to be flagged away — so the stage still reports something."""
+    entries = [
+        build_measurement("workers_2", {"workers": 2}, {"throughput_per_s": 180.0}),
+        build_measurement("workers_4", {"workers": 4}, {"throughput_per_s": 320.0}),
+    ]
+
+    assert (
+        "Throughput relative to `workers_2` (flagged measurements excluded):\n"
+        "\n"
+        "- `workers_2`: 1.00x\n"
+        "- `workers_4`: 1.78x\n"
+    ) in render(capsys, tmp_path, "process_scaling", entries)
+
+
 def test_renders_async_over_sync_ratio_for_sync_vs_async(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
@@ -280,6 +324,28 @@ def test_renders_checkpoint_multiplier_for_checkpoint_cost(
         "Checkpoint cost (flagged measurements excluded):\n"
         "\n"
         "- one `run_steps` task costs 4.00x a flat no-op task\n"
+    ) in render(capsys, tmp_path, "checkpoint_cost", entries)
+
+
+def test_falls_back_to_ratios_when_checkpoint_cost_lost_half_its_pair(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The multiplier needs both task paths; one flagged away leaves nothing to divide,
+    and a stage with one row still deserves a table with a number under it."""
+    entries = [
+        build_measurement("flat", {}, {"throughput_per_s": 400.0}),
+        build_measurement(
+            "workflow",
+            {"task_path": "benchmarks.tasks.run_steps"},
+            {"throughput_per_s": 100.0},
+            flagged=True,
+        ),
+    ]
+
+    assert (
+        "Throughput relative to `flat` (flagged measurements excluded):\n"
+        "\n"
+        "- `flat`: 1.00x\n"
     ) in render(capsys, tmp_path, "checkpoint_cost", entries)
 
 

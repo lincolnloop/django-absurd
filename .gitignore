@@ -2,6 +2,7 @@
 *.pyc
 .claude/worktrees/
 .coverage
+.coverage.*
 .direnv/
 .envrc
 .mypy_cache/
