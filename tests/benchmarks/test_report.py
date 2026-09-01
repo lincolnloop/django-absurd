@@ -102,13 +102,42 @@ def test_renders_stage_tables_from_result_files(
         HEADER + "\n"
         "## Stage A\n"
         "\n" + MEASUREMENT_TABLE_HEAD + "| a1_c1 | saturation | 1 | 1 | default | 0.25 "
-        "| 412.5 | 0.0120 | 0.0300 | 0.0500 | 4.0% |  |\n"
+        "| 412.5 |  |  |  | 4.0% |  |\n"
         "| a1_c2 | saturation | 1 | 2 | 4 | 0.25 "
-        "| 800.0 | 0.0120 | 0.0300 | 0.0500 | 22.0% | ⚠ flagged |\n"
+        "| 800.0 |  |  |  | 22.0% | ⚠ flagged |\n"
         "\n"
         "Throughput relative to `a1_c1` (flagged measurements excluded):\n"
         "\n"
         "- `a1_c1`: 1.00x\n"
+    )
+
+
+def test_leaves_latency_columns_empty_for_a_saturation_measurement(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """A saturation run's latency is drain time, not latency.
+
+    Its queue is full by construction, so every task but the first waited behind the
+    whole backlog. Publishing percentiles for it invites the comparison the harness
+    tells the reader not to make.
+    """
+    entries = [
+        build_measurement("a1_c1", {}, {"throughput_per_s": 412.5}),
+        build_measurement("g_rate_25pct", {"mode": "rate"}, {"throughput_per_s": 90.0}),
+    ]
+
+    assert render(capsys, tmp_path, "a", entries) == (
+        HEADER + "\n"
+        "## Stage A\n"
+        "\n" + MEASUREMENT_TABLE_HEAD + "| a1_c1 | saturation | 1 | 1 | default | 0.25 "
+        "| 412.5 |  |  |  | 4.0% |  |\n"
+        "| g_rate_25pct | rate | 1 | 1 | default | 0.25 "
+        "| 90.0 | 0.0120 | 0.0300 | 0.0500 | 4.0% |  |\n"
+        "\n"
+        "Throughput relative to `a1_c1` (flagged measurements excluded):\n"
+        "\n"
+        "- `a1_c1`: 1.00x\n"
+        "- `g_rate_25pct`: 0.22x\n"
     )
 
 
@@ -125,7 +154,7 @@ def test_renders_an_unmeasurable_spread_as_unavailable(
         HEADER + "\n"
         "## Stage A\n"
         "\n" + MEASUREMENT_TABLE_HEAD + "| a1_c1 | saturation | 1 | 1 | default | 0.25 "
-        "| 0.0 | 0.0120 | 0.0300 | 0.0500 | n/a | ⚠ flagged |\n"
+        "| 0.0 |  |  |  | n/a | ⚠ flagged |\n"
         "\n"
         "No unflagged measurements; nothing derived.\n"
     )

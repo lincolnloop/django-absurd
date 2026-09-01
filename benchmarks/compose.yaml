@@ -60,7 +60,7 @@ services:
       - >-
         uv sync --frozen
         && uv run python benchmarks/manage.py migrate
-        && uv run python -m benchmarks.stages --all
+        && uv run python -m benchmarks.stages
 
 volumes:
   bench_pgdata:

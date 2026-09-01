@@ -31,8 +31,15 @@ dropped from under a running worker fails on its next claim, with the same messa
 | `--beat`          | off            | Also run the [beat scheduler](cron-jobs.md#application-side-beat). |
 
 - **One worker per queue.** `--queue` takes a single name; run a process per queue.
-- Measured guidance on choosing `--concurrency`, `--batch-size` and `--poll-interval`:
-  [Performance](performance.md).
+- **`--concurrency`** — default `1`. Runs in flight per worker; also the sync
+  thread-pool size. Raise it when tasks wait — on the database, an HTTP call, a sleep.
+  Pure Python compute won't go faster; add worker processes for that.
+- **`--batch-size`** — defaults to `--concurrency`. A claim never fetches more than the
+  worker has free, so this only bites at `--concurrency 1`, where a bigger batch means
+  fewer claims. Setting it to 1 costs a round trip per task and buys nothing.
+- **`--poll-interval`** — default `0.25`. Applies only when a worker is idle; a busy one
+  reclaims immediately. Lower it for latency on quiet queues, raise it to stop idle
+  workers polling so often.
 - A run that makes no progress within `--claim-timeout` is re-claimed and replayed from
   its last [checkpoint](workflows.md#steps) — see [long steps](workflows.md#long-steps).
 - Run **exactly one** `--beat` across your fleet; there is no leader election.

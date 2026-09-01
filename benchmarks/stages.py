@@ -19,6 +19,18 @@ SLEEP_SYNC = "benchmarks.tasks.sleep_sync"
 
 STAGE_NAMES = ("a", "b", "c", "d", "e", "f", "g")
 
+# Which stage each one reads back off disk to calibrate itself. A partial order, not a
+# sequence: D and F depend on nothing, so the letters imply an ordering that is not
+# real. Naming several stages runs them in dependency order whatever order they arrive
+# in; a stage named alone whose prerequisite is missing still refuses rather than
+# quietly running it.
+STAGE_DEPENDS_ON = {
+    "b": "a",
+    "c": "a",
+    "e": "a",
+    "g": "b",
+}
+
 STAGE_DESCRIPTIONS = {
     "a": "one worker's knobs: concurrency ladder, then batch size, then async dispatch",
     "b": "throughput scaling across worker processes, at stage A's winning config",
@@ -86,8 +98,19 @@ class StageOptions:
 
 def run_stages(stage_names: list[str], options: StageOptions) -> None:
     options.results_dir.mkdir(parents=True, exist_ok=True)
-    for name in stage_names:
+    for name in order_by_dependency(stage_names):
         run_stage(name, options)
+
+
+def order_by_dependency(stage_names: list[str]) -> list[str]:
+    """Sort the requested stages so a prerequisite runs before what calibrates on it.
+
+    Only orders what was asked for — it never adds a missing prerequisite, because a
+    stage that cannot calibrate should say so rather than silently run a second stage
+    the caller did not ask for.
+    """
+    requested = set(stage_names)
+    return [name for name in STAGE_NAMES if name in requested]
 
 
 def run_stage(name: str, options: StageOptions) -> None:
@@ -479,16 +502,19 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description="Run the django-absurd benchmark stages."
     )
-    parser.add_argument("--stage", action="append", choices=STAGE_NAMES, type=str.lower)
-    parser.add_argument("--all", action="store_true")
+    parser.add_argument(
+        "stages",
+        nargs="*",
+        choices=[*STAGE_NAMES, []],
+        type=str.lower,
+        help="Stages to run, in any order; omit to run all of them.",
+    )
     parser.add_argument("--results-dir", default=DEFAULT_RESULTS_DIR, type=Path)
     parser.add_argument("--reps", default=None, type=int)
     parser.add_argument("--tasks", default=None, type=int)
     parser.add_argument("--duration", default=None, type=float)
     args = parser.parse_args(argv)
-    stages = list(STAGE_NAMES) if args.all else (args.stage or [])
-    if not stages:
-        parser.error("pass --stage <A-G> (repeatable) or --all")
+    stages = args.stages or list(STAGE_NAMES)
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "benchmarks.settings")
     django.setup()
     run_stages(

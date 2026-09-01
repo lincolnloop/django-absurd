@@ -15,9 +15,7 @@ MEASURABLE_TASKS = "60"
 def test_runs_the_producer_stage_at_the_size_it_was_asked_for(
     tmp_path: pathlib.Path,
 ) -> None:
-    stages.main(
-        ["--stage", "f", "--reps", "1", "--tasks", "10", "--results-dir", str(tmp_path)]
-    )
+    stages.main(["f", "--reps", "1", "--tasks", "10", "--results-dir", str(tmp_path)])
 
     result = utils.read_stage(tmp_path, "f")
     assert [
@@ -39,9 +37,7 @@ def test_runs_the_producer_stage_at_the_size_it_was_asked_for(
 def test_runs_a_saturation_stage_at_the_size_it_was_asked_for(
     tmp_path: pathlib.Path,
 ) -> None:
-    stages.main(
-        ["--stage", "d", "--reps", "1", "--tasks", "8", "--results-dir", str(tmp_path)]
-    )
+    stages.main(["d", "--reps", "1", "--tasks", "8", "--results-dir", str(tmp_path)])
 
     result = utils.read_stage(tmp_path, "d")
     assert [
@@ -73,9 +69,9 @@ def test_runs_a_rate_stage_and_its_idle_probes_at_the_duration_it_was_asked_for(
     out in a second is not fixed, so the count is not part of the result here.
     """
     size = ["--reps", "1", "--tasks", MEASURABLE_TASKS, "--duration", "1"]
-    stages.main(["--stage", "a", *size, "--results-dir", str(tmp_path)])
+    stages.main(["a", *size, "--results-dir", str(tmp_path)])
 
-    stages.main(["--stage", "c", *size, "--results-dir", str(tmp_path)])
+    stages.main(["c", *size, "--results-dir", str(tmp_path)])
 
     result = utils.read_stage(tmp_path, "c")
     assert [
@@ -111,10 +107,10 @@ def test_runs_every_calibrated_stage_from_its_prerequisite(
     stage back off disk, so a stage that runs alone proves nothing about the chain.
     """
     size = ["--reps", "1", "--tasks", MEASURABLE_TASKS, "--duration", "1"]
-    stages.main(["--stage", "a", *size, "--results-dir", str(tmp_path)])
+    stages.main(["a", *size, "--results-dir", str(tmp_path)])
 
     for stage in ("b", "e", "g"):
-        stages.main(["--stage", stage, *size, "--results-dir", str(tmp_path)])
+        stages.main([stage, *size, "--results-dir", str(tmp_path)])
 
     assert [
         entry["spec"]["name"]
@@ -135,6 +131,34 @@ def test_runs_every_calibrated_stage_from_its_prerequisite(
 
 
 @pytest.mark.django_db(transaction=True)
+def test_runs_a_prerequisite_before_the_stage_that_calibrates_from_it(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Naming several stages runs them in dependency order, not the order given.
+
+    E calibrates from A, so asking for them the wrong way round has to work or the
+    ordering is the caller's problem rather than the driver's.
+    """
+    stages.main(
+        [
+            "e",
+            "a",
+            "--reps",
+            "1",
+            "--tasks",
+            MEASURABLE_TASKS,
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
+
+    assert [
+        entry["spec"]["name"]
+        for entry in utils.read_stage(tmp_path, "e")["measurements"]
+    ] == ["e_flat", "e_workflow"]
+
+
+@pytest.mark.django_db(transaction=True)
 def test_reports_a_spread_once_there_are_reps_to_compare(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -144,9 +168,7 @@ def test_reports_a_spread_once_there_are_reps_to_compare(
     not something the harness can promise, and demanding it would fail the suite on an
     honest measurement.
     """
-    stages.main(
-        ["--stage", "f", "--reps", "2", "--tasks", "10", "--results-dir", str(tmp_path)]
-    )
+    stages.main(["f", "--reps", "2", "--tasks", "10", "--results-dir", str(tmp_path)])
 
     result = utils.read_stage(tmp_path, "f")
     assert [isinstance(entry["spread"], float) for entry in result["measurements"]] == [

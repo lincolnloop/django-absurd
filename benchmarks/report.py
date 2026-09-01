@@ -106,6 +106,10 @@ def render_measurement_row(entry: dict[str, t.Any]) -> str:
     spec = entry["spec"]
     worker = spec["worker"]
     median = entry["median"]
+    # A saturation run starts with a full queue, so every task but the first waited
+    # behind the whole backlog: its percentiles are drain time wearing latency's name.
+    # Blank rather than omitted, so the column still lines up with the rate rows.
+    paced = spec["mode"] == "rate"
     return render_row(
         [
             spec["name"],
@@ -115,9 +119,9 @@ def render_measurement_row(entry: dict[str, t.Any]) -> str:
             "default" if worker["batch_size"] is None else str(worker["batch_size"]),
             f"{worker['poll_interval']:g}",
             f"{median.get('throughput_per_s', 0.0):.1f}",
-            f"{median.get('end_to_end_p50_s', 0.0):.4f}",
-            f"{median.get('end_to_end_p90_s', 0.0):.4f}",
-            f"{median.get('end_to_end_p99_s', 0.0):.4f}",
+            f"{median.get('end_to_end_p50_s', 0.0):.4f}" if paced else "",
+            f"{median.get('end_to_end_p90_s', 0.0):.4f}" if paced else "",
+            f"{median.get('end_to_end_p99_s', 0.0):.4f}" if paced else "",
             format_spread(entry["spread"]),
             "⚠ flagged" if entry["flagged"] else "",
         ]

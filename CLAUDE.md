@@ -87,9 +87,10 @@ duplicate that material here.
 Test-authoring conventions live in [`tests/CLAUDE.md`](tests/CLAUDE.md) — read it before
 writing or editing any test file. Running the suites:
 
-- Tests run on the HOST via uv/tox (no app container). Three suites, each with its own
+- Tests run on the HOST via uv/tox (no app container). Four suites, each with its own
   `pytest.toml` and settings; invoke explicitly (a bare `uv run pytest` at repo root
-  collects nothing and exits code 5 — intentional):
+  exits 4: `tests/conftest.py` imports auth models with no `DJANGO_SETTINGS_MODULE` set,
+  so collection dies on an `ImproperlyConfigured` conftest import error):
   - `uv run pytest tests/core` — core django-absurd; `django_absurd.pg_cron` NOT
     installed; plain `db` service (`PGPORT`, default 5432).
   - `uv run pytest tests/pg_cron` — pg_cron app installed; requires the `db_pg_cron`
@@ -97,22 +98,18 @@ writing or editing any test file. Running the suites:
     with no extension — the central `cron.database_name` on that server is `postgres`, a
     different database entirely, and jobs reach it cross-database.
   - `uv run pytest tests/multidb` — multi-DB router suite; plain `db`.
+  - `uv run pytest tests/benchmarks` — the `benchmarks/` harness, driven through its
+    command line at a handful of tasks per stage; plain `db`. The tuned `db_bench`
+    server is for real benchmark runs and need not be up.
 - Two compose services: `db` (plain `postgres:18`) and `db_pg_cron`
   (`Dockerfile.pg_cron` + `shared_preload_libraries=pg_cron`). Start both:
   `docker compose up -d db db_pg_cron`. **These must be running before any suite.** If a
   connection is refused / `pg_isready` fails, the container is stopped (they don't
   survive a machine restart or a new session) — bring it up FIRST; don't diagnose it as
   anything cleverer.
-- **Copy `.envrc.example` to `.envrc` before your first run** (it is git-ignored, so a
-  fresh clone and every new worktree starts without it). It sets `PGPORT` /
-  `PGPORT_PGCRON` and pins `PYTEST_XDIST_AUTO_NUM_WORKERS` to CI's 2. Skipping it fails
-  suites in ways that read like real regressions: unset `PGPORT` sends `tests/core` at
-  whatever owns 5432 — a system Postgres with pg_cron makes `test_central_connection`'s
-  "no pg_cron" assertion never raise — and an unpinned `auto` takes every core, which
-  `tests/multidb` cannot survive because it creates a pair of databases per worker.
 - **The two gates to run before a commit** — not five separate commands:
-  - `uvx --with tox-uv tox -e dev` — all three suites against the dev env only. Reach
-    for the bare `uvx --with tox-uv tox` (full Python×Django matrix + min-max mypy) only
+  - `uvx --with tox-uv tox -e dev` — all four suites against the dev env only. Reach for
+    the bare `uvx --with tox-uv tox` (full Python×Django matrix + min-max mypy) only
     when a change could plausibly break on another version, not while iterating.
   - `uv run pre-commit run --all-files` — owns ruff-check, ruff-format, **mypy**, and
     prettier. Never invoke `ruff` or `mypy` directly; pre-commit already runs them, and
@@ -124,11 +121,11 @@ writing or editing any test file. Running the suites:
   central-extension check's `databases` guard is reachable on 6.0, skipped on 6.1), so
   only the union across the matrix is exact. Nothing equivalent sits in
   `[tool.coverage.report]` — a local run is one env, where those gaps are legitimate.
-- **The combined coverage number only exists after all three suites run in order.**
-  `tests/core` passes `--cov` (no append, truncating `.coverage`); the other two append.
-  So a suite run alone leaves `.coverage` holding a partial picture, and `coverage.xml`
-  is overwritten by whichever suite ran last. Read a total only after a full
-  `tox -e dev`; a single-suite percentage means nothing on its own.
+- **The combined coverage number only exists after all four suites run in order.**
+  `tests/core` passes `--cov` (no append, truncating `.coverage`); the rest append. So a
+  suite run alone leaves `.coverage` holding a partial picture, and `coverage.xml` is
+  overwritten by whichever suite ran last. Read a total only after a full `tox -e dev`;
+  a single-suite percentage means nothing on its own.
 - **Every tox test env runs the suites under `pytest-xdist`** (`-n auto` on each
   `pytest` command line, mypy envs excluded), so parallel safety is exercised on every
   push instead of only when someone remembers to pass `-n`. Worker count is xdist's own

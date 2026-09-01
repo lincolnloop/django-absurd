@@ -9,7 +9,7 @@ no migrations, just a settings module, a task module, and two CLI drivers.
 ## Architecture
 
 ```
-                python -m benchmarks.stages --stage a | --all
+                    python -m benchmarks.stages [stage ...]
                                    |
                                    v
    +--------------------------- stages.py ----------------------------+
@@ -51,22 +51,20 @@ workers run in.
 
 ## What it found
 
-Measured on one 8-core laptop with Postgres in Docker on the same box; the tables in
-[`docs/web/performance.md`](../docs/web/performance.md) render that run. **Absolute
-rates are a property of that machine; only the ratios travel.** A tasks/s figure quoted
-without its host context will be read as django-absurd's number rather than this
-laptop's.
+Measured on one 8-core laptop with Postgres in Docker on the same box. **Absolute rates
+are a property of that machine.** A tasks/s figure quoted without its host context will
+be read as django-absurd's number rather than this laptop's.
 
-| finding                                                    | measured                                                                                 |
-| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `--batch-size 1` pays one claim round trip per run         | a concurrency-16 worker drops to 68.1 tasks/s, matching `--concurrency 1` at 66.6        |
-| concurrency has sharply diminishing returns on short tasks | 16x the concurrency buys 2.35x the throughput                                            |
-| worker processes scale, at falling efficiency              | 1 to 8 workers is 4.2x; per-worker efficiency 1.00 to 0.52                               |
-| `poll_interval` sets the latency floor                     | median wait is half the interval, and each idle worker costs `1/poll` claims/s           |
-| async and sync tasks perform the same                      | 0.99-1.00x at 50 ms of IO, across concurrency 4/16/32                                    |
-| a checkpoint costs about a whole task                      | a 4-step `ctx.step` workflow costs 4.55x a flat one                                      |
-| batching the enqueue side is the biggest single lever      | `transaction.atomic()` over 500-task chunks is 12x a plain loop (199 to 2398 enqueues/s) |
-| latency climbs steeply just above 75% utilisation          | p50 runs 51, 64, 91 ms at 25/50/75% of capacity, then 1244 ms at 90%                     |
+| finding                                                  | measured                                                                              |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `--batch-size 1` pays one claim round trip per run       | a concurrency-16 worker drops to 68.1 tasks/s, matching `--concurrency 1` at 66.6     |
+| a no-op task is bound by round trips, not by concurrency | 16x the concurrency buys 2.35x the throughput                                         |
+| worker processes scale, at falling efficiency            | 1 to 8 workers is 4.2x; per-worker efficiency 1.00 to 0.52                            |
+| `poll_interval` sets the latency floor                   | median wait is half the interval, and each idle worker costs `1/poll` claims/s        |
+| async and sync tasks perform the same                    | 0.99-1.00x at 50 ms of IO, across concurrency 4/16/32                                 |
+| a checkpoint costs about a whole task                    | a 4-step `ctx.step` workflow costs 4.55x a flat one                                   |
+| batching the enqueue side raises producer throughput     | `transaction.atomic()` over 500-task chunks reaches 2398 enqueues/s, a plain loop 199 |
+| latency climbs steeply just above 75% utilisation        | p50 runs 51, 64, 91 ms at 25/50/75% of capacity, then 1244 ms at 90%                  |
 
 The last row is the one to design against: **keep workers under about 75% of measured
 capacity.** Between 75% and 90% the median rises 13.7x and p99 reaches 6.2 s. The 90%
@@ -84,8 +82,8 @@ would likely look better.
 docker compose -f benchmarks/compose.yaml up -d db_bench
 uv sync
 uv run python benchmarks/manage.py migrate
-uv run pytest benchmarks
-uv run python -m benchmarks.stages --all
+uv run pytest tests/benchmarks
+uv run python -m benchmarks.stages
 uv run python -m benchmarks.report > /tmp/bench-report.md
 ```
 
@@ -96,10 +94,10 @@ docker compose -f benchmarks/compose.yaml run --rm bench
 ```
 
 The `bench` service is behind a compose profile, so a plain `up -d` never starts a
-75-minute run by accident. It installs the project with uv, migrates, and runs `--all`;
-results land in `benchmarks/results/` through the bind mount. Numbers measured inside
-the container include the container's own overhead, so compare them only with other
-container runs.
+75-minute run by accident. It installs the project with uv, migrates, and runs every
+stage; results land in `benchmarks/results/` through the bind mount. Numbers measured
+inside the container include the container's own overhead, so compare them only with
+other container runs.
 
 ### Restarting Postgres between stages
 
@@ -112,25 +110,26 @@ a one-off warm-up.
 To take that variable out of a comparison, run each stage against a fresh server:
 
 ```
-benchmarks/run_stages_cold.sh          # all seven stages
-benchmarks/run_stages_cold.sh b g      # just these, in this order
+docker compose -f benchmarks/compose.yaml restart db_bench
+docker compose -f benchmarks/compose.yaml run --rm bench python -m benchmarks.stages b
 ```
 
-It restarts `db_bench`, waits for `pg_isready`, then runs one stage in the `bench`
-container, repeating per stage. Stage order still matters: B, C and E calibrate from A
-and G calibrates from B, each reading the earlier stage back off disk.
+Two commands per stage, rather than a script that loops them: the driver runs inside a
+container with no docker socket, so restarting the database is necessarily the caller's
+job. Order still matters when you pick stages by hand — B, C and E calibrate from A and
+G calibrates from B, each reading the earlier stage back off disk.
 
 This is deliberately not the default. Nobody restarts Postgres between workloads in
 production, so a cold run measures a best case rather than a representative one. Both
 are legitimate, and every result records `postgres_uptime_s` so a reader can tell which
 regime produced a number.
 
-Step 4 is the test suite AND the smoke: `uv run pytest benchmarks` runs the whole
-harness end to end (real `absurd_worker` subprocesses, real enqueues, real SQL analysis)
-against a pytest-django test database, `test_absurd_bench`, so it never touches a
-results directory you already have. It needs `db_bench` up, and nothing else. Step 5
-took 75 minutes on the reference host; `--stage A` (repeatable, case-insensitive, `A` to
-`G`) runs one stage, and `--reps 1` turns any stage into a fast dry run.
+Step 4 is the test suite AND the smoke: `pytest tests/benchmarks` drives every stage end
+to end through this driver — real `absurd_worker` subprocesses, real enqueues, real SQL
+analysis — at a handful of tasks apiece. It runs against the root compose database like
+the other three suites, so `db_bench` need not be up for it. Step 5 took 75 minutes on
+the reference host; naming stages runs only those, and `--tasks`, `--duration` and
+`--reps` shrink a stage to a dry run.
 
 `db_bench` listens on `${PGPORT_BENCH:-5435}` and keeps a named volume, so it is a
 different server from the root `compose.yaml`'s `db` and `db_pg_cron`. Those two do not
@@ -163,11 +162,6 @@ flagged for under-offering. So stage G calibrates from the fastest stage B resul
 below `RATE_WORKER_CAP` (half the cores), which leaves the producer room to hit its
 target.
 
-The concurrency ladders are deliberately **not** scaled: concurrency is capacity for
-overlapping IO waits rather than CPU parallelism, so an IO-bound task wants the same
-capacity whatever the core count, and scaling them would make the async-vs-sync ratio
-incomparable across machines.
-
 ## The results files
 
 `benchmarks/results/stage_a.json` through `stage_g.json` are written by
@@ -175,9 +169,8 @@ incomparable across machines.
 after every finished measurement (atomically, via a temp file), so a run killed at hour
 two keeps everything it measured. The directory is git-ignored on purpose: the numbers
 are a property of whatever machine produced them, and a committed set would read as
-django-absurd's official figures. The findings that travel live in the guide instead.
-The test suite never touches these files; it works against a throwaway test database and
-temporary directories.
+django-absurd's official figures. The test suite never touches these files; it works
+against a throwaway test database and temporary directories.
 
 ## The measurement model
 
@@ -236,19 +229,24 @@ recorded per measurement precisely because it pollutes.
 ## Running the tests
 
 ```
-docker compose -f benchmarks/compose.yaml up -d db_bench
-uv run pytest benchmarks
+docker compose up -d db
+uv run pytest tests/benchmarks
 ```
 
-The suite has its own `pytest.toml` (a bare `uv run pytest` at repo root collects
-nothing on purpose). It creates and reuses `test_absurd_bench` on the `db_bench` server,
-so an existing results directory and the persistent benchmark database are never touched
-by a test run.
+The suite lives at `tests/benchmarks`, beside the other three, and runs against the root
+compose database like they do — `db_bench` is for real runs and need not be up. It
+enters through this driver's command line at a handful of tasks per stage, writes into a
+temporary directory, and so touches neither a results directory you already have nor the
+persistent benchmark database.
+
+Nothing in this directory imports the suite, and the suite asserts which measurements
+ran, how big each was and whether the harness trusted them — never a rate. A benchmark
+number is not something a test can assert without becoming a flake.
 
 ## When the `absurd-sdk` pin moves
 
-Copy `benchmarks/results/` aside, re-run `uv run python -m benchmarks.stages --all`, and
-diff the two directories: the stage filenames are stable (`stage_a.json` through
+Copy `benchmarks/results/` aside, re-run `uv run python -m benchmarks.stages`, and diff
+the two directories: the stage filenames are stable (`stage_a.json` through
 `stage_g.json`), so a throughput regression shows up in a plain `diff -r`. Stages B, C
 and E calibrate themselves from `stage_a.json` and stage G from `stage_b.json`, so a
 partial re-run must include the stage it depends on (on a fresh checkout that means
@@ -267,7 +265,7 @@ starting with stage A), or it errors saying so.
 | `producer.py`    | the enqueue side: preload, paced offer, producer benchmark                        |
 | `analysis.py`    | the SQL that turns Absurd's own columns into metrics                              |
 | `measurement.py` | one measurement: reps, drain detection, median, flags                             |
-| `stages.py`      | runs the benchmark stages (`--stage`, `--all`, `--reps`)                          |
+| `stages.py`      | runs the benchmark stages (positional names, `--tasks`, `--duration`, `--reps`)   |
 | `report.py`      | renders a results directory as markdown                                           |
 
 Worker children inherit the database the parent is actually using (the runner serializes
