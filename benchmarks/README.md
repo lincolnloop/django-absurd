@@ -140,15 +140,15 @@ need to be running for anything in this directory.
 
 Times are from the 8-core reference run and scale with the host.
 
-| stage                | question                                    | calibrates from   | workload                   | ~time  |
-| -------------------- | ------------------------------------------- | ----------------- | -------------------------- | ------ |
-| `worker_knobs`       | what each worker knob buys                  | —                 | 5,000 no-ops, saturation   | 20 min |
-| `process_scaling`    | how throughput scales with worker processes | `worker_knobs`    | no-ops, saturation         | 10 min |
-| `poll_interval`      | what `--poll-interval` costs and buys       | `worker_knobs`    | 5 tasks/s offered for 60 s | 10 min |
-| `sync_vs_async`      | whether async tasks beat sync ones          | —                 | 50 ms sleep, saturation    | 15 min |
-| `checkpoint_cost`    | what a checkpoint costs                     | `worker_knobs`    | 2,000 tasks, saturation    | 3 min  |
-| `producer_ceiling`   | how fast the producer can enqueue           | —                 | 5,000 enqueues, no workers | 2 min  |
-| `latency_under_load` | what latency looks like under load          | `process_scaling` | 60 s paced offer           | 14 min |
+| stage                | question                                    | calibrates from   | workload                           | ~time  |
+| -------------------- | ------------------------------------------- | ----------------- | ---------------------------------- | ------ |
+| `worker_knobs`       | what each worker knob buys                  | —                 | 5,000 no-ops, saturation           | 20 min |
+| `process_scaling`    | how throughput scales with worker processes | `worker_knobs`    | no-ops, saturation                 | 10 min |
+| `poll_interval`      | what `--poll-interval` costs and buys       | `worker_knobs`    | 5 tasks/s offered for 60 s         | 10 min |
+| `sync_vs_async`      | whether async tasks beat sync ones          | —                 | sleep (`--io-seconds`), saturation | 15 min |
+| `checkpoint_cost`    | what a checkpoint costs                     | `worker_knobs`    | 2,000 tasks, saturation            | 3 min  |
+| `producer_ceiling`   | how fast the producer can enqueue           | —                 | 5,000 enqueues, no workers         | 2 min  |
+| `latency_under_load` | what latency looks like under load          | `process_scaling` | 60 s paced offer                   | 14 min |
 
 Three stages depend on nothing, so the set is a partial order rather than a sequence —
 which is why they carry names instead of letters. Naming several runs them in dependency
@@ -259,19 +259,19 @@ from `stage_worker_knobs.json` and `latency_under_load` from
 
 ## Layout
 
-| file             | what it is                                                                        |
-| ---------------- | --------------------------------------------------------------------------------- |
-| `compose.yaml`   | the `db_bench` Postgres (pinned config, own volume) and the `bench` runner        |
-| `settings.py`    | Django settings; reads `PGDATABASE`/`PGHOST`/`PGPORT_BENCH`/`PGUSER`/`PGPASSWORD` |
-| `manage.py`      | for `migrate` and for the worker children                                         |
-| `tasks.py`       | the five workloads: two no-ops, two 50 ms sleeps, one 4-step workflow             |
-| `host.py`        | host context capture and the suspension guard                                     |
-| `runner.py`      | spawns and reaps `absurd_worker` subprocesses                                     |
-| `producer.py`    | the enqueue side: preload, paced offer, producer benchmark                        |
-| `analysis.py`    | the SQL that turns Absurd's own columns into metrics                              |
-| `measurement.py` | one measurement: reps, drain detection, median, flags                             |
-| `stages.py`      | runs the benchmark stages (positional names, `--tasks`, `--duration`, `--reps`)   |
-| `report.py`      | renders a results directory as markdown                                           |
+| file             | what it is                                                                            |
+| ---------------- | ------------------------------------------------------------------------------------- |
+| `compose.yaml`   | the `db_bench` Postgres (pinned config, own volume) and the `bench` runner            |
+| `settings.py`    | Django settings; reads `PGDATABASE`/`PGHOST`/`PGPORT_BENCH`/`PGUSER`/`PGPASSWORD`     |
+| `manage.py`      | for `migrate` and for the worker children                                             |
+| `tasks.py`       | the five workloads: two no-ops, two sleeps, one 4-step workflow                       |
+| `host.py`        | host context capture and the suspension guard                                         |
+| `runner.py`      | spawns and reaps `absurd_worker` subprocesses                                         |
+| `producer.py`    | the enqueue side: preload, paced offer, producer benchmark                            |
+| `analysis.py`    | the SQL that turns Absurd's own columns into metrics                                  |
+| `measurement.py` | one measurement: reps, drain detection, median, flags                                 |
+| `stages.py`      | runs the stages (positional names, `--tasks`, `--duration`, `--io-seconds`, `--reps`) |
+| `report.py`      | renders a results directory as markdown                                               |
 
 Worker children inherit the database the parent is actually using (the runner serializes
 `connections["default"].settings_dict` into their environment), which is what lets the

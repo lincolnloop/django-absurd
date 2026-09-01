@@ -74,6 +74,9 @@ RATE_SPREAD_FLOOR_S = 0.15
 IDLE_PROBE_SECONDS = 30.0
 IDLE_PROBE_WORKERS = 4
 POLL_INTERVALS = (0.05, 0.25, 1.0)
+# What the sleep tasks simulate as IO. The stage's finding is only true AT a duration,
+# so it is the experiment's independent variable rather than a fixed property of it.
+SLEEP_IO_SECONDS = 0.05
 # ~25 s per rep at the slowest mode's ~200 enqueues/s: enough for stable percentiles
 # while 3 reps x 3 modes still finish in a couple of minutes.
 PRODUCER_ENQUEUE_COUNT = 5000
@@ -110,6 +113,7 @@ class StageOptions:
     # one flag scaling both would hide which mode a stage is in.
     tasks: int | None = None
     duration_s: float | None = None
+    io_seconds: float | None = None
 
 
 def run_stages(stage_names: list[str], options: StageOptions) -> None:
@@ -139,7 +143,10 @@ def run_stage(name: str, options: StageOptions) -> None:
         run_poll_interval(options)
     elif name == "sync_vs_async":
         record_measurements(
-            "sync_vs_async", build_sync_vs_async_measurements(), [], options
+            "sync_vs_async",
+            build_sync_vs_async_measurements(options.io_seconds or SLEEP_IO_SECONDS),
+            [],
+            options,
         )
     elif name == "checkpoint_cost":
         record_measurements(
@@ -335,12 +342,15 @@ def build_poll_interval_measurements(
     ]
 
 
-def build_sync_vs_async_measurements() -> list[measurement.MeasurementSpec]:
+def build_sync_vs_async_measurements(
+    io_seconds: float,
+) -> list[measurement.MeasurementSpec]:
     return [
         measurement.MeasurementSpec(
             name=f"{flavour}_c{concurrency}",
             mode="saturation",
             task_path=task_path,
+            task_kwargs={"seconds": io_seconds},
             worker=runner.WorkerSpec(concurrency=concurrency),
             tasks=250 * concurrency,
             timeout_s=SATURATION_TIMEOUT_S,
@@ -546,6 +556,15 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--reps", default=None, type=int)
     parser.add_argument("--tasks", default=None, type=int)
     parser.add_argument("--duration", default=None, type=float)
+    parser.add_argument(
+        "--io-seconds",
+        default=None,
+        type=float,
+        help=(
+            "Seconds of simulated IO the sync_vs_async workloads sleep for "
+            f"(default: {SLEEP_IO_SECONDS:g}); no other stage sleeps."
+        ),
+    )
     args = parser.parse_args(argv)
     stages = args.stages or list(STAGE_NAMES)
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "benchmarks.settings")
@@ -557,6 +576,7 @@ def main(argv: list[str] | None = None) -> None:
             reps=args.reps,
             tasks=args.tasks,
             duration_s=args.duration,
+            io_seconds=args.io_seconds,
         ),
     )
 
