@@ -135,12 +135,13 @@ def summarize_reps(
 def measure_spread(
     valid: list[dict[str, t.Any]], median: dict[str, t.Any], ranking_key: str
 ) -> float | None:
-    """Relative spread, or ``None`` when there is no positive median to divide by.
+    """Relative spread, or ``None`` when there is nothing to spread.
 
-    Never 0.0 for that case: a measurement that measured nothing would then read as
-    the most stable one in its stage.
+    Never 0.0 for those cases: a measurement that measured nothing, or measured once,
+    would otherwise read as the most stable one in its stage. One rep has no spread —
+    it has an unknown one, and `--reps 1` is documented as a dry run.
     """
-    if not valid or median.get(ranking_key, 0.0) <= 0:
+    if len(valid) < 2 or median.get(ranking_key, 0.0) <= 0:
         return None
     values = [rep[ranking_key] for rep in valid]
     return float((max(values) - min(values)) / median[ranking_key])

@@ -1,3 +1,5 @@
+import json
+import pathlib
 import time
 import typing as t
 
@@ -5,6 +7,14 @@ from absurd_sdk import RetryStrategy
 from django.tasks import task
 
 from django_absurd import absurd_params
+
+
+def read_stage(results_dir: pathlib.Path, stage: str) -> dict[str, t.Any]:
+    """Parse the results file a stage wrote, so a test can assert what is in it."""
+    parsed: dict[str, t.Any] = json.loads(
+        (results_dir / f"stage_{stage}.json").read_text()
+    )
+    return parsed
 
 
 @task(queue_name="bench")

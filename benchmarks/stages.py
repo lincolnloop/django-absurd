@@ -406,12 +406,9 @@ def summarize_producer_reps(
         (rep for rep in reps if rep["valid"]), key=lambda rep: rep["enqueues_per_s"]
     )
     median: dict[str, t.Any] = valid[(len(valid) - 1) // 2] if valid else {}
-    values = [rep["enqueues_per_s"] for rep in valid]
-    spread = (
-        (max(values) - min(values)) / median["enqueues_per_s"]
-        if valid and median["enqueues_per_s"]
-        else None
-    )
+    # The shared helper rather than a second copy of the arithmetic: this stage had
+    # its own, so the "one rep has no spread" guard had to be fixed twice.
+    spread = measurement.measure_spread(valid, median, "enqueues_per_s")
     return {
         "spec": {"name": f"f_{mode}", "mode": "producer"},
         "reps": reps,

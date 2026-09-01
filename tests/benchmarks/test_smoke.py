@@ -12,7 +12,9 @@ def test_saturation_measurement_drains_backlog_and_reports_sql_metrics() -> None
         tasks=50,
         workers=1,
         worker=runner.WorkerSpec(concurrency=2, poll_interval=0.05),
-        reps=1,
+        # Two reps so the unflagged assertion below means what it says: a single rep
+        # has no spread to report and is flagged for that alone.
+        reps=2,
         timeout_s=60,
     )
 

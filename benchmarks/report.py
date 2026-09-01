@@ -291,12 +291,12 @@ def render_row(fields: list[str]) -> str:
     return "| " + " | ".join(fields) + " |"
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description="Render a benchmark results directory as markdown."
     )
     parser.add_argument("--results-dir", default=DEFAULT_RESULTS_DIR, type=Path)
-    print(render_report(parser.parse_args().results_dir), end="")
+    print(render_report(parser.parse_args(argv).results_dir), end="")
 
 
 if __name__ == "__main__":

@@ -2,6 +2,8 @@ import json
 import typing as t
 from pathlib import Path
 
+import pytest
+
 from benchmarks import report
 
 HOST = {
@@ -63,15 +65,28 @@ def build_measurement(
 
 
 def render(
-    tmp_path: Path, stage: str, entries: list[dict[str, t.Any]], **extra: t.Any
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    stage: str,
+    entries: list[dict[str, t.Any]],
+    **extra: t.Any,
 ) -> str:
+    """Drive the report the way a reader does, and hand back what it printed.
+
+    A results file on disk is the real input here — it is the interface between a stage
+    run and the report — so the only thing worth faking is the measurement, never the
+    rendering.
+    """
     (tmp_path / f"stage_{stage}.json").write_text(
         json.dumps({"stage": stage, "measurements": entries, **extra})
     )
-    return report.render_report(tmp_path)
+    report.main(["--results-dir", str(tmp_path)])
+    return capsys.readouterr().out
 
 
-def test_renders_stage_tables_from_result_files(tmp_path: Path) -> None:
+def test_renders_stage_tables_from_result_files(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
     entries = [
         build_measurement("a1_c1", {}, {"throughput_per_s": 412.5}),
         build_measurement(
@@ -83,7 +98,7 @@ def test_renders_stage_tables_from_result_files(tmp_path: Path) -> None:
         ),
     ]
 
-    assert render(tmp_path, "a", entries) == (
+    assert render(capsys, tmp_path, "a", entries) == (
         HEADER + "\n"
         "## Stage A\n"
         "\n" + MEASUREMENT_TABLE_HEAD + "| a1_c1 | saturation | 1 | 1 | default | 0.25 "
@@ -97,14 +112,16 @@ def test_renders_stage_tables_from_result_files(tmp_path: Path) -> None:
     )
 
 
-def test_renders_an_unmeasurable_spread_as_unavailable(tmp_path: Path) -> None:
+def test_renders_an_unmeasurable_spread_as_unavailable(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
     entries = [
         build_measurement(
             "a1_c1", {}, {"throughput_per_s": 0.0}, flagged=True, spread=None
         )
     ]
 
-    assert render(tmp_path, "a", entries) == (
+    assert render(capsys, tmp_path, "a", entries) == (
         HEADER + "\n"
         "## Stage A\n"
         "\n" + MEASUREMENT_TABLE_HEAD + "| a1_c1 | saturation | 1 | 1 | default | 0.25 "
@@ -115,7 +132,7 @@ def test_renders_an_unmeasurable_spread_as_unavailable(tmp_path: Path) -> None:
 
 
 def test_names_the_moved_baseline_when_the_first_measurement_is_flagged(
-    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     entries = [
         build_measurement("a1_c1", {}, {"throughput_per_s": 412.5}, flagged=True),
@@ -127,10 +144,12 @@ def test_names_the_moved_baseline_when_the_first_measurement_is_flagged(
         "stage's first measurement `a1_c1` is flagged, so the baseline moved):\n"
         "\n"
         "- `a1_c2`: 1.00x\n"
-    ) in render(tmp_path, "a", entries)
+    ) in render(capsys, tmp_path, "a", entries)
 
 
-def test_reports_mixed_provenance_when_measurements_disagree(tmp_path: Path) -> None:
+def test_reports_mixed_provenance_when_measurements_disagree(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
     entries = [
         build_measurement("a1_c1", {}, {}, host={**HOST, "git_sha": "bbb222"}),
         build_measurement(
@@ -145,7 +164,7 @@ def test_reports_mixed_provenance_when_measurements_disagree(tmp_path: Path) -> 
         ),
     ]
 
-    rendered = render(tmp_path, "a", entries)
+    rendered = render(capsys, tmp_path, "a", entries)
 
     assert "- git sha: mixed (`aaa111`, `bbb222`)\n" in rendered
     assert (
@@ -153,7 +172,9 @@ def test_reports_mixed_provenance_when_measurements_disagree(tmp_path: Path) -> 
     ) in rendered
 
 
-def test_renders_scaling_efficiency_for_stage_b(tmp_path: Path) -> None:
+def test_renders_scaling_efficiency_for_stage_b(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
     entries = [
         build_measurement("b_workers_1", {"workers": 1}, {"throughput_per_s": 100.0}),
         build_measurement("b_workers_2", {"workers": 2}, {"throughput_per_s": 180.0}),
@@ -164,10 +185,12 @@ def test_renders_scaling_efficiency_for_stage_b(tmp_path: Path) -> None:
         "\n"
         "- 1 worker(s): 1.00\n"
         "- 2 worker(s): 0.90\n"
-    ) in render(tmp_path, "b", entries)
+    ) in render(capsys, tmp_path, "b", entries)
 
 
-def test_renders_async_over_sync_ratio_for_stage_d(tmp_path: Path) -> None:
+def test_renders_async_over_sync_ratio_for_stage_d(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
     entries = [
         build_measurement(
             "d_async_c4",
@@ -200,10 +223,12 @@ def test_renders_async_over_sync_ratio_for_stage_d(tmp_path: Path) -> None:
         "(flagged measurements excluded):\n"
         "\n"
         "- concurrency 4: 2.00x\n"
-    ) in render(tmp_path, "d", entries)
+    ) in render(capsys, tmp_path, "d", entries)
 
 
-def test_renders_checkpoint_multiplier_for_stage_e(tmp_path: Path) -> None:
+def test_renders_checkpoint_multiplier_for_stage_e(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
     entries = [
         build_measurement("e_flat", {}, {"throughput_per_s": 400.0}),
         build_measurement(
@@ -217,10 +242,12 @@ def test_renders_checkpoint_multiplier_for_stage_e(tmp_path: Path) -> None:
         "Checkpoint cost (flagged measurements excluded):\n"
         "\n"
         "- one `run_steps` task costs 4.00x a flat no-op task\n"
-    ) in render(tmp_path, "e", entries)
+    ) in render(capsys, tmp_path, "e", entries)
 
 
-def test_renders_producer_columns_for_stage_f(tmp_path: Path) -> None:
+def test_renders_producer_columns_for_stage_f(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
     entries = [
         build_measurement(
             "f_single",
@@ -235,7 +262,7 @@ def test_renders_producer_columns_for_stage_f(tmp_path: Path) -> None:
         )
     ]
 
-    assert render(tmp_path, "f", entries) == (
+    assert render(capsys, tmp_path, "f", entries) == (
         HEADER + "\n"
         "## Stage F\n"
         "\n"
@@ -247,7 +274,7 @@ def test_renders_producer_columns_for_stage_f(tmp_path: Path) -> None:
 
 
 def test_renders_idle_polling_tax_and_latency_ratios_for_stage_c(
-    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     entries = [
         build_measurement("c_poll_0.25", {"mode": "rate"}, {"end_to_end_p50_s": 0.02}),
@@ -269,7 +296,7 @@ def test_renders_idle_polling_tax_and_latency_ratios_for_stage_c(
         {"poll_interval": 1.0, "workers": 4, "claims_per_s_per_worker": 0.99},
     ]
 
-    rendered = render(tmp_path, "c", entries, idle_probes=probes)
+    rendered = render(capsys, tmp_path, "c", entries, idle_probes=probes)
 
     assert (
         "Idle polling tax (workers parked on an empty queue):\n"
