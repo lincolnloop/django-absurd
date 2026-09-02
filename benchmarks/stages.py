@@ -31,6 +31,7 @@ SLEEP_SYNC = "tasks.sleep_sync"
 STAGE_NAMES = (
     "worker_knobs",
     "process_scaling",
+    "pooled_vs_split",
     "poll_interval",
     "sync_vs_async",
     "checkpoint_cost",
@@ -44,6 +45,10 @@ STAGE_DESCRIPTIONS = {
     ),
     "process_scaling": (
         "throughput scaling across worker processes, at the winning worker config"
+    ),
+    "pooled_vs_split": (
+        "one total concurrency reached two ways: slots in one process, or one slot in "
+        "each of that many processes"
     ),
     "poll_interval": ("latency under a paced offer, plus idle claim-rate probes"),
     "sync_vs_async": "async vs sync task bodies at the same 50 ms of simulated IO",
@@ -78,6 +83,10 @@ IDLE_PROBE_SECONDS = 30.0
 # A rate is divided by its own window, so a zero-length one has nothing to report.
 SMALLEST_MEASURABLE_DURATION_S = 0.001
 IDLE_PROBE_WORKERS = 4
+# The totals pooled_vs_split reaches both ways. Fixed rather than derived from the
+# host, for the same reason the concurrency ladder's rungs are: a shape that means
+# something different on every machine cannot be compared across machines.
+POOLED_VS_SPLIT_TOTALS = (4, 8)
 POLL_INTERVALS = (0.05, 0.25, 1.0)
 # What the sleep tasks simulate as IO. The stage's finding is only true AT a duration,
 # so it is the experiment's independent variable rather than a fixed property of it.
@@ -211,6 +220,8 @@ def run_stage(name: str, options: StageOptions) -> None:
         run_worker_knobs(options)
     elif name == "process_scaling":
         run_process_scaling(options)
+    elif name == "pooled_vs_split":
+        run_pooled_vs_split(options)
     elif name == "poll_interval":
         run_poll_interval(options)
     elif name == "sync_vs_async":
@@ -270,6 +281,51 @@ def run_process_scaling(options: StageOptions) -> None:
         options,
         {"calibration": calibration},
     )
+
+
+def run_pooled_vs_split(options: StageOptions) -> None:
+    """The same total concurrency reached two ways, arm against arm.
+
+    Calibrated from nothing: both arms of a pair are the experiment's own fixed
+    shapes, and configuring either from an earlier stage's winner would make them
+    unequal in a second way.
+    """
+    runnable = [
+        total
+        for total in POOLED_VS_SPLIT_TOTALS
+        if bound_fleet(total, options) >= total
+    ]
+    skipped = [
+        {"total": total, "max_workers": bound_fleet(total, options)}
+        for total in POOLED_VS_SPLIT_TOTALS
+        if total not in runnable
+    ]
+    for pair in skipped:
+        print(
+            f"total {pair['total']}: not run, --max-workers {pair['max_workers']} "
+            f"cannot spawn its {pair['total']}-process split arm"
+        )
+    specs = build_pooled_vs_split_measurements(runnable, options)
+    reps: dict[str, list[dict[str, t.Any]]] = {spec.name: [] for spec in specs}
+    # The list the loop below appends to, so every rewrite of the file records the
+    # order the arms have run in so far rather than the order they were meant to.
+    run_order: list[str] = []
+    extra = {
+        "shape_connections": [measure_shape_connections(spec) for spec in specs],
+        "run_order": run_order,
+        "skipped_pairs": skipped,
+    }
+    # Written before the first rep, so a bound that leaves nothing to compare still
+    # leaves a file saying which pairs it refused and what refused them.
+    write_stage_file("pooled_vs_split", [], options, extra)
+    for arm in build_pooled_vs_split_schedule(specs):
+        reps[arm.name].append(measurement.run_clean_rep(arm))
+        run_order.append(arm.name)
+        write_stage_file(
+            "pooled_vs_split", summarize_pooled_vs_split(specs, reps), options, extra
+        )
+    for entry in summarize_pooled_vs_split(specs, reps):
+        print(summarize_measurement(entry))
 
 
 def run_poll_interval(options: StageOptions) -> None:
@@ -444,6 +500,65 @@ def build_worker_ladder(ceiling: int) -> list[int]:
     return sorted(step for step in steps if 1 <= step <= ceiling)
 
 
+def build_pooled_vs_split_measurements(
+    totals: list[int], options: StageOptions
+) -> list[measurement.MeasurementSpec]:
+    """Both shapes of each total, pooled arm first, at the same task count.
+
+    Sized here rather than by `record_measurements`, which this stage cannot use: its
+    reps are interleaved between the arms instead of run measurement by measurement.
+    """
+    return [
+        apply_size_overrides(
+            measurement.MeasurementSpec(
+                name=f"{shape}_{total}",
+                mode="saturation",
+                task_path=NOOP_SYNC,
+                worker=runner.WorkerSpec(concurrency=concurrency),
+                workers=workers,
+                tasks=SATURATION_TASKS,
+                timeout_s=SATURATION_TIMEOUT_S,
+            ),
+            options,
+        )
+        for total in totals
+        for shape, workers, concurrency in (
+            ("pooled", 1, total),
+            ("split", total, 1),
+        )
+    ]
+
+
+def build_pooled_vs_split_schedule(
+    specs: list[measurement.MeasurementSpec],
+) -> list[measurement.MeasurementSpec]:
+    """Every rep of every arm, in the order they run.
+
+    Reversed on the odd reps: a pair's two arms stay back to back, while neither arm
+    and neither pair ever always runs first. Cumulative database state only grows
+    across a stage, so a fixed order would hand one arm of every pair the emptier
+    tables — which is how an earlier control in this repo came to be invalidated.
+    """
+    rounds = specs[0].reps if specs else 0
+    return [
+        spec
+        for index in range(rounds)
+        for spec in (specs if index % 2 == 0 else specs[::-1])
+    ]
+
+
+def summarize_pooled_vs_split(
+    specs: list[measurement.MeasurementSpec],
+    reps: dict[str, list[dict[str, t.Any]]],
+) -> list[dict[str, t.Any]]:
+    """The arms that have a rep, in their canonical order however they were run."""
+    return [
+        measurement.summarize_reps(spec, reps[spec.name])
+        for spec in specs
+        if reps[spec.name]
+    ]
+
+
 def build_poll_interval_measurements(
     winner: runner.WorkerSpec,
 ) -> list[measurement.MeasurementSpec]:
@@ -494,6 +609,33 @@ def build_checkpoint_cost_measurements(
         )
         for name, task_path in (("flat", NOOP_SYNC), ("workflow", RUN_STEPS))
     ]
+
+
+def measure_shape_connections(
+    spec: measurement.MeasurementSpec,
+) -> dict[str, t.Any]:
+    """How many Postgres backends one shape opens, as a delta across starting it.
+
+    A delta because the harness's own connections sit on the same database, and a
+    count would credit them to whichever shape was measured. Sampled once the fleet
+    reports ready and before any rep, so the probe's own queries stay outside every
+    measured phase; a fleet already draining opens the same backends.
+    """
+    before = analysis.count_client_backends()
+    procs = runner.start_workers(spec.worker, spec.workers)
+    try:
+        opened = analysis.count_client_backends() - before
+    finally:
+        runner.stop_workers(procs)
+    print(
+        f"{spec.name}: {opened} backends for {spec.workers} x {spec.worker.concurrency}"
+    )
+    return {
+        "measurement": spec.name,
+        "processes": spec.workers,
+        "concurrency": spec.worker.concurrency,
+        "connections": opened,
+    }
 
 
 def measure_idle_probes(
@@ -778,8 +920,9 @@ def main(argv: list[str] | None = None) -> None:
         help=(
             "Most worker processes any one stage may spawn at once, at least 1: "
             "bounds the process_scaling ladder, the poll_interval idle probes, and the "
-            "fleet latency_under_load calibrates from. Unset, fleet size tracks the "
-            f"host's core count ({HOST_CPUS} here)."
+            "fleet latency_under_load calibrates from, and drops whole any "
+            "pooled_vs_split pair whose split arm it cannot spawn. Unset, fleet size "
+            f"tracks the host's core count ({HOST_CPUS} here)."
         ),
     )
     parser.add_argument(

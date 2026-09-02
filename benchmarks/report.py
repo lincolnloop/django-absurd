@@ -68,6 +68,11 @@ def render_report(results_dir: Path) -> str:
     ]
     if not stages:
         return f"No stage_*.json result files under {results_dir}.\n"
+    # A stage can legitimately measure nothing — a pooled_vs_split whose every pair the
+    # worker bound refused writes a file saying which — and the header is built out of
+    # measurement provenance, so there would be no run to describe.
+    if not any(stage["measurements"] for stage in stages):
+        return f"No measurements in the stage_*.json files under {results_dir}.\n"
     lines = describe_host(stages)
     for stage in stages:
         lines += render_stage(stage)
@@ -205,6 +210,9 @@ def render_stage(stage: dict[str, t.Any]) -> list[str]:
     ]
     lines += [render_measurement_row(entry) for entry in measurements]
     lines += render_idle_probes(stage)
+    lines += render_skipped_pairs(stage)
+    lines += render_shape_connections(stage)
+    lines += render_run_order(stage)
     lines += build_commit_budget_lines(stage)
     lines += build_derived_lines(stage["stage"], measurements)
     return lines
@@ -332,6 +340,101 @@ def render_idle_probes(stage: dict[str, t.Any]) -> list[str]:
     return lines
 
 
+def render_skipped_pairs(stage: dict[str, t.Any]) -> list[str]:
+    """The comparisons a stage refused to make, said where their rows would be.
+
+    A pair whose split arm the worker bound cannot spawn is dropped whole rather than
+    run at the bound — half a pair is not a comparison — and a table two rows short
+    with nothing said about it reads like a run that crashed.
+    """
+    skipped = stage.get("skipped_pairs")
+    if not skipped:
+        return []
+    return [
+        "",
+        "Pairs not run:",
+        "",
+        *[
+            f"- total {pair['total']}: `--max-workers {pair['max_workers']}` cannot "
+            f"spawn the {pair['total']} processes its split arm needs, so neither arm "
+            f"of the pair was measured"
+            for pair in skipped
+        ],
+    ]
+
+
+def render_shape_connections(stage: dict[str, t.Any]) -> list[str]:
+    """What each shape cost in Postgres backends, and what that does to the ratios."""
+    shapes = stage.get("shape_connections")
+    if not shapes:
+        return []
+    return [
+        "",
+        "Postgres backends each shape opened (measured across starting its fleet):",
+        "",
+        "| measurement | processes | concurrency | connections |",
+        "| --- | --- | --- | --- |",
+        *[
+            render_row(
+                [
+                    shape["measurement"],
+                    str(shape["processes"]),
+                    str(shape["concurrency"]),
+                    str(shape["connections"]),
+                ]
+            )
+            for shape in shapes
+        ],
+        "",
+        describe_connection_confound(shapes),
+    ]
+
+
+def describe_connection_confound(shapes: list[dict[str, t.Any]]) -> str:
+    """Whether a pair's two shapes reached one total on the same connection count.
+
+    They differ in claim path by design. If they also differ in how many backends they
+    open, every ratio below is both differences at once and no line here can separate
+    them — which is a thing to say out loud rather than a reason to drop the stage.
+    """
+    opened_by_total: dict[int, set[int]] = {}
+    for shape in shapes:
+        total = shape["processes"] * shape["concurrency"]
+        opened_by_total.setdefault(total, set()).add(shape["connections"])
+    unequal = sorted(
+        total for total, opened in opened_by_total.items() if len(opened) > 1
+    )
+    if not unequal:
+        return (
+            "Both shapes of every pair opened the same number of backends, so a ratio "
+            "below is the claim path and nothing else."
+        )
+    return (
+        f"At total {', '.join(str(total) for total in unequal)} the two shapes opened "
+        "different numbers of backends — a pooled arm's slots share the connections of "
+        "the one process holding them, a split arm gets a set per process. Every ratio "
+        "below is the claim path AND the connection count, and nothing here separates "
+        "the two."
+    )
+
+
+def render_run_order(stage: dict[str, t.Any]) -> list[str]:
+    """The order the arms ran in, which is a property of the measurement itself.
+
+    Cumulative database state only grows across a stage, so an arm that always ran
+    first would carry an advantage no column in the table records.
+    """
+    run_order = stage.get("run_order")
+    if not run_order:
+        return []
+    return [
+        "",
+        "Arms ran in this order, reversed each rep so neither always went first: "
+        + ", ".join(run_order)
+        + ".",
+    ]
+
+
 def build_commit_budget_lines(stage: dict[str, t.Any]) -> list[str]:
     """What bound each saturation measurement: its own client, or the disk's fsync.
 
@@ -389,6 +492,8 @@ def build_derived_lines(stage: str, measurements: list[dict[str, t.Any]]) -> lis
     """
     if stage == "process_scaling":
         return build_scaling_efficiency_lines(measurements)
+    if stage == "pooled_vs_split":
+        return build_pooled_vs_split_lines(measurements)
     if stage == "sync_vs_async":
         return build_async_ratio_lines(measurements)
     if stage == "checkpoint_cost":
@@ -412,6 +517,41 @@ def build_scaling_efficiency_lines(measurements: list[dict[str, t.Any]]) -> list
         efficiency = describe_quotient(entry, single, THROUGHPUT_KEY, workers, "")
         lines.append(f"- {workers} worker(s): {efficiency}")
     return lines
+
+
+def build_pooled_vs_split_lines(measurements: list[dict[str, t.Any]]) -> list[str]:
+    """`split / pooled` at every total both shapes of the pair were measured at.
+
+    Paired on the shapes themselves — processes times concurrency is the total, and
+    the pooled arm is the one-process one — rather than on the measurement names, so
+    the pairing cannot come apart from what was actually run.
+    """
+    paired: dict[int, dict[str, dict[str, t.Any]]] = {}
+    for entry in measurements:
+        spec = entry["spec"]
+        shape = "pooled" if spec["workers"] == 1 else "split"
+        total = spec["workers"] * spec["worker"]["concurrency"]
+        paired.setdefault(total, {})[shape] = entry
+    complete = [
+        (total, pair)
+        for total, pair in sorted(paired.items())
+        if {"pooled", "split"} <= pair.keys()
+        and pair["pooled"]["median"].get(THROUGHPUT_KEY, 0.0)
+    ]
+    if not complete:
+        # A run killed between a pair's two arms, or a pooled arm no rep survived:
+        # a stage with rows in it still deserves a number under them.
+        return build_ratio_lines(measurements, THROUGHPUT_KEY, "Throughput")
+    return [
+        "",
+        "Split / pooled throughput at the same total concurrency:",
+        "",
+        *[
+            f"- total {total}: "
+            + describe_quotient(pair["split"], pair["pooled"], THROUGHPUT_KEY, 1, "x")
+            for total, pair in complete
+        ],
+    ]
 
 
 def build_async_ratio_lines(measurements: list[dict[str, t.Any]]) -> list[str]:
@@ -461,6 +601,10 @@ def build_checkpoint_multiplier_lines(
 def build_ratio_lines(
     measurements: list[dict[str, t.Any]], metric_key: str, label: str
 ) -> list[str]:
+    # A stage whose every measurement was refused before it ran has no reference to
+    # divide by and nothing to say about one; its own block says which pairs and why.
+    if not measurements:
+        return []
     reference = measurements[0]
     if not reference["median"].get(metric_key, 0.0):
         return ["", "Reference measurement measured nothing; nothing derived."]

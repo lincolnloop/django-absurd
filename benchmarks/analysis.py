@@ -171,6 +171,22 @@ def count_unfinished_tasks(queue: str = "bench") -> int:
         return int(cursor.fetchone()[0])
 
 
+def count_client_backends() -> int:
+    """Client backends on this database other than the connection doing the asking.
+
+    Counted rather than matched on `application_name`: neither the worker children nor
+    the harness sets one, so the only thing that separates a fleet's backends from
+    everything else already connected is a count taken on each side of starting it.
+    """
+    with connections[resolve_absurd_database()].cursor() as cursor:
+        cursor.execute(
+            "select count(*) from pg_stat_activity "
+            "where datname = current_database() "
+            "and backend_type = 'client backend' and pid <> pg_backend_pid()"
+        )
+        return int(cursor.fetchone()[0])
+
+
 def capture_database_now() -> dt.datetime:
     with connections[resolve_absurd_database()].cursor() as cursor:
         cursor.execute("select now()")

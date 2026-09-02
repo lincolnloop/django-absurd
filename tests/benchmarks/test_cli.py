@@ -768,3 +768,138 @@ def test_stops_the_run_at_the_stage_that_could_not_calibrate(
     assert [path.name for path in sorted(tmp_path.iterdir())] == [
         "stage_worker_knobs.json"
     ]
+
+
+def test_alternates_the_two_shapes_of_a_pooled_vs_split_pair_across_its_reps(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Both arms of a pair run back to back, and the pair runs both ways round.
+
+    Cumulative database state only grows across a stage, so an arm that always went
+    first would drain the emptier tables every time and nothing in its row would say
+    so. Reversing the schedule on the odd reps is what stops that lining up — the
+    mistake that invalidated an earlier control in this repo.
+    """
+    stages.main(
+        [
+            "pooled_vs_split",
+            "--reps",
+            "2",
+            "--tasks",
+            MEASURABLE_TASKS,
+            "--max-workers",
+            "4",
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
+
+    result = utils.read_stage(tmp_path, "pooled_vs_split")
+    assert {
+        "measurements": [entry["spec"]["name"] for entry in result["measurements"]],
+        "reps": [len(entry["reps"]) for entry in result["measurements"]],
+        "run_order": result["run_order"],
+    } == {
+        "measurements": ["pooled_4", "split_4"],
+        "reps": [2, 2],
+        "run_order": ["pooled_4", "split_4", "split_4", "pooled_4"],
+    }
+
+
+def test_records_the_backends_each_pooled_vs_split_shape_opened(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The comparison's own confound, measured rather than assumed.
+
+    A worker process opens two backends whatever its concurrency: the SDK client's
+    own connection and Django's. So the two ways of reaching one total concurrency do
+    NOT reach it on the same number of connections — four slots in one process share
+    one claim connection where four processes have four — and the stage records that
+    for the report to say out loud.
+
+    The 8 pair is skipped whole rather than run at the bound: an 8x1 quietly bounded
+    to 4x1 is an unequal comparison presented as an equal one.
+    """
+    stages.main(
+        [
+            "pooled_vs_split",
+            "--reps",
+            "1",
+            "--tasks",
+            MEASURABLE_TASKS,
+            "--max-workers",
+            "4",
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
+
+    result = utils.read_stage(tmp_path, "pooled_vs_split")
+    assert {
+        "measurements": [entry["spec"]["name"] for entry in result["measurements"]],
+        "shape_connections": result["shape_connections"],
+        "skipped_pairs": result["skipped_pairs"],
+    } == {
+        "measurements": ["pooled_4", "split_4"],
+        "shape_connections": [
+            {
+                "measurement": "pooled_4",
+                "processes": 1,
+                "concurrency": 4,
+                "connections": 2,
+            },
+            {
+                "measurement": "split_4",
+                "processes": 4,
+                "concurrency": 1,
+                "connections": 8,
+            },
+        ],
+        "skipped_pairs": [{"total": 8, "max_workers": 4}],
+    }
+
+
+def test_measures_no_pooled_vs_split_pair_the_worker_bound_cannot_spawn(
+    capsys: pytest.CaptureFixture[str], tmp_path: pathlib.Path
+) -> None:
+    """A bound under every total leaves nothing to compare, and the file says so.
+
+    It is not an error — a bounded full run must not die at this stage — and it is not
+    silence either: the pairs it refused and the bound that refused them are on the
+    console as it happens and in the results file afterwards.
+    """
+    stages.main(
+        [
+            "pooled_vs_split",
+            "--reps",
+            "1",
+            "--tasks",
+            MEASURABLE_TASKS,
+            "--max-workers",
+            "1",
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
+
+    result = utils.read_stage(tmp_path, "pooled_vs_split")
+    assert {
+        "measurements": result["measurements"],
+        "run_order": result["run_order"],
+        "shape_connections": result["shape_connections"],
+        "skipped_pairs": result["skipped_pairs"],
+    } == {
+        "measurements": [],
+        "run_order": [],
+        "shape_connections": [],
+        "skipped_pairs": [
+            {"total": 4, "max_workers": 1},
+            {"total": 8, "max_workers": 1},
+        ],
+    }
+    assert capsys.readouterr().out == (
+        "stage POOLED_VS_SPLIT: one total concurrency reached two ways: slots in one "
+        "process, or one slot in each of that many processes\n"
+        "total 4: not run, --max-workers 1 cannot spawn its 4-process split arm\n"
+        "total 8: not run, --max-workers 1 cannot spawn its 8-process split arm\n"
+    )

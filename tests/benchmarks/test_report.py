@@ -72,6 +72,12 @@ MEASUREMENT_TABLE_HEAD = (
 )
 
 
+# The two shapes of one pooled_vs_split pair: four slots in one process, against one
+# slot in each of four processes.
+POOLED_WORKER = {"concurrency": 4, "batch_size": None, "poll_interval": 0.25}
+SPLIT_WORKER = {"concurrency": 1, "batch_size": None, "poll_interval": 0.25}
+
+
 def build_measurement(
     name: str,
     spec: dict[str, t.Any],
@@ -151,6 +157,24 @@ def render(
     write_stage(tmp_path, stage, entries, **extra)
     report.main(["--results-dir", str(tmp_path)])
     return capsys.readouterr().out
+
+
+def build_pooled_vs_split_entries() -> list[dict[str, t.Any]]:
+    """One pair, measured both ways round, the way the stage records it."""
+    return [
+        build_measurement(
+            "pooled_4",
+            {"workers": 1, "worker": POOLED_WORKER},
+            {"throughput_per_s": 400.0},
+            {"range_high": 440.0, "range_low": 360.0},
+        ),
+        build_measurement(
+            "split_4",
+            {"workers": 4, "worker": SPLIT_WORKER},
+            {"throughput_per_s": 600.0},
+            {"range_high": 660.0, "range_low": 540.0},
+        ),
+    ]
 
 
 def test_says_so_when_the_results_directory_holds_no_stage_files(
@@ -767,3 +791,190 @@ def test_names_a_working_point_nothing_could_be_said_about(
         "Calibrated from `worker_knobs` `concurrency_1`: 12.5 tasks/s, cv n/a, "
         "invalid, dispersion unmeasured.\n"
     ) in render(capsys, tmp_path, "checkpoint_cost", entries, calibration=calibration)
+
+
+def test_renders_split_over_pooled_throughput_for_pooled_vs_split(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The one number the stage exists for, with both arms' spreads carried through.
+
+    Split over pooled, so a ratio above 1 reads as the split arm winning — and the
+    order the arms ran in prints under it, because an arm that always went first would
+    have drained the emptier tables every rep and no column in the table says so.
+    """
+    rendered = render(
+        capsys,
+        tmp_path,
+        "pooled_vs_split",
+        build_pooled_vs_split_entries(),
+        run_order=["pooled_4", "split_4", "split_4", "pooled_4"],
+    )
+
+    assert (
+        "Split / pooled throughput at the same total concurrency:\n"
+        "\n"
+        "- total 4: 1.50x (reps 1.23-1.83x)\n"
+    ) in rendered
+    assert (
+        "Arms ran in this order, reversed each rep so neither always went first: "
+        "pooled_4, split_4, split_4, pooled_4.\n"
+    ) in rendered
+
+
+def test_says_the_two_shapes_of_a_pair_opened_different_numbers_of_backends(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """A worker process opens two backends whatever its concurrency, so the two ways
+    of reaching one total concurrency do not reach it on the same connections.
+
+    That is a confound in the stage's own comparison and the report says so rather
+    than leaving a ratio to be read as the claim path alone.
+    """
+    shapes = [
+        {
+            "measurement": "pooled_4",
+            "processes": 1,
+            "concurrency": 4,
+            "connections": 2,
+        },
+        {
+            "measurement": "split_4",
+            "processes": 4,
+            "concurrency": 1,
+            "connections": 8,
+        },
+    ]
+
+    assert (
+        "Postgres backends each shape opened (measured across starting its fleet):\n"
+        "\n"
+        "| measurement | processes | concurrency | connections |\n"
+        "| --- | --- | --- | --- |\n"
+        "| pooled_4 | 1 | 4 | 2 |\n"
+        "| split_4 | 4 | 1 | 8 |\n"
+        "\n"
+        "At total 4 the two shapes opened different numbers of backends — a pooled "
+        "arm's slots share the connections of the one process holding them, a split "
+        "arm gets a set per process. Every ratio below is the claim path AND the "
+        "connection count, and nothing here separates the two.\n"
+    ) in render(
+        capsys,
+        tmp_path,
+        "pooled_vs_split",
+        build_pooled_vs_split_entries(),
+        shape_connections=shapes,
+    )
+
+
+def test_says_a_pair_whose_shapes_opened_the_same_backends_is_clean(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The other reading of the same measurement, which is why it is measured.
+
+    If a pooled arm ever opens a connection per slot the ratio becomes the claim path
+    and nothing else, and the report has to be able to say that too.
+    """
+    shapes = [
+        {
+            "measurement": "pooled_4",
+            "processes": 1,
+            "concurrency": 4,
+            "connections": 8,
+        },
+        {
+            "measurement": "split_4",
+            "processes": 4,
+            "concurrency": 1,
+            "connections": 8,
+        },
+    ]
+
+    assert (
+        "Both shapes of every pair opened the same number of backends, so a ratio "
+        "below is the claim path and nothing else.\n"
+    ) in render(
+        capsys,
+        tmp_path,
+        "pooled_vs_split",
+        build_pooled_vs_split_entries(),
+        shape_connections=shapes,
+    )
+
+
+def test_names_the_pooled_vs_split_pairs_the_worker_bound_refused(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """A pair the bound could not run is missing from the table, so it is named.
+
+    Running its pooled arm at 1x8 against a split arm bounded to 4x1 would be an
+    unequal comparison presented as an equal one, so neither arm runs — and a table
+    two rows short with nothing said about it reads like a run that crashed.
+    """
+    assert (
+        "Pairs not run:\n"
+        "\n"
+        "- total 8: `--max-workers 4` cannot spawn the 8 processes its split arm "
+        "needs, so neither arm of the pair was measured\n"
+    ) in render(
+        capsys,
+        tmp_path,
+        "pooled_vs_split",
+        build_pooled_vs_split_entries(),
+        skipped_pairs=[{"total": 8, "max_workers": 4}],
+    )
+
+
+def test_falls_back_to_ratios_when_a_pooled_vs_split_pair_lost_an_arm(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The file is rewritten after every rep, so a run killed between a pair's two
+    arms leaves one of them on disk, and one row still deserves a number under it."""
+    entries = [
+        build_measurement(
+            "pooled_4",
+            {"workers": 1, "worker": POOLED_WORKER},
+            {"throughput_per_s": 400.0},
+        )
+    ]
+
+    assert ("Throughput relative to `pooled_4`:\n\n- `pooled_4`: 1.00x\n") in render(
+        capsys, tmp_path, "pooled_vs_split", entries
+    )
+
+
+def test_renders_a_stage_that_measured_nothing_beside_one_that_did(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """A stage can refuse every measurement it was asked for and still have a section.
+
+    An empty table under a heading that says which pairs were refused and why is the
+    honest rendering; dropping the stage would leave the reader to notice its absence.
+    """
+    write_stage(tmp_path, "worker_knobs", [build_measurement("concurrency_1", {}, {})])
+
+    rendered = render(
+        capsys,
+        tmp_path,
+        "pooled_vs_split",
+        [],
+        skipped_pairs=[{"total": 4, "max_workers": 1}],
+    )
+
+    assert (
+        "## Pooled vs split\n"
+        "\n" + MEASUREMENT_TABLE_HEAD + "\n"
+        "Pairs not run:\n"
+        "\n"
+        "- total 4: `--max-workers 1` cannot spawn the 4 processes its split arm "
+        "needs, so neither arm of the pair was measured\n"
+    ) in rendered
+
+
+def test_says_so_when_every_stage_file_measured_nothing(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The header is built out of measurement provenance, so a directory holding only
+    a refused stage has no run to describe — and says that rather than crashing."""
+    assert render(capsys, tmp_path, "pooled_vs_split", []) == (
+        f"No measurements in the stage_*.json files under {tmp_path}.\n"
+    )

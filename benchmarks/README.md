@@ -123,11 +123,11 @@ over — an empty one, or one whose contents predate a change to this service �
 `db` or `db_pg_cron`, and the next `up` initialises `absurd_bench` again. The results
 files are what you keep, never the database.
 
-With no stage named, `python -m stages` runs all seven, which took 75 minutes on the
-reference host; naming stages runs only those, and `--tasks`, `--duration`, `--reps` and
-`--max-workers` shrink a stage to a dry run. Results land in `benchmarks/results/`. The
-test suite is separate and lives at the repo root — see
-[Running the tests](#running-the-tests).
+With no stage named, `python -m stages` runs all eight, which took 75 minutes on the
+reference host before pooled_vs_split joined them; naming stages runs only those, and
+`--tasks`, `--duration`, `--reps` and `--max-workers` shrink a stage to a dry run.
+Results land in `benchmarks/results/`. The test suite is separate and lives at the repo
+root — see [Running the tests](#running-the-tests).
 
 **One measurement regime, and it is a host one.** Driver, producer and workers all run
 on the host; only Postgres is in a container, reached over loopback. Half of that regime
@@ -176,15 +176,55 @@ Times are from the 8-core reference run and scale with the host.
 | -------------------- | ------------------------------------------- | ----------------- | ---------------------------------- | ------ |
 | `worker_knobs`       | what each worker knob buys                  | —                 | 5,000 no-ops, saturation           | 20 min |
 | `process_scaling`    | how throughput scales with worker processes | `worker_knobs`    | no-ops, saturation                 | 10 min |
+| `pooled_vs_split`    | one total concurrency, reached two ways     | —                 | 5,000 no-ops, saturation           | 6 min  |
 | `poll_interval`      | what `--poll-interval` costs and buys       | `worker_knobs`    | 5 tasks/s offered for 60 s         | 10 min |
 | `sync_vs_async`      | whether async tasks beat sync ones          | —                 | sleep (`--io-seconds`), saturation | 15 min |
 | `checkpoint_cost`    | what a checkpoint costs                     | `worker_knobs`    | 2,000 tasks, saturation            | 3 min  |
 | `producer_ceiling`   | how fast the producer can enqueue           | —                 | 5,000 enqueues, no workers         | 2 min  |
 | `latency_under_load` | what latency looks like under load          | `process_scaling` | 60 s paced offer                   | 14 min |
 
-Three stages depend on nothing, so the set is a partial order rather than a sequence —
+Four stages depend on nothing, so the set is a partial order rather than a sequence —
 which is why they carry names instead of letters. Naming several runs them in dependency
 order whatever order you type.
+
+**`pooled_vs_split` measures the diagonal the other two miss.** worker_knobs sweeps
+concurrency at one process and process_scaling sweeps processes at one concurrency, so
+the two ways of reaching the SAME total concurrency were never put against each other:
+`pooled_4` is 1 process x 4 concurrency, `split_4` is 4 processes x 1, and the same
+for 8. The shapes are fixed twice over: not calibrated from an earlier stage, since
+configuring one arm from a winner would make the pair unequal in a second way, and not
+derived from the host, for the reason the concurrency rungs are not — a shape that means
+something different on every machine cannot be compared across machines. On a host with
+fewer cores than a total, that pair's arms are both oversubscribed; only `--max-workers`
+skips a pair.
+
+Three things about how it runs, all of them methodology rather than knobs:
+
+- **A pair is skipped whole, never half-run.** `--max-workers 4` cannot spawn the 8
+  processes `split_8` needs, and running `1x8` against a bounded `4x1` would be an
+  unequal comparison presented as an equal one. So neither arm runs, and both the
+  console and the results file name the pair and the bound that refused it. A bound
+  under every total leaves the stage with nothing to compare, which is a file saying so
+  rather than an error — a bounded full run must not die here.
+- **The arms alternate across reps.** A pair's two arms run back to back, and the whole
+  schedule reverses on the odd reps, so neither arm and neither pair ever always goes
+  first. Cumulative database state only grows across a stage; a fixed order would hand
+  one arm of every pair the emptier tables, which is exactly how an earlier control in
+  this repo came to be invalidated. The order they actually ran in is recorded and
+  printed under the table.
+- **Connection count is measured, because it is a confound.** A worker process opens two
+  Postgres backends whatever its concurrency — the SDK client's own connection and
+  Django's — so `1x4` reaches four-way concurrency on two backends and `4x1` reaches it
+  on eight. The two shapes therefore differ in connection count as well as in claim
+  path, and the report says that outright above the ratio rather than leaving it to be
+  read as the claim path alone. It is measured per shape, as a delta across starting the
+  fleet, so the day a pooled worker opens a connection per slot the same line will say
+  the comparison is clean.
+
+What it derives is `split / pooled` throughput per total, with both arms' rep endpoints
+carried through the division, under the commit-budget block every saturation stage gets
+— which is the half of the reading that matters, since two arms at the fsync ceiling
+converging says something entirely different from two arms below it converging.
 
 **Worker counts scale with the host.** `build_worker_ladder` derives the process_scaling
 ladder from `os.cpu_count()`: 1 and 2 anchor the low end where per-worker efficiency is
@@ -197,10 +237,10 @@ Thirty-two cores means 1 + 2 + 8 + 16 + 24 + 32 = 83 worker processes spawned ac
 process_scaling alone, and 128 cores means 323. `--max-workers N` lowers the ceiling the
 ladder is derived from, so a bounded ladder is still a ladder rather than the same rung
 repeated: `--max-workers 3` gives 1, 2, 3. The same bound caps the poll_interval idle
-probes (four per interval otherwise) and the fleet latency_under_load calibrates from —
-it narrows which process_scaling rung latency_under_load may pick, so the offered rate
-stays the throughput that fleet actually measured. Unset, everything behaves exactly as
-above.
+probes (four per interval otherwise), drops whole any pooled_vs_split pair whose split
+arm it cannot spawn, and caps the fleet latency_under_load calibrates from — it narrows
+which process_scaling rung latency_under_load may pick, so the offered rate stays the
+throughput that fleet actually measured. Unset, everything behaves exactly as above.
 
 Bound both stages together. `--max-workers` on latency_under_load alone reads back a
 `stage_process_scaling.json` measured on a larger fleet, and the rungs it is allowed to
@@ -261,6 +301,14 @@ ceiling (84,000/s against 953/s, measured side by side). Any of the three can be
 the probe was refused, the run went ahead regardless, and the report says the
 calibration is missing rather than dropping the line — an uncalibrated number that says
 so beats no run at all.
+
+**A stage that compares two topologies records how it compared them.**
+`stage_pooled_vs_split.json` carries three blocks beside its measurements:
+`shape_connections`, the Postgres backends each shape opened; `run_order`, the arms in
+the order they actually ran, which is what says no arm always went first; and
+`skipped_pairs`, the pairs the worker bound refused and the bound that refused them. A
+file whose `measurements` are empty and whose `skipped_pairs` are not is a stage that
+was asked for more processes than it was allowed to spawn, not a crashed run.
 
 **A stage calibrated from another names what it inherited**, in a `calibration` block
 holding the stage and measurement that became the working point, its throughput, its CV

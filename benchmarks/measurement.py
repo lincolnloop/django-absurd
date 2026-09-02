@@ -49,19 +49,24 @@ class MeasurementSpec:
 
 
 def run_measurement(spec: MeasurementSpec) -> dict[str, t.Any]:
-    """Run one measurement's reps from a clean queue, reduce to a median + flags."""
-    reps = []
-    for _ in range(spec.reps):
-        truncate_queue_tables(spec.worker.queue)
-        # Bracketing each rep rather than reading the host block's one figure, which
-        # is collected after every rep has run: a 1-minute average sampled there is
-        # mostly the harness's own load, so it cannot say what it was asked to.
-        load_before = host.read_load_average()
-        rep = run_one_rep(spec)
-        reps.append(
-            {**rep, "load_before": load_before, "load_after": host.read_load_average()}
-        )
-    return summarize_reps(spec, reps)
+    """Run one measurement's reps from a clean queue, reduce to a median + marks."""
+    return summarize_reps(spec, [run_clean_rep(spec) for _ in range(spec.reps)])
+
+
+def run_clean_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
+    """One rep from a truncated queue, with the ambient load sampled either side.
+
+    Separate from the loop above so a stage comparing two configurations can
+    interleave their reps rather than running one configuration's three and then the
+    other's, which is how an arm ends up always going first.
+    """
+    truncate_queue_tables(spec.worker.queue)
+    # Bracketing each rep rather than reading the host block's one figure, which is
+    # collected after every rep has run: a 1-minute average sampled there is mostly
+    # the harness's own load, so it cannot say what it was asked to.
+    load_before = host.read_load_average()
+    rep = run_one_rep(spec)
+    return {**rep, "load_before": load_before, "load_after": host.read_load_average()}
 
 
 def run_one_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
