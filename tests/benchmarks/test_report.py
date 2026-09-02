@@ -25,10 +25,29 @@ OPTIONS = {
     "tasks": None,
 }
 
+# What a probe's timed rounds reduce to, the way `analysis.summarize_commit_rates`
+# records them. A median with its own spread, because the durable rate is a wide
+# distribution rather than a constant, and every share the report prints against it
+# has to carry that.
 COMMIT_CEILING = {
-    "commit_ceiling_durable_per_s": 1903.0,
-    "commit_ceiling_nondurable_per_s": 131368.0,
-    "commit_ceiling_durable_after_per_s": 719.0,
+    "commit_ceiling_durable": {
+        "median_per_s": 2016.0,
+        "cv": 0.279,
+        "range_low": 1600.0,
+        "range_high": 2262.0,
+    },
+    "commit_ceiling_nondurable": {
+        "median_per_s": 367723.0,
+        "cv": 0.052,
+        "range_low": 324000.0,
+        "range_high": 380000.0,
+    },
+    "commit_ceiling_durable_after": {
+        "median_per_s": 1904.0,
+        "cv": 0.114,
+        "range_low": 1700.0,
+        "range_high": 2100.0,
+    },
 }
 
 RANKING_KEYS = {
@@ -45,8 +64,9 @@ HEADER = (
     "- options: --duration stage default, --io-seconds 0.05, --max-workers 8, "
     "--reps 3, --tasks stage default\n"
     "- cpu count: 8, load average (1m): 0.50\n"
-    "- commit ceiling: 1903 commits/s durable, 719/s after the run, 131368/s "
-    "non-durable (69x without fsync)\n"
+    "- commit ceiling (commits/s, one connection): durable 2016 (cv 28%, "
+    "1600-2262), after the run 1904 (cv 11%, 1700-2100), non-durable 367723 "
+    "(cv 5%, 324000-380000), 182x without fsync\n"
     "- python 3.14.3, Django 6.1, absurd-sdk 0.5.0\n"
     "- postgres: PostgreSQL 18.0 on x86_64-pc-linux-gnu\n"
     "\n"
@@ -627,14 +647,20 @@ def test_renders_idle_polling_tax_and_latency_ratios_for_poll_interval(
 def test_says_what_bound_each_saturation_measurement(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    """A task rate near the commit ceiling is a measurement of the disk.
+    """A task rate near one connection's commit ceiling is a measurement of Postgres.
 
-    Multiplying a throughput by the commits a task cost gives the commit rate the run
-    asked of the disk, and its share of the ceiling is what separates the two kinds of
-    row: one at a fraction of it is bound by its client and is the only kind that is
-    about Absurd. The paced row is left out — its rate was set by the offer, so its
-    share of the ceiling says how big the offer was and nothing about what bound it —
-    and a row whose reps left no median says so rather than reading as free.
+    Throughput times the commits a task cost is the commit rate the run asked of the
+    database; over the worker count it is what ONE worker's connection carried, which
+    is the comparable quantity — a worker opens the SDK's single connection whatever
+    its concurrency, and the ceiling is one connection's. So `split_4` demands more of
+    the database than `concurrency_16` and is still the freer of the two.
+
+    The verdict is read off the band the ceiling's own spread puts around the share,
+    not off the share itself: a row whose band lies across the line is reported as
+    unresolved rather than assigned to whichever side one draw of the calibration
+    happened to favour. The paced row is left out — its rate was set by the offer, so
+    its share says how big the offer was and nothing about what bound it — and a row
+    whose reps left no median says so rather than reading as free.
     """
     entries = [
         build_measurement(
@@ -647,18 +673,33 @@ def test_says_what_bound_each_saturation_measurement(
             {},
             {"throughput_per_s": 548.0, "commits_per_task": 3.55},
         ),
+        build_measurement(
+            "concurrency_8",
+            {},
+            {"throughput_per_s": 380.0, "commits_per_task": 3.55},
+        ),
+        build_measurement(
+            "split_4",
+            {"workers": 4, "worker": SPLIT_WORKER},
+            {"throughput_per_s": 1200.0, "commits_per_task": 3.55},
+        ),
         build_measurement("concurrency_32", {}, {"throughput_per_s": 0.0}),
         build_measurement("rate_25pct", {"mode": "rate"}, {"throughput_per_s": 90.0}),
     ]
 
     assert (
-        "Commit budget (`tasks/s x commits/task`, against the durable commit "
-        "ceiling):\n"
+        "Commit budget (`tasks/s x commits/task / workers`, against one connection's "
+        "durable ceiling):\n"
         "\n"
-        "- `concurrency_1`: 532 commits/s (150.0 x 3.55), 28% of 1903/s "
-        "— client-bound\n"
-        "- `concurrency_16`: 1945 commits/s (548.0 x 3.55), 102% of 1903/s "
-        "— fsync-bound\n"
+        "- `concurrency_1`: 532 commits/s per worker connection (150.0 x 3.55 / 1), "
+        "26% of 2016/s, 24%-33% across the ceiling's own spread — client-bound\n"
+        "- `concurrency_16`: 1945 commits/s per worker connection (548.0 x 3.55 / 1), "
+        "96% of 2016/s, 86%-122% across the ceiling's own spread — connection-bound\n"
+        "- `concurrency_8`: 1349 commits/s per worker connection (380.0 x 3.55 / 1), "
+        "67% of 2016/s, 60%-84% across the ceiling's own spread — unresolved: the "
+        "ceiling's spread straddles the line\n"
+        "- `split_4`: 1065 commits/s per worker connection (1200.0 x 3.55 / 4), "
+        "53% of 2016/s, 47%-67% across the ceiling's own spread — client-bound\n"
         "- `concurrency_32`: commits per task not recorded, so nothing says what "
         "bound it\n"
     ) in render(capsys, tmp_path, "worker_knobs", entries)
@@ -685,12 +726,12 @@ def test_says_the_commit_ceiling_is_missing_rather_than_omitting_it(
     )
 
     assert (
-        "- commit ceiling: not measured, so nothing below says whether a throughput "
-        "is this disk's number or Absurd's\n"
+        "- commit ceiling (commits/s, one connection): not measured, so nothing below "
+        "says whether a throughput is this connection's number or Absurd's\n"
     ) in rendered
     assert (
-        "- `concurrency_1`: 532 commits/s (150.0 x 3.55), against no ceiling "
-        "— nothing here says what bound it\n"
+        "- `concurrency_1`: 532 commits/s per worker connection (150.0 x 3.55 / 1), "
+        "against no ceiling — nothing here says what bound it\n"
     ) in rendered
 
 
@@ -710,13 +751,14 @@ def test_says_which_halves_of_the_commit_ceiling_were_measured(
         tmp_path,
         "worker_knobs",
         entries,
-        commit_ceiling_durable_after_per_s=None,
-        commit_ceiling_nondurable_per_s=None,
+        commit_ceiling_durable_after=None,
+        commit_ceiling_nondurable=None,
     )
 
     assert (
-        "- commit ceiling: 1903 commits/s durable, not measured after the run, "
-        "not measured non-durable (ratio not measured)\n"
+        "- commit ceiling (commits/s, one connection): durable 2016 (cv 28%, "
+        "1600-2262), after the run not measured, non-durable not measured, "
+        "ratio not measured\n"
     ) in rendered
 
 

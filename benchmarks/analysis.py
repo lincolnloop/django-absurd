@@ -1,4 +1,5 @@
 import datetime as dt
+import math
 import statistics
 import time
 import typing as t
@@ -17,12 +18,21 @@ MIN_TRIMMED_SPAN_S = 0.01
 # would report the machine's memory speed as its durable ceiling (84,000/s against
 # 953/s measured side by side on the same server).
 COMMIT_PROBE_TABLE = "benchmark_commit_ceiling_probe"
-# ~0.1 s at the ~1,900 commits/s a quiet SSD sustains, and the probe runs three times
-# a run — never during a measurement.
-DURABLE_PROBE_COMMITS = 200
-# The same window's worth with the fsync taken out: at ~400,000 commits/s the durable
-# count would be timing half a millisecond.
+# Commits per timed round: ~0.15 s at the ~2,000 commits/s a warmed session sustains,
+# and the size the dispersion below was measured at.
+DURABLE_PROBE_COMMITS = 300
+# The same window's worth with the fsync taken out: at ~370,000 commits/s the durable
+# count would be timing under a millisecond.
 NONDURABLE_PROBE_COMMITS = 5000
+# Commits a session must already have made before its rate settles. Consecutive
+# 400-commit rounds on one connection read 519, 544, 1276, 1899, 1912 and 1914/s — the
+# climb is over after about a thousand — so every round before this is thrown away.
+PROBE_WARM_UP_COMMITS = 1200
+# Timed rounds kept. The durable rate is not a constant: eight trials spread 600-2262/s
+# around a 2,016 median, a 28% CV, while the same trials without fsync held to 5%. One
+# round is a draw from that distribution, so the ceiling is recorded as a median with
+# its own dispersion beside it and nothing downstream may print it as exact.
+PROBE_TIMED_ROUNDS = 5
 
 # Completions per profile slice. Equal-COUNT slices rather than equal-time ones: a slow
 # measurement puts fewer completions into a fixed time slice, so its slices would read
@@ -204,19 +214,34 @@ def measure_idle_commit_rate(seconds: float) -> float:
     return (read_xact_commit() - before) / seconds
 
 
-def measure_commit_ceiling(*, durable: bool) -> float | None:
-    """Commits/s this server sustains in one session, or ``None`` if it refused.
+def measure_commit_ceiling(*, durable: bool) -> dict[str, float] | None:
+    """What one WARM session commits per second, as a distribution, or ``None``.
 
-    The number every throughput in a run has to be read against: 71% of a run's active
-    backend time is WAL durability, so a task rate near this ceiling is a property of
-    the disk rather than of Absurd, and the same code on another machine reports a
-    different one.
+    The numbers every throughput in a run has to be read against: 71% of a run's active
+    backend time is WAL durability, so a per-connection task rate near this ceiling is
+    a property of Postgres on this disk rather than of Absurd, and the same code on
+    another machine reports a different one.
+
+    A median and its spread rather than a number, because the durable rate has a ~28%
+    CV on the stack this was written against and the non-durable one 5% — the variance
+    is fsync's. A scalar here would hand every reader downstream a precision the
+    calibration does not have.
+
+    One session, because that is what a worker gets: a worker process opens exactly two
+    backends whatever its ``--concurrency``, so its claim traffic funnels through one
+    connection. The machine's own capacity is several times this — 1,953 commits/s at
+    one connection against 13,238/s at sixteen, measured warm — which is why a report
+    divides a fleet's commit rate by its worker count before comparing it to this.
 
     Calibration, not measurement — a run that cannot have its ceiling records that it
     has none and carries on, because an uncalibrated number that says so beats no run.
     """
     commits = DURABLE_PROBE_COMMITS if durable else NONDURABLE_PROBE_COMMITS
     table = psycopg.sql.Identifier(COMMIT_PROBE_TABLE)
+    probe = psycopg.sql.SQL(COMMIT_PROBE_SQL).format(
+        commits=psycopg.sql.Literal(commits), table=table
+    )
+    warm_up_rounds = math.ceil(PROBE_WARM_UP_COMMITS / commits)
     try:
         with connections[resolve_absurd_database()].cursor() as cursor:
             # Outside the try/finally on purpose: a name already taken belongs to
@@ -230,17 +255,24 @@ def measure_commit_ceiling(*, durable: bool) -> float | None:
             try:
                 if not durable:
                     cursor.execute("set synchronous_commit = off")
-                cursor.execute(
-                    psycopg.sql.SQL(COMMIT_PROBE_SQL).format(
-                        commits=psycopg.sql.Literal(commits), table=table
+                rates = []
+                for _ in range(warm_up_rounds + PROBE_TIMED_ROUNDS):
+                    # Emptied first so the row read back is this round's own elapsed
+                    # and never a slower earlier round's.
+                    cursor.execute(
+                        psycopg.sql.SQL("truncate {table}").format(table=table)
                     )
-                )
-                cursor.execute(
-                    psycopg.sql.SQL("select max(elapsed_s) from {table}").format(
-                        table=table
+                    cursor.execute(probe)
+                    cursor.execute(
+                        psycopg.sql.SQL("select max(elapsed_s) from {table}").format(
+                            table=table
+                        )
                     )
-                )
-                return commits / float(cursor.fetchone()[0])
+                    rates.append(commits / float(cursor.fetchone()[0]))
+                # Warmed on this cursor's own connection, and its rounds dropped by the
+                # slice: the climb is per connection, so a session warmed anywhere else
+                # leaves this one paying for it.
+                return summarize_commit_rates(rates[warm_up_rounds:])
             finally:
                 # Reset unconditionally: it is a no-op for the durable probe, and a
                 # branch here would be one more way to leave the session altered.
@@ -250,6 +282,20 @@ def measure_commit_ceiling(*, durable: bool) -> float | None:
                 )
     except db.Error:
         return None
+
+
+def summarize_commit_rates(rates: list[float]) -> dict[str, float]:
+    """One probe's timed rounds, in the vocabulary a measurement's reps already use.
+
+    The endpoints are recorded beside the CV for the same reason a measurement records
+    both: a percentage is what a reader has to un-reduce to see what was measured.
+    """
+    return {
+        "median_per_s": statistics.median(rates),
+        "cv": statistics.stdev(rates) / statistics.fmean(rates),
+        "range_low": min(rates),
+        "range_high": max(rates),
+    }
 
 
 def read_completed_run_metrics(

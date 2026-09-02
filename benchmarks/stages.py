@@ -105,15 +105,16 @@ MARK_WORDS = {"!": "INVALID", "~": "UNSTABLE", "?": "DISPERSION UNMEASURED"}
 # The 4-checkpoint task runs ~4.5x slower than a flat one, so SATURATION_TASKS would
 # push a rep past two minutes; 2000 keeps checkpoint_cost on the same per-rep budget.
 WORKFLOW_TASKS = 2000
-# What every stage file this invocation writes records beside its options. The third
-# is not the first repeated: measured straight after a full run the durable ceiling
-# read 719/s against the 1,903/s the same probe read on an idle machine, so a run's
-# own throughput means different things at its start and its end, and bookending it is
-# the only way a reader can see that happened.
+# What every stage file this invocation writes records beside its options: a block per
+# probe, each a median with its own CV and endpoints. The third is not the first
+# repeated — a run leaves behind the bloat and the WAL churn it made, so only a closing
+# probe says whether the ceiling its throughputs were read against still held at the
+# end. All three are warmed probes: the 719/s once read here straight after a run was a
+# cold session, not a depressed server.
 COMMIT_CEILING_KEYS = (
-    "commit_ceiling_durable_per_s",
-    "commit_ceiling_nondurable_per_s",
-    "commit_ceiling_durable_after_per_s",
+    "commit_ceiling_durable",
+    "commit_ceiling_nondurable",
+    "commit_ceiling_durable_after",
 )
 
 
@@ -162,27 +163,25 @@ class StageOptions:
     # carried into every stage file this run writes. Mutable because the after-the-run
     # probe only exists once the stages are done, and it belongs in files already on
     # disk by then.
-    commit_ceiling: dict[str, float | None] = dataclasses.field(default_factory=dict)
+    commit_ceiling: dict[str, dict[str, float] | None] = dataclasses.field(
+        default_factory=dict
+    )
 
 
 def run_stages(stage_names: list[str], options: StageOptions) -> None:
     options.results_dir.mkdir(parents=True, exist_ok=True)
     ordered = order_by_dependency(stage_names)
     # Before anything measures, and never between the reps of a measurement: the probe
-    # commits a few hundred times of its own.
+    # commits a few thousand times of its own.
     options.commit_ceiling.update(
         {
-            "commit_ceiling_durable_per_s": analysis.measure_commit_ceiling(
-                durable=True
-            ),
-            "commit_ceiling_nondurable_per_s": analysis.measure_commit_ceiling(
-                durable=False
-            ),
+            "commit_ceiling_durable": analysis.measure_commit_ceiling(durable=True),
+            "commit_ceiling_nondurable": analysis.measure_commit_ceiling(durable=False),
         }
     )
     for name in ordered:
         run_stage(name, options)
-    options.commit_ceiling["commit_ceiling_durable_after_per_s"] = (
+    options.commit_ceiling["commit_ceiling_durable_after"] = (
         analysis.measure_commit_ceiling(durable=True)
     )
     record_commit_ceiling(ordered, options)

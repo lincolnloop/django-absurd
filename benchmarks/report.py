@@ -42,12 +42,13 @@ MARK_LEGEND = (
 # ratio, the scaling efficiency and the checkpoint multiplier all reach for this one.
 THROUGHPUT_KEY = "throughput_per_s"
 
-# Share of the measured commit ceiling above which a measurement is called fsync-bound
-# rather than client-bound. The concurrency ladder measured here ran from 28% of the
-# ceiling at concurrency 1 to 102% at concurrency 16, where concurrent backends share
-# an fsync through group commit. Where "near the ceiling" starts is a judgement and
-# not a measured boundary, which is why the share itself prints beside the verdict.
-FSYNC_BOUND_SHARE = 0.70
+# Share of one connection's commit ceiling above which a measurement is called
+# connection-bound rather than client-bound. The concurrency ladder measured here ran
+# from 28% of the ceiling at concurrency 1 to 102% at concurrency 16 — sixteen threads
+# on the same single connection, which is what it saturated. Where "near the ceiling"
+# starts is a judgement and not a measured boundary, which is why the share and the
+# band it was read from both print beside the verdict.
+CONNECTION_BOUND_SHARE = 0.70
 
 # Named by the flag that sets each one, so the header reads back as the command that
 # produced it. Alphabetical: no ordering of these means anything to a reader.
@@ -96,7 +97,10 @@ def describe_host(stages: list[dict[str, t.Any]]) -> list[str]:
             f"- cpu count: {context['cpu_count']}, "
             f"load average (1m): {context['load_avg_1m']:.2f}"
         ),
-        f"- commit ceiling: {describe_commit_ceiling(stages)}",
+        (
+            f"- commit ceiling (commits/s, one connection): "
+            f"{describe_commit_ceiling(stages)}"
+        ),
         (
             f"- python {context['python']}, Django {context['django']}, "
             f"absurd-sdk {context['absurd_sdk']}"
@@ -112,42 +116,53 @@ def describe_provenance(shas: list[str]) -> str:
 
 
 def describe_commit_ceiling(stages: list[dict[str, t.Any]]) -> str:
-    """What the machine's disk could commit while this run was made.
+    """What one connection to this server could commit while the run was made.
 
     71% of the active backend time in a full run is WAL durability, so every task rate
     below is a commit rate in disguise and the ceiling is what says whether it was the
-    disk's number or Absurd's. Printed even when it is missing: a run nobody could
-    calibrate is still a run, but it must not read like a calibrated one.
+    connection's number or Absurd's. Each probe prints its dispersion beside its
+    median: the durable rate carries a ~28% CV, and a bare number would be read as a
+    constant. Printed even when it is missing — a run nobody could calibrate is still a
+    run, but it must not read like a calibrated one.
     """
     return describe_alternatives(sorted({format_commit_ceiling(s) for s in stages}))
 
 
 def format_commit_ceiling(stage: dict[str, t.Any]) -> str:
-    durable = stage.get("commit_ceiling_durable_per_s")
+    durable = stage.get("commit_ceiling_durable")
     if durable is None:
         return (
-            "not measured, so nothing below says whether a throughput is this disk's "
-            "number or Absurd's"
+            "not measured, so nothing below says whether a throughput is this "
+            "connection's number or Absurd's"
         )
-    nondurable = stage.get("commit_ceiling_nondurable_per_s")
-    after = stage.get("commit_ceiling_durable_after_per_s")
+    nondurable = stage.get("commit_ceiling_nondurable")
+    after = stage.get("commit_ceiling_durable_after")
     return (
-        f"{durable:.0f} commits/s durable, "
-        f"{format_commit_rate(after)} after the run, "
-        f"{format_commit_rate(nondurable)} non-durable "
-        f"({describe_durability_cost(durable, nondurable)})"
+        f"durable {format_commit_rate(durable)}, "
+        f"after the run {format_commit_rate(after)}, "
+        f"non-durable {format_commit_rate(nondurable)}, "
+        f"{describe_durability_cost(durable, nondurable)}"
     )
 
 
-def format_commit_rate(value: float | None) -> str:
-    return "not measured" if value is None else f"{value:.0f}/s"
+def format_commit_rate(ceiling: dict[str, float] | None) -> str:
+    """A probe's median, with the spread that says how much of it to believe."""
+    if ceiling is None:
+        return "not measured"
+    return (
+        f"{ceiling['median_per_s']:.0f} "
+        f"(cv {ceiling['cv']:.0%}, {ceiling['range_low']:.0f}-"
+        f"{ceiling['range_high']:.0f})"
+    )
 
 
-def describe_durability_cost(durable: float, nondurable: float | None) -> str:
+def describe_durability_cost(
+    durable: dict[str, float], nondurable: dict[str, float] | None
+) -> str:
     """What fsync costs, as the multiple the same server reaches without it."""
     if nondurable is None:
         return "ratio not measured"
-    return f"{nondurable / durable:.0f}x without fsync"
+    return f"{nondurable['median_per_s'] / durable['median_per_s']:.0f}x without fsync"
 
 
 def describe_options(stages: list[dict[str, t.Any]]) -> str:
@@ -436,12 +451,14 @@ def render_run_order(stage: dict[str, t.Any]) -> list[str]:
 
 
 def build_commit_budget_lines(stage: dict[str, t.Any]) -> list[str]:
-    """What bound each saturation measurement: its own client, or the disk's fsync.
+    """What bound each saturation measurement: its own client, or its connection.
 
     Throughput times the commits a task cost is the commit rate the run asked of the
-    disk. Near the ceiling that rate is a property of the disk and moves to a
-    different number on another machine; a fraction of it is the case where the
-    measurement is about Absurd.
+    database, and dividing that by the worker count is what one worker's connection
+    carried — the comparable quantity, since a worker opens the SDK's one connection
+    whatever its concurrency and the ceiling is one connection's. Near the ceiling that
+    rate belongs to the connection and moves on another machine; a fraction of it is
+    the case where the measurement is about Absurd.
 
     Saturation rows only. A paced row's rate is set by the offer, so its share of the
     ceiling says how big the offer was and nothing about what bound it.
@@ -453,16 +470,21 @@ def build_commit_budget_lines(stage: dict[str, t.Any]) -> list[str]:
     ]
     if not any(entry["median"].get("commits_per_task") for entry in measurements):
         return []
-    ceiling = stage.get("commit_ceiling_durable_per_s")
+    ceiling = stage.get("commit_ceiling_durable")
     return [
         "",
-        "Commit budget (`tasks/s x commits/task`, against the durable commit ceiling):",
+        (
+            "Commit budget (`tasks/s x commits/task / workers`, against one "
+            "connection's durable ceiling):"
+        ),
         "",
         *[describe_commit_budget(entry, ceiling) for entry in measurements],
     ]
 
 
-def describe_commit_budget(entry: dict[str, t.Any], ceiling: float | None) -> str:
+def describe_commit_budget(
+    entry: dict[str, t.Any], ceiling: dict[str, float] | None
+) -> str:
     name = entry["spec"]["name"]
     commits_per_task = entry["median"].get("commits_per_task")
     if not commits_per_task:
@@ -470,15 +492,35 @@ def describe_commit_budget(entry: dict[str, t.Any], ceiling: float | None) -> st
             f"- `{name}`: commits per task not recorded, so nothing says what bound it"
         )
     throughput = entry["median"].get(THROUGHPUT_KEY, 0.0)
+    workers = entry["spec"]["workers"]
+    per_connection = throughput * commits_per_task / workers
     demanded = (
-        f"- `{name}`: {throughput * commits_per_task:.0f} commits/s "
-        f"({throughput:.1f} x {commits_per_task:.2f})"
+        f"- `{name}`: {per_connection:.0f} commits/s per worker connection "
+        f"({throughput:.1f} x {commits_per_task:.2f} / {workers})"
     )
     if ceiling is None:
         return f"{demanded}, against no ceiling — nothing here says what bound it"
-    share = throughput * commits_per_task / ceiling
-    bound = "fsync-bound" if share >= FSYNC_BOUND_SHARE else "client-bound"
-    return f"{demanded}, {share:.0%} of {ceiling:.0f}/s — {bound}"
+    band_low = per_connection / ceiling["range_high"]
+    band_high = per_connection / ceiling["range_low"]
+    return (
+        f"{demanded}, {per_connection / ceiling['median_per_s']:.0%} of "
+        f"{ceiling['median_per_s']:.0f}/s, {band_low:.0%}-{band_high:.0%} across the "
+        f"ceiling's own spread — {describe_what_bound_it(band_low, band_high)}"
+    )
+
+
+def describe_what_bound_it(band_low: float, band_high: float) -> str:
+    """Which side of the line the whole band falls on, or that it lies across it.
+
+    Read off the band and not off the median share: the calibration's own spread is
+    wide enough that a verdict taken from one draw of it would flip between two
+    identical runs, which is the false precision this block exists to refuse.
+    """
+    if band_low >= CONNECTION_BOUND_SHARE:
+        return "connection-bound"
+    if band_high < CONNECTION_BOUND_SHARE:
+        return "client-bound"
+    return "unresolved: the ceiling's spread straddles the line"
 
 
 def build_derived_lines(stage: str, measurements: list[dict[str, t.Any]]) -> list[str]:

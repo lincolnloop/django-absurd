@@ -1,11 +1,14 @@
 import pathlib
+import time
 
 import pytest
+from django.db import connections
 
 import analysis
 import measurement
 import runner
 import stages
+from django_absurd.queues import resolve_absurd_database
 from tests.benchmarks import utils
 
 # Every test here runs real `absurd_worker` children: separate processes on their own
@@ -427,4 +430,47 @@ def test_saturation_rep_too_small_to_slice_records_no_profile() -> None:
         "profile_slices": None,
         "profile_median_per_s": None,
         "profile_cv": None,
+    }
+
+
+def test_commit_ceiling_probe_times_a_warmed_session_not_a_cold_one() -> None:
+    """A session's commit rate climbs for its first thousand or so commits.
+
+    Consecutive 400-commit rounds on one connection read 519, 544, 1276, 1899, 1912
+    and 1914/s, so a probe that timed the start of that would report a third of the
+    rate the same connection sustains. That is not a cosmetic error — the report
+    divides each measurement's per-connection commit rate by this ceiling to call the
+    measurement connection-bound or client-bound, so a cold ceiling inverts the verdict
+    for every row it labels. The rounds before the warm-up budget are therefore run and
+    thrown away, and the rounds after it are what the recorded median comes from.
+
+    Asserted as a shape — every round's commits made, only the kept rounds' time
+    divided — never at a rate, which is this machine's to decide. The timed rounds are
+    a bit over half the probe's commits, so a probe that summarized its warm-up too
+    would divide close to the whole call rather than the 0.75 of it allowed here.
+    """
+    timed_commits = analysis.PROBE_TIMED_ROUNDS * analysis.DURABLE_PROBE_COMMITS
+    committed_before = analysis.read_xact_commit()
+    started = time.perf_counter()
+    ceiling = analysis.measure_commit_ceiling(durable=True)
+    elapsed_s = time.perf_counter() - started
+    # Cumulative statistics are flushed at most once a second, so without this the
+    # probe's own commits are still in the backend's local buffer when it is asked.
+    with connections[resolve_absurd_database()].cursor() as cursor:
+        cursor.execute("select pg_stat_force_next_flush()")
+    committed = analysis.read_xact_commit() - committed_before
+    # An unmeasured ceiling has no timed window at all, which the dict below reports as
+    # the whole call rather than dividing by None.
+    timed_s = timed_commits / ceiling["median_per_s"] if ceiling else elapsed_s
+
+    assert {
+        "measured": ceiling is not None,
+        "committed_its_warm_up_rounds_too": (
+            committed >= analysis.PROBE_WARM_UP_COMMITS + timed_commits
+        ),
+        "timed_only_the_rounds_it_kept": timed_s < 0.75 * elapsed_s,
+    } == {
+        "measured": True,
+        "committed_its_warm_up_rounds_too": True,
+        "timed_only_the_rounds_it_kept": True,
     }

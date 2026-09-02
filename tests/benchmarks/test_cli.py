@@ -100,13 +100,16 @@ def test_records_the_configuration_a_stage_was_run_at(
 def test_records_the_commit_ceiling_this_machine_was_measured_against(
     tmp_path: pathlib.Path,
 ) -> None:
-    """A throughput is a property of this disk unless the ceiling beside it says so.
+    """A throughput is a property of this connection unless the ceiling says so.
 
-    Bookended rather than measured once: sustained write load depresses the ceiling
-    and it recovers when the machine goes idle, so the same run means different things
-    at its start and at its end. Asserted as measured and as ordered — taking the
-    fsync out cannot make a server commit slower — never at a number, which is the
-    machine's to decide.
+    Recorded as a distribution, because the durable rate is one: a median with the CV
+    and the endpoints of the rounds it came from, in the same vocabulary a
+    measurement's reps use. Bookended rather than measured once — a run leaves behind
+    the bloat and the WAL churn it made, so only the closing probe says whether the
+    ceiling its throughputs were read against still held at the end.
+
+    Asserted as measured, as bracketed and as ordered — taking the fsync out cannot
+    make a server commit slower — never at a number, which is the machine's to decide.
     """
     stages.main(
         [
@@ -121,14 +124,25 @@ def test_records_the_commit_ceiling_this_machine_was_measured_against(
     )
 
     result = utils.read_stage(tmp_path, "producer_ceiling")
+    durable = result["commit_ceiling_durable"]
     assert {
-        "durable": result["commit_ceiling_durable_per_s"] > 0,
-        "durable_after": result["commit_ceiling_durable_after_per_s"] > 0,
-        "fsync_costs_something": (
-            result["commit_ceiling_nondurable_per_s"]
-            > result["commit_ceiling_durable_per_s"]
+        "durable": durable["median_per_s"] > 0,
+        "durable_after": result["commit_ceiling_durable_after"]["median_per_s"] > 0,
+        "measured_its_own_dispersion": durable["cv"] >= 0,
+        "endpoints_bracket_the_median": (
+            durable["range_low"] <= durable["median_per_s"] <= durable["range_high"]
         ),
-    } == {"durable": True, "durable_after": True, "fsync_costs_something": True}
+        "fsync_costs_something": (
+            result["commit_ceiling_nondurable"]["median_per_s"]
+            > durable["median_per_s"]
+        ),
+    } == {
+        "durable": True,
+        "durable_after": True,
+        "measured_its_own_dispersion": True,
+        "endpoints_bracket_the_median": True,
+        "fsync_costs_something": True,
+    }
 
 
 def test_records_no_commit_ceiling_when_the_probe_was_refused(
@@ -155,16 +169,14 @@ def test_records_no_commit_ceiling_when_the_probe_was_refused(
 
     result = utils.read_stage(tmp_path, "producer_ceiling")
     assert {
-        "commit_ceiling_durable_per_s": result["commit_ceiling_durable_per_s"],
-        "commit_ceiling_nondurable_per_s": result["commit_ceiling_nondurable_per_s"],
-        "commit_ceiling_durable_after_per_s": result[
-            "commit_ceiling_durable_after_per_s"
-        ],
+        "commit_ceiling_durable": result["commit_ceiling_durable"],
+        "commit_ceiling_nondurable": result["commit_ceiling_nondurable"],
+        "commit_ceiling_durable_after": result["commit_ceiling_durable_after"],
         "measured_anyway": result["measurements"][0]["median"]["enqueues_per_s"] > 0,
     } == {
-        "commit_ceiling_durable_per_s": None,
-        "commit_ceiling_nondurable_per_s": None,
-        "commit_ceiling_durable_after_per_s": None,
+        "commit_ceiling_durable": None,
+        "commit_ceiling_nondurable": None,
+        "commit_ceiling_durable_after": None,
         "measured_anyway": True,
     }
 

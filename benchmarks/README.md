@@ -50,10 +50,10 @@ repo root's.
 
 `host.py` sits beside all of this: it records the machine context per measurement
 (cores, versions, git SHA), samples the load average around every rep, and brackets
-every measured phase with the suspension guard. The flags a run was given and the
-machine's commit ceiling are recorded once per results file, beside those measurements —
-see [The results files](#the-results-files). `settings.py`, `manage.py` and `tasks.py`
-are the minimal Django project the workers run in.
+every measured phase with the suspension guard. The flags a run was given and the commit
+ceiling of one connection to it are recorded once per results file, beside those
+measurements — see [The results files](#the-results-files). `settings.py`, `manage.py`
+and `tasks.py` are the minimal Django project the workers run in.
 
 ## What it found
 
@@ -223,8 +223,9 @@ Three things about how it runs, all of them methodology rather than knobs:
 
 What it derives is `split / pooled` throughput per total, with both arms' rep endpoints
 carried through the division, under the commit-budget block every saturation stage gets
-— which is the half of the reading that matters, since two arms at the fsync ceiling
-converging says something entirely different from two arms below it converging.
+— which is the half of the reading that matters, since two arms whose connections are
+each at the commit ceiling converging says something entirely different from two arms
+below it converging.
 
 **Worker counts scale with the host.** `build_worker_ladder` derives the process_scaling
 ladder from `os.cpu_count()`: 1 and 2 anchor the low end where per-worker efficiency is
@@ -286,21 +287,37 @@ none, and the report will not render it; re-measure rather than hand-adding one.
 same goes for one written before a measurement carried `invalid`, `unstable`, `cv` and
 its rep endpoints: it records a single `flagged` the report no longer reads.
 
-**Each file also says what the machine could commit.** Beside `options` sit
-`commit_ceiling_durable_per_s`, `commit_ceiling_nondurable_per_s` and
-`commit_ceiling_durable_after_per_s`: commits per second this server sustained in one
-session, measured once before the first measurement of the run and again after the last
-one. The closing probe is not the opening one repeated — measured straight after a full
-run the durable ceiling read 719/s against 1,903/s on the same idle machine, so a run's
-own numbers mean different things at its start and at its end. The probe loops
-server-side, a `do` block committing single-row inserts timed with `clock_timestamp()`,
-because a client loop would measure its own round trips as well as the disk's fsync; it
-writes to a real table it creates and drops rather than a temporary one, since a temp
-table is not WAL-logged and a probe against one reports memory speed as the durable
-ceiling (84,000/s against 953/s, measured side by side). Any of the three can be `null`:
-the probe was refused, the run went ahead regardless, and the report says the
-calibration is missing rather than dropping the line — an uncalibrated number that says
-so beats no run at all.
+**Each file also says what one connection to this server could commit.** Beside
+`options` sit `commit_ceiling_durable`, `commit_ceiling_nondurable` and
+`commit_ceiling_durable_after`, one block each: `median_per_s`, `cv`, `range_low` and
+`range_high` — the same dispersion vocabulary a measurement uses for its reps, because
+the durable rate is a distribution and not a constant. Eight trials on one machine
+spread 600-2,262 commits/s around a 2,016 median, a 28% CV, while the same trials with
+`synchronous_commit=off` held to 5%: the variance is fsync's. Anything reading a bare
+median as exact is reading in a precision the calibration does not have, which is why
+the report prints the spread beside every share it takes against it.
+
+Each probe warms before it times. A session's commit rate climbs over its first thousand
+or so commits — consecutive 400-commit rounds on one connection read 519, 544, 1,276,
+1,899, 1,912 and 1,914/s — so the probe runs rounds until it has committed
+`PROBE_WARM_UP_COMMITS`, throws those away, and records the median and spread of the
+five that follow. The climb is per connection, so the warm-up has to happen on the
+session that then measures. An earlier reading of 719/s straight after a run was that
+cold climb, not a server depressed by the load.
+
+The opening probe runs before the first measurement of the run and the closing one after
+the last. The closing probe is not the opening one repeated: a run leaves behind the
+bloat and the WAL churn it made, and only a probe taken afterwards says whether the
+ceiling its throughputs were read against still held at the end.
+
+The probe loops server-side, a `do` block committing single-row inserts timed with
+`clock_timestamp()`, because a client loop would measure its own round trips as well as
+the disk's fsync; it writes to a real table it creates and drops rather than a temporary
+one, since a temp table is not WAL-logged and a probe against one reports memory speed
+as the durable ceiling (84,000/s against 953/s, measured side by side). Any of the three
+blocks can be `null`: the probe was refused, the run went ahead regardless, and the
+report says the calibration is missing rather than dropping the line — an uncalibrated
+number that says so beats no run at all.
 
 **A stage that compares two topologies records how it compared them.**
 `stage_pooled_vs_split.json` carries three blocks beside its measurements:
@@ -352,17 +369,31 @@ exchange rate.** `commits_per_task` is the database's own `xact_commit` delta ac
 measured phase over the runs that completed inside it, so it covers the claim, the
 completion and the driver's drain polling, and excludes the preload, which is over
 before the phase opens. Throughput times that is the commit rate the run asked of the
-disk, and the report prints it against the ceiling under each saturation table: a
-measurement near the ceiling is fsync-bound and its number is a property of the disk
-rather than of Absurd, while one at a fraction of the ceiling is bound by its client and
-is the kind that is about Absurd. Measured on one laptop with Postgres in Docker, 71% of
-active backend time in a full run was WAL durability, the durable ceiling was 1,903
-commits/s and a task cost 3.55 commits — 1903/3.55 is 536 tasks/s against 548 observed
-at the top of the concurrency ladder, which is the ladder climbing from client-bound to
-fsync-bound rather than Absurd scaling. Rate reps carry no `commits_per_task`: their
-completed-run count comes off the trimmed middle of the offer window while the phase
-spans the whole offer and drain, so the quotient would divide two different windows into
-each other.
+database, and the report prints it under each saturation table — divided by the
+measurement's worker count first, because **the ceiling is one connection's**. A worker
+process opens exactly two backends whatever its `--concurrency` (the SDK's connection
+and Django's), so its claim traffic funnels through one connection however many threads
+are behind it, while the box has several times that capacity spread across more of them
+(warmed: 1,953 commits/s at one connection, 4,748 at four, 7,835 at eight, 13,238 at
+sixteen — sublinear, because concurrent backends share an fsync through group commit).
+Comparing a fleet's total against one connection's ceiling would call an eight-process
+measurement saturated when each of its connections was idling.
+
+So a row is **connection-bound** when its per-connection commit rate is near the ceiling
+— that number belongs to Postgres and moves on another machine — and **client-bound**
+when it is a fraction of it, which is the kind that is about Absurd. "Near" is 70%, a
+judgement rather than a measured boundary, and the verdict is read off the band the
+ceiling's own spread puts around the share rather than off the share: a row whose band
+lies across the line prints as `unresolved` instead of being assigned to whichever side
+one draw of the calibration favoured. Measured on one laptop with Postgres in Docker,
+71% of active backend time in a full run was WAL durability, one connection's durable
+ceiling was ~2,000 commits/s and a task cost 3.55 commits — 2000/3.55 is 563 tasks/s
+against 548 observed at the top of the concurrency ladder, which is sixteen threads
+climbing to the point where they saturate the one connection they share rather than
+Absurd failing to scale. DB-bound throughput therefore scales with worker PROCESSES, not
+with `--concurrency`. Rate reps carry no `commits_per_task`: their completed-run count
+comes off the trimmed middle of the offer window while the phase spans the whole offer
+and drain, so the quotient would divide two different windows into each other.
 
 Reading a profile: within a rep, remaining depth falls while accumulated database state
 only grows, so the two point opposite ways. Throughput RISING across the slices means
