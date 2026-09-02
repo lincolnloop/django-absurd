@@ -1,5 +1,6 @@
 import pathlib
 import time
+import typing as t
 
 import pytest
 from django.db import connections
@@ -21,6 +22,50 @@ MEASURABLE_TASKS = "60"
 # Three full profile slices and a deliberate leftover, derived from the slice size so
 # it stays on that boundary if the size ever moves.
 PROFILED_TASKS = 3 * analysis.THROUGHPUT_SLICE_COMPLETIONS + 100
+
+# One phase's statement counters as `pg_stat_statements` hands them over, either side
+# of it. Cumulative, so the figures per task are the difference: the claim and its
+# nested update both move, the drain poll is a statement of somebody else's that did
+# not, and the insert is one the earlier snapshot had never seen.
+STATEMENTS_BEFORE = [
+    {
+        "queryid": 1,
+        "query": "select * from absurd.claim_task($1, $2)",
+        "toplevel": True,
+        "calls": 100,
+        "total_exec_ms": 50.0,
+        "rows": 100,
+    },
+    {
+        "queryid": 2,
+        "query": "update absurd.t_bench set state = $1 where task_id = $2",
+        "toplevel": False,
+        "calls": 300,
+        "total_exec_ms": 30.0,
+        "rows": 300,
+    },
+    {
+        "queryid": 3,
+        "query": "select count(*) from absurd.t_bench where state = $1",
+        "toplevel": True,
+        "calls": 40,
+        "total_exec_ms": 2.0,
+        "rows": 40,
+    },
+]
+STATEMENTS_AFTER = [
+    {**STATEMENTS_BEFORE[0], "calls": 108, "total_exec_ms": 54.0, "rows": 108},
+    {**STATEMENTS_BEFORE[1], "calls": 324, "total_exec_ms": 46.0, "rows": 324},
+    STATEMENTS_BEFORE[2],
+    {
+        "queryid": 4,
+        "query": "insert into absurd.r_bench ($1, $2)",
+        "toplevel": True,
+        "calls": 8,
+        "total_exec_ms": 2.0,
+        "rows": 16,
+    },
+]
 
 
 def test_reports_the_sql_metrics_of_the_backlog_a_stage_drained(
@@ -473,4 +518,159 @@ def test_commit_ceiling_probe_times_a_warmed_session_not_a_cold_one() -> None:
         "measured": True,
         "committed_its_warm_up_rounds_too": True,
         "timed_only_the_rounds_it_kept": True,
+    }
+
+
+def test_saturation_rep_records_no_statement_stats_where_nothing_counted_them() -> None:
+    """The instrument that itemises a task's cost needs an extension this server lacks.
+
+    `pg_stat_statements` only counts anything when the server was started with it in
+    `shared_preload_libraries`, and the suite's `db` service must not be: it is shared
+    by every suite, and changing what Postgres preloads changes what all of them run
+    against. So the rep records no statement stats and measures everything else, which
+    is also what a managed database whose role cannot create the extension gets.
+
+    Both ways a server can count nothing degrade the same, and both are real here: the
+    extension unreadable because it was never preloaded, and the name occupied by
+    something that is not its view at all.
+    """
+    spec = measurement.MeasurementSpec(
+        name="smoke-statements",
+        mode="saturation",
+        task_path="tasks.noop_sync",
+        tasks=int(MEASURABLE_TASKS),
+        workers=1,
+        worker=runner.WorkerSpec(concurrency=1, poll_interval=0.05),
+        reps=1,
+        timeout_s=60,
+    )
+
+    rep = measurement.run_measurement(spec)["reps"][0]
+    with utils.hold_the_statement_stats_name():
+        while_the_name_is_taken = analysis.read_statement_stats()
+
+    assert {
+        "n_runs": rep["n_runs"],
+        "statement_stats": rep["statement_stats"],
+        "unreadable_view": analysis.read_statement_stats(),
+        "occupied_name": while_the_name_is_taken,
+    } == {
+        "n_runs": int(MEASURABLE_TASKS),
+        "statement_stats": None,
+        "unreadable_view": None,
+        "occupied_name": None,
+    }
+
+
+def test_statement_stats_bill_every_statement_of_a_phase_to_one_task() -> None:
+    """A phase's statement counters, diffed and divided by the tasks that ran in it.
+
+    Counters are cumulative and never reset — `pg_stat_statements_reset()` cannot be
+    undone and would take out anything else reading the same server — so a phase is
+    two snapshots subtracted. A statement whose counters did not move belongs to
+    whatever else the server was doing and is dropped; one the earlier snapshot never
+    saw counts from zero.
+
+    Only the top-level rows sum into the server side: under `track=all` a PL/pgSQL
+    function's own row already counts the time of every statement it ran inside itself,
+    so adding the nested rows would bill Absurd's claim path twice. What is left of the
+    wall clock is the client side — the harness's Python, the SDK's, and the round
+    trips — which is the number that separates "Absurd's SQL is expensive" from "our
+    Python is expensive".
+    """
+    stats = analysis.build_statement_stats(STATEMENTS_BEFORE, STATEMENTS_AFTER, 8, 0.5)
+
+    assert stats == {
+        "statements": [
+            {
+                "query": "update absurd.t_bench set state = $1 where task_id = $2",
+                "toplevel": False,
+                "calls_per_task": 3.0,
+                "total_exec_ms_per_task": 2.0,
+                "rows_per_task": 3.0,
+            },
+            {
+                "query": "select * from absurd.claim_task($1, $2)",
+                "toplevel": True,
+                "calls_per_task": 1.0,
+                "total_exec_ms_per_task": 0.5,
+                "rows_per_task": 1.0,
+            },
+            {
+                "query": "insert into absurd.r_bench ($1, $2)",
+                "toplevel": True,
+                "calls_per_task": 1.0,
+                "total_exec_ms_per_task": 0.25,
+                "rows_per_task": 2.0,
+            },
+        ],
+        "wall_ms_per_task": 62.5,
+        "server_exec_ms_per_task": 0.75,
+        "client_ms_per_task": 61.75,
+    }
+
+
+def test_statement_stats_keep_only_the_costliest_statements_of_a_phase() -> None:
+    """A results file has to stay readable, and the tail of the list is microseconds.
+
+    Every statement the phase issued is still summed into the server side; what the cap
+    drops is the itemisation of the cheapest, ranked on the server time each cost.
+    """
+    counted = range(analysis.STATEMENT_STATS_LIMIT + 2)
+    before: list[dict[str, t.Any]] = [
+        {
+            "queryid": index,
+            "query": f"select {index}",
+            "toplevel": True,
+            "calls": 0,
+            "total_exec_ms": 0.0,
+            "rows": 0,
+        }
+        for index in counted
+    ]
+    # One statement per millisecond of server time, so the rank is the queryid and the
+    # server side sums to `sum(counted) / 8` whatever the cap kept.
+    after = [
+        {**row, "calls": 8, "total_exec_ms": float(index)}
+        for index, row in enumerate(before)
+    ]
+
+    assert analysis.build_statement_stats(before, after, 8, 0.5) == {
+        "statements": [
+            {
+                "query": f"select {index}",
+                "toplevel": True,
+                "calls_per_task": 1.0,
+                "total_exec_ms_per_task": index / 8,
+                "rows_per_task": 0.0,
+            }
+            for index in range(analysis.STATEMENT_STATS_LIMIT + 1, 1, -1)
+        ],
+        "wall_ms_per_task": 62.5,
+        "server_exec_ms_per_task": sum(counted) / 8,
+        "client_ms_per_task": 62.5 - sum(counted) / 8,
+    }
+
+
+def test_statement_stats_of_a_phase_there_is_nothing_to_divide() -> None:
+    """Three ways the itemisation has no answer, none of them an error.
+
+    A snapshot is missing on any server that counts no statements, and a phase that
+    completed no runs has no task to divide by — the same guard `commits_per_task`
+    already refuses on, since a per-task figure over zero tasks is not a figure.
+    """
+    assert {
+        "no_snapshot_before": analysis.build_statement_stats(
+            None, STATEMENTS_AFTER, 8, 0.5
+        ),
+        "no_snapshot_after": analysis.build_statement_stats(
+            STATEMENTS_BEFORE, None, 8, 0.5
+        ),
+        "no_runs_to_divide_by": analysis.build_statement_stats(
+            STATEMENTS_BEFORE, STATEMENTS_AFTER, 0, 0.5
+        ),
+    } == {
+        "no_snapshot_before": None,
+        "no_snapshot_after": None,
+        "no_runs_to_divide_by": None,
     }

@@ -171,6 +171,10 @@ class StageOptions:
 def run_stages(stage_names: list[str], options: StageOptions) -> None:
     options.results_dir.mkdir(parents=True, exist_ok=True)
     ordered = order_by_dependency(stage_names)
+    # Ahead of every measurement, because a rep can only itemise what something was
+    # already counting. `db_bench` keeps its data directory in RAM, so a restarted
+    # server has never had the extension and a run that assumed one would find none.
+    analysis.install_statement_stats()
     # Before anything measures, and never between the reps of a measurement: the probe
     # commits a few thousand times of its own.
     options.commit_ceiling.update(

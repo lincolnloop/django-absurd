@@ -195,7 +195,9 @@ keeps its data directory in RAM, so every `up`, `restart` and `down` hands you a
 server and the Absurd schema has to be installed again. Skip it and the run dies partway
 through the first measurement on `ProgrammingError: schema "absurd" does not exist`,
 after the banner has already printed. It takes about a second and it is idempotent, so
-run it every time.
+run it every time. `pg_stat_statements` is lost to a restart the same way, and that one
+the driver re-creates itself before it measures anything, so `migrate` is the only step
+left to remember.
 
 `db_bench` is a service in the root `compose.yaml`, behind a `bench` profile: a bare
 `docker compose up -d` starts the suites' databases and not a benchmark server nobody
@@ -431,6 +433,14 @@ three blocks can be `null`: the probe was refused, the run went ahead regardless
 the report says the calibration is missing rather than dropping the line — an
 uncalibrated number that says so beats no run at all.
 
+**Each saturation rep carries its own itemised cost**, in a `statement_stats` block
+holding the statements it issued and the `wall = server + client` split of its
+milliseconds per task — see [The measurement model](#the-measurement-model). Capped at
+the fifteen costliest statements by server time, because the tail of that list is
+microsecond bookkeeping and a results file has to stay readable; the totals beside it
+are summed over all of them, capped or not. `null` means nothing counted statements on
+that server, which is not the same as nothing having run.
+
 **A stage that compares two topologies records how it compared them.**
 `stage_pooled_vs_split.json` carries three blocks beside its measurements:
 `shape_connections`, the Postgres backends each shape opened; `run_order`, the arms in
@@ -517,6 +527,35 @@ saturated when it has about half its capacity left. Rate reps carry no
 `commits_per_task`: their completed-run count comes off the trimmed middle of the offer
 window while the phase spans the whole offer and drain, so the quotient would divide two
 different windows into each other.
+
+**And every saturation rep says what those commits carried, statement by statement.** It
+brackets the measured phase with a snapshot of `pg_stat_statements` and diffs the two,
+so `statement_stats` names each statement the phase issued, how many times it ran for
+one task (`calls_per_task`), what it cost the server (`total_exec_ms_per_task`) and how
+many rows it touched. The server runs the extension with `pg_stat_statements.track=all`
+and not `top`, because Absurd's whole claim path is PL/pgSQL: `top` would record the
+call that entered it and hide every statement inside. A statement Absurd ran inside
+another is marked `"toplevel": false`, and only the top-level ones sum into
+`server_exec_ms_per_task` — a function's own row already counts the time of everything
+it ran. What is left of the phase is `client_ms_per_task`: the harness's Python, the
+SDK's, and the round trips between them, which is the number that separates "Absurd's
+SQL is expensive" from "our Python is expensive". Server time is summed over every
+backend the phase used, so above one worker it counts concurrent work against a single
+wall clock and the remainder stops being one; at one worker and one concurrency it is
+exact, which is where the instrument is worth reading. The driver's own drain poll is in
+the list like any other statement, which is how its share gets attributed instead of
+assumed; the reader's own statements are excluded by name. Rate reps carry no
+`statement_stats`, for the same reason they carry no `commits_per_task`.
+
+The counters are never reset. `pg_stat_statements_reset()` cannot be undone and would
+take out whatever else is reading the same server, so a phase is two cumulative
+snapshots subtracted and a statement whose counters did not move is dropped as somebody
+else's. `python -m stages` issues `create extension if not exists pg_stat_statements`
+before anything measures — the extension is per-database, and a RAM data directory loses
+it on every restart exactly as it loses the schema. A role that may not create
+extensions, or a server that never preloaded the library (which is every suite server
+here), leaves `statement_stats` null and changes nothing else about the run: the
+instrument is worth a run's itemisation, not the run.
 
 Reading a profile: within a rep, remaining depth falls while accumulated database state
 only grows, so the two point opposite ways. Throughput RISING across the slices means
@@ -625,6 +664,13 @@ Nothing in this directory imports the suite, and the suite asserts which measure
 ran, how big each was and whether the harness trusted them — never a rate. A benchmark
 number is not something a test can assert without becoming a flake.
 
+`db` does not preload `pg_stat_statements` and must not be given it: it is the shared
+suite server, and what Postgres preloads is server-wide. So the suite exercises the
+degraded side of that instrument for real — a run whose extension cannot be created, a
+view that counts nothing — and the arithmetic on the other side is asserted against
+snapshots written out in the test, which is a data transform rather than a stand-in for
+the database.
+
 ## When the `absurd-sdk` pin moves
 
 Copy `results/` aside, re-run `uv run python -m stages`, and compare the two
@@ -638,9 +684,10 @@ of the same commit disagreed by a 16.6% CV on individual rates
    server with a disk under it, and no rate below them compares at all. A ceiling that
    MOVED between the opening and closing probes of one file says the same thing about
    that file, itself included. Re-run rather than reading on.
-2. **the structural counts** — `commits_per_task` per measurement, `shape_connections`.
-   These are exact and portable, so any movement in them is the SDK and is worth
-   chasing.
+2. **the structural counts** — `commits_per_task` per measurement, the `calls_per_task`
+   of each statement in `statement_stats`, `shape_connections`. These are exact and
+   portable, so any movement in them is the SDK and is worth chasing; a claim path that
+   grew a statement shows here and nowhere else.
 3. **the rank ordering** within each stage, which held across both runs. A rung that
    changed places is a finding; a rung that changed by 20% and kept its place is not.
 

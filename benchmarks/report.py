@@ -50,6 +50,15 @@ THROUGHPUT_KEY = "throughput_per_s"
 # was read from prints beside it.
 CONNECTION_BOUND_SHARE = 0.70
 
+# Statements printed under one measurement. A results file keeps
+# `analysis.STATEMENT_STATS_LIMIT` of them so the fan-out can be re-read in full; a
+# report is read top to bottom, and past the costliest few the entries are microsecond
+# bookkeeping repeated under every row in the stage.
+REPORT_STATEMENT_LIMIT = 5
+# Normalised SQL arrives wrapped over several lines and runs to Postgres's
+# `track_activity_query_size`, while a bullet has to stay one line of it.
+STATEMENT_TEXT_LIMIT = 110
+
 # The `cluster_name` compose gives the RAM-backed benchmark server. The warning is
 # keyed off this name and not off a suspiciously large ceiling, because a tmpfs commit
 # rate reads as a hundredfold better disk rather than as no disk at all — 56,659
@@ -274,6 +283,7 @@ def render_stage(stage: dict[str, t.Any]) -> list[str]:
     lines += render_shape_connections(stage)
     lines += render_run_order(stage)
     lines += build_commit_budget_lines(stage)
+    lines += build_statement_cost_lines(stage)
     lines += build_derived_lines(stage["stage"], measurements)
     return lines
 
@@ -508,11 +518,7 @@ def build_commit_budget_lines(stage: dict[str, t.Any]) -> list[str]:
     Saturation rows only. A paced row's rate is set by the offer, so its share of the
     ceiling says how big the offer was and nothing about what bound it.
     """
-    measurements = [
-        entry
-        for entry in stage["measurements"]
-        if entry["spec"]["mode"] == "saturation"
-    ]
+    measurements = select_saturation_measurements(stage)
     if not any(entry["median"].get("commits_per_task") for entry in measurements):
         return []
     opening = stage.get("commit_ceiling_durable")
@@ -601,6 +607,87 @@ def describe_what_bound_it(band_low: float, band_high: float) -> str:
     if band_high < CONNECTION_BOUND_SHARE:
         return "client-bound"
     return "unresolved: the ceiling's spread straddles the line"
+
+
+def select_saturation_measurements(stage: dict[str, t.Any]) -> list[dict[str, t.Any]]:
+    """The rows whose rate the run discovered rather than imposed.
+
+    A paced row's rate is the offer's, so anything divided into it — a share of the
+    commit ceiling, a millisecond per task — says how big the offer was and nothing
+    about what the work cost.
+    """
+    return [
+        entry
+        for entry in stage["measurements"]
+        if entry["spec"]["mode"] == "saturation"
+    ]
+
+
+def build_statement_cost_lines(stage: dict[str, t.Any]) -> list[str]:
+    """Where a task's time went, statement by statement, and what was left for Python.
+
+    Under the commit budget because it decomposes the same quotient: the budget says
+    what a task asked of the disk, this says which statements asked it, how often each
+    ran and what the wall clock spent nowhere near the server. A block rather than
+    columns — one row per statement per measurement is not a table anybody can scan,
+    and the fan-out is the finding.
+    """
+    measurements = select_saturation_measurements(stage)
+    if not any(entry["median"].get("statement_stats") for entry in measurements):
+        return []
+    return [
+        "",
+        (
+            "Per-task cost (median rep, ms/task; server time is summed over every "
+            "backend the phase used, so above one worker it counts concurrent work "
+            "against one wall clock):"
+        ),
+        "",
+        *[line for entry in measurements for line in describe_statement_cost(entry)],
+    ]
+
+
+def describe_statement_cost(entry: dict[str, t.Any]) -> list[str]:
+    """One measurement's per-task split, then the statements that made up its server
+    side, costliest first."""
+    name = entry["spec"]["name"]
+    stats = entry["median"].get("statement_stats")
+    if not stats:
+        return [f"- `{name}`: no statement stats recorded, so nothing itemises it"]
+    return [
+        (
+            f"- `{name}`: {stats['wall_ms_per_task']:.2f} wall = "
+            f"{stats['server_exec_ms_per_task']:.2f} server + "
+            f"{stats['client_ms_per_task']:.2f} client"
+        ),
+        *[
+            format_statement_cost(statement)
+            for statement in stats["statements"][:REPORT_STATEMENT_LIMIT]
+        ],
+    ]
+
+
+def format_statement_cost(statement: dict[str, t.Any]) -> str:
+    """One statement's calls and server time per task.
+
+    Nesting is marked because it is what the counts have to be read against: a nested
+    row is a statement Absurd's PL/pgSQL ran inside a top-level call that was already
+    charged for its time, so only the top-level rows sum to the server side.
+    """
+    nesting = "" if statement["toplevel"] else " nested"
+    return (
+        f"  - {statement['calls_per_task']:.2f} calls x "
+        f"{statement['total_exec_ms_per_task']:.3f} ms{nesting}: "
+        f"`{summarize_statement_text(statement['query'])}`"
+    )
+
+
+def summarize_statement_text(query: str) -> str:
+    """Normalised SQL as one line, cut where a bullet stops being readable."""
+    collapsed = " ".join(query.split())
+    if len(collapsed) <= STATEMENT_TEXT_LIMIT:
+        return collapsed
+    return collapsed[:STATEMENT_TEXT_LIMIT] + "…"
 
 
 def build_derived_lines(stage: str, measurements: list[dict[str, t.Any]]) -> list[str]:

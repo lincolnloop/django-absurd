@@ -1,4 +1,5 @@
 import datetime as dt
+import json
 import math
 import statistics
 import time
@@ -140,6 +141,69 @@ begin
   end loop;
   insert into {table} (elapsed_s)
   values (extract(epoch from clock_timestamp() - started));
+end $$;
+"""
+
+# The extension that names every statement a task issued, and the view it installs:
+# one name, because the extension names its view after itself. `db_bench` preloads the
+# library with `pg_stat_statements.track=all`, so the statements INSIDE Absurd's
+# PL/pgSQL claim path are counted separately from the call that entered it.
+STATEMENT_STATS_EXTENSION = "pg_stat_statements"
+
+# Statements kept per rep, ranked by the server time each cost. The claim path fans out
+# to a handful of inner statements and the driver's drain poll is one more; past the top
+# few the entries are microsecond bookkeeping and the results file stops being readable.
+STATEMENT_STATS_LIMIT = 15
+
+# The counters a statement the earlier snapshot never saw is diffed against.
+UNSEEN_STATEMENT = {"calls": 0, "total_exec_ms": 0.0, "rows": 0}
+
+# Read through a function of the harness's own rather than off the view directly,
+# because one code path has three servers to satisfy: one that preloaded the library,
+# one where nothing created the extension (`undefined_table`), and one where it is
+# created but the server was started without it, which is every suite server here
+# (`object_not_in_prerequisite_state`). The last two mean the same thing to a caller —
+# no statement stats — and neither may abort a run, so they are classified server-side
+# where both are catchable at once. `create or replace` on every read keeps the reader
+# independent of whether a bootstrap ran, which a rep driven straight off `measurement`
+# never does.
+#
+# One JSON document rather than rows, and `text` rather than `jsonb`: Django's psycopg3
+# backend registers an identity loader for jsonb so its own JSONField can decode with
+# its own decoder, so a jsonb column reaches Python as the undecoded string anyway.
+#
+# Dropped before it is created, because `create or replace` REFUSES a changed return
+# type — and a database that has held an older reader outlives one edit here easily
+# (`db_bench` aside, every `--reuse-db` test database does), so the failure would be a
+# run recording no statement stats for a reason nothing in it names.
+STATEMENT_STATS_READER = "benchmark_read_statement_stats"
+STATEMENT_STATS_READER_SQL = """
+create or replace function {reader}() returns text language plpgsql as $$
+begin
+  return (
+    select coalesce(
+             jsonb_agg(jsonb_build_object(
+               'queryid', queryid,
+               'query', query,
+               'toplevel', toplevel,
+               'calls', calls,
+               'total_exec_ms', total_exec_time,
+               'rows', rows)),
+             '[]'::jsonb)::text
+    from {stats}
+    where dbid = (select oid from pg_database where datname = current_database())
+      -- The instrument does not bill a task for reading it: two patterns because
+      -- three statements of its own are counted — this very query, which names the
+      -- view, and the drop and create that installed it, which name the function.
+      -- A comment marker would be tidier and does not survive: plpgsql hands SPI an
+      -- expression whose text has had its comments taken out.
+      and query not like {stats_text}
+      and query not like {reader_text}
+  );
+exception
+  -- A null DOCUMENT rather than SQL NULL, so the caller parses one JSON string
+  -- whatever happened here and an empty list still means a server that counted.
+  when undefined_table or object_not_in_prerequisite_state then return 'null';
 end $$;
 """
 
@@ -400,3 +464,118 @@ def read_xact_commit() -> int:
             "where datname = current_database()"
         )
         return int(cursor.fetchone()[0])
+
+
+def install_statement_stats() -> None:
+    """Create the statement view on this database, or leave the run without one.
+
+    The extension is per-database and `db_bench` keeps its data directory in RAM, so
+    every restart hands a run a server that has never had it — which is why this is a
+    bootstrap step and not a one-off setup instruction nobody would re-run.
+
+    A role that cannot create extensions is the managed-Postgres case, and it costs the
+    run its statement stats and nothing else: `read_statement_stats` reports none and
+    every measurement still runs. Refusing to measure over a missing instrument would
+    be the worse trade.
+    """
+    try:
+        with connections[resolve_absurd_database()].cursor() as cursor:
+            cursor.execute(
+                psycopg.sql.SQL("create extension if not exists {stats}").format(
+                    stats=psycopg.sql.Identifier(STATEMENT_STATS_EXTENSION)
+                )
+            )
+    except db.Error:
+        return
+
+
+def read_statement_stats() -> list[dict[str, t.Any]] | None:
+    """Every statement this database has run, or ``None`` where nothing counted them.
+
+    A snapshot, never a reset: `pg_stat_statements_reset()` cannot be undone and would
+    take out whatever else is reading the same server, so a phase is bracketed by two
+    of these and diffed.
+    """
+    try:
+        with connections[resolve_absurd_database()].cursor() as cursor:
+            cursor.execute(
+                psycopg.sql.SQL("drop function if exists {reader}()").format(
+                    reader=psycopg.sql.Identifier(STATEMENT_STATS_READER)
+                )
+            )
+            cursor.execute(
+                psycopg.sql.SQL(STATEMENT_STATS_READER_SQL).format(
+                    reader=psycopg.sql.Identifier(STATEMENT_STATS_READER),
+                    stats=psycopg.sql.Identifier(STATEMENT_STATS_EXTENSION),
+                    stats_text=psycopg.sql.Literal(f"%{STATEMENT_STATS_EXTENSION}%"),
+                    reader_text=psycopg.sql.Literal(f"%{STATEMENT_STATS_READER}%"),
+                )
+            )
+            cursor.execute(
+                psycopg.sql.SQL("select {reader}()").format(
+                    reader=psycopg.sql.Identifier(STATEMENT_STATS_READER)
+                )
+            )
+            return t.cast(
+                "list[dict[str, t.Any]] | None", json.loads(cursor.fetchone()[0])
+            )
+    except db.Error:
+        return None
+
+
+def build_statement_stats(
+    before: list[dict[str, t.Any]] | None,
+    after: list[dict[str, t.Any]] | None,
+    n_runs: int,
+    phase_s: float,
+) -> dict[str, t.Any] | None:
+    """What one task cost statement by statement, and what was left over client-side.
+
+    The instrument that answers "is this claim overhead": it names the statements the
+    phase issued, how many times each ran per task and what each cost the server, so a
+    per-task figure decomposes into work instead of staying a wall-clock total.
+
+    `client_ms_per_task` is the remainder — the harness's Python, the SDK's, and every
+    round trip between them. Server time is summed across every backend the phase used,
+    so at more than one worker it counts several connections' concurrent work against
+    one wall clock and the remainder is not a remainder; at one worker it is.
+    """
+    if before is None or after is None or not n_runs:
+        return None
+    baseline = {row["queryid"]: row for row in before}
+    issued = [
+        delta
+        for delta in (describe_statement_delta(row, baseline, n_runs) for row in after)
+        if delta["calls_per_task"]
+    ]
+    # Top-level statements only. Under `track=all` a PL/pgSQL function's own row already
+    # counts the time of every statement it ran inside itself, so summing both levels
+    # bills the claim path twice.
+    server_ms = sum(
+        delta["total_exec_ms_per_task"] for delta in issued if delta["toplevel"]
+    )
+    wall_ms = 1000.0 * phase_s / n_runs
+    return {
+        "statements": sorted(
+            issued, key=lambda delta: delta["total_exec_ms_per_task"], reverse=True
+        )[:STATEMENT_STATS_LIMIT],
+        "wall_ms_per_task": wall_ms,
+        "server_exec_ms_per_task": server_ms,
+        "client_ms_per_task": wall_ms - server_ms,
+    }
+
+
+def describe_statement_delta(
+    row: dict[str, t.Any], baseline: dict[int, dict[str, t.Any]], n_runs: int
+) -> dict[str, t.Any]:
+    """One statement's counters over the phase, divided by the tasks that ran in it."""
+    was = baseline.get(row["queryid"], UNSEEN_STATEMENT)
+    return {
+        "query": row["query"],
+        "toplevel": row["toplevel"],
+        "calls_per_task": (row["calls"] - was["calls"]) / n_runs,
+        "total_exec_ms_per_task": (
+            (row["total_exec_ms"] - was["total_exec_ms"]) / n_runs
+        ),
+        "rows_per_task": (row["rows"] - was["rows"]) / n_runs,
+    }

@@ -48,6 +48,30 @@ def hold_the_commit_probe_table() -> t.Iterator[None]:
 
 
 @contextlib.contextmanager
+def hold_the_statement_stats_name() -> t.Iterator[None]:
+    """Occupy the view name the statement-stats extension installs, so it refuses.
+
+    `create extension` builds a view named after the extension, so a relation already
+    holding that name makes it fail with `duplicate_table` — the same shape as the
+    managed-Postgres role that may not create extensions at all, and the one a test can
+    hand it without a mock. The extension goes first because it owns that name itself
+    whenever an earlier test in this database created it; nothing puts it back, and
+    nothing needs to — a server with no extension and a server whose extension was
+    never preloaded both read back as no statement stats.
+    """
+    with connections[resolve_absurd_database()].cursor() as cursor:
+        cursor.execute(f"drop extension if exists {analysis.STATEMENT_STATS_EXTENSION}")
+        cursor.execute(
+            f"create view {analysis.STATEMENT_STATS_EXTENSION} as select 1 as n"
+        )
+    try:
+        yield
+    finally:
+        with connections[resolve_absurd_database()].cursor() as cursor:
+            cursor.execute(f"drop view {analysis.STATEMENT_STATS_EXTENSION}")
+
+
+@contextlib.contextmanager
 def nap_the_wall_clock() -> t.Iterator[None]:
     """Run the body on a host whose WALL clock keeps outrunning its monotonic one.
 

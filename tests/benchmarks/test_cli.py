@@ -3,6 +3,7 @@ import pathlib
 import pytest
 from django.db import connections
 
+import analysis
 import stages
 from django_absurd.queues import resolve_absurd_database
 from tests.benchmarks import utils
@@ -949,3 +950,78 @@ def test_measures_no_pooled_vs_split_pair_the_worker_bound_cannot_spawn(
         "total 4: not run, --max-workers 1 cannot spawn its 4-process split arm\n"
         "total 8: not run, --max-workers 1 cannot spawn its 8-process split arm\n"
     )
+
+
+def test_installs_the_extension_a_run_itemises_its_tasks_with(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Nothing counts a statement until the extension exists on this database.
+
+    It is per-database and `db_bench` keeps its data directory in RAM, so every restart
+    hands a run a server that has never had it — which makes this a bootstrap step of
+    the run rather than a setup instruction somebody would have to remember. Driven
+    through the cheapest stage there is, because the bootstrap belongs to the run and
+    not to any stage.
+
+    Installed is all this can assert here: the suite's server does not preload the
+    library, so the view it creates counts nothing and reads back as no statement
+    stats, which `tests/benchmarks/test_smoke.py` asserts.
+    """
+    stages.main(
+        [
+            "producer_ceiling",
+            "--reps",
+            "1",
+            "--tasks",
+            "10",
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
+
+    with connections[resolve_absurd_database()].cursor() as cursor:
+        cursor.execute(
+            "select count(*) from pg_extension where extname = %s",
+            [analysis.STATEMENT_STATS_EXTENSION],
+        )
+        installed = cursor.fetchone()[0]
+    result = utils.read_stage(tmp_path, "producer_ceiling")
+    assert {
+        "installed": installed,
+        "measured": result["measurements"][0]["median"]["enqueues_per_s"] > 0,
+    } == {"installed": 1, "measured": True}
+
+
+def test_runs_without_statement_stats_when_the_extension_cannot_be_created(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A managed database whose role cannot create extensions still gets its run.
+
+    The instrument is worth a run's statement stats and not the run itself, so a
+    refused bootstrap costs the itemisation and nothing else — the same trade the
+    commit-ceiling probe already makes when it is refused.
+    """
+    with utils.hold_the_statement_stats_name():
+        stages.main(
+            [
+                "producer_ceiling",
+                "--reps",
+                "1",
+                "--tasks",
+                "10",
+                "--results-dir",
+                str(tmp_path),
+            ]
+        )
+        with connections[resolve_absurd_database()].cursor() as cursor:
+            cursor.execute(
+                "select count(*) from pg_extension where extname = %s",
+                [analysis.STATEMENT_STATS_EXTENSION],
+            )
+            installed = cursor.fetchone()[0]
+
+    result = utils.read_stage(tmp_path, "producer_ceiling")
+    assert {
+        "installed": installed,
+        "measured_anyway": result["measurements"][0]["median"]["enqueues_per_s"] > 0,
+    } == {"installed": 0, "measured_anyway": True}

@@ -53,6 +53,71 @@ COMMIT_CEILING = {
     },
 }
 
+# One rep's itemised per-task cost, the way `analysis.build_statement_stats` records
+# it: the statements the phase issued, costliest server time first, with the nested
+# ones Absurd's PL/pgSQL ran inside the call above them. More of them than a report
+# prints, and one wrapped the way Postgres normalises long SQL.
+STATEMENT_STATS = {
+    "statements": [
+        {
+            "query": (
+                "update absurd.t_bench\n  set state = $1,\n      updated_at = now()\n"
+                "  where task_id = $2 and state = $3 and attempt = $4\n"
+                "  returning task_id, state, attempt"
+            ),
+            "toplevel": False,
+            "calls_per_task": 3.0,
+            "total_exec_ms_per_task": 0.91,
+            "rows_per_task": 3.0,
+        },
+        {
+            "query": "select * from absurd.claim_task($1, $2)",
+            "toplevel": True,
+            "calls_per_task": 1.0,
+            "total_exec_ms_per_task": 0.62,
+            "rows_per_task": 1.0,
+        },
+        {
+            "query": "insert into absurd.r_bench (task_id, attempt) values ($1, $2)",
+            "toplevel": True,
+            "calls_per_task": 1.0,
+            "total_exec_ms_per_task": 0.41,
+            "rows_per_task": 1.0,
+        },
+        {
+            "query": "commit",
+            "toplevel": True,
+            "calls_per_task": 1.0,
+            "total_exec_ms_per_task": 0.3,
+            "rows_per_task": 0.0,
+        },
+        {
+            "query": "select count(*) from absurd.t_bench where state <> $1",
+            "toplevel": True,
+            "calls_per_task": 0.02,
+            "total_exec_ms_per_task": 0.11,
+            "rows_per_task": 0.02,
+        },
+        {
+            "query": "select pg_stat_force_next_flush()",
+            "toplevel": True,
+            "calls_per_task": 0.01,
+            "total_exec_ms_per_task": 0.02,
+            "rows_per_task": 0.01,
+        },
+        {
+            "query": "select now()",
+            "toplevel": True,
+            "calls_per_task": 0.01,
+            "total_exec_ms_per_task": 0.01,
+            "rows_per_task": 0.01,
+        },
+    ],
+    "wall_ms_per_task": 7.89,
+    "server_exec_ms_per_task": 2.1,
+    "client_ms_per_task": 5.79,
+}
+
 RANKING_KEYS = {
     "producer": "enqueues_per_s",
     "rate": "end_to_end_p50_s",
@@ -894,6 +959,46 @@ def test_bands_against_the_opening_probe_when_the_run_recorded_no_closing_one(
         },
         commit_ceiling_durable_after=None,
     )
+
+
+def test_says_where_each_measurement_spent_its_time_per_task(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The commit budget says what a task asked of the disk; this says who asked.
+
+    Every statement the phase issued, how many times each ran for one task and what it
+    cost the server, then the wall clock left over — which is the number that separates
+    Absurd's SQL being expensive from the harness's own Python being expensive. Nested
+    rows are marked because only the top-level ones sum to the server side: a nested
+    statement ran inside a call the row above it already charged for.
+
+    Capped at the costliest few, since the tail is microsecond bookkeeping repeated
+    under every row in the stage, and each statement is one line however Postgres
+    wrapped it. A saturation row whose reps recorded none says so, and the paced row is
+    left out — its rate was the offer's, so ms per task says how big the offer was.
+    """
+    entries = [
+        build_measurement("concurrency_1", {}, {"statement_stats": STATEMENT_STATS}),
+        build_measurement("concurrency_2", {}, {}),
+        build_measurement("rate_25pct", {"mode": "rate"}, {}),
+    ]
+
+    assert (
+        "Per-task cost (median rep, ms/task; server time is summed over every backend "
+        "the phase used, so above one worker it counts concurrent work against one "
+        "wall clock):\n"
+        "\n"
+        "- `concurrency_1`: 7.89 wall = 2.10 server + 5.79 client\n"
+        "  - 3.00 calls x 0.910 ms nested: `update absurd.t_bench set state = $1, "
+        "updated_at = now() where task_id = $2 and state = $3 and attempt = $4 re…`\n"
+        "  - 1.00 calls x 0.620 ms: `select * from absurd.claim_task($1, $2)`\n"
+        "  - 1.00 calls x 0.410 ms: `insert into absurd.r_bench (task_id, attempt) "
+        "values ($1, $2)`\n"
+        "  - 1.00 calls x 0.300 ms: `commit`\n"
+        "  - 0.02 calls x 0.110 ms: `select count(*) from absurd.t_bench where "
+        "state <> $1`\n"
+        "- `concurrency_2`: no statement stats recorded, so nothing itemises it\n"
+    ) in render(capsys, tmp_path, "worker_knobs", entries)
 
 
 def test_says_the_commit_ceiling_is_missing_rather_than_omitting_it(

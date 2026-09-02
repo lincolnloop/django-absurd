@@ -86,6 +86,10 @@ def run_saturation_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
         spec.task_path, spec.tasks, kwargs=spec.task_kwargs
     )
     procs = runner.start_workers(spec.worker, spec.workers)
+    # Ahead of the commit snapshot, because reading the statement view is a statement
+    # and a commit of the harness's own: taken the other way round the read would land
+    # inside the commit window and be billed to the tasks.
+    statements_before = analysis.read_statement_stats()
     commits_before = analysis.read_xact_commit()
     try:
         with host.measure_phase() as phase:
@@ -97,6 +101,7 @@ def run_saturation_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
     # lose the commits it just made. Before the analysis queries, which are commits
     # of the harness's own and no part of what a task cost.
     commits = analysis.read_xact_commit() - commits_before
+    statements_after = analysis.read_statement_stats()
     metrics = analysis.analyze_saturation(spec.worker.queue)
     # A terminally failed task still satisfies the drain predicate, so without this
     # the measurement silently covers a smaller sample than it was asked to.
@@ -111,6 +116,14 @@ def run_saturation_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
         # ceiling beside it. The preload is outside the phase, so this is the
         # execution side alone — no enqueue commits in it.
         "commits_per_task": commits / metrics["n_runs"] if metrics["n_runs"] else None,
+        # The same exchange rate, itemised: which statements those commits carried,
+        # what each cost the server, and what the wall clock spent nowhere near it.
+        # `None` on any server that counted no statements, which is every suite
+        # server — the extension needs `shared_preload_libraries`, and giving it to
+        # the shared `db` service would change what every other suite runs against.
+        "statement_stats": analysis.build_statement_stats(
+            statements_before, statements_after, metrics["n_runs"], phase.elapsed_s
+        ),
         **metrics,
     }
 
@@ -131,9 +144,9 @@ def run_rate_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
     finally:
         runner.stop_workers(procs)
     # The offer and the drain that followed it, which the trimmed window excludes.
-    # No commits per task: this rep's completed-run count comes off the trimmed middle
-    # of the offer window while the phase spans the whole offer and drain, so the
-    # quotient would divide two different windows into each other.
+    # No commits per task and no statement stats: this rep's completed-run count comes
+    # off the trimmed middle of the offer window while the phase spans the whole offer
+    # and drain, so either quotient would divide two different windows into each other.
     return {
         "phase_s": phase.elapsed_s,
         **analysis.analyze_rate(spec.worker.queue, window_start, window_end),
