@@ -1,4 +1,5 @@
 import datetime as dt
+import statistics
 import time
 import typing as t
 
@@ -9,6 +10,13 @@ from django_absurd.queues import resolve_absurd_database
 
 # Below this the p10..p90 completion window is too short to divide by.
 MIN_TRIMMED_SPAN_S = 0.01
+
+# Completions per profile slice. Equal-COUNT slices rather than equal-time ones: a slow
+# measurement puts fewer completions into a fixed time slice, so its slices would read
+# as noisier for purely statistical reasons and would not compare across settings.
+THROUGHPUT_SLICE_COMPLETIONS = 200
+# Two points are a line whatever the drain did, so below three the shape is invented.
+MIN_PROFILE_SLICES = 3
 
 LATENCY_KEYS = (
     "queue_wait_p50_s",
@@ -72,9 +80,35 @@ where {window}
 """
 
 
+# `extract(epoch ...)` is numeric from Postgres 14 on, which reaches Python as a Decimal
+# that will not divide against the floats every other rate here is made of; the other
+# queries dodge it only because percentile_cont has no numeric form to resolve to.
+#
+# The having clause drops the two slices that have no rate to report: the last one,
+# which holds whatever completions were left over, and any whose completions all landed
+# on one instant, which is what would otherwise divide by zero.
+THROUGHPUT_PROFILE_SQL = """
+select count(*), min(ts), max(ts)
+from (
+  select extract(epoch from r.completed_at)::float8 as ts,
+         (row_number() over (order by r.completed_at) - 1) / {size} as bucket
+  from {runs} r
+  join {tasks} t on t.task_id = r.task_id
+  where r.state = 'completed' and {window}
+) s
+group by bucket
+having count(*) = {size} and max(ts) > min(ts)
+order by bucket
+"""
+
+
 def analyze_saturation(queue: str = "bench") -> dict[str, t.Any]:
-    """Every metric of one saturation rep, in a single round trip."""
-    return read_completed_run_metrics(queue, psycopg.sql.SQL("true"))
+    """Every metric of one saturation rep, plus how it varied during the drain."""
+    window = psycopg.sql.SQL("true")
+    return {
+        **read_completed_run_metrics(queue, window),
+        **read_throughput_profile(queue, window),
+    }
 
 
 def analyze_rate(
@@ -83,7 +117,9 @@ def analyze_rate(
     """Same metrics over the middle 80% of the offer window.
 
     In rate mode ARRIVAL defines the experiment, so the ramp and tail are trimmed on
-    ``enqueue_at`` rather than on completion.
+    ``enqueue_at`` rather than on completion. No within-run profile either: the offer
+    rate is imposed rather than discovered, so slicing it would plot the producer's
+    pacing back at the reader.
     """
     span = (window_end - window_start) / 10
     window = psycopg.sql.SQL("t.enqueue_at between {low} and {high}").format(
@@ -145,6 +181,28 @@ def read_completed_run_metrics(
     return build_metrics(row, totals, fairness)
 
 
+def read_throughput_profile(
+    queue: str, window: psycopg.sql.Composable
+) -> dict[str, t.Any]:
+    """Throughput over successive equal-count slices of one drain, oldest first.
+
+    A saturation rep drains a full queue to empty, so its single throughput number
+    averages whatever the per-task cost did as depth fell. Slice 0 is the fullest
+    queue and the last slice the emptiest, which is what tells a rising cost apart
+    from a rep-to-rep one.
+    """
+    with connections[resolve_absurd_database()].cursor() as cursor:
+        cursor.execute(
+            psycopg.sql.SQL(THROUGHPUT_PROFILE_SQL).format(
+                runs=psycopg.sql.Identifier("absurd", f"r_{queue}"),
+                tasks=psycopg.sql.Identifier("absurd", f"t_{queue}"),
+                window=window,
+                size=psycopg.sql.Literal(THROUGHPUT_SLICE_COMPLETIONS),
+            )
+        )
+        return build_throughput_profile(cursor.fetchall())
+
+
 def build_metrics(
     row: tuple[t.Any, ...], totals: tuple[t.Any, ...], fairness: dict[str, int]
 ) -> dict[str, t.Any]:
@@ -175,6 +233,21 @@ def build_metrics(
         dict(zip(LATENCY_KEYS, [value or 0.0 for value in row[4:]], strict=True))
     )
     return metrics
+
+
+def build_throughput_profile(rows: list[tuple[t.Any, ...]]) -> dict[str, t.Any]:
+    slices = [count / (last - first) for count, first, last in rows]
+    if len(slices) < MIN_PROFILE_SLICES:
+        return {
+            "profile_slices": None,
+            "profile_median_per_s": None,
+            "profile_cv": None,
+        }
+    return {
+        "profile_slices": slices,
+        "profile_median_per_s": statistics.median(slices),
+        "profile_cv": statistics.stdev(slices) / statistics.fmean(slices),
+    }
 
 
 def read_xact_commit() -> int:

@@ -2,6 +2,7 @@ import pathlib
 
 import pytest
 
+import analysis
 import measurement
 import runner
 import stages
@@ -14,6 +15,9 @@ pytestmark = pytest.mark.django_db(transaction=True)
 # Above the degenerate-window floor: below about fifty tasks the trimmed completion
 # window collapses and every measurement reports zero throughput.
 MEASURABLE_TASKS = "60"
+# Three full profile slices and a deliberate leftover, derived from the slice size so
+# it stays on that boundary if the size ever moves.
+PROFILED_TASKS = 3 * analysis.THROUGHPUT_SLICE_COMPLETIONS + 100
 
 
 def test_reports_the_sql_metrics_of_the_backlog_a_stage_drained(
@@ -124,8 +128,9 @@ def test_reports_the_latency_of_the_paced_offer_a_rate_stage_made(
 # Everything below builds its own measurement rather than driving a stage. The first
 # three want a task that misbehaves — one that outlives its claim lease, one that never
 # completes, one that never drains — and every workload the driver offers is a task
-# that succeeds; the last two want a single measurement repeated, which the smallest
-# stage would charge six of.
+# that succeeds; the last four want one measurement at a size of their own — repeated,
+# napped, too small to slice, or big enough to slice — which the smallest stage would
+# charge six of.
 def test_saturation_measurement_flags_a_task_that_outlived_its_claim_lease() -> None:
     spec = measurement.MeasurementSpec(
         name="smoke-redelivery",
@@ -262,3 +267,77 @@ def test_saturation_measurement_spreads_its_reps_two_ways() -> None:
         "measured_a_spread": isinstance(result["spread"], float),
         "measured_an_absolute_spread": isinstance(result["absolute_spread"], float),
     } == {"reps": 2, "measured_a_spread": True, "measured_an_absolute_spread": True}
+
+
+def test_saturation_rep_profiles_its_throughput_across_the_drain() -> None:
+    """A rep drains a full queue to empty, so one number averages a moving quantity.
+
+    The profile is what separates a cost that rises with queue depth from one that
+    differs rep to rep: slice 0 drained the fullest queue and the last slice the
+    emptiest. Sized at three full slices plus a leftover, so the partial slice the
+    drain ends on has to be dropped rather than divided — its 100 completions over
+    the same instants would read as a rate of their own.
+
+    Asserted as measured and ordered, never as fast or as flat: a real worker's shape
+    is the finding, not something a test can demand.
+    """
+    spec = measurement.MeasurementSpec(
+        name="smoke-profile",
+        mode="saturation",
+        task_path="tasks.noop_sync",
+        tasks=PROFILED_TASKS,
+        workers=1,
+        worker=runner.WorkerSpec(concurrency=8, poll_interval=0.05),
+        reps=1,
+        timeout_s=90,
+    )
+
+    rep = measurement.run_measurement(spec)["reps"][0]
+
+    assert {
+        "n_runs": rep["n_runs"],
+        "full_slices": len(rep["profile_slices"]),
+        "every_slice_measured_a_rate": all(rate > 0 for rate in rep["profile_slices"]),
+        "median_is_the_middle_slice": (
+            rep["profile_median_per_s"] == sorted(rep["profile_slices"])[1]
+        ),
+        "measured_a_cv": rep["profile_cv"] > 0,
+    } == {
+        "n_runs": PROFILED_TASKS,
+        "full_slices": 3,
+        "every_slice_measured_a_rate": True,
+        "median_is_the_middle_slice": True,
+        "measured_a_cv": True,
+    }
+
+
+def test_saturation_rep_too_small_to_slice_records_no_profile() -> None:
+    """Two slices are a line whatever the drain did, so no profile is recorded.
+
+    A smoke-sized backlog would otherwise publish a shape read off a handful of
+    completions, and nothing downstream could tell it from a measured one.
+    """
+    spec = measurement.MeasurementSpec(
+        name="smoke-unprofilable",
+        mode="saturation",
+        task_path="tasks.noop_sync",
+        tasks=int(MEASURABLE_TASKS),
+        workers=1,
+        worker=runner.WorkerSpec(concurrency=8, poll_interval=0.05),
+        reps=1,
+        timeout_s=60,
+    )
+
+    rep = measurement.run_measurement(spec)["reps"][0]
+
+    assert {
+        "n_runs": rep["n_runs"],
+        "profile_slices": rep["profile_slices"],
+        "profile_median_per_s": rep["profile_median_per_s"],
+        "profile_cv": rep["profile_cv"],
+    } == {
+        "n_runs": int(MEASURABLE_TASKS),
+        "profile_slices": None,
+        "profile_median_per_s": None,
+        "profile_cv": None,
+    }

@@ -260,6 +260,25 @@ driver contributes no timestamps: throughput is `0.8 * n / (p90 - p10)` over the
 completion times, trimming the ramp and the tail, and fairness is
 `count(*) group by claimed_by` over the same rows the throughput count uses.
 
+**Throughput is profiled within a rep, not only across reps.** A saturation rep drains a
+full queue to empty, so its single `throughput_per_s` averages whatever the per-task
+cost did as depth fell. Every saturation rep therefore also carries `profile_slices` —
+throughput over successive slices of 200 completions, slice 0 the fullest queue and the
+last one the emptiest — with `profile_median_per_s` and `profile_cv` beside it. The
+slices are equal-COUNT rather than equal-time because a slower measurement puts fewer
+completions into a fixed time slice, so its slices would read as noisier for purely
+statistical reasons and would not compare across settings. The partial slice a drain
+ends on is dropped, and a rep with fewer than three full slices records `null` rather
+than a shape read off a handful of rows. Rate measurements carry no profile: their offer
+rate is imposed rather than discovered, so slicing it would plot the producer's pacing
+back at the reader.
+
+Reading one: within a rep, remaining depth falls while accumulated database state only
+grows, so the two point opposite ways. Throughput RISING across the slices means depth
+drives the per-task cost, because nothing cumulative can make a drain faster; flat
+within a rep while reps disagree rules depth out and points at cumulative state or a
+per-run latch; a sawtooth is contention, and neither.
+
 Redelivery needs no instrumentation either, but it does need the right query. Absurd's
 `fail_run` marks the failed run `'failed'` and inserts a **new** row for the retry, and
 `complete_run` only ever accepts a run that is still `'running'`. A completed-only count
