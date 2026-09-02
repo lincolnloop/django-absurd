@@ -63,6 +63,14 @@ services:
       - autovacuum=on
       - -c
       - log_min_messages=warning
+      # Always on, never a flag: the per-statement counts ARE the overhead measurement,
+      # and runs taken with and without the tracking are not comparable. `all`, not
+      # `top`, because Absurd's whole claim path runs inside PL/pgSQL functions and
+      # `top` would record the function call while hiding every statement in it.
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=all
     environment:
       - POSTGRES_DB=absurd_bench
       - POSTGRES_PASSWORD=postgres
