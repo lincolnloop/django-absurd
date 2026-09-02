@@ -7,7 +7,8 @@ Nothing here ships in the `django_absurd` wheel, and it is not a Django app: no 
 no migrations, just a settings module, a task module, and two CLI drivers. It is not a
 package either — no `__init__.py`, so this directory IS the import root and its modules
 are top-level (`import stages`, `import host`). Every command below therefore runs from
-inside `benchmarks/`.
+inside `benchmarks/`, except the one that starts the database: its compose file is the
+repo root's.
 
 ## Architecture
 
@@ -84,14 +85,25 @@ would likely look better.
 
 ## Reproducing from a clean checkout
 
-From inside `benchmarks/`:
+First the database, which is the one step whose home is the repo root:
 
 ```
 docker compose up -d --wait db_bench
+```
+
+Then everything else, from inside `benchmarks/`:
+
+```
 uv run python manage.py migrate
 uv run python -m stages
 uv run python -m report > "results/report-$(date -u +%Y%m%dT%H%M%SZ).md"
 ```
+
+`db_bench` is a service in the root `compose.yaml`, behind a `bench` profile: a bare
+`docker compose up -d` starts the suites' databases and not a benchmark server nobody
+asked for, while naming the service starts it as above. Compose searches parent
+directories for its file, so that first command also works from inside `benchmarks/` —
+it reaches the root file either way.
 
 Only Postgres is containerised. `db_bench` publishes `${PGPORT_BENCH:-5460}` and holds
 its own database, `absurd_bench`; `settings.py` reads the same variable, so one value
@@ -100,10 +112,14 @@ measure an untuned one. `DATABASE_URL` overrides the whole address.
 
 `uv run` resolves `pyproject.toml` and `uv.lock` here, so the dependency set is the
 pinned one and the environment lands in `benchmarks/.venv`. django-absurd comes from the
-checkout above, editable, so the harness measures this branch. A `bench_pgdata` volume
-created before the harness moved to the host predates `POSTGRES_DB`, so it holds no
-`absurd_bench`: `docker compose down -v` and start again — the results files are what
-you keep, never the database.
+checkout above, editable, so the harness measures this branch. Compose names its project
+after the directory holding the compose file, so `bench_pgdata` belongs to this
+checkout: another clone or worktree builds its own rather than wandering into this one,
+and a volume left behind by an older layout is not reached at all. To start the database
+over — an empty one, or one whose contents predate a change to this service —
+`docker compose down -v db_bench` removes that service and its volume without touching
+`db` or `db_pg_cron`, and the next `up` initialises `absurd_bench` again. The results
+files are what you keep, never the database.
 
 With no stage named, `python -m stages` runs all seven, which took 75 minutes on the
 reference host; naming stages runs only those, and `--tasks`, `--duration`, `--reps` and
@@ -119,9 +135,11 @@ dependency. The other half is now whichever machine you are on, which is why `ho
 stamps cores, load average and versions onto every measurement: numbers are comparable
 with numbers measured the same way, and a run against Postgres somewhere else is not.
 
-`db_bench` keeps a named volume, so it is a different server from the root
-`compose.yaml`'s `db` and `db_pg_cron`. Those two do not need to be running for a
-benchmark run.
+`db_bench` sits in the root `compose.yaml` beside `db` and `db_pg_cron` and is still a
+different server: its own volume, its own pinned config, its own port, and a profile
+that keeps it out of a bare `up`. The suites hammer `db` with real worker subprocesses,
+so a benchmark sharing it would absorb whichever tests were running. Neither of those
+two needs to be up for a benchmark run.
 
 ### Restarting Postgres between stages
 
@@ -138,10 +156,9 @@ docker compose restart db_bench
 uv run python -m stages process_scaling
 ```
 
-Both commands are now yours to run in one shell, so a loop over stages is a `for` loop
-rather than an appeal to a docker socket the driver could not reach. Prerequisites still
-have to exist when you pick stages by hand — the driver orders what you name, but it
-will not run a stage you did not ask for.
+Both commands run on the host, in one shell and from this directory, so a loop over
+stages is a `for` loop. Prerequisites still have to exist when you pick stages by hand —
+the driver orders what you name, but it will not run a stage you did not ask for.
 
 This is deliberately not the default. Nobody restarts Postgres between workloads in
 production, so a cold run measures a best case rather than a representative one. Both
@@ -283,10 +300,10 @@ uv run pytest tests/benchmarks
 ```
 
 The suite lives at `tests/benchmarks`, beside the other three, and runs from the repo
-root against the root compose database like they do — `db_bench` is for real runs and
-need not be up. It puts this directory on its `pythonpath` and imports the modules the
-way the harness does, top-level, so one file is never imported under two names. It
-enters through this driver's command line at a handful of tasks per stage, writes into a
+root against the `db` service like they do — `db_bench` is for real runs and need not be
+up. It puts this directory on its `pythonpath` and imports the modules the way the
+harness does, top-level, so one file is never imported under two names. It enters
+through this driver's command line at a handful of tasks per stage, writes into a
 temporary directory, and so touches neither a results directory you already have nor the
 persistent benchmark database.
 
@@ -311,7 +328,6 @@ fields the current table reads. Re-measure rather than converting them.
 
 | file             | what it is                                                                                             |
 | ---------------- | ------------------------------------------------------------------------------------------------------ |
-| `compose.yaml`   | the `db_bench` Postgres alone: pinned image and config, own volume, `${PGPORT_BENCH:-5460}`            |
 | `pyproject.toml` | the harness's own uv project: django-absurd by path, everything else pinned                            |
 | `uv.lock`        | the pinned resolution `uv run` installs into `benchmarks/.venv`                                        |
 | `settings.py`    | Django settings; reads `DATABASE_URL`, else `PGPORT_BENCH` against `absurd_bench`                      |

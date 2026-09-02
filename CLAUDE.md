@@ -101,12 +101,14 @@ writing or editing any test file. Running the suites:
   - `uv run pytest tests/benchmarks` — the `benchmarks/` harness, driven through its
     command line at a handful of tasks per stage; plain `db`. The tuned `db_bench`
     server is for real benchmark runs and need not be up.
-- Two compose services: `db` (plain `postgres:18`) and `db_pg_cron`
+- Two compose services back the suites: `db` (plain `postgres:18`) and `db_pg_cron`
   (`Dockerfile.pg_cron` + `shared_preload_libraries=pg_cron`). Start both:
   `docker compose up -d db db_pg_cron`. **These must be running before any suite.** If a
   connection is refused / `pg_isready` fails, the container is stopped (they don't
   survive a machine restart or a new session) — bring it up FIRST; don't diagnose it as
-  anything cleverer.
+  anything cleverer. The same file holds a third, `db_bench` — the tuned server for real
+  benchmark runs, behind a `bench` profile so a bare `up -d` leaves it alone. No suite
+  needs it; see [`benchmarks/README.md`](benchmarks/README.md).
 - **`PGPORT` is read by both sides** — the port `db` publishes and the port the test
   settings connect to — so one value keeps them consistent. Set it whenever a system
   Postgres already owns 5432: otherwise `tests/core` runs against that server, and a

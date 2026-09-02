@@ -54,6 +54,20 @@ Mirror `examples/web`. Working directory `benchmarks/`.
   lockfile to `fileFilters`. Without it every root bump stales the lock and
   `uv sync --locked` fails the build.
 
+**Reversed after landing, with the container-only decision — see the spec.** Python runs
+on the host under uv from inside `benchmarks/`, so the `Dockerfile`, the runner service
+and the one-shot migrate service are gone, and with them the CI job that built the
+image. `pyproject.toml` and `uv.lock` stay and are what `uv run` resolves. The database
+keeps its exact tag, tuned config and named volume, gains `ports:` because the driver
+now reaches it over loopback, and moves into the ROOT `compose.yaml` beside `db` and
+`db_pg_cron` — one file for every service in the repo. The profile gate survives the
+move, on the database rather than the runner, for the same reason it was there: a bare
+`up -d` brings up the suites' servers and nothing a benchmark needs. `settings.py`
+defaults to `localhost:${PGPORT_BENCH:-5460}` instead of a compose service name. The
+`renovate.json` bullet outlives its own reason: with no `uv sync --locked` to fail a
+build, re-locking in the same branch is the only thing left stopping a stale lock, which
+now resolves silently on the host.
+
 ## 1.2 Stage rename
 
 Letters out, descriptive names in, dependency graph explicit as a module-level mapping.
@@ -87,8 +101,9 @@ Direct size flags, as needed:
 - `--duration` — rate stages, **including the idle probes**, whose seconds are currently
   a hardcoded constant governed by neither flag and would otherwise dominate a smoke run
 
-No `--cold` flag — see the spec. Delete the shell script; document the two-command
-restart sequence per stage in the README instead.
+No `--cold` flag — see the spec, where the reasoning was reversed and the outcome was
+not. Delete the shell script; document the two-command restart sequence per stage in the
+README instead.
 
 ## 1.4 Bug fixes — RED first
 
@@ -173,8 +188,7 @@ Worker children still reach the right database — `build_worker_env` hands them
 parent's connection settings, so they load the harness settings module while pointing at
 the suite's test database.
 
-That leaves the benchmark server with exactly one purpose, real runs in the container,
-instead of two.
+That leaves the benchmark server with exactly one purpose, real runs, instead of two.
 
 Replace the existing tests. Delete unit tests on internal helpers.
 
@@ -266,7 +280,8 @@ Own PR, after #257 merges.
    pooled/split arms read its intervals.
 3. Rename the task whose name says it burns CPU and which performs one database insert.
    It belongs here, with the body rewrite, not in phase 3.
-4. Second database service and volume for the seeded dataset.
+4. Second database service and volume for the seeded dataset, in the root `compose.yaml`
+   beside `db_bench`.
 5. Admin probe is its own entrypoint, not a stage.
 6. Record the retired spec and plan in `docs/HISTORY.md` against the pushed SHA, then
    delete the rest. Findings that already paid out belong in `docs/WHY.md` if not

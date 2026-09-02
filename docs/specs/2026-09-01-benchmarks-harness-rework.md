@@ -77,26 +77,53 @@ and its host context. This applies to this document too.
 
 ## Decisions
 
-**Container-only.** No host-run path, no published database port. Everything through
-compose, mirroring `examples/`. Their README's "container numbers are only comparable
-with container numbers" caveat stops being a footnote and becomes uniformly true — one
-measurement regime instead of two.
+**Container-only — decided, then reversed.** The decision was: no host-run path, no
+published database port, everything through compose mirroring `examples/`, so that
+"container numbers are only comparable with container numbers" stopped being a footnote
+and became uniformly true.
 
-Consequence: **the cold-start capability cannot be a driver flag.** Restarting the
-database is a host operation; a driver inside the runner container has no docker socket.
-Mounting one to get a flag is not worth it. The capability survives as a documented
-two-command sequence per stage, and the shell script goes.
+It was reversed once it had landed. The container existed so that Python could run, and
+a Dockerfile, a profile-gated runner service, a one-shot migrate service and a CI job
+existed to make that happen. Driver, producer and workers now run on the host under uv
+from inside `benchmarks/`; only Postgres stays in a container, published on
+`${PGPORT_BENCH:-5460}`. It is still one regime, and still stated rather than assumed,
+but it is a host one: an exact image tag, a fixed server config and `uv.lock` pin half
+of it, and `host.py` stamps cores, load average and versions onto every measurement
+because the other half is whichever machine you are on. Two things the container could
+not do: record the commit a result came from, for want of a git binary, and restart the
+database between stages.
 
-**Standalone project.** `benchmarks/` gets its own `pyproject.toml`, `uv.lock`,
-`Dockerfile`, pinned exactly, working directory `benchmarks/`. Same scaffolding as
-`examples/`. Deterministic versions, `uv sync --locked` fails the build on drift.
+Which kills the consequence drawn from it. **The cold-start capability was called
+impossible as a driver flag** because a driver inside the runner container had no docker
+socket, and mounting one was not worth it. That reasoning is dead: the driver is on the
+host, `docker compose restart db_bench` is one more command in the same shell, and a
+loop over stages is a `for` loop. It stays a documented two-command sequence per stage,
+and the shell script still goes, but for a different reason — nobody restarts Postgres
+between workloads in production, so a cold run is a best case rather than the regime to
+default to, and every result records `postgres_uptime_s` so a reader can tell which
+produced a number.
+
+**Standalone project.** `benchmarks/` gets its own `pyproject.toml` and `uv.lock`,
+pinned exactly, working directory `benchmarks/`. Same scaffolding as `examples/`.
 Renovate must re-lock it or every root bump stalls auto-merge.
+
+Amended with the container: the `Dockerfile` goes, and with it the `uv sync --locked`
+that made a stale lock fail a build. On the host `uv run` re-resolves instead, so a
+stale lock is quiet — the harness measures a dependency set nobody pinned. Renovate
+re-locking in the same branch is now the only thing preventing that, which
+`renovate.json` says where it configures it.
 
 **`DATABASE_URL`, not `PG*`.** One variable instead of five, and it is what the examples
 already do. Note the two places the database reaches code: settings, and the environment
 handed to worker subprocesses — the second currently serialises `PG*` names and must
 move with the first, or children silently connect to the persistent database instead of
 the test one.
+
+Both places take `DATABASE_URL` as implemented, and the runner hands children exactly
+that. One `PG*` name survives on purpose: with the harness on the host the database has
+to publish a port, and `PGPORT_BENCH` is what the compose service and `settings.py`
+build their default from, so one value moves both sides — as `PGPORT` does for the
+suites. `DATABASE_URL` still overrides the whole address.
 
 **Stages are a DAG, not a sequence.** Letters out, descriptive names in, dependency
 graph explicit:

@@ -62,7 +62,7 @@ jobs:
           report_type: test_results
           flags: ${{ matrix.env }}
           fail_ci_if_error: true
-          files: junit-core.xml,junit-pg_cron.xml,junit-multidb.xml
+          files: junit-core.xml,junit-pg_cron.xml,junit-multidb.xml,junit-benchmarks.xml
 
   examples:
     name: examples/${{ matrix.example }} pytest suite
