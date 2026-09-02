@@ -1,8 +1,10 @@
 import pathlib
 
 import pytest
+from django.db import connections
 
 import stages
+from django_absurd.queues import resolve_absurd_database
 from tests.benchmarks import utils
 
 # Every test here drives a stage, and a stage spawns real `absurd_worker` children:
@@ -628,6 +630,38 @@ def test_records_an_unknown_git_sha_when_git_is_out_of_reach(
         "unknown",
         "unknown",
         "unknown",
+    ]
+
+
+def test_records_the_cluster_name_of_the_server_it_measured(
+    tmp_path: pathlib.Path,
+) -> None:
+    """`db_bench` names its cluster `bench-tmpfs` because its data directory is RAM,
+    and that name is the only thing in a results file that says an absolute rate off
+    it is not a durable one. The suites run against `db`, which declares no name, so
+    what this pins is that the field is read off the server the run measured rather
+    than assumed."""
+    with connections[resolve_absurd_database()].cursor() as cursor:
+        cursor.execute("show cluster_name")
+        (declared,) = cursor.fetchone()
+
+    stages.main(
+        [
+            "producer_ceiling",
+            "--reps",
+            "1",
+            "--tasks",
+            "10",
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
+
+    result = utils.read_stage(tmp_path, "producer_ceiling")
+    assert [entry["host"]["cluster_name"] for entry in result["measurements"]] == [
+        declared,
+        declared,
+        declared,
     ]
 
 

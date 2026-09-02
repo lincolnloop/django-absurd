@@ -50,6 +50,12 @@ THROUGHPUT_KEY = "throughput_per_s"
 # was read from prints beside it.
 CONNECTION_BOUND_SHARE = 0.70
 
+# The `cluster_name` compose gives the RAM-backed benchmark server. The warning is
+# keyed off this name and not off a suspiciously large ceiling, because a tmpfs commit
+# rate reads as a hundredfold better disk rather than as no disk at all — 56,659
+# commits/s against 584 off the volume — and no threshold separates the two.
+TMPFS_CLUSTER_NAME = "bench-tmpfs"
+
 # Named by the flag that sets each one, so the header reads back as the command that
 # produced it. Alphabetical: no ordering of these means anything to a reader.
 OPTION_FLAGS = (
@@ -101,11 +107,12 @@ def describe_host(stages: list[dict[str, t.Any]]) -> list[str]:
             f"- commit ceiling (commits/s, one connection): "
             f"{describe_commit_ceiling(stages)}"
         ),
+        *describe_storage_medium(contexts),
         (
             f"- python {context['python']}, Django {context['django']}, "
             f"absurd-sdk {context['absurd_sdk']}"
         ),
-        f"- postgres: {context['postgres']}",
+        f"- postgres: {context['postgres']}, cluster {describe_cluster(contexts)}",
         "",
         *MARK_LEGEND,
     ]
@@ -118,12 +125,13 @@ def describe_provenance(shas: list[str]) -> str:
 def describe_commit_ceiling(stages: list[dict[str, t.Any]]) -> str:
     """What one connection to this server could commit while the run was made.
 
-    71% of the active backend time in a full run is WAL durability, so every task rate
-    below is a commit rate in disguise and the ceiling is what says whether it was the
-    connection's number or Absurd's. Each probe prints its dispersion beside its
-    median: the durable rate carries a ~28% CV, and a bare number would be read as a
-    constant. Printed even when it is missing — a run nobody could calibrate is still a
-    run, but it must not read like a calibrated one.
+    Every task rate below is a commit rate in disguise — 71% of the active backend time
+    in a full run against a Docker volume was WAL durability — and the ceiling is what
+    says whether it was the connection's number or Absurd's. Each probe prints its
+    dispersion beside its median: the durable rate is a wide distribution however fast
+    the medium, and a bare number would be read as a constant. Printed even when it is
+    missing — a run nobody could calibrate is still a run, but it must not read like a
+    calibrated one.
     """
     return describe_alternatives(sorted({format_commit_ceiling(s) for s in stages}))
 
@@ -163,6 +171,43 @@ def describe_durability_cost(
     if nondurable is None:
         return "ratio not measured"
     return f"{nondurable['median_per_s'] / durable['median_per_s']:.0f}x without fsync"
+
+
+def describe_storage_medium(contexts: list[dict[str, t.Any]]) -> list[str]:
+    """Whether the server kept its data in RAM, and what that costs the reader.
+
+    Printed directly under the commit ceiling rather than beside the postgres version
+    where the cluster name itself goes: the ceiling is the number this line is about,
+    and the one a reader would otherwise carry off as a property of django-absurd.
+    `any`, not all — one stage measured on RAM is enough to make the absolute rates in
+    the file it sits in incomparable with a durable one.
+    """
+    if not any(entry["cluster_name"] == TMPFS_CLUSTER_NAME for entry in contexts):
+        return []
+    return [
+        (
+            "- storage: RAM. The data directory is a tmpfs, so fsync costs a memcpy "
+            "and every rate here is for COMPARING configurations. None of them is a "
+            "durable-storage figure, and none may be published as a property of "
+            "django-absurd."
+        )
+    ]
+
+
+def describe_cluster(contexts: list[dict[str, t.Any]]) -> str:
+    """The server's `cluster_name`, which is how a run says which server it got.
+
+    An ordinary server declares none and reads back as the empty string. That prints
+    as `unnamed` rather than as nothing at all, so the field is always there to read.
+    """
+    return describe_alternatives(
+        sorted(
+            {
+                f"`{entry['cluster_name']}`" if entry["cluster_name"] else "unnamed"
+                for entry in contexts
+            }
+        )
+    )
 
 
 def describe_options(stages: list[dict[str, t.Any]]) -> str:

@@ -89,101 +89,118 @@ would likely look better.
 
 ## What repeats and what does not
 
-Two full 58-minute runs, identical flags, back to back on an idle machine:
+**Comparisons WITHIN a run are valid. Absolute rates are not publishable at all** — not
+across runs, and not as a property of django-absurd. The database's data directory is a
+[tmpfs](../compose.yaml), so a tasks/s number here was measured against a server with no
+disk under it, and no production Postgres runs that way. A row read against another row
+in the same file is a comparison; the same row quoted on its own is a number about RAM.
+
+The data directory used to be a named volume, and that volume was the largest single
+source of irreproducibility here. The durable commit rate on a Docker volume on macOS
+sits in one of two regimes about 3.5x apart, and nothing the harness controls selects
+between them. Ten arms each, interleaved so the media alternate, same config throughout:
 
 ```
-median B/A across 32 measurements   1.02
-CV of the B/A ratios                31.7%
-rep ranges that overlap             29 of 32
-run A ceiling, opening / closing    1,984 / 2,007 commits/s (cv 1.2% / 2.5%)
-run B ceiling, opening / closing      615 / 2,100 commits/s (cv 13.6% / 2.4%)
+disk (volume)   618 466 464 679 462 476 590 579 776 1,698     median   584 c/s  cv 54.7%
+tmpfs (RAM)     46,356 ... 187,643  (its ten, low to high)    median 56,659 c/s  cv 69.4%
 ```
 
-**Comparisons WITHIN a run are valid. Absolute numbers ACROSS runs are not.** The two
-runs agreed on the middle — median ratio 1.02, and 29 of 32 rep intervals overlapping —
-and disagreed by a 31.7% CV on the individual figures. So a row read against another row
-in the same file is a comparison; the same row read against last week's file is noise.
+RAM is not better storage; it is storage taken out of the measurement. At 56,659
+commits/s and ~2.5 commits per task the database could sustain ~22,000 tasks/s, about
+12x the CPU-bound ceiling of ~1,800 this rig actually reaches — so the commit ceiling
+stops constraining anything, and its own 69% spread stops reaching the numbers below it.
+`synchronous_commit=on` and `fsync=on` are unchanged: the durability request is the same
+one, and only the medium moved.
 
-The cause is the storage stack, and it was measured directly rather than inferred. The
-durable commit rate on a Docker volume on macOS has **two regimes about 3.5x apart**,
-and nothing the harness controls selects between them. Idle machine, clean tables, fresh
-connection, six consecutive rounds of 400 durable commits:
-
-```
-566  508  628  500  587  510 c/s      (~1.8 ms per commit)
-```
-
-The same probe, same script, same server, on another occasion:
+Two `worker_knobs` runs on each medium, which is the like-for-like comparison:
 
 ```
-519  544  1,276  1,899  1,912  1,914 c/s      (~0.5 ms per commit once climbed)
+cross-run median ratio     disk 1.20     ->  tmpfs 0.99      a 20% drift, removed
+cross-run cv of ratios     disk 21.4%    ->  tmpfs 16.6%     better, still above 10%
+median within-run cv       disk ~6%      ->  tmpfs 2.7%
+wall clock per stage       disk ~14 min  ->  tmpfs ~3.5 min
 ```
 
-Warm-up removes the cold climb. It does not choose the regime, and no flag here does
-either.
+The ladders stop plateauing too. Concurrency 1..16 read 110, 110, 174, 422, 450 tasks/s
+on the volume and 315, 393, 644, 956, 1,172 on RAM — monotonic, and still climbing at
+the top rung.
 
-**The commit-ceiling block is how a reader tells which regime produced their numbers.**
-That is its job, not decoration: runs A and B recorded 1,984/s and 615/s for the same
-probe against the same server, and without that line in both files the two runs would
-read as Absurd changing behaviour rather than as one disk in two moods. Read it before
-any throughput in the file.
+The residual 16.6% is not the storage. It is CPU scheduling at the rungs that
+oversubscribe the box, the same effect that marks saturation measurements on a machine
+you are also using — see
+[the last paragraph of the measurement model](#the-measurement-model). A quiet machine
+on AC power is still the requirement.
+
+**The commit-ceiling block is how a reader tells which server produced their numbers**,
+and that is its job rather than decoration. Five figures there means RAM. The report
+header prints the server's `cluster_name` beside its Postgres version for exactly this —
+`db_bench` declares itself `bench-tmpfs` — and a run on that cluster gets a header line
+of its own saying its rates are for comparing configurations and are not durable-storage
+figures. Read both before any throughput in the file.
 
 **A calibration that disagrees with itself softens every bound-verdict under it**, and
 it can disagree two ways. Within one probe: `range_low` and `range_high` come off the
-same rounds the `cv` does, so a badly-repeating probe is already wide — run A's repeated
-to 1.2%, run B's to 13.6%. Between the two probes: run B opened at 615/s and closed at
-2,100/s, so its ceiling moved 3.4x DURING the run.
+same rounds the `cv` does, so a badly-repeating probe is already wide. Between the two
+probes: the opening one can land in a different regime from the closing one, which the
+volume did constantly — one run opened at 615 c/s and closed at 2,100, a ceiling that
+moved 3.4x DURING the run.
 
 So the commit-budget band spans the UNION of both durable probes' endpoints,
 `min(range_low)` to `max(range_high)`, and every row names which probes it came from — a
 reader comparing two reports has to tell a band that widened from mid-run drift apart
-from one that widened because the disk is worse. Run B's union is 465-2,139/s, and 21 of
-its 25 commit-budget rows straddle the 70% line and print `unresolved` — right, because
-a run that crossed regimes halfway through calibrates nothing measured under it, itself
-included. Its opening probe alone called 15 of those rows `connection-bound`. This costs
-a run that did not drift nothing: run A's union is 1,915-2,037/s against an opening
-1,948-2,006, and all 25 of its rows read `client-bound` either way. No share of a median
-prints beside the band either: two probes are two calibrations rather than two draws of
-one, so when they disagree there is no rate a share could honestly be taken against. A
-run with no closing probe — killed before the last stage, or the probe refused — bands
-against the opening one alone and says so. All of that is the calibration declining a
-call it cannot support, not a measurement gone missing.
+from one that widened because the medium is worse. That mechanism was built for the
+volume and every number in it was measured there: the run that opened at 615 c/s has a
+union of 465-2,139 c/s, and 21 of its 25 commit-budget rows straddle the 70% line and
+print `unresolved` — right, because a run that crossed regimes halfway through
+calibrates nothing measured under it, itself included. Its opening probe alone would
+have called 15 of those rows `connection-bound`. Refusing costs a run that did not drift
+nothing: a run whose union was 1,915-2,037 c/s against an opening 1,948-2,006 read
+`client-bound` on all 25 rows either way. On RAM the probes sit two orders of magnitude
+above anything a fleet demands — 56,659 c/s against the 384-1,028 c/s per connection the
+topology tables ask for — so the band is narrow in the only sense that matters and every
+row reads `client-bound` — which is the finding: what runs out on this rig is cores. No
+share of a median prints beside the band either: two probes are two calibrations rather
+than two draws of one, so when they disagree there is no rate a share could honestly be
+taken against. A run with no closing probe — killed before the last stage, or the probe
+refused — bands against the opening one alone and says so. All of that is the
+calibration declining a call it cannot support, not a measurement gone missing.
 
-**Absolute figures need native Linux storage.** A tasks/s number measured here is a
-property of the host's fsync path — on the stack above, a Docker volume on macOS — and
-not publishable as a property of django-absurd. Nothing in this directory can make it
-one; a host whose disk is not a Docker volume on a virtualised filesystem can.
+**Publishable absolute figures need native Linux storage, and RAM did not deliver
+them.** It removed the disk's variance from the comparison, which is what the harness is
+for; it did not turn a rate into a property of django-absurd. Nothing in this directory
+can. A host with real storage under a real filesystem can.
 
 What IS portable off this machine:
 
 - the structural counts — `commits_per_task` (2.13-3.02 depending on configuration), row
   updates per task (~4), Postgres backends per worker process (2, whatever the
-  `--concurrency`). Exact, and identical in both runs;
-- the rank ordering, and every qualitative result that came out of it. Both runs put
+  `--concurrency`). Exact, and identical across runs;
+- the rank ordering, and every qualitative result that came out of it. Both media put
   split above pooled at equal total concurrency, processes above in-process concurrency,
   batched above unbatched, and ~10 processes x 8 concurrency near the top.
 
 ## Reproducing from a clean checkout
 
-First the database, which is the one step whose home is the repo root:
+Four commands, all of them from inside `benchmarks/`:
 
 ```
 docker compose up -d --wait db_bench
-```
-
-Then everything else, from inside `benchmarks/`:
-
-```
 uv run python manage.py migrate
 uv run python -m stages
 uv run python -m report > "results/report-$(date -u +%Y%m%dT%H%M%SZ).md"
 ```
 
+**`migrate` is not a one-off, and it is not only for a clean checkout.** `db_bench`
+keeps its data directory in RAM, so every `up`, `restart` and `down` hands you an empty
+server and the Absurd schema has to be installed again. Skip it and the run dies partway
+through the first measurement on `ProgrammingError: schema "absurd" does not exist`,
+after the banner has already printed. It takes about a second and it is idempotent, so
+run it every time.
+
 `db_bench` is a service in the root `compose.yaml`, behind a `bench` profile: a bare
 `docker compose up -d` starts the suites' databases and not a benchmark server nobody
 asked for, while naming the service starts it as above. Compose searches parent
-directories for its file, so that first command also works from inside `benchmarks/` —
-it reaches the root file either way.
+directories for its file, so that first command reaches the root file from here.
 
 Only Postgres is containerised. `db_bench` publishes `${PGPORT_BENCH:-5460}` and holds
 its own database, `absurd_bench`; `settings.py` reads the same variable, so one value
@@ -192,14 +209,11 @@ measure an untuned one. `DATABASE_URL` overrides the whole address.
 
 `uv run` resolves `pyproject.toml` and `uv.lock` here, so the dependency set is the
 pinned one and the environment lands in `benchmarks/.venv`. django-absurd comes from the
-checkout above, editable, so the harness measures this branch. Compose names its project
-after the directory holding the compose file, so `bench_pgdata` belongs to this
-checkout: another clone or worktree builds its own rather than wandering into this one,
-and a volume left behind by an older layout is not reached at all. To start the database
-over — an empty one, or one whose contents predate a change to this service —
-`docker compose down -v db_bench` removes that service and its volume without touching
-`db` or `db_pg_cron`, and the next `up` initialises `absurd_bench` again. The results
-files are what you keep, never the database.
+checkout above, editable, so the harness measures this branch. Nothing about the
+database survives, so nothing about it can go stale either:
+`docker compose restart db_bench` is the whole "start over" procedure, and the next
+`migrate` initialises `absurd_bench` again. The results files are what you keep, never
+the database.
 
 With no stage named, `python -m stages` runs all eight, which took 75 minutes on the
 reference host before pooled_vs_split joined them; naming stages runs only those, and
@@ -210,20 +224,21 @@ root — see [Running the tests](#running-the-tests).
 **One measurement regime, and it is a host one.** Driver, producer and workers all run
 on the host; only Postgres is in a container, reached over loopback. Half of that regime
 is still pinned hard — `db_bench` is an exact image tag with a fixed server config on a
-port nothing else uses, and `uv.lock` plus `requires-python` fix the Python and every
-dependency. The other half is now whichever machine you are on, which is why `host.py`
-stamps cores, load average and versions onto every measurement and every results file
-records the flags it was run at. That stamping is what makes a run readable later; it is
-not what makes two runs comparable. Absolute rates compare within one run's results
-directory and nowhere else — see
-[What repeats and what does not](#what-repeats-and-what-does-not) — and a run against
-Postgres somewhere else, or at another size, does not even compare ordinally.
+port nothing else uses, in RAM so the disk under it is not part of the regime at all,
+and `uv.lock` plus `requires-python` fix the Python and every dependency. The other half
+is now whichever machine you are on, which is why `host.py` stamps cores, load average
+and versions onto every measurement and every results file records the flags it was run
+at. That stamping is what makes a run readable later; it is not what makes two runs
+comparable. Absolute rates compare within one run's results directory and nowhere else —
+see [What repeats and what does not](#what-repeats-and-what-does-not) — and a run
+against Postgres somewhere else, or at another size, does not even compare ordinally.
 
 `db_bench` sits in the root `compose.yaml` beside `db` and `db_pg_cron` and is still a
-different server: its own volume, its own pinned config, its own port, and a profile
-that keeps it out of a bare `up`. The suites hammer `db` with real worker subprocesses,
-so a benchmark sharing it would absorb whichever tests were running. Neither of those
-two needs to be up for a benchmark run.
+different server: a 4 GB tmpfs data directory instead of a disk, its own pinned config,
+its own port, its own `cluster_name` (`bench-tmpfs`, which is what a results file
+carries), and a profile that keeps it out of a bare `up`. The suites hammer `db` with
+real worker subprocesses, so a benchmark sharing it would absorb whichever tests were
+running. Neither of those two needs to be up for a benchmark run.
 
 ### Restarting Postgres between stages
 
@@ -237,12 +252,15 @@ To take that variable out of a comparison, run each stage against a fresh server
 
 ```
 docker compose restart db_bench
+uv run python manage.py migrate
 uv run python -m stages process_scaling
 ```
 
-Both commands run on the host, in one shell and from this directory, so a loop over
-stages is a `for` loop. Prerequisites still have to exist when you pick stages by hand —
-the driver orders what you name, but it will not run a stage you did not ask for.
+The `migrate` is not optional here: a restart discards the tmpfs and with it the whole
+schema. All three commands run on the host, in one shell and from this directory, so a
+loop over stages is a `for` loop. Prerequisites still have to exist when you pick stages
+by hand — the driver orders what you name, but it will not run a stage you did not ask
+for.
 
 This is deliberately not the default. Nobody restarts Postgres between workloads in
 production, so a cold run measures a best case rather than a representative one. Both
@@ -372,15 +390,16 @@ its rep endpoints: it records a single `flagged` the report no longer reads.
 `options` sit `commit_ceiling_durable`, `commit_ceiling_nondurable` and
 `commit_ceiling_durable_after`, one block each: `median_per_s`, `cv`, `range_low` and
 `range_high` — the same dispersion vocabulary a measurement uses for its reps, because
-the durable rate is a distribution and not a constant — and on this stack not even one
-distribution. Two warmed probes against the same server, one per run, recorded 1,984/s
-and 615/s, a factor of three apart, while a non-durable probe on the same session
-repeats to about 5%: the variance lives in the fsync path. Anything reading a bare
-median as exact is reading in a precision the calibration does not have, which is why
-the report bands every share it takes against these probes across the pair of them and
-softens the verdict when that band is wide. **This block is the only thing in a results
-file that says which regime the run got**, which is what makes it worth reading first
-rather than last.
+the durable rate is a distribution and not a constant. On a Docker volume it was not
+even one distribution: two warmed probes against the same server, one per run, recorded
+1,984/s and 615/s, a factor of three apart, while a non-durable probe on the same
+session repeated to about 5% — the variance lived in the fsync path. That is why
+`db_bench` now keeps its data directory in RAM, and why the probe stays: anything
+reading a bare median as exact is reading in a precision the calibration does not have,
+so the report bands every share it takes against these probes across the pair of them
+and softens the verdict when that band is wide. **This block, with the `cluster_name`
+beside it in the host block, is what says which server the run got** — five figures here
+is RAM, three is a disk — which is what makes it worth reading first rather than last.
 
 Each probe warms before it times. A session's commit rate can climb over its first
 thousand or so commits — consecutive 400-commit rounds on one connection read 519, 544,
@@ -403,12 +422,14 @@ ceiling its throughputs were read against still held at the end.
 
 The probe loops server-side, a `do` block committing single-row inserts timed with
 `clock_timestamp()`, because a client loop would measure its own round trips as well as
-the disk's fsync; it writes to a real table it creates and drops rather than a temporary
-one, since a temp table is not WAL-logged and a probe against one reports memory speed
-as the durable ceiling (84,000/s against 953/s, measured side by side). Any of the three
-blocks can be `null`: the probe was refused, the run went ahead regardless, and the
-report says the calibration is missing rather than dropping the line — an uncalibrated
-number that says so beats no run at all.
+the server's fsync; it writes to a real table it creates and drops rather than a
+temporary one, since a temp table is not WAL-logged and a probe against one skips the
+WAL the run itself pays for (84,000/s against 953/s on a disk, measured side by side).
+The probe measures what the server actually does, which on `db_bench` is a WAL write to
+RAM — that is the point, and the number it reports is what makes it obvious. Any of the
+three blocks can be `null`: the probe was refused, the run went ahead regardless, and
+the report says the calibration is missing rather than dropping the line — an
+uncalibrated number that says so beats no run at all.
 
 **A stage that compares two topologies records how it compared them.**
 `stage_pooled_vs_split.json` carries three blocks beside its measurements:
@@ -467,10 +488,11 @@ and Django's), so its claim traffic funnels through one connection however many 
 are behind it, while the box has several times that capacity spread across more of them
 (one session, warm, in the fast regime: 1,953 commits/s at one connection, 4,748 at
 four, 7,835 at eight, 13,238 at sixteen — sublinear, because concurrent backends share
-an fsync through group commit). That ladder was measured once and never re-measured in
-the slow regime, so read its shape and not its levels. Comparing a fleet's total against
-one connection's ceiling would call an eight-process measurement saturated when each of
-its connections was idling.
+an fsync through group commit). That ladder was measured once, on the Docker volume in
+its fast regime, so read its shape and not its levels — on RAM every level of it is two
+orders of magnitude higher. Comparing a fleet's total against one connection's ceiling
+would call an eight-process measurement saturated when each of its connections was
+idling.
 
 So a row is **connection-bound** when its per-connection commit rate is near the ceiling
 — that number belongs to Postgres and moves on another machine — and **client-bound**
@@ -481,20 +503,20 @@ band lies across the line prints as `unresolved` instead of being assigned to wh
 side one draw of the calibration favoured, and both a probe that repeated badly and a
 pair of probes that disagree widen that band — see
 [What repeats and what does not](#what-repeats-and-what-does-not). Measured on one
-laptop with Postgres in Docker, 71% of active backend time in a full run was WAL
-durability, and yet no row of the topology tables came out connection-bound: at the best
-measured cell (10 processes x 8 concurrency) the per-connection commit rate was 19% of
-one connection's ceiling, and every rung below it was freer still. What ran out was
-cores, not the database. Throughput still scales with worker PROCESSES rather than with
-`--concurrency` — processes bought 9x for 8 of them at concurrency 1, in-process
-concurrency 3.3x for 8 threads and then nothing — but the reason is client-side Python
-per task, which is why the verdict is worth printing per row instead of assumed.
-`commits_per_task` here is worker-side and runs 2.13-3.02; a figure nearer 3.55 has the
-enqueue side folded into it, and dividing by that reads a connection as saturated when
-it has about half its capacity left. Rate reps carry no `commits_per_task`: their
-completed-run count comes off the trimmed middle of the offer window while the phase
-spans the whole offer and drain, so the quotient would divide two different windows into
-each other.
+laptop with Postgres on a Docker volume, 71% of active backend time in a full run was
+WAL durability — and even then no row of the topology tables came out connection-bound:
+at the best measured cell (10 processes x 8 concurrency) the per-connection commit rate
+was 19% of one connection's ceiling, and every rung below it was freer still. What ran
+out was cores, not the database. Throughput still scales with worker PROCESSES rather
+than with `--concurrency` — processes bought 9x for 8 of them at concurrency 1,
+in-process concurrency 3.3x for 8 threads and then nothing — but the reason is
+client-side Python per task, which is why the verdict is worth printing per row instead
+of assumed. `commits_per_task` here is worker-side and runs 2.13-3.02; a figure nearer
+3.55 has the enqueue side folded into it, and dividing by that reads a connection as
+saturated when it has about half its capacity left. Rate reps carry no
+`commits_per_task`: their completed-run count comes off the trimmed middle of the offer
+window while the phase spans the whole offer and drain, so the quotient would divide two
+different windows into each other.
 
 Reading a profile: within a rep, remaining depth falls while accumulated database state
 only grows, so the two point opposite ways. Throughput RISING across the slices means
@@ -607,15 +629,15 @@ number is not something a test can assert without becoming a flake.
 
 Copy `results/` aside, re-run `uv run python -m stages`, and compare the two
 directories. The stage filenames are stable, so `diff -r` lines the two runs up — but
-what it lines up is mostly the run-to-run spread, not the SDK: two runs of the same
-commit disagreed by a 31.7% CV on individual rates. Read the comparison in this order:
+what it lines up is partly the run-to-run spread, not the SDK: two `worker_knobs` runs
+of the same commit disagreed by a 16.6% CV on individual rates
+([why](#what-repeats-and-what-does-not)). Read the comparison in this order:
 
-1. **the `commit_ceiling_durable` blocks.** Ceilings a factor of three apart mean the
-   two runs measured different regimes and no rate below them compares at all
-   ([why](#what-repeats-and-what-does-not)). The same reading applies to the opening and
-   closing probes WITHIN one file: one run here opened at 615/s and closed at 2,100/s,
-   and nothing in it compares to anything, itself included. Re-run rather than reading
-   on.
+1. **the host block's `cluster_name`, then the `commit_ceiling_durable` blocks.** Both
+   runs must say `bench-tmpfs`; a three-figure ceiling means one of them landed on a
+   server with a disk under it, and no rate below them compares at all. A ceiling that
+   MOVED between the opening and closing probes of one file says the same thing about
+   that file, itself included. Re-run rather than reading on.
 2. **the structural counts** — `commits_per_task` per measurement, `shape_connections`.
    These are exact and portable, so any movement in them is the SDK and is worth
    chasing.

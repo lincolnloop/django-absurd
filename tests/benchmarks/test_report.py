@@ -9,6 +9,9 @@ import report
 HOST = {
     "absurd_sdk": "0.5.0",
     "captured_at": "2026-08-27T12:00:00+00:00",
+    # An ordinary server declares no `cluster_name` and reads back as the empty
+    # string, which is what `db` under the suites gives too.
+    "cluster_name": "",
     "cpu_count": 8,
     "django": "6.1",
     "git_sha": "deadbeef",
@@ -68,7 +71,7 @@ HEADER = (
     "1600-2262), after the run 1904 (cv 11%, 1700-2100), non-durable 367723 "
     "(cv 5%, 324000-380000), 182x without fsync\n"
     "- python 3.14.3, Django 6.1, absurd-sdk 0.5.0\n"
-    "- postgres: PostgreSQL 18.0 on x86_64-pc-linux-gnu\n"
+    "- postgres: PostgreSQL 18.0 on x86_64-pc-linux-gnu, cluster unnamed\n"
     "\n"
     "Marks: `!` invalid — a rep measured something other than what was asked (a "
     "redelivery, a task that never completed, a window too short to divide by, an "
@@ -444,6 +447,60 @@ def test_reports_mixed_provenance_when_measurements_disagree(
     assert "- git sha: mixed (`aaa111`, `bbb222`)\n" in rendered
     assert (
         "- captured at: 2026-08-27T12:00:00+00:00 .. 2026-08-27T15:00:00+00:00\n"
+    ) in rendered
+
+
+def test_says_a_run_on_ram_is_for_comparing_and_not_for_publishing(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The RAM-backed server's whole point is that its commit ceiling stops reaching
+    the measurement — 56,659 commits/s against 584 off a Docker volume — and that is
+    also how its numbers become unpublishable. A reader looking at a five-figure
+    ceiling has to be told which of those it is looking at, so the line sits directly
+    under it and names the consequence rather than the medium alone."""
+    entries = [
+        build_measurement(
+            "concurrency_1", {}, {}, host={**HOST, "cluster_name": "bench-tmpfs"}
+        )
+    ]
+
+    rendered = render(capsys, tmp_path, "worker_knobs", entries)
+
+    assert (
+        "- storage: RAM. The data directory is a tmpfs, so fsync costs a memcpy and "
+        "every rate here is for COMPARING configurations. None of them is a "
+        "durable-storage figure, and none may be published as a property of "
+        "django-absurd.\n"
+        "- python 3.14.3, Django 6.1, absurd-sdk 0.5.0\n"
+        "- postgres: PostgreSQL 18.0 on x86_64-pc-linux-gnu, cluster `bench-tmpfs`\n"
+    ) in rendered
+
+
+def test_warns_about_ram_when_only_some_measurements_came_off_it(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """A partial re-run against another server is a documented workflow, so a
+    directory can hold one stage measured on RAM and one on a disk. One is enough:
+    the absolute rates in that file no longer compare with each other, which is the
+    warning, and the cluster names read as mixed the way a git SHA does."""
+    entries = [
+        build_measurement(
+            "concurrency_1", {}, {}, host={**HOST, "cluster_name": "bench-tmpfs"}
+        ),
+        build_measurement("concurrency_2", {}, {}),
+    ]
+
+    rendered = render(capsys, tmp_path, "worker_knobs", entries)
+
+    assert (
+        "- storage: RAM. The data directory is a tmpfs, so fsync costs a memcpy and "
+        "every rate here is for COMPARING configurations. None of them is a "
+        "durable-storage figure, and none may be published as a property of "
+        "django-absurd.\n"
+    ) in rendered
+    assert (
+        "- postgres: PostgreSQL 18.0 on x86_64-pc-linux-gnu, "
+        "cluster mixed (`bench-tmpfs`, unnamed)\n"
     ) in rendered
 
 

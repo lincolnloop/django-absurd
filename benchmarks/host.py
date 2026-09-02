@@ -56,14 +56,20 @@ def collect_host_context() -> dict[str, t.Any]:
     with connections["default"].cursor() as cursor:
         # Uptime rides along with the version: a server hammered for hours measures
         # slower than a freshly started one, and nothing else records which you got.
+        # `cluster_name` rides along for the same reason and a sharper one: `db_bench`
+        # sets it to `bench-tmpfs` and nothing else in a results file says the data
+        # directory was RAM, where an absolute rate is not a durable figure at all.
+        # Unset it reads back as the empty string, which is every ordinary server.
         cursor.execute(
             "select version(), "
-            "extract(epoch from now() - pg_postmaster_start_time())::float8"
+            "extract(epoch from now() - pg_postmaster_start_time())::float8, "
+            "current_setting('cluster_name')"
         )
-        postgres, postgres_uptime_s = cursor.fetchone()
+        postgres, postgres_uptime_s, cluster_name = cursor.fetchone()
     return {
         "absurd_sdk": importlib.metadata.version("absurd-sdk"),
         "captured_at": dt.datetime.now(tz=dt.UTC).isoformat(),
+        "cluster_name": cluster_name,
         "cpu_count": os.cpu_count() or 1,
         "django": django.get_version(),
         "git_sha": read_git_sha(),
