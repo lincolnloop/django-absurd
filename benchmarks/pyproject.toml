@@ -1,0 +1,15 @@
+[project]
+dependencies = [
+  "dj-database-url==3.1.2",
+  "django-absurd",
+  "django==6.1",
+  "psycopg[binary]==3.3.4",
+]
+name = "django-absurd-benchmarks"
+requires-python = "==3.14.*"
+version = "0"
+
+# django-absurd from the local checkout (repo root), so the harness measures THIS
+# branch's code — not a released version.
+[tool.uv.sources]
+django-absurd = {path = "..", editable = true}

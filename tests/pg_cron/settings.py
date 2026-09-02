@@ -6,7 +6,7 @@ from tests.settings import *  # noqa: F403
 INSTALLED_APPS = [*INSTALLED_APPS, "django_absurd.pg_cron"]  # noqa: F405
 
 DATABASES["default"]["HOST"] = os.environ.get("PGHOST", "localhost")  # noqa: F405
-DATABASES["default"]["PORT"] = os.environ.get("PGPORT_PGCRON", "5434")  # noqa: F405
+DATABASES["default"]["PORT"] = os.environ.get("PGPORT_PGCRON", "5443")  # noqa: F405
 # An ORDINARY test DB — NOT db_pg_cron's cron.database_name (the central `postgres`
 # DB). The app/test DB holds no extension; jobs are scheduled cross-database into it
 # from the central catalog, so the topology here is truly central != app.

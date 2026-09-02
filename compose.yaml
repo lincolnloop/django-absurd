@@ -7,7 +7,7 @@ services:
     environment:
       - POSTGRES_PASSWORD=postgres
     ports:
-      - "${PGPORT:-5432}:5432"
+      - "${PGPORT:-5442}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres"]
       interval: 5s
@@ -29,9 +29,86 @@ services:
     environment:
       - POSTGRES_PASSWORD=postgres
     ports:
-      - "${PGPORT_PGCRON:-5434}:5432"
+      - "${PGPORT_PGCRON:-5443}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  db_bench:
+    # In this file so one `docker compose` reaches every service, but a separate server
+    # on purpose. It keeps an exact patch tag and a pinned server config, so a re-run
+    # months later measures the same server; it publishes a port no other service uses,
+    # because a benchmark that quietly measured the wrong one would still print
+    # numbers; and it stays off `db`, which the suites hammer with real worker
+    # subprocesses that a benchmark sharing the server would silently absorb.
+    #
+    # The data directory is a tmpfs, and that is the OPPOSITE of what a named volume
+    # was here for. The volume was the single largest source of irreproducibility: the
+    # durable commit rate on a Docker volume on macOS sits in one of two regimes ~3.5x
+    # apart and nothing selects between them (median 584 c/s, cv 54.7% across
+    # interleaved arms), which drove a 20% systematic drift between two identical
+    # `worker_knobs` runs. On RAM the same probe medians 56,659 c/s — ~22k tasks/s of
+    # headroom against the ~4,400 tasks/s this rig reaches — so the commit ceiling
+    # stops constraining anything and its variance stops reaching the measurement: the
+    # drift went to 0.99x and the cross-run cv of the ratios to 4.7%. Nothing persists,
+    # so `benchmarks/README.md` has the reader migrate after every start.
+    #
+    # Profiled so a bare `docker compose up -d` starts the suites' databases and not a
+    # tuned server nobody asked for. Naming it on the command line still starts it,
+    # which is what `benchmarks/README.md` tells the reader to do.
+    profiles:
+      - bench
+    image: postgres:18.4
+    # The resource knobs are env-overridable so the rig runs on a machine other than
+    # the one the defaults were picked for; `benchmarks/CLAUDE.md` holds the sizing
+    # evidence and says why the rest of this config is deliberately fixed.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=${BENCH_SHARED_BUFFERS:-1GB}
+      - -c
+      - max_connections=${BENCH_MAX_CONNECTIONS:-100}
+      - -c
+      - synchronous_commit=on
+      - -c
+      - fsync=on
+      - -c
+      - autovacuum=on
+      - -c
+      - log_min_messages=warning
+      # Provenance, not tuning: a results file has to SAY it came off RAM. A tmpfs
+      # ceiling reads as a hundredfold better disk rather than as no disk at all, and
+      # `host.py` stamps this name onto every measurement so the report can refuse to
+      # let an absolute rate off this server be read as a durable one.
+      - -c
+      - cluster_name=bench-tmpfs
+      # Always on, never a flag: the per-statement counts ARE the overhead measurement,
+      # and runs taken with and without the tracking are not comparable. `all`, not
+      # `top`, because Absurd's whole claim path runs inside PL/pgSQL functions and
+      # `top` would record the function call while hiding every statement in it.
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=all
+    environment:
+      - POSTGRES_DB=absurd_bench
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - "${PGPORT_BENCH:-5460}:5432"
+    # 0 is how compose spells "no limit", and it is the only spelling that works: an
+    # empty `${BENCH_CPUS:-}` fails the file outright on `strconv.ParseFloat`. At 0
+    # compose omits the field, so an unset var cannot throttle the server to nothing.
+    cpus: ${BENCH_CPUS:-0}
+    mem_limit: ${BENCH_MEMORY:-0}
+    tmpfs:
+      # The 4g default is headroom, not a guess: the database is 69 MB and two full
+      # `worker_knobs` runs used 355 MB, in an 11.7 GB VM. `synchronous_commit=on`
+      # and `fsync=on` above are unchanged — the durability request is the same one,
+      # only the medium moved, which is why fsync here costs a memcpy.
+      - /var/lib/postgresql:size=${BENCH_TMPFS_SIZE:-4g}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d absurd_bench"]
       interval: 5s
       timeout: 5s
       retries: 10

@@ -34,8 +34,8 @@ jobs:
       PGUSER: postgres
       PGPASSWORD: postgres
       PGDATABASE: postgres
-      PGPORT: "5432"
-      PGPORT_PGCRON: "5434"
+      PGPORT: "5442"
+      PGPORT_PGCRON: "5443"
       # Worker count for tox's `-n auto`; a runner has more cores than the suites
       # profitably use, and 2 is enough to keep the parallel path exercised.
       PYTEST_XDIST_AUTO_NUM_WORKERS: "2"
@@ -62,7 +62,7 @@ jobs:
           report_type: test_results
           flags: ${{ matrix.env }}
           fail_ci_if_error: true
-          files: junit-core.xml,junit-pg_cron.xml,junit-multidb.xml
+          files: junit-core.xml,junit-pg_cron.xml,junit-multidb.xml,junit-benchmarks.xml
 
   examples:
     name: examples/${{ matrix.example }} pytest suite

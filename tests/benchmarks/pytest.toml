@@ -1,0 +1,16 @@
+[pytest]
+DJANGO_SETTINGS_MODULE = "tests.benchmarks.settings"
+addopts = [
+  "--confcutdir=..",
+  "--cov",
+  "--cov-append",
+  "--cov-report=term",
+  "--cov-report=xml",
+  "--junitxml=junit-benchmarks.xml",
+  "--reuse-db",
+  "--strict-markers",
+]
+pythonpath = ["../..", "../../benchmarks"]
+testpaths = ["."]
+# Real workers on real time; the whole suite is well under this.
+timeout = "120"

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from django.db import connections, transaction
 from django.utils.module_loading import import_string
 
-PRODUCER_TASK_PATH = "benchmarks.tasks.noop_sync"
+PRODUCER_TASK_PATH = "tasks.noop_sync"
 ATOMIC_CHUNK_SIZE = 500
 PRODUCER_THREAD_COUNT = 8
 OFFER_ACHIEVED_FLOOR = 0.98
@@ -89,7 +89,7 @@ def run_rate_producer(
 def run_producer_benchmark(
     mode: t.Literal["single", "threaded", "atomic"], count: int
 ) -> dict[str, t.Any]:
-    """Stage F: enqueue ``count`` tasks three ways, reporting the producer's cost."""
+    """Enqueue ``count`` tasks three ways, reporting the producer's own cost."""
     task_object = import_string(PRODUCER_TASK_PATH)
     started = time.monotonic()
     if mode == "single":
@@ -181,7 +181,5 @@ def split_evenly(total: int, parts: int) -> list[int]:
 
 
 def read_percentile(values: list[float], fraction: float) -> float:
-    if not values:
-        return 0.0
     ordered = sorted(values)
     return ordered[min(len(ordered) - 1, int(fraction * len(ordered)))]

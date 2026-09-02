@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 import typing as t
+import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -45,7 +46,7 @@ def start_workers(spec: WorkerSpec, count: int) -> list[Worker]:
     try:
         for index in range(count):
             # A comprehension would discard the children already started when one
-            # of them fails, leaking them for the rest of the benchmark run.
+            # fails, leaking them for the rest of the run.
             started.append(spawn_worker(spec, index, environ))  # noqa: PERF401
     except BaseException:
         stop_workers(started)
@@ -110,18 +111,24 @@ def spawn_worker(spec: WorkerSpec, index: int, environ: dict[str, str]) -> Worke
 def build_worker_env() -> dict[str, str]:
     # Children must reach the database the PARENT is on — under pytest that is the
     # test database, not the one benchmarks/settings.py falls back to.
-    settings_dict = connections["default"].settings_dict
     return {
         **os.environ,
-        "DJANGO_SETTINGS_MODULE": "benchmarks.settings",
-        "PGDATABASE": settings_dict["NAME"],
-        "PGHOST": settings_dict["HOST"],
-        "PGPASSWORD": settings_dict["PASSWORD"],
-        "PGPORT_BENCH": str(settings_dict["PORT"]),
-        "PGUSER": settings_dict["USER"],
+        "DJANGO_SETTINGS_MODULE": "settings",
+        "DATABASE_URL": build_database_url(),
         # Without this the readiness line sits in the child's block-buffered pipe.
         "PYTHONUNBUFFERED": "1",
     }
+
+
+def build_database_url() -> str:
+    """Render the parent's live connection as the URL its settings module reads."""
+    settings_dict = connections["default"].settings_dict
+    user = urllib.parse.quote(settings_dict["USER"], safe="")
+    password = urllib.parse.quote(settings_dict["PASSWORD"], safe="")
+    host = settings_dict["HOST"]
+    port = settings_dict["PORT"]
+    name = settings_dict["NAME"]
+    return f"postgres://{user}:{password}@{host}:{port}/{name}"
 
 
 def wait_for_worker_ready(

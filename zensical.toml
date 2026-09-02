@@ -9,7 +9,6 @@ nav = [
   {"Cron Jobs" = "cron-jobs.md"},
   {"Workers" = "workers.md"},
   {"Deploying" = "deploying.md"},
-  {"Performance" = "performance.md"},
   {"Cleanup" = "cleanup.md"},
   {"Monitoring" = "monitoring.md"},
   {"Admin" = "admin.md"},

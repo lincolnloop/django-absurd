@@ -54,29 +54,63 @@ def check_phase_uninterrupted(elapsed_s: float, wall_s: float) -> None:
 
 def collect_host_context() -> dict[str, t.Any]:
     with connections["default"].cursor() as cursor:
-        # Uptime rides along with the version: a server hammered for hours measures
-        # slower than a freshly started one, and nothing else records which you got.
+        # Uptime, `cluster_name` and the two settings ride along with the version:
+        # nothing else says which server a run got, and a live server is the truth.
         cursor.execute(
             "select version(), "
-            "extract(epoch from now() - pg_postmaster_start_time())::float8"
+            "extract(epoch from now() - pg_postmaster_start_time())::float8, "
+            "current_setting('cluster_name'), "
+            "current_setting('shared_buffers'), "
+            "current_setting('max_connections')"
         )
-        postgres, postgres_uptime_s = cursor.fetchone()
+        (
+            postgres,
+            postgres_uptime_s,
+            cluster_name,
+            shared_buffers,
+            max_connections,
+        ) = cursor.fetchone()
     return {
         "absurd_sdk": importlib.metadata.version("absurd-sdk"),
         "captured_at": dt.datetime.now(tz=dt.UTC).isoformat(),
+        "cluster_name": cluster_name,
+        # The HOST's cores — where the worker fleet runs and what the process_scaling
+        # ladder derives from. `requested_container_*` below speaks for the server.
         "cpu_count": os.cpu_count() or 1,
         "django": django.get_version(),
         "git_sha": read_git_sha(),
-        "load_avg_1m": os.getloadavg()[0],
+        "load_avg_1m": read_load_average(),
+        "max_connections": max_connections,
         "postgres": postgres,
         "postgres_uptime_s": float(postgres_uptime_s),
         "python": platform.python_version(),
+        "requested_container_cpus": read_requested_limit("BENCH_CPUS"),
+        "requested_container_memory": read_requested_limit("BENCH_MEMORY"),
+        "shared_buffers": shared_buffers,
     }
 
 
+def read_requested_limit(variable: str) -> str | None:
+    """A container CPU or memory limit as REQUESTED, which is all that is knowable.
+
+    Neither limit is visible over SQL, and an absent variable means unknown rather than
+    unlimited: whoever ran `docker compose up` may have set one in another shell.
+    """
+    return os.environ.get(variable) or None
+
+
+def read_load_average() -> float:
+    """The 1-minute load average right now, for a caller that samples it itself.
+
+    The host block is collected once a measurement is OVER, so its own figure counts
+    the load the harness had just made; a rep samples this on each side of itself.
+    """
+    return os.getloadavg()[0]
+
+
 def read_git_sha() -> str:
-    # Provenance is best-effort: the compose `bench` container has no git binary and
-    # no .git directory, and a missing SHA should not abort a measurement.
+    # Provenance is best-effort: an unpacked tarball has no .git directory, and a
+    # missing SHA must not abort a measurement.
     try:
         completed = subprocess.run(
             ["git", "rev-parse", "HEAD"],
