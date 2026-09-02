@@ -64,7 +64,7 @@ the macOS indexer suppressed.
 Per `noop_sync` task (empty body), worker side, across the 204 `noop_sync` saturation
 reps of `warmup`, `a`, `b` and `c2`:
 
-    commits per task     1.72 - 3.01   varies with SHAPE, not just with batching
+    commits per task     1.72 - 3.01   part shape, part ramp; the split is open
     row updates          ~4            ~2 on r_bench, ~2 on t_bench
     backends per worker  2             SDK connection + Django ORM, at ANY --concurrency
 
@@ -298,31 +298,51 @@ curve. What it does change is the experiment — the medians move by more than h
 is depth and not precision — at four times the tasks and up to ten times the wall clock.
 **Rejected.**
 
-A short drain is not a fleet getting going, either. Worker startup is outside the
-measured window by construction: `start_workers` waits for each child's readiness line
-and `measure_phase` opens afterwards, and the p10-p90 trim then drops the first tenth of
-the completions. Over the concurrency ladder's 60 reps slice 0 sits at 0.60-1.09 of its
-rep's median slice, and the SHORT rungs show no deficit to explain — `concurrency_16`
-and `batch_32` (4.0-5.1 s) read 0.78-1.10 while `concurrency_1` (13.1-15.7 s) reads
-0.60-0.93. Dropping slice 0 moves a rep's fitted drift by a median 0.9 points across
-those 60 reps and at most 7.4. A short drain here is a shallower queue, not a ramp.
+A short drain is not a fleet getting going, either — at one process. `start_workers`
+waits for that child's readiness line before `measure_phase` opens, and the p10-p90 trim
+then drops the first tenth of the completions. Over the concurrency ladder's 60 reps
+slice 0 sits at 0.60-1.09 of its rep's median slice, and the SHORT rungs show no deficit
+to explain — `concurrency_16` and `batch_32` (4.0-5.1 s) read 0.78-1.10 while
+`concurrency_1` (13.1-15.7 s) reads 0.60-0.93. Dropping slice 0 moves a rep's fitted
+drift by a median 0.9 points across those 60 reps and at most 7.4. A short drain here is
+a shallower queue, not a ramp.
 
-**Where a ramp IS in the window: the multi-process arms.** `split_8` (8x1, 5,000 tasks,
-1.5-2.0 s) reads slice 0 at 0.21-0.24 of its median and climbs from 479-523 to
-2,286-2,714 tasks/s across its own drain, while the pooled arm of the same pair (1x8,
-5.5-6.1 s) sits at 0.95-1.05. The contamination tracks the PROCESS COUNT and not the
-window length: eight fresh interpreters warming their claim path up inside a two-second
-drain. `split_8` publishes 1,920-2,055 tasks/s against its own median slices of
+### Where a ramp IS in the window: the multi-process arms
+
+**Above one process the fleet starts inside the measured drain.** `start_workers` spawns
+children one at a time, blocking on each one's readiness line, and the preload is
+already in the queue — so worker 0 claims for the whole stagger before the last child
+exists. A child's interpreter and Django startup times at 0.20 s, putting roughly 1.5 s
+of staggered start inside an eight-process arm and 2 s inside a ten-process one.
+
+`split_8` (8x1, 5,000 tasks, 1.5-2.0 s) reads slice 0 at 0.21-0.24 of its median and
+climbs from 479-523 to 2,286-2,714 tasks/s across its own drain, while the pooled arm of
+the same pair (1x8, 5.5-6.1 s) sits at 0.95-1.05. The contamination tracks the PROCESS
+COUNT and not the window length, and the pooled arm is what rules out a warm-up
+explanation: one interpreter warms its claim path as much as eight do, and it shows no
+deficit. `split_8` publishes 1,920-2,055 tasks/s against its own median slices of
 2,060-2,253, so it understates by 7-15% and `pooled_vs_split`'s split/pooled ratio is
 understated with it — the direction of that ratio is not in doubt either way, and it
 would only grow. (All four runs, 12 reps.)
 
+**`commits_per_task` and `calls_per_task` take the same defect the other way up.** Both
+divide a phase-window delta — `xact_commit`, and `pg_stat_statements` — by `n_runs`,
+which `analyze_saturation` counts over the WHOLE drain (`window = true`). Tasks finished
+before the phase opened are in the denominator and their commits are not, so both counts
+read low above one process, by the share of the drain that ran during the stagger. What
+that costs in practice is not established: the measured `commits_per_task` column falls
+from 2.13 at one, two and five processes to 1.88 at ten, which is the right direction,
+but a bias proportional to the stagger would have moved the two- and five-process rungs
+too and it did not. Treat the spread across process counts as unresolved rather than as
+shape.
+
 That is a real defect and a bigger constant is the wrong fix for it: it would dilute the
-warm-up only by measuring a deeper queue for both arms of a pair, at four times the
-cost, while degrading every single-process rung it touches. What it wants is a windowed
-analysis — a saturation rep capturing the database clock the way a rate rep already
-does, and counting completions from there — which moves every saturation figure in this
-file and is not done here.
+stagger only by measuring a deeper queue for both arms of a pair, at four times the
+cost, while degrading every single-process rung it touches. Two things would: spawning
+the children concurrently rather than one at a time, and a windowed analysis — a
+saturation rep capturing the database clock the way a rate rep already does, and
+counting both completions and runs from there. The second moves every saturation figure
+in this file. Neither is done here.
 
 ## Storage: two regimes on a volume, and none on RAM
 
@@ -763,9 +783,13 @@ order:
    one file's opening and closing probes says the same about that file. Re-run rather
    than reading on.
 2. **the structural counts** — `commits_per_task` per measurement, each statement's
-   `calls_per_task` in `statement_stats`, `shape_connections`. These are exact and
-   portable, so movement in them is the change itself and is worth chasing; a claim path
-   that grew a statement shows here and nowhere else.
+   `calls_per_task` in `statement_stats`, `shape_connections`. Counts rather than
+   timings, so a claim path that grew a statement shows here at a magnitude no
+   throughput number could resolve, and nowhere else. `shape_connections` is exact. The
+   two per-task counts are exact at ONE worker process and read low above it
+   ([the multi-process arms](#where-a-ramp-is-in-the-window-the-multi-process-arms)), so
+   compare them at the SAME process count — where the bias is common to both runs — and
+   do not read a difference between rungs of `process_scaling` as shape.
 3. **the `options` and `calibration` blocks.** Same flags, or the runs measured
    different experiments — a deeper queue is slower, so a saturation rate does not
    compare across `--tasks`. And a stage that calibrates inherits the winning rung, so a
