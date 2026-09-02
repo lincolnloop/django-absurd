@@ -173,6 +173,60 @@ seed. It reuses the measurement core — host context, suspension guard, reps, m
 flags — and not the stage-runner shell. That reuse is what makes it one harness; sharing
 a CLI is not.
 
+## Retracted in review, and why
+
+The rework's own reference docs failed the rule above. Each claim below was in
+`benchmarks/CLAUDE.md` or `benchmarks/README.md`; each is now deleted or replaced by
+what the recorded runs support. Kept here for the reasoning, not for the wording.
+
+- **"processes 1 -> 10 at concurrency 16 bought 3.7x" and "the best cell measured was
+  4,441 tasks/s".** `build_process_scaling_measurements` sizes the preload as
+  `max(4000, 2000 * count)`, so the ladder's rungs run at 4,000 to 20,000 tasks — and
+  the same document's own measurement puts 4x the depth at 40-58% of the throughput. The
+  multiple and the ceiling both mixed process scaling with a depth penalty. Withdrawn:
+  the direction survives, the confound points conservative, so the quotients are lower
+  bounds. Equal-depth re-measurement is the fix and is not done.
+- **"2,142 sustainable, so the knee is around half the drain rate", attributed to the
+  fleet.** The refused 3,213/s probe recorded `offered_ok` false — the producer achieved
+  2,895 and 3,016/s and missed 61k of 64k deadlines — as well as `backlog_grew`. A ramp
+  probe bounds whichever of the fleet and the producer ran out first, and both run on
+  one box. The knee figure itself survives on different evidence: the over-offered
+  rungs, where the producer DID deliver, collapse between 2,116 and 3,039/s offered.
+- **"run `a` reads 6-10% low" attributed to load and the macOS indexer.** `a`'s
+  `worker_knobs` winner was `batch_32` where the others picked `concurrency_16`, so
+  every downstream stage ran a different worker config, and its rate stage calibrated
+  from `workers_5`. Its overall deficit against the clean pair is 2%, while `c2` — at
+  the same load as `b` — reads 8-20% low on several rungs. The load attribution is
+  withdrawn; the indexer stays as a measured hazard (1-1.4 cores) with no percentage
+  attached.
+- **The old `latency_under_load` before/after table's provenance.** It said "four runs,
+  7 workers x concurrency 16, drain 4,182-4,231"; run `a` ran five workers and `c2`'s
+  drain was 4,052, and its throughput column mixed per-rep endpoints with medians.
+- **Itemised per-task costs as single figures** (2.82 ms = 1.64 server + 1.18 client;
+  `claim_task` 1.4718 ms). No saved run produces that decomposition. Replaced by ranges
+  over the five runs' median reps.
+- **"42% is what a GIL serialises."** `client_ms_per_task` is wall minus server time, so
+  it includes round-trip waits, where the GIL is released. The single claim connection
+  per worker process is an equally good fit and nothing measured separates them.
+- **"46 reps, median +13.3%, 37 of 46"** for within-rep drift. Not reproducible from any
+  stated rep set; five reasonable definitions span +8% to +22%. Replaced by one
+  definition with its rep set named.
+- **Two irreconciled tmpfs commit ceilings** (56,659 c/s interleaved against
+  200,000-240,000 in-run). Different measurements — the interleaved arms skip the
+  per-session warm-up — and only the in-run probe is what a report's verdicts are read
+  against.
+- **Cherry-picked slice-0 and dispersion ranges** (0.46 from one rep, "0.79-1.01 across
+  every single-process rung", "profile_cv 5.6-11.0%"). Replaced by the full ranges.
+
+Two guards were wrong rather than overstated, and were fixed:
+
+- `summarize_reps` took the lower of two middle reps in every mode. In rate mode the
+  ranking key is end-to-end p50, where lower is better, so an even `--reps` reported the
+  measurement by its LUCKIEST rep. `pick_median_rep` now resolves towards the worse
+  middle per metric.
+- `RATE_SPREAD_FLOOR_S` was 150 ms while the rate rungs read p50s of 9-42 ms, so `~`
+  could never fire on any of them and an unmarked rate table said nothing. Now 10 ms.
+
 ## What survives from `loadtest/`
 
 Kept: the admin probe and its seeder (the ordering decision in #142 is made and

@@ -87,9 +87,10 @@ says outright that rates off that server are only for comparing configurations. 
 it is the commit ceiling: what a single connection to this server could commit per
 second, measured before the first stage and again after the last.
 
-Then one table per stage, one row per configuration, with the rate and the spread across
-repeats. Every measurement appears even when something was wrong with it, marked in
-place:
+Then one table per stage, one row per configuration, with the rate, the `backlog` it
+preloaded and the spread across repeats. Two rows with different backlogs are two
+different experiments — a deeper queue is slower. Every measurement appears even when
+something was wrong with it, marked in place:
 
 - `!` **invalid** — a rep measured something other than what was asked (a redelivery, a
   task that never finished, a window too short to divide by, an offer the producer could
@@ -105,54 +106,53 @@ calibration could not tell.
 
 ## What it found
 
-Measured on one 14-core laptop with the server's data directory in RAM. Read the ratios,
-not the rates.
+Measured on one 14-core laptop with the data directory in RAM, over four runs of one
+commit; every range below is across those runs. Read the directions, not the rates.
+[`CLAUDE.md`](CLAUDE.md) names the run behind each figure.
 
 - **Scale with worker processes, keep `--concurrency` around 16, and batch the claims.**
-  The best cell measured was 10 processes x 16 concurrency at 4,441 tasks/s. Neither
-  axis had flattened out there: concurrency 1 -> 16 at one process bought 3.4x (360.6 ->
-  1,231.1 tasks/s), and processes 1 -> 10 at concurrency 16 bought 3.7x (1,211.5 ->
-  4,441.7).
-- **Processes beat threads at the same total.** 4 processes x 1 beat 1 x 4 concurrency
-  by 2.08x, and 8 x 1 beat 1 x 8 by 2.24x. The reason is that 42% of a task's wall time
-  is client-side Python (2.82 ms per task = 1.64 ms server + 1.18 ms client), which is
-  what a GIL serialises.
+  Neither axis had flattened at the top of the sweep: concurrency 1 -> 16 at one process
+  bought 3.0-3.7x, all of it at one queue depth. More processes always bought more, but
+  `process_scaling` preloads 2,000 tasks per worker, so its rungs drained 4,000 to
+  20,000 tasks and no multiple can be read off that ladder.
+- **Processes beat threads at the same total.** 4 x 1 beat 1 x 4 by 1.95-2.28x and 8 x 1
+  beat 1 x 8 by 2.17-2.29x, both arms of each pair at the same depth. 40-47% of a task's
+  wall time is outside the server (2.82-3.14 ms per task = 1.57-1.77 server + 1.16-1.48
+  client); what serialises it — the GIL, or the one claim connection a worker process
+  owns — is not established.
 - **All of the per-task database cost is acquiring work, not finishing it.** Claiming a
-  task costs about 15x completing one (1.47 ms against 0.099 ms), and 18% of every claim
-  is a scan for cancellations.
-- **A queue that is deeper is slower.** Throughput rises as a backlog drains — within a
-  measurement, by a median 13.3%, in 37 of 46 repeats. So a saturation number averages a
-  curve and cannot be compared across different `--tasks` values.
+  task costs 13-16x completing one (1.41-1.56 ms against 0.09-0.12 ms), and 18-19% of
+  every claim is a scan for cancellations.
+- **A queue that is deeper is slower.** Throughput rises as a backlog drains, a fitted
+  median +15.7% within a rep over 150 reps, so a saturation number averages a curve and
+  does not compare across `--tasks` values.
 
 ## Caveats that change what you can do with a number
 
 **Absolute rates are not publishable, at all** — not across runs, and not as a property
-of django-absurd. `db_bench` keeps its data directory in RAM, so every rate here was
-measured against a server with no disk under it, and no production Postgres runs that
-way. A row read against another row in the same file is a comparison; the same row
-quoted on its own is a number about RAM. Publishable figures need real storage under a
-real filesystem, which nothing in this directory can provide.
+of django-absurd. `db_bench` keeps its data directory in RAM, and no production Postgres
+runs that way. A row read against another row in the same file is a comparison; the same
+row quoted on its own is a number about RAM. Publishable figures need real storage,
+which nothing in this directory can provide.
 
 **Every ceiling this work proposed turned out to be the measurement environment rather
 than Absurd** — disk fsync first, then a single connection's commit rate, then CPU. The
-harness has not found Absurd's limit; it has only ever found its own. Read every figure
-above with that in mind.
+harness has not found Absurd's limit; it has only ever found its own.
 
 **Repeats are good enough to rank things, not to confirm a small change.** Three runs of
-the same commit, 25 shared measurements: median CV 4.7%, mean 5.1%, worst 12.5%. The
-third run also sat systematically below the other two on several measurements, so part
-of that is a between-run bias rather than scatter. A difference smaller than about 12%
-is not evidence of anything.
+the same commit, 25 shared measurements: median CV 4.7%, mean 5.1%, worst 12.5%, one run
+systematically below the other two. Under about 12% is not evidence of anything, and a
+whole run reading low is usually the working point it inherited, not the machine.
 
 **Measure on a quiet machine on AC power.** The macOS indexer alone was worth 1-1.4
-cores sustained and moved measurements 6-10%. It ruins the saturation stages, which
-drive the box to its limit, and barely reaches the paced ones — so a run on a machine
-you are also using is worth reading for its rate stages and worth distrusting for the
-rest.
+cores sustained. It spoils the saturation stages, which drive the box to its limit, and
+barely reaches the paced ones.
 
-**`latency_under_load` measures the offer rate it then uses.** Its rungs are fractions
-of whatever rate its own ramp found the fleet could absorb, so read the `Offer rate:`
-line under its table first — two runs' rows only compare if their ramps agreed.
+**`latency_under_load` measures the offer rate it then uses, and stops at the lower of
+two limits.** Its rungs are fractions of whatever rate its own ramp got through cleanly,
+and a probe fails when the fleet falls behind OR when the producer — on the same box —
+never delivers the offer. Read the `Offer rate:` line and the ramp's `producer kept up`
+column first; two runs' rows only compare if their ramps agreed.
 
 ## Files
 

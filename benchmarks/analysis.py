@@ -26,7 +26,11 @@ BACKLOG_GROWTH_FLOOR_TASKS = 8
 # The table the commit-ceiling probe commits into. A REAL table, not a temporary one:
 # a temp table is not WAL-logged, so the probe would report memory speed as durable.
 COMMIT_PROBE_TABLE = "benchmark_commit_ceiling_probe"
-# Commits per timed round: ~0.15 s at the rate a warmed session sustains.
+# Commits per timed round. Sized on the volume, where ~2,000 commits/s made this a
+# 0.15 s round; on tmpfs a warmed session commits 204,000-241,000/s, so the same round
+# times 1.2-1.5 ms — the regime the count below exists to stay out of. Unchanged
+# anyway: every ceiling in `CLAUDE.md` was measured at 300, and re-sizing it makes none
+# of them comparable.
 DURABLE_PROBE_COMMITS = 300
 # The same window with fsync out of the way, where the durable count above would
 # be timing under a millisecond.

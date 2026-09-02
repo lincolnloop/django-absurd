@@ -476,6 +476,53 @@ def test_saturation_measurement_records_every_dispersion_of_its_reps() -> None:
     }
 
 
+def test_saturation_measurement_of_two_reps_reports_the_slower_one() -> None:
+    """An even rep count has two middles, and the summary takes the unlucky one.
+
+    Whichever way two real reps land, the measurement reports the LOWER throughput of
+    the pair — asserted as the low endpoint rather than as a level, since which rep is
+    faster is not something a test can arrange.
+    """
+    spec = measurement.MeasurementSpec(
+        name="smoke-two-reps-saturation",
+        mode="saturation",
+        task_path="tasks.noop_sync",
+        tasks=int(MEASURABLE_TASKS),
+        workers=1,
+        worker=runner.WorkerSpec(concurrency=1, poll_interval=0.05),
+        reps=2,
+        timeout_s=60,
+    )
+
+    result = measurement.run_measurement(spec)
+
+    assert (result["median"]["throughput_per_s"] == result["range_low"]) is True
+
+
+def test_rate_measurement_of_two_reps_reports_the_slower_one() -> None:
+    """The same rule, on the metric that runs the other way.
+
+    A rate measurement ranks on end-to-end p50, where LOW is the lucky rep, so the
+    unlucky middle is the high endpoint — the opposite index from a saturation
+    measurement, and taking the low one both times published the better rep.
+    """
+    spec = measurement.MeasurementSpec(
+        name="smoke-two-reps-rate",
+        mode="rate",
+        task_path="tasks.noop_sync",
+        rate_per_s=ABSORBABLE_RATE_PER_S,
+        duration_s=2.0,
+        workers=1,
+        worker=runner.WorkerSpec(concurrency=1, poll_interval=0.05),
+        reps=2,
+        timeout_s=120,
+    )
+
+    result = measurement.run_measurement(spec)
+
+    assert (result["median"]["end_to_end_p50_s"] == result["range_high"]) is True
+
+
 def test_saturation_rep_records_what_its_tasks_cost_in_commits() -> None:
     """A task rate is a commit rate in disguise, and this is the exchange rate.
 

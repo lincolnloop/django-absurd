@@ -59,8 +59,9 @@ STAGE_DESCRIPTIONS = {
 
 # The depth every rung sharing a table is measured at, so `--tasks` is a comparability
 # key rather than a size: 20,000 was measured and REFUSED — it moves the medians
-# 0.42-0.60x on depth alone, tightens no CV, and costs up to 10x the wall clock. See
-# `benchmarks/CLAUDE.md`.
+# 0.42-0.60x on depth alone, leaves the cross-rep CV inside the bracket 5,000 already
+# spanned while making the within-rep profile noisier, and costs up to 10x the wall
+# clock. See `benchmarks/CLAUDE.md`.
 SATURATION_TASKS = 5000
 SATURATION_TIMEOUT_S = 900.0
 # Read back off the measurement default rather than restated, so a results file
@@ -86,7 +87,11 @@ RATE_RAMP_STEP = 1.5
 RATE_RAMP_SECONDS = 20.0
 # Reps this close are not called unstable however far apart they read relatively: a
 # rate measurement ranks on a latency, which every relative dispersion divides by.
-RATE_SPREAD_FLOOR_S = 0.15
+# 10 ms and not the 150 ms this started at: `latency_under_load`'s rungs measure p50s of
+# 9-30 ms and `poll_0.05` 39-42 ms, so a floor above their whole healthy range put `~`
+# out of reach of every one of them and an unmarked rate table said nothing. Under the
+# smallest rung's own p50, so a rep that genuinely lurched still clears it.
+RATE_SPREAD_FLOOR_S = 0.010
 IDLE_PROBE_SECONDS = 30.0
 # A rate is divided by its own window, so a zero-length one has nothing to report.
 SMALLEST_MEASURABLE_DURATION_S = 0.001
@@ -556,6 +561,14 @@ def build_async_dispatch_measurements(
 def build_process_scaling_measurements(
     winner: runner.WorkerSpec, max_workers: int
 ) -> list[measurement.MeasurementSpec]:
+    """The worker ladder, each rung preloaded with 2,000 tasks per worker.
+
+    Sized per rung so a ten-worker fleet still has a drain long enough to trim, which
+    CONFOUNDS the ladder: its rungs run at 4,000 to 20,000 tasks and a deeper backlog
+    is slower, so no rate here compares with the rate above it and the report marks
+    the scaling efficiency it derives. Fixing it means one depth for every rung — see
+    `benchmarks/CLAUDE.md`, which also records the direction the confound points.
+    """
     return [
         measurement.MeasurementSpec(
             name=f"workers_{count}",
@@ -871,7 +884,7 @@ def summarize_producer_reps(
     valid = sorted(
         (rep for rep in reps if rep["valid"]), key=lambda rep: rep["enqueues_per_s"]
     )
-    median: dict[str, t.Any] = valid[(len(valid) - 1) // 2] if valid else {}
+    median = measurement.pick_median_rep(valid, "enqueues_per_s")
     # The shared helpers rather than a second copy of the arithmetic, which needs
     # every dispersion guard fixed in two places.
     cv = measurement.measure_cv(valid, "enqueues_per_s")

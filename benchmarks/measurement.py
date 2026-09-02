@@ -10,6 +10,10 @@ import runner
 from django_absurd.flush import truncate_queue_tables
 
 DRAIN_POLL_INTERVAL_S = 0.5
+# Ranking keys a SMALLER value is the better measurement of. Everything else here is
+# a rate, where bigger is better; only an end-to-end latency runs the other way, and
+# which way it runs is what says which of two middle reps is the unlucky one.
+LOWER_IS_BETTER_RANKING_KEYS = frozenset({"end_to_end_p50_s"})
 
 
 class MeasurementTimeoutError(Exception):
@@ -153,9 +157,7 @@ def summarize_reps(
     valid = sorted(
         (rep for rep in reps if rep["valid"]), key=lambda rep: rep[ranking_key]
     )
-    # Lower of the two middles at an even rep count: the upper one is the BEST rep,
-    # and a measurement must not be summarized by its luckiest one.
-    median: dict[str, t.Any] = valid[(len(valid) - 1) // 2] if valid else {}
+    median = pick_median_rep(valid, ranking_key)
     absolute_spread = measure_absolute_spread(valid, ranking_key)
     cv = measure_cv(valid, ranking_key)
     low, high = measure_rep_range(valid, ranking_key)
@@ -175,6 +177,23 @@ def summarize_reps(
         "unstable": is_measurement_unstable(spec, cv, absolute_spread),
         "host": host.collect_host_context(),
     }
+
+
+def pick_median_rep(
+    valid: list[dict[str, t.Any]], ranking_key: str
+) -> dict[str, t.Any]:
+    """The middle rep of reps already sorted ascending, resolving an even count
+    towards the WORSE of the two middles.
+
+    Which middle that is depends on the metric, and taking the lower one both times
+    summarized a rate measurement by its LUCKIEST rep: a throughput and an enqueue
+    rate are better high, an end-to-end latency is better low.
+    """
+    if not valid:
+        return {}
+    if ranking_key in LOWER_IS_BETTER_RANKING_KEYS:
+        return valid[len(valid) // 2]
+    return valid[(len(valid) - 1) // 2]
 
 
 def measure_spread(
