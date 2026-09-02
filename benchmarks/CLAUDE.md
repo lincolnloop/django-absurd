@@ -474,11 +474,13 @@ repeated, so when most rungs are marked it lands on the slowest survivor and eve
 number in the later stage was measured at it — which the report prints under that
 stage's heading.
 
-## Comparing two runs when the `absurd-sdk` pin moves
+## Comparing two runs: refactors, version bumps, bisection
 
-Copy `results/` aside, re-run `uv run python -m stages`, and compare the two
-directories. The stage filenames are stable, so `diff -r` lines the runs up — but part
-of what it lines up is run-to-run spread rather than the SDK. Read in this order:
+This is what the rig is FOR — deciding whether a change cost throughput, not producing a
+headline number. Copy `results/` aside, re-run `uv run python -m stages`, and compare
+the two directories. The stage filenames are stable, so `diff -r` lines the runs up —
+but part of what it lines up is run-to-run spread rather than the change. Read in this
+order:
 
 1. **the host block's `cluster_name`, then the `commit_ceiling_durable` blocks.** Both
    runs must say `bench-tmpfs`; a three-figure ceiling means one landed on a server with
@@ -487,10 +489,26 @@ of what it lines up is run-to-run spread rather than the SDK. Read in this order
    than reading on.
 2. **the structural counts** — `commits_per_task` per measurement, each statement's
    `calls_per_task` in `statement_stats`, `shape_connections`. These are exact and
-   portable, so movement in them is the SDK and is worth chasing; a claim path that grew
-   a statement shows here and nowhere else.
-3. **the rank ordering** within each stage, which held across every run. A rung that
+   portable, so movement in them is the change itself and is worth chasing; a claim path
+   that grew a statement shows here and nowhere else.
+3. **the `options` and `calibration` blocks.** Same flags, or the runs measured
+   different experiments — a deeper queue is slower, so a saturation rate does not
+   compare across `--tasks`. And a stage that calibrates inherits the winning rung, so a
+   run calibrated at concurrency 8 and one at 16 measured DIFFERENT configurations under
+   the same measurement names. That is the likeliest way to get a confident wrong answer
+   out of two runs.
+4. **the rank ordering** within each stage, which held across every run. A rung that
    changed places is a finding; a rung that changed by 10% and kept its place is not.
+
+**The floor: a difference under about 12% is not evidence of anything.** Three runs of
+identical code gave a median CV of 4.7% and a worst of 12.5%, and the third sat
+systematically below the other two, so there is between-run bias on top of scatter. Only
+a delta clearing that floor on SEVERAL measurements at once, in one direction, is a
+change. Check `load_before`/`load_after` too: a run at load 6.7 measured 6-10% low
+against one at 2.5.
+
+Ignore `latency_under_load` at `rate_50pct` and above — those rows carry no information;
+see the known defect below.
 
 A partial re-run must include the stage it depends on, or it errors saying so.
 
