@@ -71,6 +71,17 @@ def normalize_measured_numbers(output: str) -> str:
     return re.sub(r"\d+\.\d+(?=[ %]|ms)", "N", output)
 
 
+def strip_measurement_marks(output: str) -> str:
+    """Console output with the bracketed row marks removed.
+
+    Whether a smoke-sized measurement comes out invalid is a property of the run
+    rather than of the driver — a one-second offer at a one-second poll interval
+    sometimes lands too few completions to divide by — so a test about anything else
+    must not assert it. The stage that measures nothing on purpose asserts them.
+    """
+    return re.sub(r" \[[A-Z ]+\]", "", output)
+
+
 def normalize_measured_durations(rep: dict[str, t.Any]) -> dict[str, t.Any]:
     """A refused rep with the durations in its error blanked, so it reads as a literal.
 

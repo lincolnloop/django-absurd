@@ -7,9 +7,40 @@ DEFAULT_RESULTS_DIR = Path(__file__).resolve().parent / "results"
 
 TABLE_HEADER = (
     "| measurement | mode | workers | concurrency | batch | poll | tasks/s "
-    "| e2e p50 s | e2e p90 s | e2e p99 s | spread | notes |"
+    "| e2e p50 s | e2e p90 s | e2e p99 s | rep range | spread | cv | notes |"
 )
-TABLE_RULE = "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
+TABLE_RULE = "| " + " | ".join(["---"] * 14) + " |"
+PRODUCER_TABLE_HEADER = (
+    "| mode | enqueues | enqueues/s | enqueue p50 s | enqueue p99 s "
+    "| rep range | spread | cv | notes |"
+)
+PRODUCER_TABLE_RULE = "| " + " | ".join(["---"] * 9) + " |"
+
+# Printed once for the whole document rather than under each table: it is how to read
+# every row here, and nothing in it varies by stage.
+MARK_LEGEND = (
+    (
+        "Marks: `!` invalid — a rep measured something other than what was asked (a "
+        "redelivery, a task that never completed, a window too short to divide by, "
+        "an under-offered rate). `~` unstable — the reps measured the right thing "
+        "and disagreed, beyond the measurement's CV limit. `?` — fewer than two "
+        "valid reps, so dispersion was never measured. A marked measurement stays "
+        "in every table and in every number derived below one."
+    ),
+    "",
+    (
+        "`rep range`, `spread` and `cv` are over the metric the reps were ranked on: "
+        "tasks/s in saturation mode, end-to-end p50 s in rate mode, enqueues/s in "
+        "producer mode. `spread` is `(max - min) / median`, shown because the "
+        "endpoints are what a reader wants; `cv` is stdev/mean and is what `~` is "
+        "thresholded on, because a range grows with `--reps` on unchanged data "
+        "and a CV does not."
+    ),
+)
+
+# The metric every saturation-mode derivation divides, named once: the throughput
+# ratio, the scaling efficiency and the checkpoint multiplier all reach for this one.
+THROUGHPUT_KEY = "throughput_per_s"
 
 # Named by the flag that sets each one, so the header reads back as the command that
 # produced it. Alphabetical: no ordering of these means anything to a reader.
@@ -58,6 +89,8 @@ def describe_host(stages: list[dict[str, t.Any]]) -> list[str]:
             f"absurd-sdk {context['absurd_sdk']}"
         ),
         f"- postgres: {context['postgres']}",
+        "",
+        *MARK_LEGEND,
     ]
 
 
@@ -140,11 +173,8 @@ def render_producer_stage(stage: dict[str, t.Any]) -> list[str]:
         "",
         f"## {render_heading(stage['stage'])}",
         "",
-        (
-            "| mode | enqueues | enqueues/s | enqueue p50 s | enqueue p99 s "
-            "| spread | notes |"
-        ),
-        "| --- | --- | --- | --- | --- | --- | --- |",
+        PRODUCER_TABLE_HEADER,
+        PRODUCER_TABLE_RULE,
         *[
             render_row(
                 [
@@ -153,8 +183,10 @@ def render_producer_stage(stage: dict[str, t.Any]) -> list[str]:
                     f"{entry['median'].get('enqueues_per_s', 0.0):.1f}",
                     f"{entry['median'].get('enqueue_p50_s', 0.0):.5f}",
                     f"{entry['median'].get('enqueue_p99_s', 0.0):.5f}",
-                    format_spread(entry["spread"]),
-                    "⚠ flagged" if entry["flagged"] else "",
+                    format_rep_range(entry),
+                    format_dispersion(entry["spread"]),
+                    format_dispersion(entry["cv"]),
+                    describe_marks(entry),
                 ]
             )
             for entry in stage["measurements"]
@@ -182,8 +214,10 @@ def render_measurement_row(entry: dict[str, t.Any]) -> str:
             f"{median.get('end_to_end_p50_s', 0.0):.4f}" if paced else "",
             f"{median.get('end_to_end_p90_s', 0.0):.4f}" if paced else "",
             f"{median.get('end_to_end_p99_s', 0.0):.4f}" if paced else "",
-            format_spread(entry["spread"]),
-            "⚠ flagged" if entry["flagged"] else "",
+            format_rep_range(entry),
+            format_dispersion(entry["spread"]),
+            format_dispersion(entry["cv"]),
+            describe_marks(entry),
         ]
     )
 
@@ -214,74 +248,57 @@ def render_idle_probes(stage: dict[str, t.Any]) -> list[str]:
 
 
 def build_derived_lines(stage: str, measurements: list[dict[str, t.Any]]) -> list[str]:
-    unflagged = [entry for entry in measurements if not entry["flagged"]]
-    if not unflagged:
-        return ["", "No unflagged measurements; nothing derived."]
+    """Every measurement derives, marked or not.
+
+    Nothing is filtered out here: a measurement excluded from the arithmetic is a
+    finding deleted, and an unstable one is a finding about the system rather than a
+    broken rep. What a marked measurement changes is the SHAPE of what it derives —
+    see `describe_quotient`, which carries the reps' own endpoints through the
+    division instead of publishing a point estimate the reps never agreed on.
+    """
     if stage == "process_scaling":
-        return build_scaling_efficiency_lines(unflagged)
+        return build_scaling_efficiency_lines(measurements)
     if stage == "sync_vs_async":
-        return build_async_ratio_lines(unflagged)
+        return build_async_ratio_lines(measurements)
     if stage == "checkpoint_cost":
-        return build_checkpoint_multiplier_lines(unflagged)
-    if all(entry["spec"]["mode"] == "rate" for entry in unflagged):
+        return build_checkpoint_multiplier_lines(measurements)
+    if all(entry["spec"]["mode"] == "rate" for entry in measurements):
         # In rate mode throughput is set by the OFFER, so a throughput ratio there
         # only restates the configured rate; latency is what those vary.
-        return build_ratio_lines(
-            unflagged, measurements, "end_to_end_p50_s", "End-to-end p50"
-        )
-    return build_ratio_lines(unflagged, measurements, "throughput_per_s", "Throughput")
+        return build_ratio_lines(measurements, "end_to_end_p50_s", "End-to-end p50")
+    return build_ratio_lines(measurements, THROUGHPUT_KEY, "Throughput")
 
 
 def build_scaling_efficiency_lines(measurements: list[dict[str, t.Any]]) -> list[str]:
     single = next(
-        (
-            entry["median"]["throughput_per_s"]
-            for entry in measurements
-            if entry["spec"]["workers"] == 1
-        ),
-        None,
+        (entry for entry in measurements if entry["spec"]["workers"] == 1), None
     )
-    if not single:
-        return build_ratio_lines(
-            measurements, measurements, "throughput_per_s", "Throughput"
-        )
-    return [
-        "",
-        "Scaling efficiency `T(N) / (N x T(1))` (flagged measurements excluded):",
-        "",
-        *[
-            f"- {entry['spec']['workers']} worker(s): "
-            f"{read_efficiency(entry, single):.2f}"
-            for entry in measurements
-        ],
-    ]
-
-
-def read_efficiency(entry: dict[str, t.Any], single_worker_throughput: float) -> float:
-    workers = entry["spec"]["workers"]
-    throughput = entry["median"]["throughput_per_s"]
-    return float(throughput / (workers * single_worker_throughput))
+    if single is None or not single["median"].get(THROUGHPUT_KEY, 0.0):
+        return build_ratio_lines(measurements, THROUGHPUT_KEY, "Throughput")
+    lines = ["", "Scaling efficiency `T(N) / (N x T(1))`:", ""]
+    for entry in measurements:
+        workers = entry["spec"]["workers"]
+        efficiency = describe_quotient(entry, single, THROUGHPUT_KEY, workers, "")
+        lines.append(f"- {workers} worker(s): {efficiency}")
+    return lines
 
 
 def build_async_ratio_lines(measurements: list[dict[str, t.Any]]) -> list[str]:
-    paired: dict[int, dict[str, float]] = {}
+    paired: dict[int, dict[str, dict[str, t.Any]]] = {}
     for entry in measurements:
         flavour = "async" if entry["spec"]["task_path"].endswith("_async") else "sync"
         concurrency = entry["spec"]["worker"]["concurrency"]
-        paired.setdefault(concurrency, {})[flavour] = entry["median"][
-            "throughput_per_s"
-        ]
+        paired.setdefault(concurrency, {})[flavour] = entry
     return [
         "",
-        (
-            "Async / sync throughput ratio at the same IO wait "
-            "(flagged measurements excluded):"
-        ),
+        "Async / sync throughput ratio at the same IO wait:",
         "",
         *[
-            f"- concurrency {concurrency}: {pair['async'] / pair['sync']:.2f}x"
+            f"- concurrency {concurrency}: "
+            f"{describe_quotient(pair['async'], pair['sync'], THROUGHPUT_KEY, 1, 'x')}"
             for concurrency, pair in sorted(paired.items())
-            if {"async", "sync"} <= pair.keys() and pair["sync"]
+            if {"async", "sync"} <= pair.keys()
+            and pair["sync"]["median"].get(THROUGHPUT_KEY, 0.0)
         ],
     ]
 
@@ -289,66 +306,111 @@ def build_async_ratio_lines(measurements: list[dict[str, t.Any]]) -> list[str]:
 def build_checkpoint_multiplier_lines(
     measurements: list[dict[str, t.Any]],
 ) -> list[str]:
-    throughput = {
-        entry["spec"]["task_path"]: entry["median"]["throughput_per_s"]
-        for entry in measurements
-    }
-    flat = throughput.get("tasks.noop_sync")
-    workflow = throughput.get("tasks.run_steps")
-    if not flat or not workflow:
-        return build_ratio_lines(
-            measurements, measurements, "throughput_per_s", "Throughput"
-        )
+    by_task_path = {entry["spec"]["task_path"]: entry for entry in measurements}
+    flat = by_task_path.get("tasks.noop_sync")
+    workflow = by_task_path.get("tasks.run_steps")
+    if (
+        flat is None
+        or workflow is None
+        or not workflow["median"].get(THROUGHPUT_KEY, 0.0)
+    ):
+        return build_ratio_lines(measurements, THROUGHPUT_KEY, "Throughput")
     return [
         "",
-        "Checkpoint cost (flagged measurements excluded):",
+        "Checkpoint cost:",
         "",
-        f"- one `run_steps` task costs {flat / workflow:.2f}x a flat no-op task",
+        (
+            f"- one `run_steps` task costs "
+            f"{describe_quotient(flat, workflow, THROUGHPUT_KEY, 1, 'x')} "
+            f"a flat no-op task"
+        ),
     ]
 
 
 def build_ratio_lines(
-    measurements: list[dict[str, t.Any]],
-    all_measurements: list[dict[str, t.Any]],
-    metric_key: str,
-    label: str,
+    measurements: list[dict[str, t.Any]], metric_key: str, label: str
 ) -> list[str]:
     reference = measurements[0]
-    base = reference["median"].get(metric_key, 0.0)
-    if not base:
+    if not reference["median"].get(metric_key, 0.0):
         return ["", "Reference measurement measured nothing; nothing derived."]
     return [
         "",
-        (
-            f"{label} relative to `{reference['spec']['name']}` "
-            f"({describe_exclusions(measurements, all_measurements)}):"
-        ),
+        f"{label} relative to `{reference['spec']['name']}`:",
         "",
         *[
-            f"- `{entry['spec']['name']}`: {entry['median'][metric_key] / base:.2f}x"
+            f"- `{entry['spec']['name']}`: "
+            f"{describe_quotient(entry, reference, metric_key, 1, 'x')}"
             for entry in measurements
         ],
     ]
 
 
-def describe_exclusions(
-    measurements: list[dict[str, t.Any]], all_measurements: list[dict[str, t.Any]]
+def describe_quotient(
+    entry: dict[str, t.Any],
+    base_entry: dict[str, t.Any],
+    metric_key: str,
+    scale: float,
+    suffix: str,
 ) -> str:
-    """Name a baseline that moved: dropping a flagged first entry silently rebases
-    every ratio in the block, which would otherwise be invisible between runs."""
-    first = all_measurements[0]["spec"]["name"]
-    if first == measurements[0]["spec"]["name"]:
-        return "flagged measurements excluded"
+    """`entry / (scale x base_entry)`, plus the interval its reps span.
+
+    A quotient of two medians is a point estimate whichever way its inputs wobbled: a
+    scaling efficiency measured against a base whose reps ran 209-501 is a range, and
+    printing only the middle of it publishes a precision nobody measured.
+    """
+    base = base_entry["median"][metric_key] * scale
+    point = f"{entry['median'].get(metric_key, 0.0) / base:.2f}{suffix}"
+    low, high = read_rep_range(entry, metric_key)
+    base_low, base_high = read_rep_range(base_entry, metric_key)
+    if base_low <= 0 or (low == high and base_low == base_high):
+        return point
     return (
-        f"flagged measurements excluded; the stage's first measurement "
-        f"`{first}` is flagged, "
-        f"so the baseline moved"
+        f"{point} (reps {low / (base_high * scale):.2f}-"
+        f"{high / (base_low * scale):.2f}{suffix})"
     )
 
 
-def format_spread(spread: float | None) -> str:
-    # None, not 0.0, when a measurement had no positive median to divide by.
-    return "n/a" if spread is None else f"{spread:.1%}"
+def read_rep_range(entry: dict[str, t.Any], metric_key: str) -> tuple[float, float]:
+    """The reps' endpoints for `metric_key`, or the median rep's own value twice.
+
+    Endpoints are recorded for the metric the reps were RANKED on and no other, so a
+    rate measurement appearing in a throughput block has none to carry — and neither
+    does a measurement no rep survived.
+    """
+    point = float(entry["median"].get(metric_key, 0.0))
+    if entry["ranking_key"] != metric_key or entry["range_low"] is None:
+        return (point, point)
+    return (float(entry["range_low"]), float(entry["range_high"]))
+
+
+def describe_marks(entry: dict[str, t.Any]) -> str:
+    """What is wrong with a row, said on the row rather than by deleting it."""
+    marks = []
+    if entry["invalid"]:
+        marks.append("!")
+    if entry["unstable"]:
+        marks.append("~")
+    if entry["cv"] is None:
+        marks.append("?")
+    return " ".join(marks)
+
+
+def format_rep_range(entry: dict[str, t.Any]) -> str:
+    """The endpoints the reps actually produced, at whatever magnitude they are.
+
+    One format for both units: a throughput reads 209.3-501.2 and a latency 0.012-0.05,
+    where a fixed number of decimals would round one of the two into a single number.
+    """
+    if entry["range_low"] is None:
+        return "n/a"
+    return f"{entry['range_low']:.4g}-{entry['range_high']:.4g}"
+
+
+def format_dispersion(value: float | None) -> str:
+    # None, not 0.0, when there were fewer than two reps to compare, or no positive
+    # middle to divide by: a measurement that measured nothing must not read as the
+    # steadiest one in its stage.
+    return "n/a" if value is None else f"{value:.1%}"
 
 
 def render_row(fields: list[str]) -> str:

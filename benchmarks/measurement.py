@@ -1,4 +1,5 @@
 import dataclasses
+import statistics
 import time
 import typing as t
 
@@ -33,11 +34,17 @@ class MeasurementSpec:
     task_kwargs: dict[str, t.Any] | None = None
     reps: int = 3
     timeout_s: float = 300.0
-    spread_limit: float = 0.15
-    # Absolute max-min, in the ranking key's own units, under which `spread_limit` no
-    # longer applies. Relative spread divides by the median, so it RISES as a
-    # measurement gets faster: reps of 67/89/173ms read as 119%. Zero keeps the pure
-    # relative test, which is the historical behaviour.
+    # Sample stdev over the mean, and not the max-min range this used to threshold: a
+    # range grows with the rep count on unchanged data (5.3% at n=3, 14.1% at n=50 on a
+    # fixed process, flagging 0.2% to 30.3% of the time) and `--reps` is a live flag,
+    # so asking for more repeats made good data look worse. A CV is flat over the same
+    # sweep (2.8% to 3.1%), and 0.10 sits in the measured gap between settings that
+    # repeat (1.0-3.4%) and ones that genuinely lurch (25-50%).
+    cv_limit: float = 0.10
+    # Absolute max-min, in the ranking key's own units, under which `cv_limit` no
+    # longer applies. Both dispersion statistics divide by a middle, so they RISE as a
+    # measurement gets faster: reps of 67/89/173ms read as 119% spread. Zero keeps the
+    # pure relative test, which is the historical behaviour.
     spread_floor: float = 0.0
 
 
@@ -124,17 +131,23 @@ def summarize_reps(
     # Lower of the two middles at an even rep count: the upper one is the BEST rep,
     # and a measurement must not be summarized by its luckiest rep.
     median: dict[str, t.Any] = valid[(len(valid) - 1) // 2] if valid else {}
-    spread = measure_spread(valid, median, ranking_key)
     absolute_spread = measure_absolute_spread(valid, ranking_key)
+    cv = measure_cv(valid, ranking_key)
+    low, high = measure_rep_range(valid, ranking_key)
     return {
         "spec": dataclasses.asdict(spec),
         "reps": reps,
+        # Named here rather than re-derived from the mode by every reader: the range,
+        # the spread and the CV are all over this one metric and nothing else.
+        "ranking_key": ranking_key,
         "median": median,
-        "spread": spread,
+        "spread": measure_spread(valid, median, ranking_key),
         "absolute_spread": absolute_spread,
-        "flagged": is_measurement_unreliable(
-            spec, reps, valid, spread, absolute_spread
-        ),
+        "cv": cv,
+        "range_low": low,
+        "range_high": high,
+        "invalid": is_measurement_invalid(reps, valid),
+        "unstable": is_measurement_unstable(spec, cv, absolute_spread),
         "host": host.collect_host_context(),
     }
 
@@ -168,22 +181,64 @@ def measure_absolute_spread(
     return float(max(values) - min(values))
 
 
-def is_measurement_unreliable(
-    spec: MeasurementSpec,
-    reps: list[dict[str, t.Any]],
-    valid: list[dict[str, t.Any]],
-    spread: float | None,
-    absolute_spread: float | None,
+def measure_cv(valid: list[dict[str, t.Any]], ranking_key: str) -> float | None:
+    """Sample stdev over the mean, or ``None`` with fewer than two reps to compare.
+
+    The dispersion statistic the instability flag is thresholded on. Unlike the spread
+    it does not grow with the rep count, so raising `--reps` sharpens the estimate
+    instead of moving the goalposts.
+    """
+    if len(valid) < 2:
+        return None
+    values = [rep[ranking_key] for rep in valid]
+    mean = statistics.fmean(values)
+    if mean <= 0:
+        return None
+    return float(statistics.stdev(values) / mean)
+
+
+def measure_rep_range(
+    valid: list[dict[str, t.Any]], ranking_key: str
+) -> tuple[float | None, float | None]:
+    """The reps' own endpoints, so a report can print `209-501` rather than a percent.
+
+    The percentage a spread reduces to is what a reader has to un-reduce; these are
+    the two numbers the measurement actually produced.
+    """
+    if not valid:
+        return (None, None)
+    values = [rep[ranking_key] for rep in valid]
+    return (float(min(values)), float(max(values)))
+
+
+def is_measurement_invalid(
+    reps: list[dict[str, t.Any]], valid: list[dict[str, t.Any]]
 ) -> bool:
-    """Every rep votes, not only the median one: a rep that under-offered has a LOWER
+    """Whether a rep measured something OTHER than what the spec asked for.
+
+    Every rep votes, not only the median one: a rep that under-offered has a LOWER
     latency, so it sorts away from the median and would never be looked at.
     """
-    if not valid or len(valid) != len(reps) or spread is None:
-        return True
     return (
-        (spread > spec.spread_limit and (absolute_spread or 0.0) > spec.spread_floor)
+        not valid
+        or len(valid) != len(reps)
         or any(rep.get("extra_runs", 0) > 0 for rep in valid)
         or any(rep.get("missing_tasks", 0) != 0 for rep in valid)
         or any(rep.get("degenerate_window", False) for rep in valid)
         or any(rep.get("offered_ok", True) is False for rep in valid)
     )
+
+
+def is_measurement_unstable(
+    spec: MeasurementSpec, cv: float | None, absolute_spread: float | None
+) -> bool:
+    """Whether the reps measured the right thing and disagreed about the answer.
+
+    Not the same condition as invalidity and not the same remedy: an unstable
+    measurement is a finding about the system, an invalid one is a broken rep. An
+    unmeasured dispersion (one valid rep) is neither, and reads as `n/a` in the report
+    rather than as a disagreement nobody observed.
+    """
+    if cv is None:
+        return False
+    return cv > spec.cv_limit and (absolute_spread or 0.0) > spec.spread_floor

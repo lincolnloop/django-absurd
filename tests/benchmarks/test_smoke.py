@@ -131,7 +131,9 @@ def test_reports_the_latency_of_the_paced_offer_a_rate_stage_made(
 # that succeeds; the last four want one measurement at a size of their own — repeated,
 # napped, too small to slice, or big enough to slice — which the smallest stage would
 # charge six of.
-def test_saturation_measurement_flags_a_task_that_outlived_its_claim_lease() -> None:
+def test_saturation_measurement_invalidates_a_task_that_outlived_its_claim_lease() -> (
+    None
+):
     spec = measurement.MeasurementSpec(
         name="smoke-redelivery",
         mode="saturation",
@@ -147,10 +149,10 @@ def test_saturation_measurement_flags_a_task_that_outlived_its_claim_lease() -> 
 
     assert result["median"]["extra_runs"] == 1
     assert result["median"]["max_attempt"] == 2
-    assert result["flagged"] is True
+    assert result["invalid"] is True
 
 
-def test_saturation_measurement_flags_tasks_that_never_completed() -> None:
+def test_saturation_measurement_invalidates_tasks_that_never_completed() -> None:
     spec = measurement.MeasurementSpec(
         name="smoke-missing",
         mode="saturation",
@@ -166,7 +168,7 @@ def test_saturation_measurement_flags_tasks_that_never_completed() -> None:
 
     assert result["median"]["missing_tasks"] == 1
     assert result["median"]["extra_runs"] == 0
-    assert result["flagged"] is True
+    assert result["invalid"] is True
 
 
 def test_saturation_measurement_refuses_a_backlog_that_never_drained() -> None:
@@ -197,10 +199,11 @@ def test_saturation_measurement_refuses_a_backlog_that_never_drained() -> None:
 
 
 def test_saturation_measurement_refuses_a_rep_the_host_slept_through() -> None:
-    """A napped rep leaves nothing behind: no median, no spread, and a flag.
+    """A napped rep leaves nothing behind: no median, no dispersion, no endpoints.
 
     The drain phase is wall time, so a host that suspends mid-drain would publish a
-    throughput measured over a window it was unconscious for.
+    throughput measured over a window it was unconscious for. It is invalid rather
+    than unstable: nothing disagreed, there was simply nothing left to compare.
     """
     spec = measurement.MeasurementSpec(
         name="smoke-napped",
@@ -221,7 +224,11 @@ def test_saturation_measurement_refuses_a_rep_the_host_slept_through() -> None:
         "median": result["median"],
         "spread": result["spread"],
         "absolute_spread": result["absolute_spread"],
-        "flagged": result["flagged"],
+        "cv": result["cv"],
+        "range_low": result["range_low"],
+        "range_high": result["range_high"],
+        "invalid": result["invalid"],
+        "unstable": result["unstable"],
     } == {
         "reps": [
             {
@@ -237,17 +244,22 @@ def test_saturation_measurement_refuses_a_rep_the_host_slept_through() -> None:
         "median": {},
         "spread": None,
         "absolute_spread": None,
-        "flagged": True,
+        "cv": None,
+        "range_low": None,
+        "range_high": None,
+        "invalid": True,
+        "unstable": False,
     }
 
 
-def test_saturation_measurement_spreads_its_reps_two_ways() -> None:
-    """Both spreads are recorded once there are reps to compare, never one of them.
+def test_saturation_measurement_records_every_dispersion_of_its_reps() -> None:
+    """All four are recorded once there are reps to compare, never some of them.
 
-    They disagree exactly where it matters — a fast measurement reads tight in absolute
-    terms and noisy in relative ones — which is why the flag consults both. Asserted as
-    measured at all, never as small: stability is not something a test can demand of a
-    real worker.
+    They say different things about the same reps: the CV is what instability is
+    thresholded on, the absolute spread is the floor that keeps a tiny difference from
+    tripping it, and the endpoints are what a report prints instead of a percentage.
+    Asserted as measured at all, never as small: stability is not something a test can
+    demand of a real worker.
     """
     spec = measurement.MeasurementSpec(
         name="smoke-repeated",
@@ -266,7 +278,19 @@ def test_saturation_measurement_spreads_its_reps_two_ways() -> None:
         "reps": len(result["reps"]),
         "measured_a_spread": isinstance(result["spread"], float),
         "measured_an_absolute_spread": isinstance(result["absolute_spread"], float),
-    } == {"reps": 2, "measured_a_spread": True, "measured_an_absolute_spread": True}
+        "measured_a_cv": isinstance(result["cv"], float),
+        "endpoints_bracket_the_median": (
+            result["range_low"]
+            <= result["median"]["throughput_per_s"]
+            <= result["range_high"]
+        ),
+    } == {
+        "reps": 2,
+        "measured_a_spread": True,
+        "measured_an_absolute_spread": True,
+        "measured_a_cv": True,
+        "endpoints_bracket_the_median": True,
+    }
 
 
 def test_saturation_rep_profiles_its_throughput_across_the_drain() -> None:

@@ -23,7 +23,7 @@ repo root's.
                                      v
    +------------------------- measurement.py -------------------------+
    | one measurement = one configuration: run N reps from a clean     |
-   | queue, keep the median rep, flag anything untrustworthy          |
+   | queue, keep the median rep, mark anything untrustworthy         |
    +------------|-------------------------------------|---------------+
                 v                                     v
    +----- producer.py ------+           +--------- runner.py --------+
@@ -214,7 +214,7 @@ exception and stays legal — no simulated IO is a real point on that experiment
 measurement's producer runs on the same machine as its workers. If latency_under_load
 aimed at the throughput of a process_scaling result that used every core, the producer
 would have no CPU left to actually offer tasks that fast. The measurement would then
-describe a load that was never applied and be flagged for under-offering. So it
+describe a load that was never applied and be marked invalid for under-offering. So it
 calibrates from the fastest process_scaling result at or below `RATE_WORKER_CAP` (half
 the cores), which leaves the producer room to hit its target.
 
@@ -241,7 +241,9 @@ a 30 s idle probe), and every measurement's `spec` carries the size it ran at. T
 set prints on one line of the report header, and a flag two stage files disagree about
 reads as `mixed (8, 60)`, the way a mixed git SHA does — running one stage again at
 another size is a documented workflow. A file written before this block existed has
-none, and the report will not render it; re-measure rather than hand-adding one.
+none, and the report will not render it; re-measure rather than hand-adding one. The
+same goes for one written before a measurement carried `invalid`, `unstable`, `cv` and
+its rep endpoints: it records a single `flagged` the report no longer reads.
 
 ## The measurement model
 
@@ -291,36 +293,64 @@ rows can never inflate it.
 **The suspension guard.** A measurement brackets its measured phase with both
 `time.perf_counter()` and `time.time()`. If wall time outruns monotonic time by more
 than two seconds the host napped or stalled mid-phase, the rep is thrown away, and the
-measurement is flagged. A wall clock stepping _backwards_ is an NTP correction, not a
-nap, and is tolerated.
+measurement is marked invalid. A wall clock stepping _backwards_ is an NTP correction,
+not a nap, and is tolerated.
 
-**Flagging is the honesty mechanism, not a failure.** Every rep votes, not just the
-median one: a rep that under-offered has a _lower_ latency, so it sorts away from the
-median and would never be looked at. A measurement is flagged when:
+**Marking is the honesty mechanism, and nothing is suppressed.** Every rep votes, not
+just the median one: a rep that under-offered has a _lower_ latency, so it sorts away
+from the median and would never be looked at. Two unrelated things can be wrong with a
+measurement, so two booleans record them — they mean different things and they call for
+different responses:
 
-- its spread across reps exceeds 15% (spread is measured over throughput in saturation
-  mode and over end-to-end p50 in rate mode, matching whichever metric that mode ranks
-  its reps by);
-- any rep was suspended mid-phase;
-- any rep saw `extra_runs > 0`, i.e. a redelivery;
-- a saturation measurement finished with fewer completed tasks than it enqueued
-  (`missing_tasks`): a terminally failed task still satisfies the drain predicate, so
-  without this the sample shrinks silently;
-- any rep's trimmed completion window was too short to divide by (`degenerate_window`),
-  which would otherwise publish either a zero or an arbitrarily large rate;
-- the rate producer could not sustain 98% of its target offer.
+- **`invalid`** — a rep measured something OTHER than what was asked. Any rep was
+  suspended mid-phase; any rep saw `extra_runs > 0`, i.e. a redelivery; a saturation
+  measurement finished with fewer completed tasks than it enqueued (`missing_tasks`),
+  since a terminally failed task still satisfies the drain predicate and the sample
+  would shrink silently; a rep's trimmed completion window was too short to divide by
+  (`degenerate_window`), which would otherwise publish either a zero or an arbitrarily
+  large rate; or the rate producer could not sustain 98% of its target offer. A hard
+  error — re-measure.
+- **`unstable`** — the reps measured the right thing and disagreed about the answer.
+  That is a finding about the system, and often the most interesting one in the run.
 
-A measurement with no positive median reports its spread as `n/a` rather than `0.0`, so
-one that measured nothing cannot read as the most stable in its stage. Flagged
-measurements are still written to the results file; the report marks them and excludes
-them from every derived ratio. Measure on a quiet machine on AC power; ambient load is
-recorded per measurement precisely because it pollutes.
+**Instability is thresholded on the CV; the range is what gets printed.** `cv` is the
+sample standard deviation over the mean of whichever metric the reps were ranked on —
+throughput in saturation mode, end-to-end p50 in rate mode, enqueues/s for the producer
+— and the limit is 10%. `spread`, `(max - min) / median`, is a RANGE, and a range grows
+with the rep count on unchanged data: 5.3% at 3 reps and 14.1% at 50 on a fixed process,
+taking the flag rate from 0.2% to 30.3%. `--reps` is a live flag, so thresholding on it
+meant that asking for more repeats made good data look worse. A CV is flat over that
+same sweep (2.8% to 3.1%) and separates the real measurements cleanly: settings that
+repeat sit at 1.0-3.4%, ones that genuinely lurch at 25-50%, and 10% is the gap between
+them. The spread and the endpoints (`range_low`, `range_high`) are all still recorded
+and the report prints the endpoints, because `209-501` is what a reader wants to see —
+they have simply stopped being the trigger. A `spread_floor` guards the whole test in
+the ranking key's own units: reps within 150 ms of each other are not called unstable
+however far apart they read relatively.
+
+Fewer than two valid reps is an unknown dispersion rather than a zero: `spread` and `cv`
+record `null` and the row is marked `?`, so a measurement that measured nothing cannot
+read as the most stable in its stage. `--reps 1` is a dry run for that reason.
+
+**Every measurement appears in every table and in every number derived under one**,
+marked `!` (invalid), `~` (unstable) or `?` (dispersion unmeasured), with a legend in
+the report header. Nothing is dropped: a measurement struck from a ratio table is a
+finding deleted, and the reproducible instability is exactly the finding worth keeping.
+A derived line built on measurements that disagreed carries the disagreement instead of
+hiding it — a ratio or a scaling efficiency divides the endpoints too and prints the
+interval beside the point estimate, `1.94x (reps 1.49-2.40x)`. The one thing a mark
+still decides is CALIBRATION: `pick_best_measurement` prefers a valid, stable rung when
+it picks the working point later stages inherit, falling back to the whole set rather
+than refusing. That is choosing a configuration to measure at, not editing a report.
+
+Measure on a quiet machine on AC power; ambient load is recorded per measurement
+precisely because it pollutes.
 
 **It does not pollute every stage equally.** A rate stage offers a few tasks a second
 and never approaches the machine's ceiling, so whatever else the box is doing barely
 reaches it. A saturation stage drives the machine to its limit, which is exactly where
 sharing cores with anything else stops being ignorable. On a busy workstation the paced
-stages came back unflagged while nearly every saturation measurement did not — so a run
+stages came back unmarked while nearly every saturation measurement did not — so a run
 on a machine you are also using is worth reading for its rate stages and worth
 distrusting for the rest.
 
@@ -371,7 +401,7 @@ fields the current table reads. Re-measure rather than converting them.
 | `runner.py`      | spawns and reaps `absurd_worker` subprocesses                                                          |
 | `producer.py`    | the enqueue side: preload, paced offer, producer benchmark                                             |
 | `analysis.py`    | the SQL that turns Absurd's own columns into metrics                                                   |
-| `measurement.py` | one measurement: reps, drain detection, median, flags                                                  |
+| `measurement.py` | one measurement: reps, drain detection, median, dispersion, marks                                      |
 | `stages.py`      | runs the stages (positional names, `--tasks`, `--duration`, `--io-seconds`, `--max-workers`, `--reps`) |
 | `report.py`      | renders a results directory as markdown                                                                |
 

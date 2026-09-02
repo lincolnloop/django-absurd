@@ -42,13 +42,21 @@ def test_runs_the_producer_stage_at_the_size_it_was_asked_for(
             "name": entry["spec"]["name"],
             "count": entry["median"]["count"],
             "spread": entry["spread"],
-            "flagged": entry["flagged"],
+            "cv": entry["cv"],
+            "invalid": entry["invalid"],
+            "unstable": entry["unstable"],
         }
         for entry in result["measurements"]
     ] == [
-        {"name": "single", "count": 10, "spread": None, "flagged": True},
-        {"name": "threaded", "count": 10, "spread": None, "flagged": True},
-        {"name": "atomic", "count": 10, "spread": None, "flagged": True},
+        {
+            "name": name,
+            "count": 10,
+            "spread": None,
+            "cv": None,
+            "invalid": False,
+            "unstable": False,
+        }
+        for name in ("single", "threaded", "atomic")
     ]
 
 
@@ -102,16 +110,26 @@ def test_runs_a_saturation_stage_at_the_size_it_was_asked_for(
             "name": entry["spec"]["name"],
             "tasks": entry["median"]["n_tasks"],
             "spread": entry["spread"],
-            "flagged": entry["flagged"],
+            "cv": entry["cv"],
+            "unstable": entry["unstable"],
         }
         for entry in result["measurements"]
     ] == [
-        {"name": "async_c4", "tasks": 8, "spread": None, "flagged": True},
-        {"name": "sync_c4", "tasks": 8, "spread": None, "flagged": True},
-        {"name": "async_c16", "tasks": 8, "spread": None, "flagged": True},
-        {"name": "sync_c16", "tasks": 8, "spread": None, "flagged": True},
-        {"name": "async_c32", "tasks": 8, "spread": None, "flagged": True},
-        {"name": "sync_c32", "tasks": 8, "spread": None, "flagged": True},
+        {
+            "name": name,
+            "tasks": 8,
+            "spread": None,
+            "cv": None,
+            "unstable": False,
+        }
+        for name in (
+            "async_c4",
+            "sync_c4",
+            "async_c16",
+            "sync_c16",
+            "async_c32",
+            "sync_c32",
+        )
     ]
 
 
@@ -151,7 +169,8 @@ def test_runs_a_rate_stage_and_its_idle_probes_at_the_duration_it_was_asked_for(
             "name": entry["spec"]["name"],
             "duration_s": entry["spec"]["duration_s"],
             "spread": entry["spread"],
-            "flagged": entry["flagged"],
+            "cv": entry["cv"],
+            "unstable": entry["unstable"],
             "phase_outlasted_its_slowest_task": (
                 entry["reps"][0]["phase_s"] > entry["reps"][0]["end_to_end_p99_s"]
             ),
@@ -162,7 +181,8 @@ def test_runs_a_rate_stage_and_its_idle_probes_at_the_duration_it_was_asked_for(
             "name": name,
             "duration_s": 1.0,
             "spread": None,
-            "flagged": True,
+            "cv": None,
+            "unstable": False,
             "phase_outlasted_its_slowest_task": True,
         }
         for name in ("poll_0.05", "poll_0.25", "poll_1")
@@ -210,18 +230,20 @@ def test_prints_a_latency_percentile_only_for_the_stages_that_paced_their_offer(
     stages.main(["poll_interval", *size])
     paced = capsys.readouterr().out
 
-    assert utils.normalize_measured_numbers(saturation) == (
+    assert utils.strip_measurement_marks(
+        utils.normalize_measured_numbers(saturation)
+    ) == (
         "stage CHECKPOINT_COST: checkpoint cost: a 4-step workflow against a flat "
         "task\n"
-        "flat: N tasks/s, spread n/a [FLAGGED]\n"
-        "workflow: N tasks/s, spread n/a [FLAGGED]\n"
+        "flat: N tasks/s, spread n/a, cv n/a\n"
+        "workflow: N tasks/s, spread n/a, cv n/a\n"
     )
-    assert utils.normalize_measured_numbers(paced) == (
+    assert utils.strip_measurement_marks(utils.normalize_measured_numbers(paced)) == (
         "stage POLL_INTERVAL: latency under a paced offer, plus idle claim-rate "
         "probes\n"
-        "poll_0.05: N tasks/s, e2e p50 Nms, spread n/a [FLAGGED]\n"
-        "poll_0.25: N tasks/s, e2e p50 Nms, spread n/a [FLAGGED]\n"
-        "poll_1: N tasks/s, e2e p50 Nms, spread n/a [FLAGGED]\n"
+        "poll_0.05: N tasks/s, e2e p50 Nms, spread n/a, cv n/a\n"
+        "poll_0.25: N tasks/s, e2e p50 Nms, spread n/a, cv n/a\n"
+        "poll_1: N tasks/s, e2e p50 Nms, spread n/a, cv n/a\n"
         "idle poll=0.05: N claims/s/worker\n"
         "idle poll=0.25: N claims/s/worker\n"
         "idle poll=1: N claims/s/worker\n"
@@ -389,12 +411,12 @@ def test_runs_a_prerequisite_before_the_stage_that_calibrates_from_it(
     ] == ["flat", "workflow"]
 
 
-def test_reports_a_spread_once_there_are_reps_to_compare(
+def test_reports_a_dispersion_once_there_are_reps_to_compare(
     tmp_path: pathlib.Path,
 ) -> None:
-    """Two reps have a spread; one has an unknown one, not a zero.
+    """Two reps have a spread and a CV; one has unknown ones, not zeroes.
 
-    Asserts a spread was computed, never that it was small: at these sizes stability is
+    Asserts they were computed, never that they were small: at these sizes stability is
     not something the harness can promise, and demanding it would fail the suite on an
     honest measurement.
     """
@@ -411,11 +433,10 @@ def test_reports_a_spread_once_there_are_reps_to_compare(
     )
 
     result = utils.read_stage(tmp_path, "producer_ceiling")
-    assert [isinstance(entry["spread"], float) for entry in result["measurements"]] == [
-        True,
-        True,
-        True,
-    ]
+    assert [
+        (isinstance(entry["spread"], float), isinstance(entry["cv"], float))
+        for entry in result["measurements"]
+    ] == [(True, True)] * 3
 
 
 def test_repeats_a_measurement_three_times_when_no_rep_count_is_given(
@@ -502,7 +523,11 @@ def test_refuses_every_producer_rep_the_host_slept_through(
             "reps": [utils.normalize_measured_durations(rep) for rep in entry["reps"]],
             "median": entry["median"],
             "spread": entry["spread"],
-            "flagged": entry["flagged"],
+            "cv": entry["cv"],
+            "range_low": entry["range_low"],
+            "range_high": entry["range_high"],
+            "invalid": entry["invalid"],
+            "unstable": entry["unstable"],
         }
         for entry in result["measurements"]
     ] == [
@@ -521,7 +546,11 @@ def test_refuses_every_producer_rep_the_host_slept_through(
             ],
             "median": {},
             "spread": None,
-            "flagged": True,
+            "cv": None,
+            "range_low": None,
+            "range_high": None,
+            "invalid": True,
+            "unstable": False,
         }
         for name in ("single", "threaded", "atomic")
     ]
@@ -548,7 +577,13 @@ def test_refuses_a_stage_whose_prerequisite_measured_no_throughput(
     capsys: pytest.CaptureFixture[str], tmp_path: pathlib.Path
 ) -> None:
     """worker_knobs calibrates its own batch-size measurements from its concurrency
-    ladder, and at one task every rung of that ladder measures nothing."""
+    ladder, and at one task every rung of that ladder measures nothing.
+
+    Every rung is marked on the console as it goes, and marked for two separate
+    things: one task completes at a single instant, so the window a rate divides by is
+    empty (invalid), and one rep has nothing to disagree with (dispersion unmeasured).
+    Neither is the other, which is the whole reason they are two marks.
+    """
     with pytest.raises(SystemExit) as exit_info:
         stages.main(
             [
@@ -562,7 +597,17 @@ def test_refuses_a_stage_whose_prerequisite_measured_no_throughput(
             ]
         )
 
-    assert (exit_info.value.code, capsys.readouterr().err) == (
+    captured = capsys.readouterr()
+    assert utils.normalize_measured_numbers(captured.out) == (
+        "stage WORKER_KNOBS: one worker's knobs: concurrency ladder, then batch "
+        "size, then async dispatch\n"
+        + "".join(
+            f"concurrency_{rung}: N tasks/s, spread n/a, cv n/a "
+            "[INVALID DISPERSION UNMEASURED]\n"
+            for rung in (1, 2, 4, 8, 16)
+        )
+    )
+    assert (exit_info.value.code, captured.err) == (
         1,
         (
             "None of the 5 recorded measurement(s) measured any throughput, so there "

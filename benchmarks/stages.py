@@ -14,7 +14,7 @@ import measurement
 import producer
 import runner
 from django_absurd.flush import truncate_queue_tables
-from report import DEFAULT_RESULTS_DIR, format_spread
+from report import DEFAULT_RESULTS_DIR, describe_marks, format_dispersion
 
 NOOP_ASYNC = "tasks.noop_async"
 NOOP_SYNC = "tasks.noop_sync"
@@ -71,8 +71,8 @@ HOST_CPUS = os.cpu_count() or 1
 RATE_WORKER_CAP = max(1, HOST_CPUS // 2)
 RATE_TIMEOUT_S = 300.0
 # Reps within 150 ms of each other are not called unstable however far apart they read
-# relatively. A rate measurement ranks on `end_to_end_p50_s`, and relative spread
-# divides by that median, so it RISES as the measurement gets faster.
+# relatively. A rate measurement ranks on `end_to_end_p50_s`, and every relative
+# dispersion divides by that middle, so it RISES as the measurement gets faster.
 RATE_SPREAD_FLOOR_S = 0.15
 IDLE_PROBE_SECONDS = 30.0
 # A rate is divided by its own window, so a zero-length one has nothing to report.
@@ -87,7 +87,12 @@ SLEEP_IO_SECONDS = 0.05
 # than a third one, so one recorded rep count describes every stage.
 PRODUCER_ENQUEUE_COUNT = 5000
 PRODUCER_REP_COUNT = DEFAULT_REP_COUNT
-PRODUCER_SPREAD_LIMIT = 0.15
+# Read back off the measurement default rather than restated: one threshold decides
+# what "unstable" means across the whole harness, whatever produced the reps.
+PRODUCER_CV_LIMIT = measurement.MeasurementSpec.cv_limit
+# The console has no legend under it, so the report's row marks are spelled out here
+# rather than reprinted as punctuation nobody watching a 75-minute run can look up.
+MARK_WORDS = {"!": "INVALID", "~": "UNSTABLE", "?": "DISPERSION UNMEASURED"}
 # The 4-checkpoint task runs ~4.5x slower than a flat one, so SATURATION_TASKS would
 # push a rep past two minutes; 2000 keeps checkpoint_cost on the same per-rep budget.
 WORKFLOW_TASKS = 2000
@@ -547,9 +552,11 @@ def summarize_measurement(result: dict[str, t.Any]) -> str:
         f"{result['spec']['name']}: "
         f"{median.get('throughput_per_s', 0.0):.1f} tasks/s, "
         f"{latency}"
-        f"spread {format_spread(result['spread'])}"
+        f"spread {format_dispersion(result['spread'])}, "
+        f"cv {format_dispersion(result['cv'])}"
     )
-    return f"{line} [FLAGGED]" if result["flagged"] else line
+    marks = " ".join(MARK_WORDS[mark] for mark in describe_marks(result).split())
+    return f"{line} [{marks}]" if marks else line
 
 
 def summarize_producer_reps(
@@ -561,15 +568,21 @@ def summarize_producer_reps(
     median: dict[str, t.Any] = valid[(len(valid) - 1) // 2] if valid else {}
     # The shared helper rather than a second copy of the arithmetic: this stage had
     # its own, so the "one rep has no spread" guard had to be fixed twice.
-    spread = measurement.measure_spread(valid, median, "enqueues_per_s")
+    cv = measurement.measure_cv(valid, "enqueues_per_s")
+    low, high = measurement.measure_rep_range(valid, "enqueues_per_s")
     return {
         "spec": {"name": mode, "mode": "producer"},
         "reps": reps,
+        "ranking_key": "enqueues_per_s",
         "median": median,
-        "spread": spread,
-        "flagged": (
-            spread is None or spread > PRODUCER_SPREAD_LIMIT or len(valid) != len(reps)
-        ),
+        "spread": measurement.measure_spread(valid, median, "enqueues_per_s"),
+        "cv": cv,
+        "range_low": low,
+        "range_high": high,
+        # No absolute floor here: the producer measures one number in one unit at one
+        # size, so there is no fast-measurement case for a floor to rescue.
+        "invalid": measurement.is_measurement_invalid(reps, valid),
+        "unstable": cv is not None and cv > PRODUCER_CV_LIMIT,
         "host": host.collect_host_context(),
     }
 
@@ -606,9 +619,13 @@ def pick_winning_worker(recorded: list[dict[str, t.Any]]) -> runner.WorkerSpec:
 
 
 def pick_best_measurement(recorded: list[dict[str, t.Any]]) -> dict[str, t.Any]:
-    # Flagged measurements are unreliable, but calibrating on nothing is worse than
-    # calibrating on a noisy best, so they are the fallback rather than an error.
-    candidates = [entry for entry in recorded if not entry["flagged"]] or recorded
+    # A working point, not a report: preferring a measurement that measured what was
+    # asked and repeated is right here, and nothing is dropped from any table by it.
+    # Calibrating on nothing is worse than calibrating on a noisy best, so the rest are
+    # the fallback rather than an error.
+    candidates = [
+        entry for entry in recorded if not (entry["invalid"] or entry["unstable"])
+    ] or recorded
     best = max(
         candidates, key=lambda entry: entry["median"].get("throughput_per_s", 0.0)
     )
