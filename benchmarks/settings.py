@@ -6,10 +6,8 @@ SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "bench-only-not-secret")
 
 INSTALLED_APPS = ["django_absurd"]
 
-# `PGPORT_BENCH` is read by both sides — the port compose publishes and the port this
-# connects to — so one value keeps them consistent, as `PGPORT` does for the suites.
-# The database name is db_bench's own too: a stray run against a suite's server would
-# measure an untuned Postgres and still print numbers.
+# `PGPORT_BENCH` is read by both sides, as `PGPORT` does for the suites, and the
+# database name is db_bench's own: a suite's server would print untuned numbers.
 DATABASES = {
     "default": dj_database_url.parse(
         os.environ.get(

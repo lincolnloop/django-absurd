@@ -34,17 +34,11 @@ class MeasurementSpec:
     task_kwargs: dict[str, t.Any] | None = None
     reps: int = 3
     timeout_s: float = 300.0
-    # Sample stdev over the mean, and not the max-min range this used to threshold: a
-    # range grows with the rep count on unchanged data (5.3% at n=3, 14.1% at n=50 on a
-    # fixed process, flagging 0.2% to 30.3% of the time) and `--reps` is a live flag,
-    # so asking for more repeats made good data look worse. A CV is flat over the same
-    # sweep (2.8% to 3.1%), and 0.10 sits in the measured gap between settings that
-    # repeat (1.0-3.4%) and ones that genuinely lurch (25-50%).
+    # Sample stdev over the mean, and not a max-min range: a range grows with the rep
+    # count on unchanged data, so asking for more repeats made good data look worse.
     cv_limit: float = 0.10
     # Absolute max-min, in the ranking key's own units, under which `cv_limit` no
-    # longer applies. Both dispersion statistics divide by a middle, so they RISE as a
-    # measurement gets faster: reps of 67/89/173ms read as 119% spread. Zero keeps the
-    # pure relative test, which is the historical behaviour.
+    # longer applies: every relative dispersion RISES as a measurement gets faster.
     spread_floor: float = 0.0
 
 
@@ -56,14 +50,12 @@ def run_measurement(spec: MeasurementSpec) -> dict[str, t.Any]:
 def run_clean_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
     """One rep from a truncated queue, with the ambient load sampled either side.
 
-    Separate from the loop above so a stage comparing two configurations can
-    interleave their reps rather than running one configuration's three and then the
-    other's, which is how an arm ends up always going first.
+    Separate from the loop above so a stage comparing two configurations can interleave
+    their reps rather than letting one arm always go first.
     """
     truncate_queue_tables(spec.worker.queue)
     # Bracketing each rep rather than reading the host block's one figure, which is
-    # collected after every rep has run: a 1-minute average sampled there is mostly
-    # the harness's own load, so it cannot say what it was asked to.
+    # collected afterwards and is mostly the harness's own load by then.
     load_before = host.read_load_average()
     rep = run_one_rep(spec)
     return {**rep, "load_before": load_before, "load_after": host.read_load_average()}
@@ -86,9 +78,8 @@ def run_saturation_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
         spec.task_path, spec.tasks, kwargs=spec.task_kwargs
     )
     procs = runner.start_workers(spec.worker, spec.workers)
-    # Ahead of the commit snapshot, because reading the statement view is a statement
-    # and a commit of the harness's own: taken the other way round the read would land
-    # inside the commit window and be billed to the tasks.
+    # Ahead of the commit snapshot, because reading the statement view is itself a
+    # statement and a commit: the other order bills that read to the tasks.
     statements_before = analysis.read_statement_stats()
     commits_before = analysis.read_xact_commit()
     try:
@@ -96,31 +87,24 @@ def run_saturation_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
             wait_until_drained(spec)
     finally:
         runner.stop_workers(procs)
-    # Read once the workers have exited: a live backend flushes its transaction
-    # counters at most once a second, so a rep that ends inside that window would
-    # lose the commits it just made. Before the analysis queries, which are commits
-    # of the harness's own and no part of what a task cost.
+    # Read once the workers have exited, since a live backend flushes its transaction
+    # counters at most once a second. Before the analysis queries, which commit too.
     commits = analysis.read_xact_commit() - commits_before
     statements_after = analysis.read_statement_stats()
     metrics = analysis.analyze_saturation(spec.worker.queue)
     # A terminally failed task still satisfies the drain predicate, so without this
     # the measurement silently covers a smaller sample than it was asked to.
     metrics["missing_tasks"] = spec.tasks - metrics["n_tasks"]
-    # Every other number here comes off a trimmed window that excludes the ramp and the
-    # tail by construction, so without this a rep cannot say where its own time went.
+    # `preload_s` and `phase_s` because every other number comes off a trimmed window
+    # that excludes the ramp and the tail by construction.
     return {
         "preload_s": preload_s,
         "phase_s": phase.elapsed_s,
-        # What the drain asked of the disk, per task: throughput times this is the
-        # commit rate the run demanded, which is only comparable with the commit
-        # ceiling beside it. The preload is outside the phase, so this is the
-        # execution side alone — no enqueue commits in it.
+        # The execution side alone — the preload sits outside the phase — so throughput
+        # times this is the commit rate the drain asked of the disk.
         "commits_per_task": commits / metrics["n_runs"] if metrics["n_runs"] else None,
-        # The same exchange rate, itemised: which statements those commits carried,
-        # what each cost the server, and what the wall clock spent nowhere near it.
-        # `None` on any server that counted no statements, which is every suite
-        # server — the extension needs `shared_preload_libraries`, and giving it to
-        # the shared `db` service would change what every other suite runs against.
+        # The same exchange rate itemised, and `None` on any server that counted no
+        # statements, which is every suite server: the extension needs a preload.
         "statement_stats": analysis.build_statement_stats(
             statements_before, statements_after, metrics["n_runs"], phase.elapsed_s
         ),
@@ -143,10 +127,8 @@ def run_rate_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
             wait_until_drained(spec)
     finally:
         runner.stop_workers(procs)
-    # The offer and the drain that followed it, which the trimmed window excludes.
-    # No commits per task and no statement stats: this rep's completed-run count comes
-    # off the trimmed middle of the offer window while the phase spans the whole offer
-    # and drain, so either quotient would divide two different windows into each other.
+    # No commits per task and no statement stats: the completed-run count comes off the
+    # trimmed middle of the offer while the phase spans the offer AND the drain.
     return {
         "phase_s": phase.elapsed_s,
         **analysis.analyze_rate(spec.worker.queue, window_start, window_end),
@@ -172,7 +154,7 @@ def summarize_reps(
         (rep for rep in reps if rep["valid"]), key=lambda rep: rep[ranking_key]
     )
     # Lower of the two middles at an even rep count: the upper one is the BEST rep,
-    # and a measurement must not be summarized by its luckiest rep.
+    # and a measurement must not be summarized by its luckiest one.
     median: dict[str, t.Any] = valid[(len(valid) - 1) // 2] if valid else {}
     absolute_spread = measure_absolute_spread(valid, ranking_key)
     cv = measure_cv(valid, ranking_key)
@@ -180,8 +162,8 @@ def summarize_reps(
     return {
         "spec": dataclasses.asdict(spec),
         "reps": reps,
-        # Named here rather than re-derived from the mode by every reader: the range,
-        # the spread and the CV are all over this one metric and nothing else.
+        # Named rather than re-derived from the mode by every reader: the range, the
+        # spread and the CV are all over this one metric and nothing else.
         "ranking_key": ranking_key,
         "median": median,
         "spread": measure_spread(valid, median, ranking_key),
@@ -200,9 +182,8 @@ def measure_spread(
 ) -> float | None:
     """Relative spread, or ``None`` when there is nothing to spread.
 
-    Never 0.0 for those cases: a measurement that measured nothing, or measured once,
-    would otherwise read as the most stable one in its stage. One rep has no spread —
-    it has an unknown one, and `--reps 1` is documented as a dry run.
+    Never 0.0: a measurement that measured nothing, or measured once, would otherwise
+    read as the most stable one in its stage.
     """
     if len(valid) < 2 or median.get(ranking_key, 0.0) <= 0:
         return None
@@ -215,8 +196,8 @@ def measure_absolute_spread(
 ) -> float | None:
     """``max - min`` in the ranking key's own units, or ``None`` with nothing valid.
 
-    Recorded alongside the relative spread because the two disagree exactly where it
-    matters: a fast measurement can be tight here and still read as noisy there.
+    Recorded beside the relative spread because a fast measurement can be tight here
+    and still read as noisy there.
     """
     if not valid:
         return None
@@ -227,9 +208,8 @@ def measure_absolute_spread(
 def measure_cv(valid: list[dict[str, t.Any]], ranking_key: str) -> float | None:
     """Sample stdev over the mean, or ``None`` with fewer than two reps to compare.
 
-    The dispersion statistic the instability flag is thresholded on. Unlike the spread
-    it does not grow with the rep count, so raising `--reps` sharpens the estimate
-    instead of moving the goalposts.
+    What the instability flag is thresholded on: unlike the spread it does not grow
+    with the rep count, so raising `--reps` sharpens the estimate.
     """
     if len(valid) < 2:
         return None
@@ -243,7 +223,7 @@ def measure_cv(valid: list[dict[str, t.Any]], ranking_key: str) -> float | None:
 def measure_rep_range(
     valid: list[dict[str, t.Any]], ranking_key: str
 ) -> tuple[float | None, float | None]:
-    """The reps' own endpoints, so a report can print `209-501` rather than a percent.
+    """The reps' own endpoints, so a report can print a range rather than a percent.
 
     The percentage a spread reduces to is what a reader has to un-reduce; these are
     the two numbers the measurement actually produced.
@@ -277,10 +257,8 @@ def is_measurement_unstable(
 ) -> bool:
     """Whether the reps measured the right thing and disagreed about the answer.
 
-    Not the same condition as invalidity and not the same remedy: an unstable
-    measurement is a finding about the system, an invalid one is a broken rep. An
-    unmeasured dispersion (one valid rep) is neither, and reads as `n/a` in the report
-    rather than as a disagreement nobody observed.
+    Not invalidity and not the same remedy: an unstable measurement is a finding about
+    the system. An unmeasured dispersion is neither, and reads as `n/a`.
     """
     if cv is None:
         return False

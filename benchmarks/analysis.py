@@ -15,29 +15,22 @@ from django_absurd.queues import resolve_absurd_database
 MIN_TRIMMED_SPAN_S = 0.01
 
 # The table the commit-ceiling probe commits into. A REAL table, not a temporary one:
-# a temp table is not WAL-logged, so its commits never reach the disk and the probe
-# would report the machine's memory speed as its durable ceiling (84,000/s against
-# 953/s measured side by side on the same server).
+# a temp table is not WAL-logged, so the probe would report memory speed as durable.
 COMMIT_PROBE_TABLE = "benchmark_commit_ceiling_probe"
-# Commits per timed round: ~0.15 s at the ~2,000 commits/s a warmed session sustains,
-# and the size the dispersion below was measured at.
+# Commits per timed round: ~0.15 s at the rate a warmed session sustains.
 DURABLE_PROBE_COMMITS = 300
-# The same window's worth with the fsync taken out: at ~370,000 commits/s the durable
-# count would be timing under a millisecond.
+# The same window with fsync out of the way, where the durable count above would
+# be timing under a millisecond.
 NONDURABLE_PROBE_COMMITS = 5000
-# Commits a session must already have made before its rate settles. Consecutive
-# 400-commit rounds on one connection read 519, 544, 1276, 1899, 1912 and 1914/s — the
-# climb is over after about a thousand — so every round before this is thrown away.
+# Commits a session must already have made before its rate settles; every round before
+# this one is thrown away.
 PROBE_WARM_UP_COMMITS = 1200
-# Timed rounds kept. The durable rate is not a constant: eight trials spread 600-2262/s
-# around a 2,016 median, a 28% CV, while the same trials without fsync held to 5%. One
-# round is a draw from that distribution, so the ceiling is recorded as a median with
-# its own dispersion beside it and nothing downstream may print it as exact.
+# Timed rounds kept. The durable rate is a distribution and not a constant, so the
+# ceiling is recorded as a median with its own dispersion beside it.
 PROBE_TIMED_ROUNDS = 5
 
-# Completions per profile slice. Equal-COUNT slices rather than equal-time ones: a slow
-# measurement puts fewer completions into a fixed time slice, so its slices would read
-# as noisier for purely statistical reasons and would not compare across settings.
+# Completions per profile slice. Equal-COUNT rather than equal-time, so a slow
+# measurement's slices are not noisier for purely statistical reasons.
 THROUGHPUT_SLICE_COMPLETIONS = 200
 # Two points are a line whatever the drain did, so below three the shape is invented.
 MIN_PROFILE_SLICES = 3
@@ -54,8 +47,8 @@ LATENCY_KEYS = (
     "end_to_end_p99_s",
 )
 
-# Every timing below is a Postgres column read on one clock: the driver contributes no
-# timestamps of its own, so producer and workers cannot disagree.
+# Every timing is a Postgres column on one clock, so producer and workers cannot
+# disagree; the driver contributes no timestamps of its own.
 COMPLETED_RUNS_SQL = """
 select
   count(distinct r.task_id),
@@ -93,9 +86,8 @@ where r.state = 'completed' and {window}
 group by r.claimed_by
 """
 
-# Deliberately UNFILTERED by state. Absurd's fail_run marks the failed run 'failed'
-# and inserts a NEW row for the retry, so a completed-only count can never exceed one
-# run per task and would report every redelivery as zero.
+# Deliberately UNFILTERED by state: `fail_run` inserts a NEW row for the retry, so a
+# completed-only count would report every redelivery as zero.
 RUN_TOTALS_SQL = """
 select count(*), count(distinct r.task_id), coalesce(max(r.attempt), 1)
 from {runs} r
@@ -104,13 +96,8 @@ where {window}
 """
 
 
-# `extract(epoch ...)` is numeric from Postgres 14 on, which reaches Python as a Decimal
-# that will not divide against the floats every other rate here is made of; the other
-# queries dodge it only because percentile_cont has no numeric form to resolve to.
-#
-# The having clause drops the two slices that have no rate to report: the last one,
-# which holds whatever completions were left over, and any whose completions all landed
-# on one instant, which is what would otherwise divide by zero.
+# `extract(epoch ...)` is numeric from Postgres 14 on, which reaches Python as a
+# Decimal that will not divide against floats; the `::float8` is what stops that.
 THROUGHPUT_PROFILE_SQL = """
 select count(*), min(ts), max(ts)
 from (
@@ -125,11 +112,8 @@ having count(*) = {size} and max(ts) > min(ts)
 order by bucket
 """
 
-# Timed and looped SERVER-side: a client loop measures its own round trip plus the
-# fsync, and the constant wanted here is the disk's alone. A procedural block rather
-# than a function — `commit` inside a plpgsql FUNCTION called from a query raises
-# `invalid transaction termination` — and the elapsed time comes back through the
-# probe's own table because a DO block returns nothing.
+# Timed server-side: a client loop would measure its own round trips too. A DO block,
+# not a function — `commit` inside plpgsql raises `invalid transaction termination`.
 COMMIT_PROBE_SQL = """
 do $$
 declare
@@ -144,39 +128,22 @@ begin
 end $$;
 """
 
-# The extension that names every statement a task issued, and the view it installs:
-# one name, because the extension names its view after itself. `db_bench` preloads the
-# library with `pg_stat_statements.track=all`, so the statements INSIDE Absurd's
-# PL/pgSQL claim path are counted separately from the call that entered it.
+# Extension and view share the one name, because the extension names its view
+# after itself.
 STATEMENT_STATS_EXTENSION = "pg_stat_statements"
 
-# Statements kept per rep, ranked by the server time each cost. The claim path fans out
-# to a handful of inner statements and the driver's drain poll is one more; past the top
-# few the entries are microsecond bookkeeping and the results file stops being readable.
+# Statements kept per rep, ranked by server time: past the top few the entries are
+# microsecond bookkeeping and the results file stops being readable.
 STATEMENT_STATS_LIMIT = 15
 
 # The counters a statement the earlier snapshot never saw is diffed against.
 UNSEEN_STATEMENT = {"calls": 0, "total_exec_ms": 0.0, "rows": 0}
 
-# Read through a function of the harness's own rather than off the view directly,
-# because one code path has three servers to satisfy: one that preloaded the library,
-# one where nothing created the extension (`undefined_table`), and one where it is
-# created but the server was started without it, which is every suite server here
-# (`object_not_in_prerequisite_state`). The last two mean the same thing to a caller —
-# no statement stats — and neither may abort a run, so they are classified server-side
-# where both are catchable at once. `create or replace` on every read keeps the reader
-# independent of whether a bootstrap ran, which a rep driven straight off `measurement`
-# never does.
-#
-# One JSON document rather than rows, and `text` rather than `jsonb`: Django's psycopg3
-# backend registers an identity loader for jsonb so its own JSONField can decode with
-# its own decoder, so a jsonb column reaches Python as the undecoded string anyway.
-#
-# Dropped before it is created, because `create or replace` REFUSES a changed return
-# type — and a database that has held an older reader outlives one edit here easily
-# (`db_bench` aside, every `--reuse-db` test database does), so the failure would be a
-# run recording no statement stats for a reason nothing in it names.
+# Read through a function of the harness's own so that a server missing the extension
+# and one missing the preloaded library are both classified server-side, in one path.
 STATEMENT_STATS_READER = "benchmark_read_statement_stats"
+# Dropped before it is created, because `create or replace` REFUSES a changed return
+# type, and `text` rather than `jsonb` because psycopg3 hands jsonb back undecoded.
 STATEMENT_STATS_READER_SQL = """
 create or replace function {reader}() returns text language plpgsql as $$
 begin
@@ -192,17 +159,13 @@ begin
              '[]'::jsonb)::text
     from {stats}
     where dbid = (select oid from pg_database where datname = current_database())
-      -- The instrument does not bill a task for reading it: two patterns because
-      -- three statements of its own are counted — this very query, which names the
-      -- view, and the drop and create that installed it, which name the function.
-      -- A comment marker would be tidier and does not survive: plpgsql hands SPI an
-      -- expression whose text has had its comments taken out.
+      -- Two patterns, because reading the instrument is billed too: this query names
+      -- the view, while the drop and create that installed it name the function.
       and query not like {stats_text}
       and query not like {reader_text}
   );
 exception
-  -- A null DOCUMENT rather than SQL NULL, so the caller parses one JSON string
-  -- whatever happened here and an empty list still means a server that counted.
+  -- A null DOCUMENT rather than SQL NULL, so the caller always parses one JSON string.
   when undefined_table or object_not_in_prerequisite_state then return 'null';
 end $$;
 """
@@ -222,10 +185,9 @@ def analyze_rate(
 ) -> dict[str, t.Any]:
     """Same metrics over the middle 80% of the offer window.
 
-    In rate mode ARRIVAL defines the experiment, so the ramp and tail are trimmed on
-    ``enqueue_at`` rather than on completion. No within-run profile either: the offer
-    rate is imposed rather than discovered, so slicing it would plot the producer's
-    pacing back at the reader.
+    Trimmed on ``enqueue_at`` rather than on completion because arrival is what defines
+    a rate experiment, and carrying no profile because an imposed offer rate has no
+    shape to discover.
     """
     span = (window_end - window_start) / 10
     window = psycopg.sql.SQL("t.enqueue_at between {low} and {high}").format(
@@ -248,9 +210,8 @@ def count_unfinished_tasks(queue: str = "bench") -> int:
 def count_client_backends() -> int:
     """Client backends on this database other than the connection doing the asking.
 
-    Counted rather than matched on `application_name`: neither the worker children nor
-    the harness sets one, so the only thing that separates a fleet's backends from
-    everything else already connected is a count taken on each side of starting it.
+    Counted rather than matched on `application_name`, which nothing here sets, so a
+    fleet's backends are only separable as a delta across starting it.
     """
     with connections[resolve_absurd_database()].cursor() as cursor:
         cursor.execute(
@@ -270,8 +231,8 @@ def capture_database_now() -> dt.datetime:
 def measure_idle_commit_rate(seconds: float) -> float:
     """Commits/s on this database while nothing but idle worker polls runs.
 
-    Each idle claim poll is exactly one autocommit transaction here, so the delta is
-    the polling tax; the driver deliberately issues no query inside the window.
+    Each idle claim poll is one autocommit transaction, so the delta is the polling
+    tax; the driver issues no query of its own inside the window.
     """
     before = read_xact_commit()
     time.sleep(seconds)
@@ -281,25 +242,16 @@ def measure_idle_commit_rate(seconds: float) -> float:
 def measure_commit_ceiling(*, durable: bool) -> dict[str, float] | None:
     """What one WARM session commits per second, as a distribution, or ``None``.
 
-    The numbers every throughput in a run has to be read against: 71% of a run's active
-    backend time is WAL durability, so a per-connection task rate near this ceiling is
-    a property of Postgres on this disk rather than of Absurd, and the same code on
-    another machine reports a different one.
+    The ceiling every throughput in a run is read against: near it, a per-connection
+    task rate is a property of Postgres on this disk rather than of Absurd.
 
-    A median and its spread rather than a number, because the durable rate on the stack
-    this was written against has two regimes about 3.5x apart and nothing here selects
-    between them: two warmed probes, one per run, read 1,984/s and 615/s. A scalar here
-    would hand every reader downstream a precision the calibration does not have, and
-    the endpoints are what widens a report's bound-verdict when a probe repeats badly.
+    A median and its spread rather than a scalar, because the durable rate is a wide
+    distribution nothing here selects within, and the endpoints are what a report's
+    bound-verdict widens on. ONE session, because a worker opens one claim connection
+    whatever its ``--concurrency`` — see `benchmarks/CLAUDE.md`.
 
-    One session, because that is what a worker gets: a worker process opens exactly two
-    backends whatever its ``--concurrency``, so its claim traffic funnels through one
-    connection. The machine's own capacity is several times this — 1,953 commits/s at
-    one connection against 13,238/s at sixteen, measured warm — which is why a report
-    divides a fleet's commit rate by its worker count before comparing it to this.
-
-    Calibration, not measurement — a run that cannot have its ceiling records that it
-    has none and carries on, because an uncalibrated number that says so beats no run.
+    Calibration, not measurement: a run that cannot have its ceiling records that it
+    has none and carries on.
     """
     commits = DURABLE_PROBE_COMMITS if durable else NONDURABLE_PROBE_COMMITS
     table = psycopg.sql.Identifier(COMMIT_PROBE_TABLE)
@@ -310,8 +262,7 @@ def measure_commit_ceiling(*, durable: bool) -> dict[str, float] | None:
     try:
         with connections[resolve_absurd_database()].cursor() as cursor:
             # Outside the try/finally on purpose: a name already taken belongs to
-            # someone else, and the cleanup below must never drop a table this probe
-            # did not create.
+            # someone else, and the cleanup must never drop a table it did not create.
             cursor.execute(
                 psycopg.sql.SQL(
                     "create table {table} (n int, elapsed_s float8)"
@@ -334,13 +285,12 @@ def measure_commit_ceiling(*, durable: bool) -> dict[str, float] | None:
                         )
                     )
                     rates.append(commits / float(cursor.fetchone()[0]))
-                # Warmed on this cursor's own connection, and its rounds dropped by the
-                # slice: the climb is per connection, so a session warmed anywhere else
-                # leaves this one paying for it.
+                # Warmed on this cursor's own connection: the climb is per connection,
+                # so a session warmed anywhere else leaves this one paying for it.
                 return summarize_commit_rates(rates[warm_up_rounds:])
             finally:
-                # Reset unconditionally: it is a no-op for the durable probe, and a
-                # branch here would be one more way to leave the session altered.
+                # Reset unconditionally: a no-op for the durable probe, and a branch
+                # here would be one more way to leave the session altered.
                 cursor.execute("reset synchronous_commit")
                 cursor.execute(
                     psycopg.sql.SQL("drop table {table}").format(table=table)
@@ -352,8 +302,8 @@ def measure_commit_ceiling(*, durable: bool) -> dict[str, float] | None:
 def summarize_commit_rates(rates: list[float]) -> dict[str, float]:
     """One probe's timed rounds, in the vocabulary a measurement's reps already use.
 
-    The endpoints are recorded beside the CV for the same reason a measurement records
-    both: a percentage is what a reader has to un-reduce to see what was measured.
+    The endpoints ride along with the CV because a percentage is what a reader has to
+    un-reduce to see what was measured.
     """
     return {
         "median_per_s": statistics.median(rates),
@@ -393,10 +343,8 @@ def read_throughput_profile(
 ) -> dict[str, t.Any]:
     """Throughput over successive equal-count slices of one drain, oldest first.
 
-    A saturation rep drains a full queue to empty, so its single throughput number
-    averages whatever the per-task cost did as depth fell. Slice 0 is the fullest
-    queue and the last slice the emptiest, which is what tells a rising cost apart
-    from a rep-to-rep one.
+    Slice 0 is the fullest queue and the last the emptiest, which is what tells a cost
+    rising with depth apart from a rep-to-rep difference.
     """
     with connections[resolve_absurd_database()].cursor() as cursor:
         cursor.execute(
@@ -417,7 +365,7 @@ def build_metrics(
     total_runs, total_tasks, max_attempt = totals
     span = (completed_p90 - completed_p10) if completed_p10 is not None else 0.0
     # Too short a trimmed window makes 0.8*n/span an arbitrarily large number rather
-    # than a rate, so it is refused outright instead of published.
+    # than a rate, so it is refused rather than published.
     degenerate = span < MIN_TRIMMED_SPAN_S or not n_runs
     shares = sorted(fairness.values())
     metrics: dict[str, t.Any] = {
@@ -469,14 +417,9 @@ def read_xact_commit() -> int:
 def install_statement_stats() -> None:
     """Create the statement view on this database, or leave the run without one.
 
-    The extension is per-database and `db_bench` keeps its data directory in RAM, so
-    every restart hands a run a server that has never had it — which is why this is a
-    bootstrap step and not a one-off setup instruction nobody would re-run.
-
-    A role that cannot create extensions is the managed-Postgres case, and it costs the
-    run its statement stats and nothing else: `read_statement_stats` reports none and
-    every measurement still runs. Refusing to measure over a missing instrument would
-    be the worse trade.
+    A bootstrap step rather than a setup instruction because the extension is
+    per-database and a RAM data directory loses it on every restart. A role that may
+    not create extensions costs the run its itemisation and nothing else.
     """
     try:
         with connections[resolve_absurd_database()].cursor() as cursor:
@@ -493,8 +436,7 @@ def read_statement_stats() -> list[dict[str, t.Any]] | None:
     """Every statement this database has run, or ``None`` where nothing counted them.
 
     A snapshot, never a reset: `pg_stat_statements_reset()` cannot be undone and would
-    take out whatever else is reading the same server, so a phase is bracketed by two
-    of these and diffed.
+    take out whatever else reads the same server, so a phase is two of these diffed.
     """
     try:
         with connections[resolve_absurd_database()].cursor() as cursor:
@@ -531,14 +473,9 @@ def build_statement_stats(
 ) -> dict[str, t.Any] | None:
     """What one task cost statement by statement, and what was left over client-side.
 
-    The instrument that answers "is this claim overhead": it names the statements the
-    phase issued, how many times each ran per task and what each cost the server, so a
-    per-task figure decomposes into work instead of staying a wall-clock total.
-
-    `client_ms_per_task` is the remainder — the harness's Python, the SDK's, and every
-    round trip between them. Server time is summed across every backend the phase used,
-    so at more than one worker it counts several connections' concurrent work against
-    one wall clock and the remainder is not a remainder; at one worker it is.
+    `client_ms_per_task` is the remainder — our Python, the SDK's, and the round trips.
+    Server time is summed over every backend the phase used, so above one worker it
+    counts concurrent work against one wall clock and the remainder stops being one.
     """
     if before is None or after is None or not n_runs:
         return None
@@ -548,9 +485,8 @@ def build_statement_stats(
         for delta in (describe_statement_delta(row, baseline, n_runs) for row in after)
         if delta["calls_per_task"]
     ]
-    # Top-level statements only. Under `track=all` a PL/pgSQL function's own row already
-    # counts the time of every statement it ran inside itself, so summing both levels
-    # bills the claim path twice.
+    # Top-level only: under `track=all` a PL/pgSQL function's own row already counts
+    # what it ran inside itself, so summing both levels bills the claim path twice.
     server_ms = sum(
         delta["total_exec_ms_per_task"] for delta in issued if delta["toplevel"]
     )

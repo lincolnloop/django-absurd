@@ -22,12 +22,8 @@ RUN_STEPS = "tasks.run_steps"
 SLEEP_ASYNC = "tasks.sleep_async"
 SLEEP_SYNC = "tasks.sleep_sync"
 
-# Declared in dependency order: a stage that calibrates itself from another reads that
-# one back off disk, so it is listed after it. Naming several stages runs them in this
-# order whatever order they arrive in; a stage named alone whose prerequisite is missing
-# still refuses rather than quietly running it. The dependency itself is written once,
-# at the `read_*` call site that needs it — a second table naming the same edges is one
-# more thing to keep in step, and this list is the only ordering anything reads.
+# Dependency order, which is the order several named stages run in; the edges are
+# written once each, at the `read_*` call site that needs one.
 STAGE_NAMES = (
     "worker_knobs",
     "process_scaling",
@@ -61,13 +57,12 @@ STAGE_DESCRIPTIONS = {
     ),
 }
 
-# Sized so even the slowest worker_knobs rung drains a backlog whose p10-p90 window is
-# not mostly ramp; throughput divides that window.
+# Sized so even the slowest worker_knobs rung drains a p10-p90 window that is not
+# mostly ramp; throughput divides that window.
 SATURATION_TASKS = 5000
 SATURATION_TIMEOUT_S = 900.0
-# The rep count every stage runs at unless `--reps` says otherwise. Read back off the
-# measurement default rather than restated, so a results file can record one rep count
-# that is true of the whole run.
+# Read back off the measurement default rather than restated, so a results file
+# records one rep count that is true of the whole run.
 DEFAULT_REP_COUNT = measurement.MeasurementSpec.reps
 RATE_OFFER_SECONDS = 60.0
 HOST_CPUS = os.cpu_count() or 1
@@ -75,42 +70,35 @@ HOST_CPUS = os.cpu_count() or 1
 # off the fastest saturation result asks for an offer it has no cores left to give.
 RATE_WORKER_CAP = max(1, HOST_CPUS // 2)
 RATE_TIMEOUT_S = 300.0
-# Reps within 150 ms of each other are not called unstable however far apart they read
-# relatively. A rate measurement ranks on `end_to_end_p50_s`, and every relative
-# dispersion divides by that middle, so it RISES as the measurement gets faster.
+# Reps this close are not called unstable however far apart they read relatively: a
+# rate measurement ranks on a latency, which every relative dispersion divides by.
 RATE_SPREAD_FLOOR_S = 0.15
 IDLE_PROBE_SECONDS = 30.0
 # A rate is divided by its own window, so a zero-length one has nothing to report.
 SMALLEST_MEASURABLE_DURATION_S = 0.001
 IDLE_PROBE_WORKERS = 4
 # The totals pooled_vs_split reaches both ways. Fixed rather than derived from the
-# host, for the same reason the concurrency ladder's rungs are: a shape that means
-# something different on every machine cannot be compared across machines.
+# host: a shape that differs by machine cannot be compared across machines.
 POOLED_VS_SPLIT_TOTALS = (4, 8)
 POLL_INTERVALS = (0.05, 0.25, 1.0)
-# What the sleep tasks simulate as IO. The stage's finding is only true AT a duration,
-# so it is the experiment's independent variable rather than a fixed property of it.
+# What the sleep tasks simulate as IO — the experiment's independent variable, since
+# its finding is only ever true AT a duration.
 SLEEP_IO_SECONDS = 0.05
-# ~25 s per rep at the slowest mode's ~200 enqueues/s: enough for stable percentiles
-# while 3 reps x 3 modes still finish in a couple of minutes. The shared default rather
-# than a third one, so one recorded rep count describes every stage.
+# ~25 s per rep at the slowest mode's rate: enough for stable percentiles while
+# 3 reps x 3 modes still finish in a couple of minutes.
 PRODUCER_ENQUEUE_COUNT = 5000
+# The shared defaults rather than a third pair, so one rep count and one instability
+# threshold describe every stage, whatever produced the reps.
 PRODUCER_REP_COUNT = DEFAULT_REP_COUNT
-# Read back off the measurement default rather than restated: one threshold decides
-# what "unstable" means across the whole harness, whatever produced the reps.
 PRODUCER_CV_LIMIT = measurement.MeasurementSpec.cv_limit
-# The console has no legend under it, so the report's row marks are spelled out here
-# rather than reprinted as punctuation nobody watching a 75-minute run can look up.
+# The console has no legend under it, so the report's row marks are spelled out rather
+# than printed as punctuation nobody watching a 75-minute run can look up.
 MARK_WORDS = {"!": "INVALID", "~": "UNSTABLE", "?": "DISPERSION UNMEASURED"}
-# The 4-checkpoint task runs ~4.5x slower than a flat one, so SATURATION_TASKS would
-# push a rep past two minutes; 2000 keeps checkpoint_cost on the same per-rep budget.
+# A 4-checkpoint task runs ~4.5x slower than a flat one, so SATURATION_TASKS would push
+# a rep past two minutes; this keeps checkpoint_cost on the same per-rep budget.
 WORKFLOW_TASKS = 2000
-# What every stage file this invocation writes records beside its options: a block per
-# probe, each a median with its own CV and endpoints. The third is not the first
-# repeated — a run leaves behind the bloat and the WAL churn it made, so only a closing
-# probe says whether the ceiling its throughputs were read against still held at the
-# end. All three are warmed probes: the 719/s once read here straight after a run was a
-# cold session, not a depressed server.
+# The three probe blocks every stage file this invocation writes records beside its
+# options; only the closing one says whether the ceiling still held at the end.
 COMMIT_CEILING_KEYS = (
     "commit_ceiling_durable",
     "commit_ceiling_nondurable",
@@ -150,19 +138,15 @@ class StageOptions:
     results_dir: Path
     reps: int | None = None
     # Override a stage's production size, so the suite can drive one end to end in
-    # seconds. Saturation stages are sized in tasks and rate stages in seconds, so
-    # one flag scaling both would hide which mode a stage is in.
+    # seconds. Two flags, because the two modes are sized in different units.
     tasks: int | None = None
     duration_s: float | None = None
     io_seconds: float | None = None
-    # The size flags above bound the WORK; this one bounds the TOPOLOGY. Fleet size
-    # otherwise tracks the host, so a 128-core box spawns hundreds of worker processes
-    # across a stage with no way to ask for fewer.
+    # The size flags above bound the WORK; this one bounds the TOPOLOGY, which
+    # otherwise tracks the host — a 128-core box spawns hundreds of workers a stage.
     max_workers: int | None = None
-    # Not a flag: the machine's own commit ceiling, measured once per invocation and
-    # carried into every stage file this run writes. Mutable because the after-the-run
-    # probe only exists once the stages are done, and it belongs in files already on
-    # disk by then.
+    # Not a flag: the machine's own commit ceiling, carried into every stage file this
+    # run writes. Mutable because the closing probe lands after those files exist.
     commit_ceiling: dict[str, dict[str, float] | None] = dataclasses.field(
         default_factory=dict
     )
@@ -172,11 +156,10 @@ def run_stages(stage_names: list[str], options: StageOptions) -> None:
     options.results_dir.mkdir(parents=True, exist_ok=True)
     ordered = order_by_dependency(stage_names)
     # Ahead of every measurement, because a rep can only itemise what something was
-    # already counting. `db_bench` keeps its data directory in RAM, so a restarted
-    # server has never had the extension and a run that assumed one would find none.
+    # already counting, and a RAM data directory loses the extension on every restart.
     analysis.install_statement_stats()
-    # Before anything measures, and never between the reps of a measurement: the probe
-    # commits a few thousand times of its own.
+    # Never between the reps of a measurement: the probe commits a few thousand times
+    # of its own.
     options.commit_ceiling.update(
         {
             "commit_ceiling_durable": analysis.measure_commit_ceiling(durable=True),
@@ -194,10 +177,8 @@ def run_stages(stage_names: list[str], options: StageOptions) -> None:
 def record_commit_ceiling(stage_names: list[str], options: StageOptions) -> None:
     """Write the after-the-run ceiling into the files this invocation already wrote.
 
-    A stage's file is rewritten after every measurement so a run killed at hour two
-    keeps its work, and the closing probe does not exist until the last stage is done
-    — so it lands last, into whatever those writes left on disk. A run that never got
-    there leaves the field null, which is what happened.
+    Last, because the closing probe does not exist until the last stage is done; a run
+    killed before then leaves the field null.
     """
     for name in stage_names:
         path = options.results_dir / f"stage_{name}.json"
@@ -209,9 +190,8 @@ def record_commit_ceiling(stage_names: list[str], options: StageOptions) -> None
 def order_by_dependency(stage_names: list[str]) -> list[str]:
     """Sort the requested stages so a prerequisite runs before what calibrates on it.
 
-    Only orders what was asked for — it never adds a missing prerequisite, because a
-    stage that cannot calibrate should say so rather than silently run a second stage
-    the caller did not ask for.
+    Only orders what was asked for, never adding a missing prerequisite: a stage that
+    cannot calibrate says so rather than running a second stage nobody asked for.
     """
     requested = set(stage_names)
     return [name for name in STAGE_NAMES if name in requested]
@@ -289,9 +269,8 @@ def run_process_scaling(options: StageOptions) -> None:
 def run_pooled_vs_split(options: StageOptions) -> None:
     """The same total concurrency reached two ways, arm against arm.
 
-    Calibrated from nothing: both arms of a pair are the experiment's own fixed
-    shapes, and configuring either from an earlier stage's winner would make them
-    unequal in a second way.
+    Calibrated from nothing: configuring either arm from an earlier stage's winner
+    would make the pair unequal in a second way.
     """
     runnable = [
         total
@@ -319,7 +298,7 @@ def run_pooled_vs_split(options: StageOptions) -> None:
         "skipped_pairs": skipped,
     }
     # Written before the first rep, so a bound that leaves nothing to compare still
-    # leaves a file saying which pairs it refused and what refused them.
+    # leaves a file naming the pairs it refused and the bound that refused them.
     write_stage_file("pooled_vs_split", [], options, extra)
     for arm in build_pooled_vs_split_schedule(specs):
         reps[arm.name].append(measurement.run_clean_rep(arm))
@@ -385,9 +364,8 @@ def measure_producer_rep(
 ) -> dict[str, t.Any]:
     """One producer rep, bracketed like every other measured phase.
 
-    Not because a nap deflates the numbers — perf_counter stops with the host — but so
-    the producer stage refuses a slept-through rep rather than being the one that
-    keeps it.
+    So this stage refuses a slept-through rep too, rather than being the one that keeps
+    them; `perf_counter` alone would not notice.
     """
     try:
         with host.measure_phase():
@@ -424,10 +402,8 @@ def run_latency_under_load(options: StageOptions) -> None:
 
 
 def build_concurrency_measurements() -> list[measurement.MeasurementSpec]:
-    # The rungs are fixed while the worker ladder in process_scaling tracks the host,
-    # so that a concurrency result means the same thing on every machine. Scale these
-    # and the async-vs-sync ratio stops being comparable across hosts, which is the
-    # only thing that ratio is for.
+    # Fixed while the process_scaling ladder tracks the host, so a concurrency result
+    # means the same thing on every machine — which is all the async ratio is for.
     return [
         measurement.MeasurementSpec(
             name=f"concurrency_{concurrency}",
@@ -492,13 +468,11 @@ def build_process_scaling_measurements(
 def build_worker_ladder(ceiling: int) -> list[int]:
     """Worker counts process_scaling measures, topping out at ``ceiling``.
 
-    The host's core count unless ``--max-workers`` asks for less. The steps are
-    derived from the ceiling rather than clamped to it, so a bounded ladder is still a
-    ladder instead of the same rung repeated.
+    The host's core count unless ``--max-workers`` asks for less. Derived from the
+    ceiling rather than clamped to it, so a bounded ladder is still a ladder.
     """
     # 1 and 2 anchor the low end where per-worker efficiency is still readable; the
-    # quarter/half/three-quarter steps track the ceiling so the curve means the same
-    # thing on any box, and nothing exceeds it.
+    # fractional steps track the ceiling so the curve means the same thing on any box.
     steps = {1, 2, ceiling // 4, ceiling // 2, ceiling * 3 // 4, ceiling}
     return sorted(step for step in steps if 1 <= step <= ceiling)
 
@@ -509,7 +483,7 @@ def build_pooled_vs_split_measurements(
     """Both shapes of each total, pooled arm first, at the same task count.
 
     Sized here rather than by `record_measurements`, which this stage cannot use: its
-    reps are interleaved between the arms instead of run measurement by measurement.
+    reps interleave between the arms instead of running measurement by measurement.
     """
     return [
         apply_size_overrides(
@@ -537,10 +511,8 @@ def build_pooled_vs_split_schedule(
 ) -> list[measurement.MeasurementSpec]:
     """Every rep of every arm, in the order they run.
 
-    Reversed on the odd reps: a pair's two arms stay back to back, while neither arm
-    and neither pair ever always runs first. Cumulative database state only grows
-    across a stage, so a fixed order would hand one arm of every pair the emptier
-    tables — which is how an earlier control in this repo came to be invalidated.
+    Reversed on the odd reps, arms staying back to back: cumulative database state only
+    grows, so a fixed order hands one arm of every pair the emptier tables.
     """
     rounds = specs[0].reps if specs else 0
     return [
@@ -619,10 +591,8 @@ def measure_shape_connections(
 ) -> dict[str, t.Any]:
     """How many Postgres backends one shape opens, as a delta across starting it.
 
-    A delta because the harness's own connections sit on the same database, and a
-    count would credit them to whichever shape was measured. Sampled once the fleet
-    reports ready and before any rep, so the probe's own queries stay outside every
-    measured phase; a fleet already draining opens the same backends.
+    A delta because the harness's own connections sit on the same database. Sampled
+    before any rep, so the probe's own queries stay outside every measured phase.
     """
     before = analysis.count_client_backends()
     procs = runner.start_workers(spec.worker, spec.workers)
@@ -689,8 +659,8 @@ def apply_size_overrides(
 ) -> measurement.MeasurementSpec:
     """Shrink a production-sized spec to whatever the caller asked for.
 
-    ``tasks`` only reaches a saturation spec and ``duration`` only a rate one: the two
-    modes are sized in different units, and one flag scaling both would hide that.
+    ``tasks`` reaches only a saturation spec and ``duration`` only a rate one, the two
+    modes being sized in different units.
     """
     replacements: dict[str, t.Any] = {}
     if options.reps is not None:
@@ -719,9 +689,8 @@ def write_stage_file(
         {
             "stage": stage,
             "options": resolve_options(options),
-            # The three keys always, at null until a probe fills them: a file that
-            # simply omitted them would read as one written before the ceiling was
-            # recorded rather than as a run whose probe was refused.
+            # The three keys always, at null until a probe fills them: omitting them
+            # would read as a file written before the ceiling was ever recorded.
             **dict.fromkeys(COMMIT_CEILING_KEYS),
             **options.commit_ceiling,
             "measurements": recorded,
@@ -739,18 +708,13 @@ def write_results_file(path: Path, payload: dict[str, t.Any]) -> None:
 def resolve_options(options: StageOptions) -> dict[str, t.Any]:
     """What the flags came out as, so a results file says which run produced it.
 
-    Beside the per-measurement `host` block rather than inside it: one results file is
-    one run of one stage, so its flags are the same for every measurement in it, while
-    load average and uptime are not.
+    Beside the per-measurement `host` block rather than inside it, since one file is
+    one run of one stage while load average and uptime vary within it.
 
-    Resolved, so an unset flag records what it fell back to instead of a null the
-    reader has to go look up — `--max-workers` most of all, since its default is the
-    host's core count and a bounded run on a big box otherwise reads exactly like an
-    unbounded run on a small one. `--tasks` and `--duration` are the two with no single
-    default to resolve to: a stage's production size is its own (5000 no-ops here, 2000
-    workflows there; a 60 s offer, a 30 s idle probe), and every measurement records
-    the size it actually ran at in its own spec. `results_dir` is where the file went,
-    which the file's own location already says.
+    RESOLVED, so an unset flag records what it fell back to — `--max-workers` above
+    all, whose default is the host's core count. `--tasks` and `--duration` stay null
+    because a stage's production size is its own and every spec records the size it
+    ran at.
     """
     return {
         "duration_s": options.duration_s,
@@ -762,16 +726,15 @@ def resolve_options(options: StageOptions) -> dict[str, t.Any]:
 
 
 def resolve_io_seconds(options: StageOptions) -> float:
-    """Read by the stage that sleeps and by the record of what it slept for, so the
-    two cannot drift into disagreeing about the same run."""
+    """Seconds of simulated IO, read by the stage that sleeps and by the record of
+    what it slept for, so the two cannot disagree about one run."""
     return SLEEP_IO_SECONDS if options.io_seconds is None else options.io_seconds
 
 
 def summarize_measurement(result: dict[str, t.Any]) -> str:
     median = result["median"]
     # A saturation run starts with a full queue, so every task but the first waited
-    # behind the whole backlog: its percentiles are drain time wearing latency's name.
-    # The report's table drops them for the same reason.
+    # behind the backlog: its percentiles are drain time wearing latency's name.
     latency = (
         f"e2e p50 {median.get('end_to_end_p50_s', 0.0) * 1000:.1f}ms, "
         if result["spec"]["mode"] == "rate"
@@ -795,8 +758,8 @@ def summarize_producer_reps(
         (rep for rep in reps if rep["valid"]), key=lambda rep: rep["enqueues_per_s"]
     )
     median: dict[str, t.Any] = valid[(len(valid) - 1) // 2] if valid else {}
-    # The shared helper rather than a second copy of the arithmetic: this stage had
-    # its own, so the "one rep has no spread" guard had to be fixed twice.
+    # The shared helpers rather than a second copy of the arithmetic, which needs
+    # every dispersion guard fixed in two places.
     cv = measurement.measure_cv(valid, "enqueues_per_s")
     low, high = measurement.measure_rep_range(valid, "enqueues_per_s")
     return {
@@ -844,11 +807,8 @@ def read_ceiling(
 def describe_calibration(stage: str, best: dict[str, t.Any]) -> dict[str, t.Any]:
     """Which measurement became the working point, recorded where it is inherited.
 
-    The choice itself is right — a valid, stable rung is what a later stage should be
-    configured at — but nothing downstream could see it had been made. When most rungs
-    are marked, calibration lands on the slowest survivor and every stage after it
-    reads as though that were the machine's best, so what was chosen and how well it
-    repeated travel with the stage that inherited it.
+    When most rungs are marked, calibration lands on the slowest survivor and every
+    later stage would otherwise read as though that were the machine's best.
     """
     return {
         "stage": stage,
@@ -872,10 +832,8 @@ def read_stage_measurements(
 
 
 def pick_best_measurement(recorded: list[dict[str, t.Any]]) -> dict[str, t.Any]:
-    # A working point, not a report: preferring a measurement that measured what was
-    # asked and repeated is right here, and nothing is dropped from any table by it.
-    # Calibrating on nothing is worse than calibrating on a noisy best, so the rest are
-    # the fallback rather than an error.
+    # A working point, not a report: nothing is dropped from a table by this, and
+    # calibrating on a noisy best beats refusing, so the rest are the fallback.
     candidates = [
         entry for entry in recorded if not (entry["invalid"] or entry["unstable"])
     ] or recorded
@@ -892,11 +850,8 @@ def pick_rate_calibration_measurement(
     recorded: list[dict[str, t.Any]], worker_cap: int
 ) -> dict[str, t.Any]:
     """Pick what a rate stage calibrates from, leaving the producer some cores."""
-    # Capping the SELECTION rather than the chosen fleet keeps the offered rate and the
-    # workers asked to absorb it the same measurement; clamping afterwards would aim a
-    # smaller fleet at a bigger fleet's ceiling. No fallback to the uncapped set: every
-    # ladder anchors at one worker and every cap is at least one, so a rung under the
-    # cap always exists.
+    # Capping the SELECTION keeps the offered rate and the fleet asked to absorb it one
+    # measurement; clamping afterwards aims a smaller fleet at a bigger one's ceiling.
     capped = [entry for entry in recorded if entry["spec"]["workers"] <= worker_cap]
     return pick_best_measurement(capped)
 
@@ -941,9 +896,7 @@ def main(argv: list[str] | None = None) -> None:
     stages = args.stages or list(STAGE_NAMES)
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "settings")
     django.setup()
-    # All three are the caller's to fix — a size nothing could measure, a stage named
-    # before its prerequisite, or one whose measurements came back empty — so they
-    # print as errors, not as crashes.
+    # All three are the caller's to fix, so they print as errors rather than crashing.
     try:
         run_stages(stages, build_stage_options(args))
     except (
@@ -958,11 +911,8 @@ def main(argv: list[str] | None = None) -> None:
 def build_stage_options(args: argparse.Namespace) -> StageOptions:
     """The parsed flags as one stage's options, refusing a size nothing could measure.
 
-    Each of these goes wrong in its own way downstream and none of them announces it:
-    an empty ladder writes no results file while reporting success, a negative fleet
-    divides an idle probe's claim rate into a rate no worker produced, no tasks leaves
-    a percentile with nothing to sort, and a zero-second probe divides by its own
-    duration.
+    Refused here because each goes wrong silently downstream: an empty ladder writes no
+    file while reporting success, and a zero-length window still gets divided by.
     """
     for flag, value, floor in (
         ("--max-workers", args.max_workers, 1),

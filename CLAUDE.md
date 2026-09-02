@@ -106,9 +106,12 @@ writing or editing any test file. Running the suites:
   `docker compose up -d db db_pg_cron`. **These must be running before any suite.** If a
   connection is refused / `pg_isready` fails, the container is stopped (they don't
   survive a machine restart or a new session) — bring it up FIRST; don't diagnose it as
-  anything cleverer. The same file holds a third, `db_bench` — the tuned server for real
-  benchmark runs, behind a `bench` profile so a bare `up -d` leaves it alone. No suite
-  needs it; see [`benchmarks/README.md`](benchmarks/README.md).
+  anything cleverer. The same file holds a third, `db_bench` — the server for real
+  benchmark runs, on a RAM data directory behind a `bench` profile so a bare `up -d`
+  leaves it alone. No suite needs it. How to run the harness is in
+  [`benchmarks/README.md`](benchmarks/README.md); why it measures the way it does, and
+  what its numbers can and cannot support, is in
+  [`benchmarks/CLAUDE.md`](benchmarks/CLAUDE.md).
 - **`PGPORT` is read by both sides** — the port `db` publishes and the port the test
   settings connect to — so one value keeps them consistent. Set it whenever a system
   Postgres already owns 5432: otherwise `tests/core` runs against that server, and a

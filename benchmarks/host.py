@@ -54,15 +54,8 @@ def check_phase_uninterrupted(elapsed_s: float, wall_s: float) -> None:
 
 def collect_host_context() -> dict[str, t.Any]:
     with connections["default"].cursor() as cursor:
-        # Uptime rides along with the version: a server hammered for hours measures
-        # slower than a freshly started one, and nothing else records which you got.
-        # `cluster_name` rides along for the same reason and a sharper one: `db_bench`
-        # sets it to `bench-tmpfs` and nothing else in a results file says the data
-        # directory was RAM, where an absolute rate is not a durable figure at all.
-        # Unset it reads back as the empty string, which is every ordinary server.
-        # `shared_buffers` and `max_connections` are read off the server rather than
-        # from `BENCH_SHARED_BUFFERS`/`BENCH_MAX_CONNECTIONS`: the harness process need
-        # not have those set at all, and a running server is authoritative.
+        # Uptime, `cluster_name` and the two settings ride along with the version:
+        # nothing else says which server a run got, and a live server is the truth.
         cursor.execute(
             "select version(), "
             "extract(epoch from now() - pg_postmaster_start_time())::float8, "
@@ -100,11 +93,8 @@ def collect_host_context() -> dict[str, t.Any]:
 def read_requested_limit(variable: str) -> str | None:
     """A container CPU or memory limit as REQUESTED, which is all that is knowable.
 
-    Neither limit is visible over SQL, so there is nothing to measure and no honest
-    way to derive one: an absent variable means the limit is unknown, not that the
-    server was unlimited — whoever ran `docker compose up` may have set it in a shell
-    this process never saw. Recorded so the report can say `unknown` in the one place
-    a reader would otherwise take `cpu_count` for the server's cores.
+    Neither limit is visible over SQL, and an absent variable means unknown rather than
+    unlimited: whoever ran `docker compose up` may have set one in another shell.
     """
     return os.environ.get(variable) or None
 
@@ -112,17 +102,15 @@ def read_requested_limit(variable: str) -> str | None:
 def read_load_average() -> float:
     """The 1-minute load average right now, for a caller that samples it itself.
 
-    This block is collected once a measurement is OVER, so the figure in it counts the
-    load the harness had just made and can never answer "was the machine otherwise
-    busy". A rep samples this on each side of itself instead.
+    The host block is collected once a measurement is OVER, so its own figure counts
+    the load the harness had just made; a rep samples this on each side of itself.
     """
     return os.getloadavg()[0]
 
 
 def read_git_sha() -> str:
-    # Provenance is best-effort: an unpacked tarball has no .git directory and a
-    # machine may have no git at all, and a missing SHA should not abort a
-    # measurement.
+    # Provenance is best-effort: an unpacked tarball has no .git directory, and a
+    # missing SHA must not abort a measurement.
     try:
         completed = subprocess.run(
             ["git", "rev-parse", "HEAD"],

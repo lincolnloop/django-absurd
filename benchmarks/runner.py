@@ -46,7 +46,7 @@ def start_workers(spec: WorkerSpec, count: int) -> list[Worker]:
     try:
         for index in range(count):
             # A comprehension would discard the children already started when one
-            # of them fails, leaking them for the rest of the benchmark run.
+            # fails, leaking them for the rest of the run.
             started.append(spawn_worker(spec, index, environ))  # noqa: PERF401
     except BaseException:
         stop_workers(started)

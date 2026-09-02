@@ -4,10 +4,8 @@ from pathlib import Path
 
 
 def main() -> None:
-    # Running this file as a script already puts benchmarks/ on sys.path, which is
-    # where `settings` and the workloads come from. The repo root goes on for a task
-    # path that lives outside the harness — the test suite measures workloads of its
-    # own.
+    # benchmarks/ is already on sys.path for `settings` and the workloads; the repo
+    # root goes on for a task path outside the harness, which the suite measures.
     sys.path.append(str(Path(__file__).resolve().parent.parent))
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "settings")
 

@@ -60,6 +60,8 @@ From `pg_stat_statements` with `track=all`, top-level rows only:
     1.00 calls/task  0.2684 ms    cancellation scan   (nested)
     1.00 calls/task  0.0990 ms  complete_run          (top level)
 
+- WAL durability was 71% of a full run's active backend time on the volume, which is why
+  every rate here is read against a commit ceiling rather than on its own.
 - Claiming costs ~15x completing. All per-task database cost is acquiring work.
 - 42% of a task's wall time is client-side Python. That is what a GIL serialises, and it
   is the mechanism behind processes beating in-process concurrency.
@@ -185,7 +187,9 @@ its connections idled.
 So a row is **connection-bound** when its per-connection commit rate is near the ceiling
 — that number belongs to Postgres and moves on another machine — and **client-bound**
 when it is a fraction of it, which is the kind that is about Absurd. "Near" is 70%, a
-judgement rather than a measured boundary, and the verdict is read off the band the
+judgement rather than a measured boundary — for scale, the volume-era concurrency ladder
+ran from 28% of the ceiling at concurrency 1 to 102% at concurrency 16, sixteen threads
+on the one connection being what saturated it. The verdict is read off the band the
 durable probes put around that rate rather than off any median: a row whose band
 straddles the line prints `unresolved` instead of being assigned to whichever side one
 draw of the calibration favoured. On RAM every row reads `client-bound`, which is the
@@ -219,6 +223,28 @@ every restart exactly as it loses the schema. A role that may not create extensi
 a server that never preloaded the library (which is every suite server here), leaves
 `statement_stats` null and changes nothing else: the instrument is worth a run's
 itemisation, not the run.
+
+The view is read through a function of the harness's own (`STATEMENT_STATS_READER`)
+rather than off `pg_stat_statements` directly, because one code path has three servers
+to satisfy: one that preloaded the library, one where nothing created the extension
+(`undefined_table`), and one where the extension exists but the server started without
+it, which is every suite server here (`object_not_in_prerequisite_state`). The last two
+mean the same thing to a caller — no statement stats — and neither may abort a run, so
+both are caught server-side in one handler. Three mechanics of that function are
+invisible from its call site:
+
+- It is DROPPED before it is created, because `create or replace` refuses a changed
+  return type and a database that has held an older reader outlives one edit here easily
+  (every `--reuse-db` test database does). The failure would otherwise be a run
+  recording no statement stats for a reason nothing in it names.
+- It returns one JSON document as `text`, not `jsonb`: Django's psycopg3 backend
+  registers an identity loader for jsonb so its own JSONField can decode with its own
+  decoder, so a jsonb column reaches Python as the undecoded string anyway. A null
+  DOCUMENT rather than SQL NULL, so the caller always parses one JSON string.
+- It excludes its own statements by TWO `like` patterns — this query, which names the
+  view, plus the drop and create, which name the function. A comment marker would be
+  tidier and does not survive: plpgsql hands SPI an expression whose text has had its
+  comments taken out.
 
 **Redelivery needs the right query, not instrumentation.** Absurd's `fail_run` marks the
 failed run `'failed'` and inserts a NEW row for the retry, and `complete_run` only ever
@@ -261,7 +287,7 @@ them. `spread` and the endpoints (`range_low`, `range_high`) are still recorded 
 report prints the endpoints, because `209-501` is what a reader wants to see — they have
 simply stopped being the trigger. A `spread_floor` guards the test in the ranking key's
 own units: reps within 150 ms of each other are not called unstable however far apart
-they read relatively.
+they read relatively — reps of 67/89/173 ms read as a 119% spread.
 
 Fewer than two valid reps is an unknown dispersion rather than a zero: `spread` and `cv`
 record `null` and the row is marked `?`, so a measurement that measured nothing cannot
@@ -381,6 +407,17 @@ session that then measures. Warming removes that bias; it does not deliver a par
 number. The same six-round probe on an idle machine has also read 566, 508, 628, 500,
 587, 510/s — flat from first round to last. So the ceiling is not a constant of the
 machine to be looked up once, which is why every results file carries its own.
+
+A WARMED probe is still a draw from a wide distribution, which is why one is recorded as
+a median with its dispersion and never as a scalar. Eight volume-era trials spread
+600-2,262/s around a 2,016 median, a 28% CV, while the same trials with
+`synchronous_commit = off` held to 5%; two warmed opening probes, one per run, read
+1,984/s and 615/s. Nothing here selects between those two regimes. The two probes are
+also sized differently on purpose — `DURABLE_PROBE_COMMITS` 300 against
+`NONDURABLE_PROBE_COMMITS` 5,000 — because the non-durable rate reached ~370,000
+commits/s on the same stack, where 300 commits would be timing under a millisecond. A
+round read straight after a run once came back at 719/s: that was a cold session, not a
+depressed server, and it is why all three probes warm.
 
 The opening probe runs before the first measurement and the closing one after the last.
 The closing probe is not the opening one repeated: a run leaves behind the bloat and the

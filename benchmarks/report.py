@@ -43,26 +43,18 @@ MARK_LEGEND = (
 THROUGHPUT_KEY = "throughput_per_s"
 
 # Share of one connection's commit ceiling above which a measurement is called
-# connection-bound rather than client-bound. The concurrency ladder measured here ran
-# from 28% of the ceiling at concurrency 1 to 102% at concurrency 16 — sixteen threads
-# on the same single connection, which is what it saturated. Where "near the ceiling"
-# starts is a judgement and not a measured boundary, which is why the band the verdict
-# was read from prints beside it.
+# connection-bound. A judgement, not a measurement, so the band prints with it.
 CONNECTION_BOUND_SHARE = 0.70
 
-# Statements printed under one measurement. A results file keeps
-# `analysis.STATEMENT_STATS_LIMIT` of them so the fan-out can be re-read in full; a
-# report is read top to bottom, and past the costliest few the entries are microsecond
-# bookkeeping repeated under every row in the stage.
+# Statements printed under one measurement, fewer than the results file keeps: a
+# report is read top to bottom, and the tail of that list repeats under every row.
 REPORT_STATEMENT_LIMIT = 5
 # Normalised SQL arrives wrapped over several lines and runs to Postgres's
 # `track_activity_query_size`, while a bullet has to stay one line of it.
 STATEMENT_TEXT_LIMIT = 110
 
-# The `cluster_name` compose gives the RAM-backed benchmark server. The warning is
-# keyed off this name and not off a suspiciously large ceiling, because a tmpfs commit
-# rate reads as a hundredfold better disk rather than as no disk at all — 56,659
-# commits/s against 584 off the volume — and no threshold separates the two.
+# The `cluster_name` compose gives the RAM-backed benchmark server. Keyed off the name
+# and not off a large ceiling: a tmpfs rate reads as a better disk, not as no disk.
 TMPFS_CLUSTER_NAME = "bench-tmpfs"
 
 # Named by the flag that sets each one, so the header reads back as the command that
@@ -84,8 +76,7 @@ def render_report(results_dir: Path) -> str:
     ]
     if not stages:
         return f"No stage_*.json result files under {results_dir}.\n"
-    # A stage can legitimately measure nothing — a pooled_vs_split whose every pair the
-    # worker bound refused writes a file saying which — and the header is built out of
+    # A stage can legitimately measure nothing, and the header is built out of
     # measurement provenance, so there would be no run to describe.
     if not any(stage["measurements"] for stage in stages):
         return f"No measurements in the stage_*.json files under {results_dir}.\n"
@@ -135,13 +126,10 @@ def describe_provenance(shas: list[str]) -> str:
 def describe_commit_ceiling(stages: list[dict[str, t.Any]]) -> str:
     """What one connection to this server could commit while the run was made.
 
-    Every task rate below is a commit rate in disguise — 71% of the active backend time
-    in a full run against a Docker volume was WAL durability — and the ceiling is what
-    says whether it was the connection's number or Absurd's. Each probe prints its
-    dispersion beside its median: the durable rate is a wide distribution however fast
-    the medium, and a bare number would be read as a constant. Printed even when it is
-    missing — a run nobody could calibrate is still a run, but it must not read like a
-    calibrated one.
+    Every task rate below is a commit rate in disguise, and this is what says whether
+    it was the connection's number or Absurd's. Each probe prints its dispersion beside
+    its median, because a bare number would be read as a constant; a missing probe
+    prints too, so an uncalibrated run cannot read like a calibrated one.
     """
     return describe_alternatives(sorted({format_commit_ceiling(s) for s in stages}))
 
@@ -186,11 +174,8 @@ def describe_durability_cost(
 def describe_storage_medium(contexts: list[dict[str, t.Any]]) -> list[str]:
     """Whether the server kept its data in RAM, and what that costs the reader.
 
-    Printed directly under the commit ceiling rather than beside the postgres version
-    where the cluster name itself goes: the ceiling is the number this line is about,
-    and the one a reader would otherwise carry off as a property of django-absurd.
-    `any`, not all — one stage measured on RAM is enough to make the absolute rates in
-    the file it sits in incomparable with a durable one.
+    Printed under the commit ceiling, which is the number it is about. `any`, not all:
+    one stage measured on RAM makes the absolute rates beside it incomparable.
     """
     if not any(entry["cluster_name"] == TMPFS_CLUSTER_NAME for entry in contexts):
         return []
@@ -207,12 +192,10 @@ def describe_storage_medium(contexts: list[dict[str, t.Any]]) -> list[str]:
 def describe_server_resources(contexts: list[dict[str, t.Any]]) -> str:
     """What the server was given, and what nothing here can say it was given.
 
-    Every one of these is env-overridable per machine, so two results files can differ
-    for a reason no measurement in them explains unless the values ride along. The two
-    memory-and-connection settings are read off the server; the container limits are
-    not visible over SQL at all, so they are labelled as requested and read `unknown`
-    when the harness's environment never carried them. The `host cpu count` above is
-    the host's, which is why this line has to speak for the server separately.
+    All of it is env-overridable, so two results files would differ for a reason no
+    measurement in them explains. Container limits are invisible over SQL, so they are
+    labelled as requested; `host cpu count` above is the host's, which is why the
+    server gets a line of its own.
     """
     return (
         f"shared_buffers {describe_server_setting(contexts, 'shared_buffers')}, "
@@ -236,8 +219,8 @@ def describe_requested_limit(contexts: list[dict[str, t.Any]], key: str) -> str:
 def describe_cluster(contexts: list[dict[str, t.Any]]) -> str:
     """The server's `cluster_name`, which is how a run says which server it got.
 
-    An ordinary server declares none and reads back as the empty string. That prints
-    as `unnamed` rather than as nothing at all, so the field is always there to read.
+    An ordinary server declares none and reads back as the empty string, printed as
+    `unnamed` so the field is always there to read.
     """
     return describe_alternatives(
         sorted(
@@ -252,19 +235,15 @@ def describe_cluster(contexts: list[dict[str, t.Any]]) -> str:
 def describe_options(stages: list[dict[str, t.Any]]) -> str:
     """The configuration behind the numbers: every flag, at the value it resolved to.
 
-    All of them, not only the ones that were passed — an omitted flag would be
-    indistinguishable from one this report does not know about, and the whole line is
-    one line either way.
-
-    Stages are run separately and a partial re-run is a documented workflow, so a
-    directory can hold one stage measured at a different size from the rest. A flag
-    they disagree about reads as mixed, the same way a git SHA does.
+    All of them, not only the ones passed: an omitted flag would be indistinguishable
+    from one this report does not know about. A partial re-run is a documented
+    workflow, so a flag two stages disagree about reads as mixed, like a git SHA.
     """
     recorded = [stage["options"] for stage in stages]
     described: list[str] = []
     for flag, key in OPTION_FLAGS:
-        # Sorted as numbers rather than as the text they render to, so a mix reads
-        # `8, 60`; an unset flag has no number to sort by and goes last.
+        # Sorted as numbers rather than as the text they render to; an unset flag has
+        # no number to sort by and goes last.
         values = sorted(
             {entry[key] for entry in recorded},
             key=lambda value: (value is None, value or 0),
@@ -321,9 +300,8 @@ def render_stage(stage: dict[str, t.Any]) -> list[str]:
 def build_calibration_lines(stage: dict[str, t.Any]) -> list[str]:
     """Which measurement this stage was configured from, said where it was inherited.
 
-    A stage calibrated from another runs at one rung of it and nothing in its own
-    table says which: when most rungs of the earlier stage are marked, the working
-    point lands on the slowest survivor and every number here is measured at it.
+    Nothing in this stage's own table says which rung it ran at, and a working point
+    that landed on a marked one is measured into every number below.
     """
     calibration = stage.get("calibration")
     if calibration is None:
@@ -391,9 +369,8 @@ def render_measurement_row(entry: dict[str, t.Any]) -> str:
     spec = entry["spec"]
     worker = spec["worker"]
     median = entry["median"]
-    # A saturation run starts with a full queue, so every task but the first waited
-    # behind the whole backlog: its percentiles are drain time wearing latency's name.
-    # Blank rather than omitted, so the column still lines up with the rate rows.
+    # A saturation row's percentiles are drain time wearing latency's name, every task
+    # but the first having queued. Blank rather than omitted, so the columns line up.
     paced = spec["mode"] == "rate"
     return render_row(
         [
@@ -443,9 +420,8 @@ def render_idle_probes(stage: dict[str, t.Any]) -> list[str]:
 def render_skipped_pairs(stage: dict[str, t.Any]) -> list[str]:
     """The comparisons a stage refused to make, said where their rows would be.
 
-    A pair whose split arm the worker bound cannot spawn is dropped whole rather than
-    run at the bound — half a pair is not a comparison — and a table two rows short
-    with nothing said about it reads like a run that crashed.
+    Half a pair is not a comparison, so a bounded pair is dropped whole — and a table
+    two rows short with nothing said about it reads like a crashed run.
     """
     skipped = stage.get("skipped_pairs")
     if not skipped:
@@ -493,9 +469,8 @@ def render_shape_connections(stage: dict[str, t.Any]) -> list[str]:
 def describe_connection_confound(shapes: list[dict[str, t.Any]]) -> str:
     """Whether a pair's two shapes reached one total on the same connection count.
 
-    They differ in claim path by design. If they also differ in how many backends they
-    open, every ratio below is both differences at once and no line here can separate
-    them — which is a thing to say out loud rather than a reason to drop the stage.
+    They differ in claim path by design; differing in backends too makes every ratio
+    below both differences at once, which is worth saying rather than dropping.
     """
     opened_by_total: dict[int, set[int]] = {}
     for shape in shapes:
@@ -522,7 +497,7 @@ def render_run_order(stage: dict[str, t.Any]) -> list[str]:
     """The order the arms ran in, which is a property of the measurement itself.
 
     Cumulative database state only grows across a stage, so an arm that always ran
-    first would carry an advantage no column in the table records.
+    first would carry an advantage no column records.
     """
     run_order = stage.get("run_order")
     if not run_order:
@@ -538,15 +513,11 @@ def render_run_order(stage: dict[str, t.Any]) -> list[str]:
 def build_commit_budget_lines(stage: dict[str, t.Any]) -> list[str]:
     """What bound each saturation measurement: its own client, or its connection.
 
-    Throughput times the commits a task cost is the commit rate the run asked of the
-    database, and dividing that by the worker count is what one worker's connection
-    carried — the comparable quantity, since a worker opens the SDK's one connection
-    whatever its concurrency and the ceiling is one connection's. Near the ceiling that
-    rate belongs to the connection and moves on another machine; a fraction of it is
-    the case where the measurement is about Absurd.
+    Divided by the worker count, because the ceiling is ONE connection's and a worker's
+    claim traffic funnels through one whatever its concurrency. Near the ceiling the
+    rate belongs to Postgres on this disk; a fraction of it is about Absurd.
 
-    Saturation rows only. A paced row's rate is set by the offer, so its share of the
-    ceiling says how big the offer was and nothing about what bound it.
+    Saturation rows only: a paced row's rate is the offer's.
     """
     measurements = select_saturation_measurements(stage)
     if not any(entry["median"].get("commits_per_task") for entry in measurements):
@@ -571,19 +542,10 @@ def describe_commit_budget(
 ) -> str:
     """One row's commit rate, as a band across every durable probe the run recorded.
 
-    The band spans the union of the opening and closing probes' endpoints, because a
-    ceiling that MOVED during the run calibrates nothing measured under it: one run
-    here opened at 615 commits/s and closed at 2,100 against the same server, and its
-    opening probe alone called 15 of that run's 25 rows connection-bound — a confident
-    verdict on a run that crossed between storage regimes halfway through and is not
-    internally comparable at all. The union refuses that call, which is the correct one
-    to refuse, and costs a run that did not drift nothing: run A's verdicts are the
-    same either way.
-
-    No single share of a median prints beside it. Two probes are two calibrations and
-    not two draws of one, so when they disagree there is no rate a share could honestly
-    be taken against, and a headline percentage is exactly what a reader would take the
-    verdict from instead of the band.
+    The band spans the UNION of the opening and closing probes' endpoints, because a
+    ceiling that moved mid-run calibrates nothing measured under it. No share of a
+    median prints beside it: two probes are two calibrations rather than two draws of
+    one, so a headline percentage is what a reader would take the verdict from.
     """
     name = entry["spec"]["name"]
     commits_per_task = entry["median"].get("commits_per_task")
@@ -598,9 +560,8 @@ def describe_commit_budget(
         f"- `{name}`: {per_connection:.0f} commits/s per worker connection "
         f"({throughput:.1f} x {commits_per_task:.2f} / {workers})"
     )
-    # The opening probe is what the run's rows were measured against, so a run without
-    # one has no calibration for a closing probe to widen — the same asymmetry the
-    # header's `format_commit_ceiling` already reports the whole line as missing on.
+    # The opening probe is what the rows were measured against, so a run without one
+    # has no calibration for a closing probe to widen.
     if opening is None:
         return f"{demanded}, against no ceiling — nothing here says what bound it"
     probes = [opening] if closing is None else [opening, closing]
@@ -616,8 +577,8 @@ def describe_commit_budget(
 def describe_band_probes(closing: dict[str, float] | None) -> str:
     """Which probes the band came from, since a wide band has two different causes.
 
-    A reader comparing two reports has to tell a band that widened because the machine
-    drifted mid-run from one that widened because the disk is worse than it was.
+    A reader comparing two reports has to tell a band widened by mid-run drift from
+    one widened by a worse disk.
     """
     if closing is None:
         return "the opening probe alone"
@@ -627,10 +588,8 @@ def describe_band_probes(closing: dict[str, float] | None) -> str:
 def describe_what_bound_it(band_low: float, band_high: float) -> str:
     """Which side of the line the whole band falls on, or that it lies across it.
 
-    Read off the band and not off any median: the calibration's own spread is wide
-    enough that a verdict taken from one draw of it would flip between two identical
-    runs, and its two probes can disagree by more again, which is the false precision
-    this block exists to refuse.
+    Read off the band and not off a median, whose spread is wide enough that a verdict
+    taken from one draw of it would flip between two identical runs.
     """
     if band_low >= CONNECTION_BOUND_SHARE:
         return "connection-bound"
@@ -642,8 +601,7 @@ def describe_what_bound_it(band_low: float, band_high: float) -> str:
 def select_saturation_measurements(stage: dict[str, t.Any]) -> list[dict[str, t.Any]]:
     """The rows whose rate the run discovered rather than imposed.
 
-    A paced row's rate is the offer's, so anything divided into it — a share of the
-    commit ceiling, a millisecond per task — says how big the offer was and nothing
+    Anything divided into a paced row's rate says how big the offer was and nothing
     about what the work cost.
     """
     return [
@@ -656,11 +614,9 @@ def select_saturation_measurements(stage: dict[str, t.Any]) -> list[dict[str, t.
 def build_statement_cost_lines(stage: dict[str, t.Any]) -> list[str]:
     """Where a task's time went, statement by statement, and what was left for Python.
 
-    Under the commit budget because it decomposes the same quotient: the budget says
-    what a task asked of the disk, this says which statements asked it, how often each
-    ran and what the wall clock spent nowhere near the server. A block rather than
-    columns — one row per statement per measurement is not a table anybody can scan,
-    and the fan-out is the finding.
+    Under the commit budget because it decomposes the same quotient. A block rather
+    than columns: one row per statement per measurement is not a table anybody can
+    scan, and the fan-out is the finding.
     """
     measurements = select_saturation_measurements(stage)
     if not any(entry["median"].get("statement_stats") for entry in measurements):
@@ -700,9 +656,8 @@ def describe_statement_cost(entry: dict[str, t.Any]) -> list[str]:
 def format_statement_cost(statement: dict[str, t.Any]) -> str:
     """One statement's calls and server time per task.
 
-    Nesting is marked because it is what the counts have to be read against: a nested
-    row is a statement Absurd's PL/pgSQL ran inside a top-level call that was already
-    charged for its time, so only the top-level rows sum to the server side.
+    Nesting is marked because only the top-level rows sum to the server side: a nested
+    row ran inside a call already charged for its time.
     """
     nesting = "" if statement["toplevel"] else " nested"
     return (
@@ -723,11 +678,9 @@ def summarize_statement_text(query: str) -> str:
 def build_derived_lines(stage: str, measurements: list[dict[str, t.Any]]) -> list[str]:
     """Every measurement derives, marked or not.
 
-    Nothing is filtered out here: a measurement excluded from the arithmetic is a
-    finding deleted, and an unstable one is a finding about the system rather than a
-    broken rep. What a marked measurement changes is the SHAPE of what it derives —
-    see `describe_quotient`, which carries the reps' own endpoints through the
-    division instead of publishing a point estimate the reps never agreed on.
+    Nothing is filtered: a measurement excluded from the arithmetic is a finding
+    deleted. A mark changes the SHAPE of what derives instead — see `describe_quotient`,
+    which carries the reps' endpoints through the division.
     """
     if stage == "process_scaling":
         return build_scaling_efficiency_lines(measurements)
@@ -761,9 +714,8 @@ def build_scaling_efficiency_lines(measurements: list[dict[str, t.Any]]) -> list
 def build_pooled_vs_split_lines(measurements: list[dict[str, t.Any]]) -> list[str]:
     """`split / pooled` at every total both shapes of the pair were measured at.
 
-    Paired on the shapes themselves — processes times concurrency is the total, and
-    the pooled arm is the one-process one — rather than on the measurement names, so
-    the pairing cannot come apart from what was actually run.
+    Paired on the shapes themselves rather than on the measurement names, so the
+    pairing cannot come apart from what was actually run.
     """
     paired: dict[int, dict[str, dict[str, t.Any]]] = {}
     for entry in measurements:
@@ -868,9 +820,8 @@ def describe_quotient(
 ) -> str:
     """`entry / (scale x base_entry)`, plus the interval its reps span.
 
-    A quotient of two medians is a point estimate whichever way its inputs wobbled: a
-    scaling efficiency measured against a base whose reps ran 209-501 is a range, and
-    printing only the middle of it publishes a precision nobody measured.
+    A quotient of two medians is a point estimate whichever way its inputs wobbled, and
+    printing only the middle of a range publishes a precision nobody measured.
     """
     base = base_entry["median"][metric_key] * scale
     point = f"{entry['median'].get(metric_key, 0.0) / base:.2f}{suffix}"
@@ -887,9 +838,8 @@ def describe_quotient(
 def read_rep_range(entry: dict[str, t.Any], metric_key: str) -> tuple[float, float]:
     """The reps' endpoints for `metric_key`, or the median rep's own value twice.
 
-    Endpoints are recorded for the metric the reps were RANKED on and no other, so a
-    rate measurement appearing in a throughput block has none to carry — and neither
-    does a measurement no rep survived.
+    Endpoints exist for the RANKED metric alone, so a rate measurement in a throughput
+    block has none to carry, nor does one no rep survived.
     """
     point = float(entry["median"].get(metric_key, 0.0))
     if entry["ranking_key"] != metric_key or entry["range_low"] is None:
@@ -912,8 +862,8 @@ def describe_marks(entry: dict[str, t.Any]) -> str:
 def format_rep_range(entry: dict[str, t.Any]) -> str:
     """The endpoints the reps actually produced, at whatever magnitude they are.
 
-    One format for both units: a throughput reads 209.3-501.2 and a latency 0.012-0.05,
-    where a fixed number of decimals would round one of the two into a single number.
+    One format for both units, where a fixed number of decimals would round a latency
+    range into a single number.
     """
     if entry["range_low"] is None:
         return "n/a"
@@ -921,9 +871,8 @@ def format_rep_range(entry: dict[str, t.Any]) -> str:
 
 
 def format_dispersion(value: float | None) -> str:
-    # None, not 0.0, when there were fewer than two reps to compare, or no positive
-    # middle to divide by: a measurement that measured nothing must not read as the
-    # steadiest one in its stage.
+    # None, not 0.0, with fewer than two reps to compare: a measurement that measured
+    # nothing must not read as the steadiest one in its stage.
     return "n/a" if value is None else f"{value:.1%}"
 
 
