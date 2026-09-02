@@ -22,7 +22,8 @@ MARK_LEGEND = (
     (
         "Marks: `!` invalid — a rep measured something other than what was asked (a "
         "redelivery, a task that never completed, a window too short to divide by, "
-        "an under-offered rate). `~` unstable — the reps measured the right thing "
+        "an under-offered rate, a paced offer whose backlog was still growing when "
+        "it stopped). `~` unstable — the reps measured the right thing "
         "and disagreed, beyond the measurement's CV limit. `?` — fewer than two "
         "valid reps, so dispersion was never measured. A marked measurement stays "
         "in every table and in every number derived below one."
@@ -287,6 +288,7 @@ def render_stage(stage: dict[str, t.Any]) -> list[str]:
         TABLE_RULE,
     ]
     lines += [render_measurement_row(entry) for entry in measurements]
+    lines += render_rate_ramp(stage)
     lines += render_idle_probes(stage)
     lines += render_skipped_pairs(stage)
     lines += render_shape_connections(stage)
@@ -389,6 +391,78 @@ def render_measurement_row(entry: dict[str, t.Any]) -> str:
             format_dispersion(entry["cv"]),
             describe_marks(entry),
         ]
+    )
+
+
+def render_rate_ramp(stage: dict[str, t.Any]) -> list[str]:
+    """The ramp that found the offer rate the rows above are fractions of.
+
+    Printed under them because a rung's rate means nothing on its own: what says
+    whether it was offered below the knee or above it is which probe absorbed what.
+    """
+    ramp = stage.get("sustainable_rate")
+    if ramp is None:
+        return []
+    return [
+        "",
+        describe_sustainable_rate(ramp),
+        "",
+        (
+            "| offered/s | offer s | absorbed | e2e p50 s | backlog at midpoint "
+            "| backlog at end |"
+        ),
+        "| " + " | ".join(["---"] * 6) + " |",
+        *[
+            render_row(
+                [
+                    f"{probe['rate_per_s']:.1f}",
+                    f"{ramp['offer_seconds']:g}",
+                    "yes" if probe["sustained"] else "no",
+                    f"{probe['rep'].get('end_to_end_p50_s', 0.0):.4f}",
+                    str(probe["rep"].get("backlog_mid", 0)),
+                    str(probe["rep"].get("backlog_end", 0)),
+                ]
+            )
+            for probe in ramp["probes"]
+        ],
+    ]
+
+
+def describe_sustainable_rate(ramp: dict[str, t.Any]) -> str:
+    """What the ramp settled on, and why it is not the drain rate beside it.
+
+    A fleet draining a backlog has work waiting at every claim; a paced one has to keep
+    up in real time. So the two rates are different quantities and the drain one is the
+    larger, which is what taking fractions of it got wrong.
+    """
+    drain = (
+        f"The drain rate this stage calibrated from was "
+        f"{ramp['drain_ceiling_per_s']:.1f}/s, which is what the fleet completes with "
+        f"a backlog already waiting rather than what it can absorb as it arrives."
+    )
+    if not ramp["sustained"]:
+        return (
+            f"Offer rate: {ramp['rate_per_s']:.1f}/s — the LOWEST rate the ramp "
+            f"probed, and one it did not absorb, so every rung above is a fraction of "
+            f"an unproven rate and the marks on them are the finding. {drain}"
+        )
+    return (
+        f"Offer rate: {ramp['rate_per_s']:.1f}/s, the highest offer the fleet "
+        f"absorbed; {describe_rate_bracket(ramp)} The rows above offer fractions of "
+        f"it. {drain}"
+    )
+
+
+def describe_rate_bracket(ramp: dict[str, t.Any]) -> str:
+    """Where the knee is, which is between two probes and never at one of them."""
+    if ramp["bracket_high_per_s"] is None:
+        return (
+            "the ramp ran out of climb below the drain rate without finding an offer "
+            "it could not, so the knee is at or above the top of the ramp."
+        )
+    return (
+        f"it refused {ramp['bracket_high_per_s']:.1f}/s, so the knee is between the "
+        f"two and nothing here refines it."
     )
 
 

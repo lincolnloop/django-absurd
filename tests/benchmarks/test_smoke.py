@@ -23,6 +23,15 @@ MEASURABLE_TASKS = "60"
 # it stays on that boundary if the size ever moves.
 PROFILED_TASKS = 3 * analysis.THROUGHPUT_SLICE_COMPLETIONS + 100
 
+# Two offer rates for one worker, either side of anything a machine's speed could
+# move: the fastest single worker ever measured on the tuned server drained 360
+# tasks/s, so 25 is absorbed everywhere and 800 diverges everywhere.
+ABSORBABLE_RATE_PER_S = 25.0
+UNABSORBABLE_RATE_PER_S = 800.0
+# A drain ceiling whose lowest ramp probe — a tenth of it — is already the rate above,
+# so a ramp anchored to it cannot absorb even its first offer.
+UNABSORBABLE_CEILING_PER_S = UNABSORBABLE_RATE_PER_S / stages.RATE_RAMP_START_FRACTION
+
 # One phase's statement counters as `pg_stat_statements` hands them over, either side
 # of it. Cumulative, so the figures per task are the difference: the claim and its
 # nested update both move, the drain poll is a statement of somebody else's that did
@@ -176,9 +185,133 @@ def test_reports_the_latency_of_the_paced_offer_a_rate_stage_made(
 # Everything below builds its own measurement rather than driving a stage. The first
 # three want a task that misbehaves — one that outlives its claim lease, one that never
 # completes, one that never drains — and every workload the driver offers is a task
-# that succeeds; the last four want one measurement at a size of their own — repeated,
-# napped, too small to slice, or big enough to slice — which the smallest stage would
-# charge six of.
+# that succeeds; the rest want one measurement at a size or an offer rate of their own —
+# repeated, napped, too small to slice, big enough to slice, or paced past what the
+# fleet can absorb — which the smallest stage would charge six of.
+def test_rate_measurement_marks_an_offer_the_fleet_never_absorbed() -> None:
+    """A queue still growing when the offer stopped never measured that rate.
+
+    Its percentiles come off the middle of a transient, so they read as whatever the
+    ramp had reached by then and rise with the window rather than describing the rate
+    on the row. One worker cannot absorb hundreds of tasks a second, so the offer here
+    diverges on any machine — while the paced arm of the same pair is absorbed on any
+    machine too, which is what says the guard has not simply flagged everything.
+    """
+    absorbed, diverging = (
+        measurement.run_measurement(
+            measurement.MeasurementSpec(
+                name=f"smoke-offer-{rate_per_s:g}",
+                mode="rate",
+                task_path="tasks.noop_sync",
+                rate_per_s=rate_per_s,
+                duration_s=2.0,
+                workers=1,
+                worker=runner.WorkerSpec(concurrency=1, poll_interval=0.05),
+                reps=1,
+                timeout_s=120,
+            )
+        )
+        for rate_per_s in (ABSORBABLE_RATE_PER_S, UNABSORBABLE_RATE_PER_S)
+    )
+
+    assert {
+        "absorbed": {
+            "backlog_grew": absorbed["reps"][0]["backlog_grew"],
+            "invalid": absorbed["invalid"],
+        },
+        "diverging": {
+            "backlog_grew": diverging["reps"][0]["backlog_grew"],
+            "invalid": diverging["invalid"],
+            "backlog_at_the_end_outgrew_the_midpoint": (
+                diverging["reps"][0]["backlog_end"]
+                > diverging["reps"][0]["backlog_mid"]
+            ),
+        },
+    } == {
+        "absorbed": {"backlog_grew": False, "invalid": False},
+        "diverging": {
+            "backlog_grew": True,
+            "invalid": True,
+            "backlog_at_the_end_outgrew_the_midpoint": True,
+        },
+    }
+
+
+def test_rate_ramp_that_absorbed_nothing_measures_at_the_lowest_rate_it_probed(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A ramp anchored to a rate no fleet here could absorb still names a rate.
+
+    Called directly because the fictional drain ceiling is the input: the stage reads
+    that number back off `stage_process_scaling.json`, and no run of the driver
+    produces one a single worker is hopeless against.
+
+    The stage measures at the lowest rate it probed rather than refusing — a marked
+    rung is a finding, an aborted stage is not — and records that the rate was never
+    absorbed, so nothing reads those rungs as latency at a sustainable offer.
+    """
+    ramp = stages.measure_sustainable_rate(
+        runner.WorkerSpec(concurrency=1, poll_interval=0.05),
+        1,
+        UNABSORBABLE_CEILING_PER_S,
+        stages.StageOptions(results_dir=tmp_path, duration_s=1.0),
+    )
+
+    lowest = UNABSORBABLE_CEILING_PER_S * stages.RATE_RAMP_START_FRACTION
+    assert {
+        "probed": [probe["rate_per_s"] for probe in ramp["probes"]],
+        "absorbed": [probe["sustained"] for probe in ramp["probes"]],
+        "backlog_grew": [probe["rep"]["backlog_grew"] for probe in ramp["probes"]],
+        "rate_per_s": ramp["rate_per_s"],
+        "sustained": ramp["sustained"],
+        "bracket_high_per_s": ramp["bracket_high_per_s"],
+        "drain_ceiling_per_s": ramp["drain_ceiling_per_s"],
+        "offer_seconds": ramp["offer_seconds"],
+    } == {
+        "probed": [lowest],
+        "absorbed": [False],
+        "backlog_grew": [True],
+        "rate_per_s": lowest,
+        "sustained": False,
+        "bracket_high_per_s": lowest,
+        "drain_ceiling_per_s": UNABSORBABLE_CEILING_PER_S,
+        "offer_seconds": 1.0,
+    }
+
+
+def test_backlog_growth_is_read_as_a_share_of_the_offer_it_grew_under() -> None:
+    """The rule the guard turns on, at the two boundaries no real offer can hold still.
+
+    A share rather than a count, so one threshold covers a five-task smoke offer and a
+    hundred-thousand-task one; and a floor in tasks under the share, so a handful of
+    scheduling jitter on a tiny offer is not read as a diverging queue.
+    """
+    assert {
+        "kept_up": analysis.build_backlog_growth(500, 1000, 480, 960),
+        "fell_behind": analysis.build_backlog_growth(500, 1000, 480, 700),
+        "jittered_under_the_floor": analysis.build_backlog_growth(50, 100, 48, 90),
+    } == {
+        "kept_up": {
+            "backlog_mid": 20,
+            "backlog_end": 40,
+            "offered_after_midpoint": 500,
+            "backlog_grew": False,
+        },
+        "fell_behind": {
+            "backlog_mid": 20,
+            "backlog_end": 300,
+            "offered_after_midpoint": 500,
+            "backlog_grew": True,
+        },
+        "jittered_under_the_floor": {
+            "backlog_mid": 2,
+            "backlog_end": 10,
+            "offered_after_midpoint": 50,
+            "backlog_grew": False,
+        },
+    }
+
+
 def test_saturation_measurement_invalidates_a_task_that_outlived_its_claim_lease() -> (
     None
 ):

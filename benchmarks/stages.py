@@ -53,12 +53,14 @@ STAGE_DESCRIPTIONS = {
         "the producer's own ceiling: one connection, eight threads, batched commits"
     ),
     "latency_under_load": (
-        "end-to-end latency at fractions of the measured process-scaling ceiling"
+        "end-to-end latency at fractions of a measured sustainable offer rate"
     ),
 }
 
-# Sized so even the slowest worker_knobs rung drains a p10-p90 window that is not
-# mostly ramp; throughput divides that window.
+# The depth every rung sharing a table is measured at, so `--tasks` is a comparability
+# key rather than a size: 20,000 was measured and REFUSED — it moves the medians
+# 0.42-0.60x on depth alone, tightens no CV, and costs up to 10x the wall clock. See
+# `benchmarks/CLAUDE.md`.
 SATURATION_TASKS = 5000
 SATURATION_TIMEOUT_S = 900.0
 # Read back off the measurement default rather than restated, so a results file
@@ -70,6 +72,18 @@ HOST_CPUS = os.cpu_count() or 1
 # off the fastest saturation result asks for an offer it has no cores left to give.
 RATE_WORKER_CAP = max(1, HOST_CPUS // 2)
 RATE_TIMEOUT_S = 300.0
+# What `latency_under_load` offers, as fractions of the sustainable rate its own ramp
+# measured — never of a drain rate, which is a different quantity entirely.
+RATE_FRACTIONS = (0.25, 0.50, 0.75, 0.90)
+# The ramp that finds that rate: climb from a tenth of the drain ceiling by half again
+# a step, and stop at the first offer the fleet could not absorb. A drain rate is the
+# most any fleet could ever complete, so it caps the climb.
+RATE_RAMP_START_FRACTION = 0.10
+RATE_RAMP_STEP = 1.5
+# Long enough that a queue falling behind has visibly fallen behind by the midpoint,
+# short enough that a whole ramp costs a couple of minutes. One rep each: a probe
+# picks a working point, and every rung it sizes is measured at `--reps`.
+RATE_RAMP_SECONDS = 20.0
 # Reps this close are not called unstable however far apart they read relatively: a
 # rate measurement ranks on a latency, which every relative dispersion divides by.
 RATE_SPREAD_FLOOR_S = 0.15
@@ -377,28 +391,119 @@ def measure_producer_rep(
 
 
 def run_latency_under_load(options: StageOptions) -> None:
-    """End-to-end latency at fractions of the measured process-scaling ceiling."""
+    """End-to-end latency at fractions of an offer rate this stage measured itself.
+
+    A drain rate is not an arrival rate: a fleet draining a backlog has work waiting
+    at every claim, while a paced one has to keep up in real time, polls that find
+    nothing included. Taking fractions of the drain rate offered more than the fleet
+    could absorb, so the upper rungs measured a diverging queue.
+    """
     worker, workers, ceiling, calibration = read_ceiling(options)
+    ramp = measure_sustainable_rate(worker, workers, ceiling, options)
     record_measurements(
         "latency_under_load",
-        [
-            measurement.MeasurementSpec(
-                name=f"rate_{int(fraction * 100)}pct",
-                mode="rate",
-                task_path=NOOP_SYNC,
-                worker=worker,
-                workers=workers,
-                rate_per_s=ceiling * fraction,
-                duration_s=RATE_OFFER_SECONDS,
-                timeout_s=RATE_TIMEOUT_S,
-                spread_floor=RATE_SPREAD_FLOOR_S,
-            )
-            for fraction in (0.25, 0.50, 0.75, 0.90)
-        ],
+        build_latency_measurements(worker, workers, ramp["rate_per_s"]),
         [],
         options,
-        {"calibration": calibration},
+        {"calibration": calibration, "sustainable_rate": ramp},
     )
+
+
+def measure_sustainable_rate(
+    worker: runner.WorkerSpec,
+    workers: int,
+    ceiling: float,
+    options: StageOptions,
+) -> dict[str, t.Any]:
+    """Climb the offered rate until the fleet stops keeping up with it.
+
+    The working point is the highest rate a probe absorbed — the fractions below it
+    then mean something, where fractions of a drain rate did not. The rung above it is
+    kept as the bracket: the knee is between the two and no probe here refines it.
+    """
+    probes: list[dict[str, t.Any]] = []
+    rate = ceiling * RATE_RAMP_START_FRACTION
+    absorbed = True
+    while absorbed and rate <= ceiling:
+        probes.append(measure_rate_probe(worker, workers, rate, options))
+        absorbed = probes[-1]["sustained"]
+        rate *= RATE_RAMP_STEP
+    sustained = [probe["rate_per_s"] for probe in probes if probe["sustained"]]
+    refused = [probe["rate_per_s"] for probe in probes if not probe["sustained"]]
+    return {
+        "drain_ceiling_per_s": ceiling,
+        "offer_seconds": resolve_rate_ramp_seconds(options),
+        # Defaulting to the lowest rate probed, when even that one diverged: the stage
+        # measures at a rate it can name rather than refusing, and says it is unproven.
+        "rate_per_s": max(sustained, default=probes[0]["rate_per_s"]),
+        "sustained": bool(sustained),
+        # None where the ramp ran out of ceiling with everything absorbed, since the
+        # knee is then above the top of the ramp rather than between two probes.
+        "bracket_high_per_s": min(refused, default=None),
+        "probes": probes,
+    }
+
+
+def measure_rate_probe(
+    worker: runner.WorkerSpec,
+    workers: int,
+    rate_per_s: float,
+    options: StageOptions,
+) -> dict[str, t.Any]:
+    """One offer at one rate, and whether the fleet absorbed it.
+
+    Judged by the same rules that mark a measurement's reps, so a probe cannot call
+    an offer absorbed that a rung at the same rate would then mark invalid.
+    """
+    spec = measurement.MeasurementSpec(
+        name=f"ramp_{rate_per_s:.0f}_per_s",
+        mode="rate",
+        task_path=NOOP_SYNC,
+        worker=worker,
+        workers=workers,
+        rate_per_s=rate_per_s,
+        duration_s=resolve_rate_ramp_seconds(options),
+        timeout_s=RATE_TIMEOUT_S,
+        reps=1,
+    )
+    rep = measurement.run_clean_rep(spec)
+    probe = {
+        "rate_per_s": rate_per_s,
+        "sustained": not measurement.is_rep_invalid(rep),
+        "rep": rep,
+    }
+    print(summarize_rate_probe(probe))
+    return probe
+
+
+def summarize_rate_probe(probe: dict[str, t.Any]) -> str:
+    """A probe on one line: the offer, the verdict, and the backlog behind it."""
+    rep = probe["rep"]
+    verdict = "sustained" if probe["sustained"] else "not sustained"
+    return (
+        f"ramp {probe['rate_per_s']:.1f}/s offered: {verdict}, "
+        f"e2e p50 {rep.get('end_to_end_p50_s', 0.0) * 1000:.1f}ms, "
+        f"backlog {rep.get('backlog_mid', 0)} -> {rep.get('backlog_end', 0)}"
+    )
+
+
+def build_latency_measurements(
+    worker: runner.WorkerSpec, workers: int, rate_per_s: float
+) -> list[measurement.MeasurementSpec]:
+    return [
+        measurement.MeasurementSpec(
+            name=f"rate_{int(fraction * 100)}pct",
+            mode="rate",
+            task_path=NOOP_SYNC,
+            worker=worker,
+            workers=workers,
+            rate_per_s=rate_per_s * fraction,
+            duration_s=RATE_OFFER_SECONDS,
+            timeout_s=RATE_TIMEOUT_S,
+            spread_floor=RATE_SPREAD_FLOOR_S,
+        )
+        for fraction in RATE_FRACTIONS
+    ]
 
 
 def build_concurrency_measurements() -> list[measurement.MeasurementSpec]:
@@ -729,6 +834,15 @@ def resolve_io_seconds(options: StageOptions) -> float:
     """Seconds of simulated IO, read by the stage that sleeps and by the record of
     what it slept for, so the two cannot disagree about one run."""
     return SLEEP_IO_SECONDS if options.io_seconds is None else options.io_seconds
+
+
+def resolve_rate_ramp_seconds(options: StageOptions) -> float:
+    """How long one ramp probe offers for, read by the probe and by its own record.
+
+    `--duration` reaches it like any other rate window, so a suite can drive a whole
+    ramp in seconds.
+    """
+    return RATE_RAMP_SECONDS if options.duration_s is None else options.duration_s
 
 
 def summarize_measurement(result: dict[str, t.Any]) -> str:

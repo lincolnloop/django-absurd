@@ -237,18 +237,29 @@ def measure_rep_range(
 def is_measurement_invalid(
     reps: list[dict[str, t.Any]], valid: list[dict[str, t.Any]]
 ) -> bool:
-    """Whether a rep measured something OTHER than what the spec asked for.
+    """Whether any rep measured something OTHER than what the spec asked for.
 
     Every rep votes, not only the median one: a rep that under-offered has a LOWER
     latency, so it sorts away from the median and would never be looked at.
     """
+    return not valid or any(is_rep_invalid(rep) for rep in reps)
+
+
+def is_rep_invalid(rep: dict[str, t.Any]) -> bool:
+    """One rep's own verdict, which the rate ramp reads a probe off directly.
+
+    Split out rather than inlined above so a probe judging whether one offer was
+    absorbed and a measurement marking its reps cannot drift apart.
+    """
     return (
-        not valid
-        or len(valid) != len(reps)
-        or any(rep.get("extra_runs", 0) > 0 for rep in valid)
-        or any(rep.get("missing_tasks", 0) != 0 for rep in valid)
-        or any(rep.get("degenerate_window", False) for rep in valid)
-        or any(rep.get("offered_ok", True) is False for rep in valid)
+        not rep["valid"]
+        or rep.get("extra_runs", 0) > 0
+        or rep.get("missing_tasks", 0) != 0
+        or rep.get("degenerate_window", False)
+        or rep.get("offered_ok", True) is False
+        # A paced rep whose queue was still growing when the offer stopped measured
+        # the ramp towards a rate, not the rate.
+        or rep.get("backlog_grew", False)
     )
 
 

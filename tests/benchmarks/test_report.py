@@ -148,7 +148,8 @@ HEADER = (
     "\n"
     "Marks: `!` invalid — a rep measured something other than what was asked (a "
     "redelivery, a task that never completed, a window too short to divide by, an "
-    "under-offered rate). `~` unstable — the reps measured the right thing and "
+    "under-offered rate, a paced offer whose backlog was still growing when it "
+    "stopped). `~` unstable — the reps measured the right thing and "
     "disagreed, beyond the measurement's CV limit. `?` — fewer than two valid reps, "
     "so dispersion was never measured. A marked measurement stays in every table and "
     "in every number derived below one.\n"
@@ -253,6 +254,51 @@ def render(
     write_stage(tmp_path, stage, entries, **extra)
     report.main(["--results-dir", str(tmp_path)])
     return capsys.readouterr().out
+
+
+def build_rate_ramp(**overrides: t.Any) -> dict[str, t.Any]:
+    """The ramp a rate stage records, the way `stages.measure_sustainable_rate` does.
+
+    Three probes climbing towards the drain rate: two the fleet absorbed and the one it
+    did not, whose backlog doubled across its own offer window.
+    """
+    return {
+        "drain_ceiling_per_s": 4200.0,
+        "offer_seconds": 20.0,
+        "rate_per_s": 1400.0,
+        "sustained": True,
+        "bracket_high_per_s": 2100.0,
+        "probes": [
+            {
+                "rate_per_s": 933.3,
+                "sustained": True,
+                "rep": {
+                    "end_to_end_p50_s": 0.014,
+                    "backlog_mid": 30,
+                    "backlog_end": 26,
+                },
+            },
+            {
+                "rate_per_s": 1400.0,
+                "sustained": True,
+                "rep": {
+                    "end_to_end_p50_s": 0.018,
+                    "backlog_mid": 42,
+                    "backlog_end": 39,
+                },
+            },
+            {
+                "rate_per_s": 2100.0,
+                "sustained": False,
+                "rep": {
+                    "end_to_end_p50_s": 8.4,
+                    "backlog_mid": 24000,
+                    "backlog_end": 51000,
+                },
+            },
+        ],
+        **overrides,
+    }
 
 
 def build_pooled_vs_split_entries() -> list[dict[str, t.Any]]:
@@ -1191,6 +1237,98 @@ def test_names_a_working_point_nothing_could_be_said_about(
         "Calibrated from `worker_knobs` `concurrency_1`: 12.5 tasks/s, cv n/a, "
         "invalid, dispersion unmeasured.\n"
     ) in render(capsys, tmp_path, "checkpoint_cost", entries, calibration=calibration)
+
+
+def test_renders_the_ramp_that_measured_a_rate_stage_its_offer_rate(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """A rung's offered rate means nothing without the ramp that chose it.
+
+    The two rates in the block are different quantities: the fleet drained 4200/s off
+    a backlog and absorbed 1400/s as it arrived, which is why fractions of the drain
+    rate over-offered. Each probe's backlogs are what the verdict was read off.
+    """
+    entries = [build_measurement("rate_25pct", {"mode": "rate"}, {})]
+
+    rendered = render(
+        capsys,
+        tmp_path,
+        "latency_under_load",
+        entries,
+        sustainable_rate=build_rate_ramp(),
+    )
+
+    assert (
+        "Offer rate: 1400.0/s, the highest offer the fleet absorbed; it refused "
+        "2100.0/s, so the knee is between the two and nothing here refines it. The "
+        "rows above offer fractions of it. The drain rate this stage calibrated from "
+        "was 4200.0/s, which is what the fleet completes with a backlog already "
+        "waiting rather than what it can absorb as it arrives.\n"
+        "\n"
+        "| offered/s | offer s | absorbed | e2e p50 s | backlog at midpoint "
+        "| backlog at end |\n"
+        "| --- | --- | --- | --- | --- | --- |\n"
+        "| 933.3 | 20 | yes | 0.0140 | 30 | 26 |\n"
+        "| 1400.0 | 20 | yes | 0.0180 | 42 | 39 |\n"
+        "| 2100.0 | 20 | no | 8.4000 | 24000 | 51000 |\n"
+    ) in rendered
+
+
+def test_says_a_ramp_that_ran_out_of_ceiling_never_found_the_knee(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """A ramp climbs no higher than the drain rate, which nothing can be offered above.
+
+    Absorbing every probe below it leaves the knee at or above the top of the ramp
+    rather than between two probes, so there is no bracket to print.
+    """
+    entries = [build_measurement("rate_25pct", {"mode": "rate"}, {})]
+    absorbed = [probe for probe in build_rate_ramp()["probes"] if probe["sustained"]]
+
+    rendered = render(
+        capsys,
+        tmp_path,
+        "latency_under_load",
+        entries,
+        sustainable_rate=build_rate_ramp(probes=absorbed, bracket_high_per_s=None),
+    )
+
+    assert (
+        "Offer rate: 1400.0/s, the highest offer the fleet absorbed; the ramp ran out "
+        "of climb below the drain rate without finding an offer it could not, so the "
+        "knee is at or above the top of the ramp."
+    ) in rendered
+
+
+def test_says_a_ramp_whose_every_offer_diverged_measured_at_an_unproven_rate(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Nothing absorbed means the rungs are fractions of a rate never demonstrated.
+
+    The stage measures at the lowest rate it probed rather than refusing, so the block
+    has to say the number was not measured — the marks on the rows above are then the
+    finding rather than a rate to read.
+    """
+    entries = [build_measurement("rate_25pct", {"mode": "rate"}, {})]
+    refused = [probe for probe in build_rate_ramp()["probes"] if not probe["sustained"]]
+
+    rendered = render(
+        capsys,
+        tmp_path,
+        "latency_under_load",
+        entries,
+        sustainable_rate=build_rate_ramp(
+            probes=refused, rate_per_s=2100.0, sustained=False
+        ),
+    )
+
+    assert (
+        "Offer rate: 2100.0/s — the LOWEST rate the ramp probed, and one it did not "
+        "absorb, so every rung above is a fraction of an unproven rate and the marks "
+        "on them are the finding. The drain rate this stage calibrated from was "
+        "4200.0/s, which is what the fleet completes with a backlog already waiting "
+        "rather than what it can absorb as it arrives.\n"
+    ) in rendered
 
 
 def test_renders_split_over_pooled_throughput_for_pooled_vs_split(

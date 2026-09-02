@@ -24,12 +24,12 @@ RAM, so a restart hands you back an empty server, and a run against one dies par
 through its first measurement with `schema "absurd" does not exist`. It takes a second
 and it is idempotent, so just run it every time.
 
-All eight stages took about 45 minutes on the reference machine (14 cores, at
-`--max-workers 10 --reps 3`), and `latency_under_load` was nearly half of that. Name
-stages to run only those; `--tasks`, `--duration`, `--reps` and `--max-workers` size
-them down to a dry run, and `--io-seconds` sets how long `sync_vs_async` pretends to do
-IO for. Results land in `benchmarks/results/`, which is git-ignored — the numbers belong
-to the machine that produced them.
+All eight stages took about 40 minutes on the reference machine (14 cores, at
+`--max-workers 10 --reps 3`), `latency_under_load` about 15 of them. Name stages to run
+only those; `--tasks`, `--duration`, `--reps` and `--max-workers` size them down to a
+dry run, and `--io-seconds` sets how long `sync_vs_async` pretends to do IO for. Results
+land in `benchmarks/results/`, which is git-ignored — the numbers belong to the machine
+that produced them.
 
 | stage                | what it answers                                             |
 | -------------------- | ----------------------------------------------------------- |
@@ -40,7 +40,7 @@ to the machine that produced them.
 | `sync_vs_async`      | whether async task bodies beat sync ones                    |
 | `checkpoint_cost`    | what a `ctx.step` checkpoint costs                          |
 | `producer_ceiling`   | how fast the enqueue side can go                            |
-| `latency_under_load` | end-to-end latency under a paced offer (see the caveats)    |
+| `latency_under_load` | end-to-end latency at fractions of a sustainable offer rate |
 
 Stages run in dependency order whatever order you type them in, but nothing runs a
 prerequisite you did not name: `process_scaling`, `poll_interval` and `checkpoint_cost`
@@ -93,7 +93,8 @@ place:
 
 - `!` **invalid** — a rep measured something other than what was asked (a redelivery, a
   task that never finished, a window too short to divide by, an offer the producer could
-  not sustain). Re-measure; do not read the row.
+  not sustain, a queue still growing when the offer stopped). Re-measure; do not read
+  the row.
 - `~` **unstable** — the reps measured the right thing and disagreed. That is a finding
   about the system, not a broken measurement.
 - `?` — fewer than two valid reps, so the spread was never measured at all.
@@ -149,11 +150,9 @@ drive the box to its limit, and barely reaches the paced ones — so a run on a 
 you are also using is worth reading for its rate stages and worth distrusting for the
 rest.
 
-**`latency_under_load` has a known defect: ignore its `rate_50pct` row and everything
-above it.** The stage derives its offered rates from the saturation ceiling, which is a
-drain rate rather than a sustainable one, so it over-offers and the queue diverges —
-89,000 unfinished tasks, a p50 latency of 67 seconds, CVs over 160%. Those rows carry no
-information. Fixing it means deriving the offer from a measured sustainable rate.
+**`latency_under_load` measures the offer rate it then uses.** Its rungs are fractions
+of whatever rate its own ramp found the fleet could absorb, so read the `Offer rate:`
+line under its table first — two runs' rows only compare if their ramps agreed.
 
 ## Files
 

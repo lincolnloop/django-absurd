@@ -14,6 +14,15 @@ from django_absurd.queues import resolve_absurd_database
 # Below this the p10..p90 completion window is too short to divide by.
 MIN_TRIMMED_SPAN_S = 0.01
 
+# Backlog growth over the back half of an offer window, as a share of the tasks
+# offered into it, above which the queue never reached steady state. In steady state
+# the backlog is one Little's-law-worth of in-flight work at each end and the growth
+# cancels to a fraction of a percent; a fleet absorbing 95% of its offer reads 5%.
+BACKLOG_GROWTH_LIMIT = 0.05
+# Tasks of growth under which the share above is not consulted, so a handful of
+# scheduling jitter on a tiny offer is not read as a diverging queue.
+BACKLOG_GROWTH_FLOOR_TASKS = 8
+
 # The table the commit-ceiling probe commits into. A REAL table, not a temporary one:
 # a temp table is not WAL-logged, so the probe would report memory speed as durable.
 COMMIT_PROBE_TABLE = "benchmark_commit_ceiling_probe"
@@ -95,6 +104,19 @@ join {tasks} t on t.task_id = r.task_id
 where {window}
 """
 
+
+# A paced rep's backlog at the midpoint of its offer window and at the end of it:
+# enqueued minus completed, off the same columns every other metric comes from, so
+# the growth between them is exact rather than sampled while the offer ran.
+BACKLOG_SQL = """
+select
+  (select count(*) from {tasks} t where t.enqueue_at <= {mid}),
+  (select count(*) from {tasks} t where t.enqueue_at <= {high}),
+  (select count(*) from {runs} r
+     where r.state = 'completed' and r.completed_at <= {mid}),
+  (select count(*) from {runs} r
+     where r.state = 'completed' and r.completed_at <= {high})
+"""
 
 # `extract(epoch ...)` is numeric from Postgres 14 on, which reaches Python as a
 # Decimal that will not divide against floats; the `::float8` is what stops that.
@@ -183,7 +205,7 @@ def analyze_saturation(queue: str = "bench") -> dict[str, t.Any]:
 def analyze_rate(
     queue: str, window_start: dt.datetime, window_end: dt.datetime
 ) -> dict[str, t.Any]:
-    """Same metrics over the middle 80% of the offer window.
+    """Same metrics over the middle 80% of the offer window, and whether it kept up.
 
     Trimmed on ``enqueue_at`` rather than on completion because arrival is what defines
     a rate experiment, and carrying no profile because an imposed offer rate has no
@@ -194,7 +216,10 @@ def analyze_rate(
         low=psycopg.sql.Literal(window_start + span),
         high=psycopg.sql.Literal(window_end - span),
     )
-    return read_completed_run_metrics(queue, window)
+    return {
+        **read_completed_run_metrics(queue, window),
+        **read_backlog_growth(queue, window_start, window_end),
+    }
 
 
 def count_unfinished_tasks(queue: str = "bench") -> int:
@@ -336,6 +361,55 @@ def read_completed_run_metrics(
         )
         fairness = {name: int(count) for name, count in cursor.fetchall()}
     return build_metrics(row, totals, fairness)
+
+
+def read_backlog_growth(
+    queue: str, window_start: dt.datetime, window_end: dt.datetime
+) -> dict[str, t.Any]:
+    """Whether the fleet kept up with the offer, or was still falling behind at the end.
+
+    A paced measurement's percentiles only describe the rate they were taken at if the
+    queue reached steady state. A backlog still growing when the offer stopped means
+    the fleet never absorbed that rate, so its p50 is a snapshot of a transient and
+    rises with the window length rather than describing anything.
+    """
+    mid = window_start + (window_end - window_start) / 2
+    with connections[resolve_absurd_database()].cursor() as cursor:
+        cursor.execute(
+            psycopg.sql.SQL(BACKLOG_SQL).format(
+                runs=psycopg.sql.Identifier("absurd", f"r_{queue}"),
+                tasks=psycopg.sql.Identifier("absurd", f"t_{queue}"),
+                mid=psycopg.sql.Literal(mid),
+                high=psycopg.sql.Literal(window_end),
+            )
+        )
+        enqueued_mid, enqueued_end, completed_mid, completed_end = cursor.fetchone()
+    return build_backlog_growth(
+        int(enqueued_mid), int(enqueued_end), int(completed_mid), int(completed_end)
+    )
+
+
+def build_backlog_growth(
+    enqueued_mid: int, enqueued_end: int, completed_mid: int, completed_end: int
+) -> dict[str, t.Any]:
+    """The two backlogs, and the verdict read off the growth between them.
+
+    Judged as a SHARE of what was offered in between rather than as a count, so one
+    threshold covers a five-task smoke offer and a hundred-thousand-task one.
+    """
+    backlog_mid = enqueued_mid - completed_mid
+    backlog_end = enqueued_end - completed_end
+    growth = backlog_end - backlog_mid
+    offered_after_midpoint = enqueued_end - enqueued_mid
+    return {
+        "backlog_mid": backlog_mid,
+        "backlog_end": backlog_end,
+        "offered_after_midpoint": offered_after_midpoint,
+        "backlog_grew": (
+            growth > BACKLOG_GROWTH_FLOOR_TASKS
+            and growth > BACKLOG_GROWTH_LIMIT * offered_after_midpoint
+        ),
+    }
 
 
 def read_throughput_profile(

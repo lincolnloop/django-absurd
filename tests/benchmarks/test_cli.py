@@ -516,10 +516,29 @@ def test_runs_every_calibrated_stage_from_its_prerequisite(
     assert max(workers) == scaling["options"]["max_workers"]
     # latency_under_load calibrates from one of those rungs, so the bound carries
     # into its fleet.
-    assert {
-        entry["spec"]["workers"]
-        for entry in utils.read_stage(tmp_path, "latency_under_load")["measurements"]
-    } <= set(workers)
+    latency = utils.read_stage(tmp_path, "latency_under_load")
+    assert {entry["spec"]["workers"] for entry in latency["measurements"]} <= set(
+        workers
+    )
+    # What it inherits from that rung is the FLEET and the drain rate its own ramp
+    # climbs from — never the offered rate, which is the ramp's own measurement.
+    ramp = latency["sustainable_rate"]
+    assert ramp["drain_ceiling_per_s"] == latency["calibration"]["throughput_per_s"]
+    assert [probe["rate_per_s"] for probe in ramp["probes"]] == [
+        pytest.approx(
+            ramp["drain_ceiling_per_s"]
+            * stages.RATE_RAMP_START_FRACTION
+            * stages.RATE_RAMP_STEP**step
+        )
+        for step in range(len(ramp["probes"]))
+    ]
+    # It stopped at the first offer the fleet could not absorb, and measured at the
+    # highest one it could; which rung that is belongs to the machine, not the test.
+    assert all(probe["sustained"] for probe in ramp["probes"][:-1]) is True
+    assert [entry["spec"]["rate_per_s"] for entry in latency["measurements"]] == [
+        pytest.approx(ramp["rate_per_s"] * fraction)
+        for fraction in stages.RATE_FRACTIONS
+    ]
 
 
 def test_runs_a_prerequisite_before_the_stage_that_calibrates_from_it(
