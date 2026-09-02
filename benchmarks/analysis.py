@@ -222,10 +222,11 @@ def measure_commit_ceiling(*, durable: bool) -> dict[str, float] | None:
     a property of Postgres on this disk rather than of Absurd, and the same code on
     another machine reports a different one.
 
-    A median and its spread rather than a number, because the durable rate has a ~28%
-    CV on the stack this was written against and the non-durable one 5% — the variance
-    is fsync's. A scalar here would hand every reader downstream a precision the
-    calibration does not have.
+    A median and its spread rather than a number, because the durable rate on the stack
+    this was written against has two regimes about 3.5x apart and nothing here selects
+    between them: two warmed probes, one per run, read 1,984/s and 615/s. A scalar here
+    would hand every reader downstream a precision the calibration does not have, and
+    the endpoints are what widens a report's bound-verdict when a probe repeats badly.
 
     One session, because that is what a worker gets: a worker process opens exactly two
     backends whatever its ``--concurrency``, so its claim traffic funnels through one

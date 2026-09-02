@@ -705,6 +705,59 @@ def test_says_what_bound_each_saturation_measurement(
     ) in render(capsys, tmp_path, "worker_knobs", entries)
 
 
+def test_softens_the_bound_verdict_when_the_calibration_disagrees_with_itself(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """A ceiling that repeated badly cannot support a crisp verdict, and gets none.
+
+    One measurement, one median ceiling, two recorded spreads: the endpoints and the CV
+    come off the same probe rounds, so a probe whose CV is high has already recorded a
+    wide `range_low`-`range_high` and the band the verdict is read off widens with it.
+    That is why nothing here reads the CV a second time — a row that was called
+    client-bound against a ceiling that repeated to 1% reads `unresolved` against one
+    that repeated to 14%, which is the whole of the widening the calibration earns.
+    """
+    entries = [
+        build_measurement(
+            "concurrency_4",
+            {},
+            {"throughput_per_s": 400.0, "commits_per_task": 3.0},
+        )
+    ]
+
+    assert (
+        "- `concurrency_4`: 1200 commits/s per worker connection (400.0 x 3.00 / 1), "
+        "60% of 2000/s, 59%-62% across the ceiling's own spread — client-bound\n"
+    ) in render(
+        capsys,
+        tmp_path,
+        "worker_knobs",
+        entries,
+        commit_ceiling_durable={
+            "median_per_s": 2000.0,
+            "cv": 0.012,
+            "range_low": 1950.0,
+            "range_high": 2050.0,
+        },
+    )
+    assert (
+        "- `concurrency_4`: 1200 commits/s per worker connection (400.0 x 3.00 / 1), "
+        "60% of 2000/s, 46%-80% across the ceiling's own spread — unresolved: the "
+        "ceiling's spread straddles the line\n"
+    ) in render(
+        capsys,
+        tmp_path,
+        "worker_knobs",
+        entries,
+        commit_ceiling_durable={
+            "median_per_s": 2000.0,
+            "cv": 0.136,
+            "range_low": 1500.0,
+            "range_high": 2600.0,
+        },
+    )
+
+
 def test_says_the_commit_ceiling_is_missing_rather_than_omitting_it(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
