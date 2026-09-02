@@ -655,10 +655,12 @@ def test_says_what_bound_each_saturation_measurement(
     its concurrency, and the ceiling is one connection's. So `split_4` demands more of
     the database than `concurrency_16` and is still the freer of the two.
 
-    The verdict is read off the band the ceiling's own spread puts around the share,
-    not off the share itself: a row whose band lies across the line is reported as
+    The verdict is read off the band the durable probes' own spread puts around that
+    rate, and off no median: a row whose band lies across the line is reported as
     unresolved rather than assigned to whichever side one draw of the calibration
-    happened to favour. The paced row is left out — its rate was set by the offer, so
+    happened to favour. Both probes agree here, so the band is what either would have
+    drawn on its own — the widening a disagreement earns is the neighbouring test. The
+    paced row is left out — its rate was set by the offer, so
     its share says how big the offer was and nothing about what bound it — and a row
     whose reps left no median says so rather than reading as free.
     """
@@ -692,14 +694,14 @@ def test_says_what_bound_each_saturation_measurement(
         "durable ceiling):\n"
         "\n"
         "- `concurrency_1`: 532 commits/s per worker connection (150.0 x 3.55 / 1), "
-        "26% of 2016/s, 24%-33% across the ceiling's own spread — client-bound\n"
+        "24%-33% of the durable ceiling across both probes — client-bound\n"
         "- `concurrency_16`: 1945 commits/s per worker connection (548.0 x 3.55 / 1), "
-        "96% of 2016/s, 86%-122% across the ceiling's own spread — connection-bound\n"
+        "86%-122% of the durable ceiling across both probes — connection-bound\n"
         "- `concurrency_8`: 1349 commits/s per worker connection (380.0 x 3.55 / 1), "
-        "67% of 2016/s, 60%-84% across the ceiling's own spread — unresolved: the "
+        "60%-84% of the durable ceiling across both probes — unresolved: the "
         "ceiling's spread straddles the line\n"
         "- `split_4`: 1065 commits/s per worker connection (1200.0 x 3.55 / 4), "
-        "53% of 2016/s, 47%-67% across the ceiling's own spread — client-bound\n"
+        "47%-67% of the durable ceiling across both probes — client-bound\n"
         "- `concurrency_32`: commits per task not recorded, so nothing says what "
         "bound it\n"
     ) in render(capsys, tmp_path, "worker_knobs", entries)
@@ -710,12 +712,13 @@ def test_softens_the_bound_verdict_when_the_calibration_disagrees_with_itself(
 ) -> None:
     """A ceiling that repeated badly cannot support a crisp verdict, and gets none.
 
-    One measurement, one median ceiling, two recorded spreads: the endpoints and the CV
-    come off the same probe rounds, so a probe whose CV is high has already recorded a
-    wide `range_low`-`range_high` and the band the verdict is read off widens with it.
-    That is why nothing here reads the CV a second time — a row that was called
-    client-bound against a ceiling that repeated to 1% reads `unresolved` against one
-    that repeated to 14%, which is the whole of the widening the calibration earns.
+    One measurement, one probe, two recorded spreads: the endpoints and the CV come off
+    the same probe rounds, so a probe whose CV is high has already recorded a wide
+    `range_low`-`range_high` and the band the verdict is read off widens with it. That
+    is why nothing here reads the CV a second time — a row that was called client-bound
+    against a ceiling that repeated to 1% reads `unresolved` against one that repeated
+    to 14%, which is the whole of the widening one probe's own dispersion earns. No
+    closing probe here, so that widening is the only one in play.
     """
     entries = [
         build_measurement(
@@ -727,7 +730,7 @@ def test_softens_the_bound_verdict_when_the_calibration_disagrees_with_itself(
 
     assert (
         "- `concurrency_4`: 1200 commits/s per worker connection (400.0 x 3.00 / 1), "
-        "60% of 2000/s, 59%-62% across the ceiling's own spread — client-bound\n"
+        "59%-62% of the durable ceiling across the opening probe alone — client-bound\n"
     ) in render(
         capsys,
         tmp_path,
@@ -739,11 +742,12 @@ def test_softens_the_bound_verdict_when_the_calibration_disagrees_with_itself(
             "range_low": 1950.0,
             "range_high": 2050.0,
         },
+        commit_ceiling_durable_after=None,
     )
     assert (
         "- `concurrency_4`: 1200 commits/s per worker connection (400.0 x 3.00 / 1), "
-        "60% of 2000/s, 46%-80% across the ceiling's own spread — unresolved: the "
-        "ceiling's spread straddles the line\n"
+        "46%-80% of the durable ceiling across the opening probe alone — unresolved: "
+        "the ceiling's spread straddles the line\n"
     ) in render(
         capsys,
         tmp_path,
@@ -755,6 +759,83 @@ def test_softens_the_bound_verdict_when_the_calibration_disagrees_with_itself(
             "range_low": 1500.0,
             "range_high": 2600.0,
         },
+        commit_ceiling_durable_after=None,
+    )
+
+
+def test_bands_the_bound_verdict_across_both_durable_probes(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """A ceiling that moved DURING the run calibrates nothing, and must not pretend to.
+
+    Run B's real probes: 615/s opening, 2,100/s closing, against the same server. Its
+    opening probe alone would call this row connection-bound and print that verdict
+    against every row in the file, when the machine in fact crossed between storage
+    regimes mid-run and nothing in the run is internally comparable. The band taken
+    across both probes straddles the line, and `unresolved` is the honest answer.
+    """
+    entries = [
+        build_measurement(
+            "concurrency_8",
+            {},
+            {"throughput_per_s": 250.0, "commits_per_task": 2.0},
+        )
+    ]
+    drifted = {
+        "commit_ceiling_durable": {
+            "median_per_s": 615.0,
+            "cv": 0.136,
+            "range_low": 465.0,
+            "range_high": 673.0,
+        },
+        "commit_ceiling_durable_after": {
+            "median_per_s": 2100.0,
+            "cv": 0.024,
+            "range_low": 2030.0,
+            "range_high": 2139.0,
+        },
+    }
+
+    assert (
+        "- `concurrency_8`: 500 commits/s per worker connection (250.0 x 2.00 / 1), "
+        "23%-108% of the durable ceiling across both probes — unresolved: the "
+        "ceiling's spread straddles the line\n"
+    ) in render(capsys, tmp_path, "worker_knobs", entries, **drifted)
+
+
+def test_bands_against_the_opening_probe_when_the_run_recorded_no_closing_one(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The closing probe is absent until a run finishes, and can be refused outright.
+
+    The band then comes off the opening probe alone and the row says so, because a
+    reader comparing two reports has to tell a band that widened because the machine
+    drifted mid-run from one that widened because the disk got worse.
+    """
+    entries = [
+        build_measurement(
+            "concurrency_8",
+            {},
+            {"throughput_per_s": 250.0, "commits_per_task": 2.0},
+        )
+    ]
+
+    assert (
+        "- `concurrency_8`: 500 commits/s per worker connection (250.0 x 2.00 / 1), "
+        "74%-108% of the durable ceiling across the opening probe alone — "
+        "connection-bound\n"
+    ) in render(
+        capsys,
+        tmp_path,
+        "worker_knobs",
+        entries,
+        commit_ceiling_durable={
+            "median_per_s": 615.0,
+            "cv": 0.136,
+            "range_low": 465.0,
+            "range_high": 673.0,
+        },
+        commit_ceiling_durable_after=None,
     )
 
 

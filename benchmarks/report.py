@@ -46,8 +46,8 @@ THROUGHPUT_KEY = "throughput_per_s"
 # connection-bound rather than client-bound. The concurrency ladder measured here ran
 # from 28% of the ceiling at concurrency 1 to 102% at concurrency 16 — sixteen threads
 # on the same single connection, which is what it saturated. Where "near the ceiling"
-# starts is a judgement and not a measured boundary, which is why the share and the
-# band it was read from both print beside the verdict.
+# starts is a judgement and not a measured boundary, which is why the band the verdict
+# was read from prints beside it.
 CONNECTION_BOUND_SHARE = 0.70
 
 # Named by the flag that sets each one, so the header reads back as the command that
@@ -470,7 +470,8 @@ def build_commit_budget_lines(stage: dict[str, t.Any]) -> list[str]:
     ]
     if not any(entry["median"].get("commits_per_task") for entry in measurements):
         return []
-    ceiling = stage.get("commit_ceiling_durable")
+    opening = stage.get("commit_ceiling_durable")
+    closing = stage.get("commit_ceiling_durable_after")
     return [
         "",
         (
@@ -478,13 +479,31 @@ def build_commit_budget_lines(stage: dict[str, t.Any]) -> list[str]:
             "connection's durable ceiling):"
         ),
         "",
-        *[describe_commit_budget(entry, ceiling) for entry in measurements],
+        *[describe_commit_budget(entry, opening, closing) for entry in measurements],
     ]
 
 
 def describe_commit_budget(
-    entry: dict[str, t.Any], ceiling: dict[str, float] | None
+    entry: dict[str, t.Any],
+    opening: dict[str, float] | None,
+    closing: dict[str, float] | None,
 ) -> str:
+    """One row's commit rate, as a band across every durable probe the run recorded.
+
+    The band spans the union of the opening and closing probes' endpoints, because a
+    ceiling that MOVED during the run calibrates nothing measured under it: one run
+    here opened at 615 commits/s and closed at 2,100 against the same server, and its
+    opening probe alone called 15 of that run's 25 rows connection-bound — a confident
+    verdict on a run that crossed between storage regimes halfway through and is not
+    internally comparable at all. The union refuses that call, which is the correct one
+    to refuse, and costs a run that did not drift nothing: run A's verdicts are the
+    same either way.
+
+    No single share of a median prints beside it. Two probes are two calibrations and
+    not two draws of one, so when they disagree there is no rate a share could honestly
+    be taken against, and a headline percentage is exactly what a reader would take the
+    verdict from instead of the band.
+    """
     name = entry["spec"]["name"]
     commits_per_task = entry["median"].get("commits_per_task")
     if not commits_per_task:
@@ -498,23 +517,39 @@ def describe_commit_budget(
         f"- `{name}`: {per_connection:.0f} commits/s per worker connection "
         f"({throughput:.1f} x {commits_per_task:.2f} / {workers})"
     )
-    if ceiling is None:
+    # The opening probe is what the run's rows were measured against, so a run without
+    # one has no calibration for a closing probe to widen — the same asymmetry the
+    # header's `format_commit_ceiling` already reports the whole line as missing on.
+    if opening is None:
         return f"{demanded}, against no ceiling — nothing here says what bound it"
-    band_low = per_connection / ceiling["range_high"]
-    band_high = per_connection / ceiling["range_low"]
+    probes = [opening] if closing is None else [opening, closing]
+    band_low = per_connection / max(probe["range_high"] for probe in probes)
+    band_high = per_connection / min(probe["range_low"] for probe in probes)
     return (
-        f"{demanded}, {per_connection / ceiling['median_per_s']:.0%} of "
-        f"{ceiling['median_per_s']:.0f}/s, {band_low:.0%}-{band_high:.0%} across the "
-        f"ceiling's own spread — {describe_what_bound_it(band_low, band_high)}"
+        f"{demanded}, {band_low:.0%}-{band_high:.0%} of the durable ceiling across "
+        f"{describe_band_probes(closing)} — "
+        f"{describe_what_bound_it(band_low, band_high)}"
     )
+
+
+def describe_band_probes(closing: dict[str, float] | None) -> str:
+    """Which probes the band came from, since a wide band has two different causes.
+
+    A reader comparing two reports has to tell a band that widened because the machine
+    drifted mid-run from one that widened because the disk is worse than it was.
+    """
+    if closing is None:
+        return "the opening probe alone"
+    return "both probes"
 
 
 def describe_what_bound_it(band_low: float, band_high: float) -> str:
     """Which side of the line the whole band falls on, or that it lies across it.
 
-    Read off the band and not off the median share: the calibration's own spread is
-    wide enough that a verdict taken from one draw of it would flip between two
-    identical runs, which is the false precision this block exists to refuse.
+    Read off the band and not off any median: the calibration's own spread is wide
+    enough that a verdict taken from one draw of it would flip between two identical
+    runs, and its two probes can disagree by more again, which is the false precision
+    this block exists to refuse.
     """
     if band_low >= CONNECTION_BOUND_SHARE:
         return "connection-bound"

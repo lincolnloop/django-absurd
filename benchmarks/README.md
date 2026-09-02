@@ -95,8 +95,8 @@ Two full 58-minute runs, identical flags, back to back on an idle machine:
 median B/A across 32 measurements   1.02
 CV of the B/A ratios                31.7%
 rep ranges that overlap             29 of 32
-ceiling run A measured               1,984 commits/s (cv 1.2%)
-ceiling run B measured                 615 commits/s (cv 13.6%)
+run A ceiling, opening / closing    1,984 / 2,007 commits/s (cv 1.2% / 2.5%)
+run B ceiling, opening / closing      615 / 2,100 commits/s (cv 13.6% / 2.4%)
 ```
 
 **Comparisons WITHIN a run are valid. Absolute numbers ACROSS runs are not.** The two
@@ -128,13 +128,26 @@ probe against the same server, and without that line in both files the two runs 
 read as Absurd changing behaviour rather than as one disk in two moods. Read it before
 any throughput in the file.
 
-**A `commit_ceiling_durable` with a high `cv` means the calibration disagrees with
-itself**, and every bound-verdict under it is correspondingly soft. Run A's probe
-repeated to 1.2% and run B's to 13.6%. The commit-budget band is drawn between
-`range_low` and `range_high`, which come off the same probe rounds the CV does, so a
-badly-repeating probe widens the band on its own and rows that a tight calibration would
-have called `client-bound` print `unresolved` instead. That is the calibration declining
-a call it cannot support, not a measurement gone missing.
+**A calibration that disagrees with itself softens every bound-verdict under it**, and
+it can disagree two ways. Within one probe: `range_low` and `range_high` come off the
+same rounds the `cv` does, so a badly-repeating probe is already wide — run A's repeated
+to 1.2%, run B's to 13.6%. Between the two probes: run B opened at 615/s and closed at
+2,100/s, so its ceiling moved 3.4x DURING the run.
+
+So the commit-budget band spans the UNION of both durable probes' endpoints,
+`min(range_low)` to `max(range_high)`, and every row names which probes it came from — a
+reader comparing two reports has to tell a band that widened from mid-run drift apart
+from one that widened because the disk is worse. Run B's union is 465-2,139/s, and 21 of
+its 25 commit-budget rows straddle the 70% line and print `unresolved` — right, because
+a run that crossed regimes halfway through calibrates nothing measured under it, itself
+included. Its opening probe alone called 15 of those rows `connection-bound`. This costs
+a run that did not drift nothing: run A's union is 1,915-2,037/s against an opening
+1,948-2,006, and all 25 of its rows read `client-bound` either way. No share of a median
+prints beside the band either: two probes are two calibrations rather than two draws of
+one, so when they disagree there is no rate a share could honestly be taken against. A
+run with no closing probe — killed before the last stage, or the probe refused — bands
+against the opening one alone and says so. All of that is the calibration declining a
+call it cannot support, not a measurement gone missing.
 
 **Absolute figures need native Linux storage.** A tasks/s number measured here is a
 property of the host's fsync path — on the stack above, a Docker volume on macOS — and
@@ -364,10 +377,10 @@ distribution. Two warmed probes against the same server, one per run, recorded 1
 and 615/s, a factor of three apart, while a non-durable probe on the same session
 repeats to about 5%: the variance lives in the fsync path. Anything reading a bare
 median as exact is reading in a precision the calibration does not have, which is why
-the report prints the spread beside every share it takes against it and softens the
-verdict when that spread is wide. **This block is the only thing in a results file that
-says which regime the run got**, which is what makes it worth reading first rather than
-last.
+the report bands every share it takes against these probes across the pair of them and
+softens the verdict when that band is wide. **This block is the only thing in a results
+file that says which regime the run got**, which is what makes it worth reading first
+rather than last.
 
 Each probe warms before it times. A session's commit rate can climb over its first
 thousand or so commits — consecutive 400-commit rounds on one connection read 519, 544,
@@ -463,16 +476,17 @@ So a row is **connection-bound** when its per-connection commit rate is near the
 — that number belongs to Postgres and moves on another machine — and **client-bound**
 when it is a fraction of it, which is the kind that is about Absurd. "Near" is 70%, a
 judgement rather than a measured boundary, and the verdict is read off the band the
-ceiling's own spread puts around the share rather than off the share: a row whose band
-lies across the line prints as `unresolved` instead of being assigned to whichever side
-one draw of the calibration favoured, and a probe that repeated badly widens that band
-on its own — see [What repeats and what does not](#what-repeats-and-what-does-not).
-Measured on one laptop with Postgres in Docker, 71% of active backend time in a full run
-was WAL durability, and yet no row of the topology tables came out connection-bound: at
-the best measured cell (10 processes x 8 concurrency) the per-connection commit rate was
-19% of one connection's ceiling, and every rung below it was freer still. What ran out
-was cores, not the database. Throughput still scales with worker PROCESSES rather than
-with `--concurrency` — processes bought 9x for 8 of them at concurrency 1, in-process
+durable probes' spread puts around that rate rather than off any median: a row whose
+band lies across the line prints as `unresolved` instead of being assigned to whichever
+side one draw of the calibration favoured, and both a probe that repeated badly and a
+pair of probes that disagree widen that band — see
+[What repeats and what does not](#what-repeats-and-what-does-not). Measured on one
+laptop with Postgres in Docker, 71% of active backend time in a full run was WAL
+durability, and yet no row of the topology tables came out connection-bound: at the best
+measured cell (10 processes x 8 concurrency) the per-connection commit rate was 19% of
+one connection's ceiling, and every rung below it was freer still. What ran out was
+cores, not the database. Throughput still scales with worker PROCESSES rather than with
+`--concurrency` — processes bought 9x for 8 of them at concurrency 1, in-process
 concurrency 3.3x for 8 threads and then nothing — but the reason is client-side Python
 per task, which is why the verdict is worth printing per row instead of assumed.
 `commits_per_task` here is worker-side and runs 2.13-3.02; a figure nearer 3.55 has the
@@ -598,7 +612,10 @@ commit disagreed by a 31.7% CV on individual rates. Read the comparison in this 
 
 1. **the `commit_ceiling_durable` blocks.** Ceilings a factor of three apart mean the
    two runs measured different regimes and no rate below them compares at all
-   ([why](#what-repeats-and-what-does-not)). Re-run rather than reading on.
+   ([why](#what-repeats-and-what-does-not)). The same reading applies to the opening and
+   closing probes WITHIN one file: one run here opened at 615/s and closed at 2,100/s,
+   and nothing in it compares to anything, itself included. Re-run rather than reading
+   on.
 2. **the structural counts** — `commits_per_task` per measurement, `shape_connections`.
    These are exact and portable, so any movement in them is the SDK and is worth
    chasing.
