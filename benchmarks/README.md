@@ -236,11 +236,31 @@ see [What repeats and what does not](#what-repeats-and-what-does-not) — and a 
 against Postgres somewhere else, or at another size, does not even compare ordinally.
 
 `db_bench` sits in the root `compose.yaml` beside `db` and `db_pg_cron` and is still a
-different server: a 4 GB tmpfs data directory instead of a disk, its own pinned config,
-its own port, its own `cluster_name` (`bench-tmpfs`, which is what a results file
-carries), and a profile that keeps it out of a bare `up`. The suites hammer `db` with
-real worker subprocesses, so a benchmark sharing it would absorb whichever tests were
-running. Neither of those two needs to be up for a benchmark run.
+different server: a tmpfs data directory instead of a disk, its own pinned config, its
+own port, its own `cluster_name` (`bench-tmpfs`, which is what a results file carries),
+and a profile that keeps it out of a bare `up`. The suites hammer `db` with real worker
+subprocesses, so a benchmark sharing it would absorb whichever tests were running.
+Neither of those two needs to be up for a benchmark run.
+
+### Sizing the server for your machine
+
+The defaults need about 5 GB free in the Docker VM (1 GB of shared buffers plus a 4 GB
+tmpfs). Set any of these in the shell that starts `db_bench`, then restart it and re-run
+`migrate`:
+
+| variable                | default | change it when                                             |
+| ----------------------- | ------- | ---------------------------------------------------------- |
+| `BENCH_SHARED_BUFFERS`  | `1GB`   | the Docker VM has under ~4 GB free — try `256MB`           |
+| `BENCH_MAX_CONNECTIONS` | `100`   | you run over ~40 worker processes (2 server backends each) |
+| `BENCH_TMPFS_SIZE`      | `4g`    | the VM is small — `512m` covers a single stage             |
+| `BENCH_CPUS`            | unset   | you want the server pinned to N cores; unset = no limit    |
+| `BENCH_MEMORY`          | unset   | you want the server's memory capped; unset = no limit      |
+
+Too small a tmpfs does not fail at startup — the run dies partway through on a Postgres
+write error, so raise it if a long run aborts. Every value above is recorded in the
+results file, because runs taken at different values are not comparable.
+[`CLAUDE.md`](CLAUDE.md) has the sizing evidence and why nothing else here is a
+variable.
 
 ### Restarting Postgres between stages
 
@@ -704,6 +724,7 @@ fields the current table reads. Re-measure rather than converting them.
 
 | file             | what it is                                                                                             |
 | ---------------- | ------------------------------------------------------------------------------------------------------ |
+| `CLAUDE.md`      | why the rig is configured the way it is, and the sizing evidence behind it                             |
 | `pyproject.toml` | the harness's own uv project: django-absurd by path, everything else pinned                            |
 | `uv.lock`        | the pinned resolution `uv run` installs into `benchmarks/.venv`                                        |
 | `settings.py`    | Django settings; reads `DATABASE_URL`, else `PGPORT_BENCH` against `absurd_bench`                      |

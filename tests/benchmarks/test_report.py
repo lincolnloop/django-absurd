@@ -16,8 +16,14 @@ HOST = {
     "django": "6.1",
     "git_sha": "deadbeef",
     "load_avg_1m": 0.5,
+    "max_connections": "100",
     "postgres": "PostgreSQL 18.0 on x86_64-pc-linux-gnu",
     "python": "3.14.3",
+    # A container limit is invisible to the server, and `db` under the suites runs
+    # under none, so an unset variable is what an ordinary run records.
+    "requested_container_cpus": None,
+    "requested_container_memory": None,
+    "shared_buffers": "128MB",
 }
 
 OPTIONS = {
@@ -131,7 +137,9 @@ HEADER = (
     "- captured at: 2026-08-27T12:00:00+00:00\n"
     "- options: --duration stage default, --io-seconds 0.05, --max-workers 8, "
     "--reps 3, --tasks stage default\n"
-    "- cpu count: 8, load average (1m): 0.50\n"
+    "- host cpu count: 8, load average (1m): 0.50\n"
+    "- server: shared_buffers 128MB, max_connections 100, requested container "
+    "limits: cpus unknown, memory unknown\n"
     "- commit ceiling (commits/s, one connection): durable 2016 (cv 28%, "
     "1600-2262), after the run 1904 (cv 11%, 1700-2100), non-durable 367723 "
     "(cv 5%, 324000-380000), 182x without fsync\n"
@@ -512,6 +520,60 @@ def test_reports_mixed_provenance_when_measurements_disagree(
     assert "- git sha: mixed (`aaa111`, `bbb222`)\n" in rendered
     assert (
         "- captured at: 2026-08-27T12:00:00+00:00 .. 2026-08-27T15:00:00+00:00\n"
+    ) in rendered
+
+
+def test_reports_a_container_limit_as_requested_rather_than_as_measured(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """A container CPU or memory limit reaches no SQL, so what a results file carries
+    is what was asked for and nothing better. It prints under that label and on the
+    server's own line, away from the host core count, which counts the cores the
+    worker fleet had and would otherwise be read as the server's allowance."""
+    entries = [
+        build_measurement(
+            "concurrency_1",
+            {},
+            {},
+            host={
+                **HOST,
+                "requested_container_cpus": "4",
+                "requested_container_memory": "8g",
+            },
+        )
+    ]
+
+    rendered = render(capsys, tmp_path, "worker_knobs", entries)
+
+    assert (
+        "- server: shared_buffers 128MB, max_connections 100, requested container "
+        "limits: cpus 4, memory 8g\n"
+    ) in rendered
+
+
+def test_reports_mixed_server_resources_when_stages_measured_different_servers(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """These settings are env-overridable per machine and a partial re-run is a
+    documented workflow, so a directory can hold one stage measured at 1GB of shared
+    buffers and one at 256MB. That reads as mixed the way a git SHA does: the rates in
+    the file no longer compare, and the line has to be the thing that says so."""
+    entries = [
+        build_measurement("concurrency_1", {}, {}),
+        build_measurement(
+            "concurrency_2",
+            {},
+            {},
+            host={**HOST, "max_connections": "50", "shared_buffers": "1GB"},
+        ),
+    ]
+
+    rendered = render(capsys, tmp_path, "worker_knobs", entries)
+
+    assert (
+        "- server: shared_buffers mixed (128MB, 1GB), "
+        "max_connections mixed (100, 50), "
+        "requested container limits: cpus unknown, memory unknown\n"
     ) in rendered
 
 

@@ -666,6 +666,76 @@ def test_records_the_cluster_name_of_the_server_it_measured(
     ]
 
 
+def test_records_the_resource_settings_of_the_server_it_measured(
+    tmp_path: pathlib.Path,
+) -> None:
+    """`shared_buffers` and `max_connections` are overridable per machine, so two
+    results files could differ for a reason nothing in either explains unless both
+    carry them.
+
+    Read off the server, not out of the harness's environment: the variables size the
+    container at `up` time and the process taking the measurement need never have seen
+    them, while a server already running answers for what it was actually started
+    with. Asserted against what the server reports and never at a value — the suites'
+    `db` runs at its own defaults, which is the point."""
+    with connections[resolve_absurd_database()].cursor() as cursor:
+        cursor.execute("show shared_buffers")
+        (shared_buffers,) = cursor.fetchone()
+        cursor.execute("show max_connections")
+        (max_connections,) = cursor.fetchone()
+
+    stages.main(
+        [
+            "producer_ceiling",
+            "--reps",
+            "1",
+            "--tasks",
+            "10",
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
+
+    result = utils.read_stage(tmp_path, "producer_ceiling")
+    assert [
+        (entry["host"]["shared_buffers"], entry["host"]["max_connections"])
+        for entry in result["measurements"]
+    ] == [(shared_buffers, max_connections)] * 3
+
+
+def test_records_the_container_limits_the_run_was_asked_to_impose(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """A container CPU or memory limit reaches no SQL, so the variables that set it are
+    the only witness a measurement has — and they witness a REQUEST, which is what the
+    field is named for. Set here the way `docker compose up` reads them, because
+    nothing in a run can be made to observe the limit itself; an unset variable stays
+    unknown rather than becoming `unlimited`."""
+    monkeypatch.setenv("BENCH_CPUS", "4")
+    monkeypatch.setenv("BENCH_MEMORY", "8g")
+
+    stages.main(
+        [
+            "producer_ceiling",
+            "--reps",
+            "1",
+            "--tasks",
+            "10",
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
+
+    result = utils.read_stage(tmp_path, "producer_ceiling")
+    assert [
+        (
+            entry["host"]["requested_container_cpus"],
+            entry["host"]["requested_container_memory"],
+        )
+        for entry in result["measurements"]
+    ] == [("4", "8g")] * 3
+
+
 def test_refuses_every_producer_rep_the_host_slept_through(
     tmp_path: pathlib.Path,
 ) -> None:

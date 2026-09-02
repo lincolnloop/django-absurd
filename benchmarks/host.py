@@ -60,24 +60,53 @@ def collect_host_context() -> dict[str, t.Any]:
         # sets it to `bench-tmpfs` and nothing else in a results file says the data
         # directory was RAM, where an absolute rate is not a durable figure at all.
         # Unset it reads back as the empty string, which is every ordinary server.
+        # `shared_buffers` and `max_connections` are read off the server rather than
+        # from `BENCH_SHARED_BUFFERS`/`BENCH_MAX_CONNECTIONS`: the harness process need
+        # not have those set at all, and a running server is authoritative.
         cursor.execute(
             "select version(), "
             "extract(epoch from now() - pg_postmaster_start_time())::float8, "
-            "current_setting('cluster_name')"
+            "current_setting('cluster_name'), "
+            "current_setting('shared_buffers'), "
+            "current_setting('max_connections')"
         )
-        postgres, postgres_uptime_s, cluster_name = cursor.fetchone()
+        (
+            postgres,
+            postgres_uptime_s,
+            cluster_name,
+            shared_buffers,
+            max_connections,
+        ) = cursor.fetchone()
     return {
         "absurd_sdk": importlib.metadata.version("absurd-sdk"),
         "captured_at": dt.datetime.now(tz=dt.UTC).isoformat(),
         "cluster_name": cluster_name,
+        # The HOST's cores — where the worker fleet runs and what the process_scaling
+        # ladder derives from. `requested_container_*` below speaks for the server.
         "cpu_count": os.cpu_count() or 1,
         "django": django.get_version(),
         "git_sha": read_git_sha(),
         "load_avg_1m": read_load_average(),
+        "max_connections": max_connections,
         "postgres": postgres,
         "postgres_uptime_s": float(postgres_uptime_s),
         "python": platform.python_version(),
+        "requested_container_cpus": read_requested_limit("BENCH_CPUS"),
+        "requested_container_memory": read_requested_limit("BENCH_MEMORY"),
+        "shared_buffers": shared_buffers,
     }
+
+
+def read_requested_limit(variable: str) -> str | None:
+    """A container CPU or memory limit as REQUESTED, which is all that is knowable.
+
+    Neither limit is visible over SQL, so there is nothing to measure and no honest
+    way to derive one: an absent variable means the limit is unknown, not that the
+    server was unlimited — whoever ran `docker compose up` may have set it in a shell
+    this process never saw. Recorded so the report can say `unknown` in the one place
+    a reader would otherwise take `cpu_count` for the server's cores.
+    """
+    return os.environ.get(variable) or None
 
 
 def read_load_average() -> float:

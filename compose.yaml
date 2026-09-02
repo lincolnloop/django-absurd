@@ -61,12 +61,15 @@ services:
     profiles:
       - bench
     image: postgres:18.4
+    # The resource knobs are env-overridable so the rig runs on a machine other than
+    # the one the defaults were picked for; `benchmarks/CLAUDE.md` holds the sizing
+    # evidence and says why the rest of this config is deliberately fixed.
     command:
       - postgres
       - -c
-      - shared_buffers=1GB
+      - shared_buffers=${BENCH_SHARED_BUFFERS:-1GB}
       - -c
-      - max_connections=100
+      - max_connections=${BENCH_MAX_CONNECTIONS:-100}
       - -c
       - synchronous_commit=on
       - -c
@@ -94,12 +97,17 @@ services:
       - POSTGRES_PASSWORD=postgres
     ports:
       - "${PGPORT_BENCH:-5460}:5432"
+    # 0 is how compose spells "no limit", and it is the only spelling that works: an
+    # empty `${BENCH_CPUS:-}` fails the file outright on `strconv.ParseFloat`. At 0
+    # compose omits the field, so an unset var cannot throttle the server to nothing.
+    cpus: ${BENCH_CPUS:-0}
+    mem_limit: ${BENCH_MEMORY:-0}
     tmpfs:
-      # 4g is headroom, not a guess: the database is 69 MB and two full `worker_knobs`
-      # runs used 355 MB, in an 11.7 GB VM. `synchronous_commit=on` and `fsync=on`
-      # above are unchanged — the durability request is the same one, only the medium
-      # moved, which is why fsync here costs a memcpy.
-      - /var/lib/postgresql:size=4g
+      # The 4g default is headroom, not a guess: the database is 69 MB and two full
+      # `worker_knobs` runs used 355 MB, in an 11.7 GB VM. `synchronous_commit=on`
+      # and `fsync=on` above are unchanged — the durability request is the same one,
+      # only the medium moved, which is why fsync here costs a memcpy.
+      - /var/lib/postgresql:size=${BENCH_TMPFS_SIZE:-4g}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d absurd_bench"]
       interval: 5s

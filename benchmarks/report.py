@@ -109,9 +109,10 @@ def describe_host(stages: list[dict[str, t.Any]]) -> list[str]:
         f"- captured at: {describe_capture_window(stamps)}",
         f"- options: {describe_options(stages)}",
         (
-            f"- cpu count: {context['cpu_count']}, "
+            f"- host cpu count: {context['cpu_count']}, "
             f"load average (1m): {context['load_avg_1m']:.2f}"
         ),
+        f"- server: {describe_server_resources(contexts)}",
         (
             f"- commit ceiling (commits/s, one connection): "
             f"{describe_commit_ceiling(stages)}"
@@ -201,6 +202,35 @@ def describe_storage_medium(contexts: list[dict[str, t.Any]]) -> list[str]:
             "django-absurd."
         )
     ]
+
+
+def describe_server_resources(contexts: list[dict[str, t.Any]]) -> str:
+    """What the server was given, and what nothing here can say it was given.
+
+    Every one of these is env-overridable per machine, so two results files can differ
+    for a reason no measurement in them explains unless the values ride along. The two
+    memory-and-connection settings are read off the server; the container limits are
+    not visible over SQL at all, so they are labelled as requested and read `unknown`
+    when the harness's environment never carried them. The `host cpu count` above is
+    the host's, which is why this line has to speak for the server separately.
+    """
+    return (
+        f"shared_buffers {describe_server_setting(contexts, 'shared_buffers')}, "
+        f"max_connections {describe_server_setting(contexts, 'max_connections')}, "
+        f"requested container limits: "
+        f"cpus {describe_requested_limit(contexts, 'requested_container_cpus')}, "
+        f"memory {describe_requested_limit(contexts, 'requested_container_memory')}"
+    )
+
+
+def describe_server_setting(contexts: list[dict[str, t.Any]], key: str) -> str:
+    return describe_alternatives(sorted({entry[key] for entry in contexts}))
+
+
+def describe_requested_limit(contexts: list[dict[str, t.Any]], key: str) -> str:
+    return describe_alternatives(
+        sorted({entry[key] or "unknown" for entry in contexts})
+    )
 
 
 def describe_cluster(contexts: list[dict[str, t.Any]]) -> str:
