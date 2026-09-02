@@ -67,11 +67,21 @@ def collect_host_context() -> dict[str, t.Any]:
         "cpu_count": os.cpu_count() or 1,
         "django": django.get_version(),
         "git_sha": read_git_sha(),
-        "load_avg_1m": os.getloadavg()[0],
+        "load_avg_1m": read_load_average(),
         "postgres": postgres,
         "postgres_uptime_s": float(postgres_uptime_s),
         "python": platform.python_version(),
     }
+
+
+def read_load_average() -> float:
+    """The 1-minute load average right now, for a caller that samples it itself.
+
+    This block is collected once a measurement is OVER, so the figure in it counts the
+    load the harness had just made and can never answer "was the machine otherwise
+    busy". A rep samples this on each side of itself instead.
+    """
+    return os.getloadavg()[0]
 
 
 def read_git_sha() -> str:

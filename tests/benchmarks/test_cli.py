@@ -97,6 +97,130 @@ def test_records_the_configuration_a_stage_was_run_at(
     }
 
 
+def test_records_the_commit_ceiling_this_machine_was_measured_against(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A throughput is a property of this disk unless the ceiling beside it says so.
+
+    Bookended rather than measured once: sustained write load depresses the ceiling
+    and it recovers when the machine goes idle, so the same run means different things
+    at its start and at its end. Asserted as measured and as ordered — taking the
+    fsync out cannot make a server commit slower — never at a number, which is the
+    machine's to decide.
+    """
+    stages.main(
+        [
+            "producer_ceiling",
+            "--reps",
+            "1",
+            "--tasks",
+            "10",
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
+
+    result = utils.read_stage(tmp_path, "producer_ceiling")
+    assert {
+        "durable": result["commit_ceiling_durable_per_s"] > 0,
+        "durable_after": result["commit_ceiling_durable_after_per_s"] > 0,
+        "fsync_costs_something": (
+            result["commit_ceiling_nondurable_per_s"]
+            > result["commit_ceiling_durable_per_s"]
+        ),
+    } == {"durable": True, "durable_after": True, "fsync_costs_something": True}
+
+
+def test_records_no_commit_ceiling_when_the_probe_was_refused(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A run nobody could calibrate still runs; it records that it has no ceiling.
+
+    Refusing to measure because a calibration probe failed would be worse than
+    reporting an uncalibrated number and saying so, which is what the null here and
+    the report's header line together do.
+    """
+    with utils.hold_the_commit_probe_table():
+        stages.main(
+            [
+                "producer_ceiling",
+                "--reps",
+                "1",
+                "--tasks",
+                "10",
+                "--results-dir",
+                str(tmp_path),
+            ]
+        )
+
+    result = utils.read_stage(tmp_path, "producer_ceiling")
+    assert {
+        "commit_ceiling_durable_per_s": result["commit_ceiling_durable_per_s"],
+        "commit_ceiling_nondurable_per_s": result["commit_ceiling_nondurable_per_s"],
+        "commit_ceiling_durable_after_per_s": result[
+            "commit_ceiling_durable_after_per_s"
+        ],
+        "measured_anyway": result["measurements"][0]["median"]["enqueues_per_s"] > 0,
+    } == {
+        "commit_ceiling_durable_per_s": None,
+        "commit_ceiling_nondurable_per_s": None,
+        "commit_ceiling_durable_after_per_s": None,
+        "measured_anyway": True,
+    }
+
+
+def test_records_which_measurement_became_the_working_point(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A calibrated stage inherits one rung of an earlier one, silently until now.
+
+    worker_knobs calibrates its own batch-size measurements from its concurrency
+    ladder and checkpoint_cost calibrates from the whole of worker_knobs, so both
+    files have to name what they were configured at and how well it repeated. The
+    stage that measured it is named too: a results directory holds several stages and
+    a bare measurement name says nothing about which one it came out of.
+    """
+    stages.main(
+        [
+            "checkpoint_cost",
+            "worker_knobs",
+            "--reps",
+            "1",
+            "--tasks",
+            MEASURABLE_TASKS,
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
+
+    knobs = utils.read_stage(tmp_path, "worker_knobs")
+    rungs = [entry["spec"]["name"] for entry in knobs["measurements"]]
+    checkpoints = utils.read_stage(tmp_path, "checkpoint_cost")
+    assert [
+        {
+            "stage": entry["stage"],
+            "names_a_rung_of_worker_knobs": entry["measurement"] in rungs,
+            "measured_a_throughput": entry["throughput_per_s"] > 0,
+            "cv": entry["cv"],
+            "recorded_whether_the_rung_was_valid": isinstance(entry["invalid"], bool),
+            "unstable": entry["unstable"],
+        }
+        for entry in (knobs["calibration"], checkpoints["calibration"])
+    ] == [
+        {
+            "stage": "worker_knobs",
+            "names_a_rung_of_worker_knobs": True,
+            "measured_a_throughput": True,
+            # One rep has nothing to disagree with, so the rung every later
+            # measurement here was configured at has an unmeasured dispersion — which
+            # is exactly the kind of thing this block exists to carry forward.
+            "cv": None,
+            "recorded_whether_the_rung_was_valid": True,
+            "unstable": False,
+        }
+    ] * 2
+
+
 def test_runs_a_saturation_stage_at_the_size_it_was_asked_for(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -542,6 +666,8 @@ def test_refuses_every_producer_rep_the_host_slept_through(
                         "every number this phase produced is fiction. Re-run the "
                         "measurement on a machine that stays awake."
                     ),
+                    "load_before": True,
+                    "load_after": True,
                 }
             ],
             "median": {},

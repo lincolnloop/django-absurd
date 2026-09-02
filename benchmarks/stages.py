@@ -96,6 +96,16 @@ MARK_WORDS = {"!": "INVALID", "~": "UNSTABLE", "?": "DISPERSION UNMEASURED"}
 # The 4-checkpoint task runs ~4.5x slower than a flat one, so SATURATION_TASKS would
 # push a rep past two minutes; 2000 keeps checkpoint_cost on the same per-rep budget.
 WORKFLOW_TASKS = 2000
+# What every stage file this invocation writes records beside its options. The third
+# is not the first repeated: measured straight after a full run the durable ceiling
+# read 719/s against the 1,903/s the same probe read on an idle machine, so a run's
+# own throughput means different things at its start and its end, and bookending it is
+# the only way a reader can see that happened.
+COMMIT_CEILING_KEYS = (
+    "commit_ceiling_durable_per_s",
+    "commit_ceiling_nondurable_per_s",
+    "commit_ceiling_durable_after_per_s",
+)
 
 
 class MissingStageError(Exception):
@@ -139,12 +149,49 @@ class StageOptions:
     # otherwise tracks the host, so a 128-core box spawns hundreds of worker processes
     # across a stage with no way to ask for fewer.
     max_workers: int | None = None
+    # Not a flag: the machine's own commit ceiling, measured once per invocation and
+    # carried into every stage file this run writes. Mutable because the after-the-run
+    # probe only exists once the stages are done, and it belongs in files already on
+    # disk by then.
+    commit_ceiling: dict[str, float | None] = dataclasses.field(default_factory=dict)
 
 
 def run_stages(stage_names: list[str], options: StageOptions) -> None:
     options.results_dir.mkdir(parents=True, exist_ok=True)
-    for name in order_by_dependency(stage_names):
+    ordered = order_by_dependency(stage_names)
+    # Before anything measures, and never between the reps of a measurement: the probe
+    # commits a few hundred times of its own.
+    options.commit_ceiling.update(
+        {
+            "commit_ceiling_durable_per_s": analysis.measure_commit_ceiling(
+                durable=True
+            ),
+            "commit_ceiling_nondurable_per_s": analysis.measure_commit_ceiling(
+                durable=False
+            ),
+        }
+    )
+    for name in ordered:
         run_stage(name, options)
+    options.commit_ceiling["commit_ceiling_durable_after_per_s"] = (
+        analysis.measure_commit_ceiling(durable=True)
+    )
+    record_commit_ceiling(ordered, options)
+
+
+def record_commit_ceiling(stage_names: list[str], options: StageOptions) -> None:
+    """Write the after-the-run ceiling into the files this invocation already wrote.
+
+    A stage's file is rewritten after every measurement so a run killed at hour two
+    keeps its work, and the closing probe does not exist until the last stage is done
+    — so it lands last, into whatever those writes left on disk. A run that never got
+    there leaves the field null, which is what happened.
+    """
+    for name in stage_names:
+        path = options.results_dir / f"stage_{name}.json"
+        write_results_file(
+            path, {**json.loads(path.read_text()), **options.commit_ceiling}
+        )
 
 
 def order_by_dependency(stage_names: list[str]) -> list[str]:
@@ -174,11 +221,13 @@ def run_stage(name: str, options: StageOptions) -> None:
             options,
         )
     elif name == "checkpoint_cost":
+        worker, calibration = read_winning_worker(options)
         record_measurements(
             "checkpoint_cost",
-            build_checkpoint_cost_measurements(read_winning_worker(options)),
+            build_checkpoint_cost_measurements(worker),
             [],
             options,
+            {"calibration": calibration},
         )
     elif name == "producer_ceiling":
         run_producer_ceiling(options)
@@ -192,39 +241,59 @@ def run_worker_knobs(options: StageOptions) -> None:
     record_measurements(
         "worker_knobs", build_concurrency_measurements(), recorded, options
     )
-    winner = pick_winning_worker(recorded)
+    best = pick_best_measurement(recorded)
+    calibration = {"calibration": describe_calibration("worker_knobs", best)}
+    winner = runner.WorkerSpec(**best["spec"]["worker"])
     record_measurements(
-        "worker_knobs", build_batch_size_measurements(winner), recorded, options
+        "worker_knobs",
+        build_batch_size_measurements(winner),
+        recorded,
+        options,
+        calibration,
     )
     record_measurements(
-        "worker_knobs", build_async_dispatch_measurements(winner), recorded, options
+        "worker_knobs",
+        build_async_dispatch_measurements(winner),
+        recorded,
+        options,
+        calibration,
     )
 
 
 def run_process_scaling(options: StageOptions) -> None:
     """How throughput scales with worker processes at the winning worker config."""
-    worker = read_winning_worker(options)
+    worker, calibration = read_winning_worker(options)
     record_measurements(
         "process_scaling",
         build_process_scaling_measurements(worker, bound_fleet(HOST_CPUS, options)),
         [],
         options,
+        {"calibration": calibration},
     )
 
 
 def run_poll_interval(options: StageOptions) -> None:
     """What poll_interval buys in latency and costs in idle transactions."""
-    worker = read_winning_worker(options)
+    worker, calibration = read_winning_worker(options)
     recorded: list[dict[str, t.Any]] = []
     record_measurements(
-        "poll_interval", build_poll_interval_measurements(worker), recorded, options
+        "poll_interval",
+        build_poll_interval_measurements(worker),
+        recorded,
+        options,
+        {"calibration": calibration},
     )
     probes = measure_idle_probes(
         worker,
         IDLE_PROBE_SECONDS if options.duration_s is None else options.duration_s,
         bound_fleet(IDLE_PROBE_WORKERS, options),
     )
-    write_stage_file("poll_interval", recorded, options, {"idle_probes": probes})
+    write_stage_file(
+        "poll_interval",
+        recorded,
+        options,
+        {"calibration": calibration, "idle_probes": probes},
+    )
 
 
 def run_producer_ceiling(options: StageOptions) -> None:
@@ -236,7 +305,15 @@ def run_producer_ceiling(options: StageOptions) -> None:
         reps = []
         for _ in range(rep_count):
             truncate_queue_tables("bench")
-            reps.append(measure_producer_rep(mode, enqueues))
+            # On each side of the rep, for the reason in `host.read_load_average`.
+            load_before = host.read_load_average()
+            reps.append(
+                {
+                    **measure_producer_rep(mode, enqueues),
+                    "load_before": load_before,
+                    "load_after": host.read_load_average(),
+                }
+            )
         recorded.append(summarize_producer_reps(mode, reps))
         write_stage_file("producer_ceiling", recorded, options)
         median = recorded[-1]["median"]
@@ -264,7 +341,7 @@ def measure_producer_rep(
 
 def run_latency_under_load(options: StageOptions) -> None:
     """End-to-end latency at fractions of the measured process-scaling ceiling."""
-    worker, workers, ceiling = read_ceiling(options)
+    worker, workers, ceiling, calibration = read_ceiling(options)
     record_measurements(
         "latency_under_load",
         [
@@ -283,6 +360,7 @@ def run_latency_under_load(options: StageOptions) -> None:
         ],
         [],
         options,
+        {"calibration": calibration},
     )
 
 
@@ -451,12 +529,13 @@ def record_measurements(
     specs: list[measurement.MeasurementSpec],
     recorded: list[dict[str, t.Any]],
     options: StageOptions,
+    extra: dict[str, t.Any] | None = None,
 ) -> None:
     for spec in specs:
         recorded.append(
             measurement.run_measurement(apply_size_overrides(spec, options))
         )
-        write_stage_file(stage, recorded, options)
+        write_stage_file(stage, recorded, options, extra)
         print(summarize_measurement(recorded[-1]))
 
 
@@ -490,20 +569,25 @@ def write_stage_file(
     extra: dict[str, t.Any] | None = None,
 ) -> None:
     # Rewritten after every measurement so a run killed at hour two keeps everything.
-    path = options.results_dir / f"stage_{stage}.json"
-    staged = path.with_suffix(".json.tmp")
-    staged.write_text(
-        json.dumps(
-            {
-                "stage": stage,
-                "options": resolve_options(options),
-                "measurements": recorded,
-                **(extra or {}),
-            },
-            indent=2,
-        )
-        + "\n"
+    write_results_file(
+        options.results_dir / f"stage_{stage}.json",
+        {
+            "stage": stage,
+            "options": resolve_options(options),
+            # The three keys always, at null until a probe fills them: a file that
+            # simply omitted them would read as one written before the ceiling was
+            # recorded rather than as a run whose probe was refused.
+            **dict.fromkeys(COMMIT_CEILING_KEYS),
+            **options.commit_ceiling,
+            "measurements": recorded,
+            **(extra or {}),
+        },
     )
+
+
+def write_results_file(path: Path, payload: dict[str, t.Any]) -> None:
+    staged = path.with_suffix(".json.tmp")
+    staged.write_text(json.dumps(payload, indent=2) + "\n")
     staged.replace(path)
 
 
@@ -587,11 +671,19 @@ def summarize_producer_reps(
     }
 
 
-def read_winning_worker(options: StageOptions) -> runner.WorkerSpec:
-    return pick_winning_worker(read_stage_measurements(options, "worker_knobs"))
+def read_winning_worker(
+    options: StageOptions,
+) -> tuple[runner.WorkerSpec, dict[str, t.Any]]:
+    best = pick_best_measurement(read_stage_measurements(options, "worker_knobs"))
+    return (
+        runner.WorkerSpec(**best["spec"]["worker"]),
+        describe_calibration("worker_knobs", best),
+    )
 
 
-def read_ceiling(options: StageOptions) -> tuple[runner.WorkerSpec, int, float]:
+def read_ceiling(
+    options: StageOptions,
+) -> tuple[runner.WorkerSpec, int, float, dict[str, t.Any]]:
     recorded = read_stage_measurements(options, "process_scaling")
     best = pick_rate_calibration_measurement(
         recorded, bound_fleet(RATE_WORKER_CAP, options)
@@ -600,7 +692,27 @@ def read_ceiling(options: StageOptions) -> tuple[runner.WorkerSpec, int, float]:
         runner.WorkerSpec(**best["spec"]["worker"]),
         best["spec"]["workers"],
         best["median"]["throughput_per_s"],
+        describe_calibration("process_scaling", best),
     )
+
+
+def describe_calibration(stage: str, best: dict[str, t.Any]) -> dict[str, t.Any]:
+    """Which measurement became the working point, recorded where it is inherited.
+
+    The choice itself is right — a valid, stable rung is what a later stage should be
+    configured at — but nothing downstream could see it had been made. When most rungs
+    are marked, calibration lands on the slowest survivor and every stage after it
+    reads as though that were the machine's best, so what was chosen and how well it
+    repeated travel with the stage that inherited it.
+    """
+    return {
+        "stage": stage,
+        "measurement": best["spec"]["name"],
+        "throughput_per_s": best["median"].get("throughput_per_s", 0.0),
+        "cv": best["cv"],
+        "invalid": best["invalid"],
+        "unstable": best["unstable"],
+    }
 
 
 def read_stage_measurements(
@@ -612,10 +724,6 @@ def read_stage_measurements(
     return t.cast(
         "list[dict[str, t.Any]]", json.loads(path.read_text())["measurements"]
     )
-
-
-def pick_winning_worker(recorded: list[dict[str, t.Any]]) -> runner.WorkerSpec:
-    return runner.WorkerSpec(**pick_best_measurement(recorded)["spec"]["worker"])
 
 
 def pick_best_measurement(recorded: list[dict[str, t.Any]]) -> dict[str, t.Any]:

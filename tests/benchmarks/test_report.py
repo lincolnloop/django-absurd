@@ -25,6 +25,12 @@ OPTIONS = {
     "tasks": None,
 }
 
+COMMIT_CEILING = {
+    "commit_ceiling_durable_per_s": 1903.0,
+    "commit_ceiling_nondurable_per_s": 131368.0,
+    "commit_ceiling_durable_after_per_s": 719.0,
+}
+
 RANKING_KEYS = {
     "producer": "enqueues_per_s",
     "rate": "end_to_end_p50_s",
@@ -39,6 +45,8 @@ HEADER = (
     "- options: --duration stage default, --io-seconds 0.05, --max-workers 8, "
     "--reps 3, --tasks stage default\n"
     "- cpu count: 8, load average (1m): 0.50\n"
+    "- commit ceiling: 1903 commits/s durable, 719/s after the run, 131368/s "
+    "non-durable (69x without fsync)\n"
     "- python 3.14.3, Django 6.1, absurd-sdk 0.5.0\n"
     "- postgres: PostgreSQL 18.0 on x86_64-pc-linux-gnu\n"
     "\n"
@@ -116,7 +124,13 @@ def write_stage(
     """The results file a stage run leaves behind, which is the report's real input."""
     (tmp_path / f"stage_{stage}.json").write_text(
         json.dumps(
-            {"stage": stage, "options": OPTIONS, "measurements": entries, **extra}
+            {
+                "stage": stage,
+                "options": OPTIONS,
+                **COMMIT_CEILING,
+                "measurements": entries,
+                **extra,
+            }
         )
     )
 
@@ -584,3 +598,172 @@ def test_renders_idle_polling_tax_and_latency_ratios_for_poll_interval(
         "- `poll_0.25`: 1.00x\n"
         "- `poll_1`: 3.00x\n"
     ) in rendered
+
+
+def test_says_what_bound_each_saturation_measurement(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """A task rate near the commit ceiling is a measurement of the disk.
+
+    Multiplying a throughput by the commits a task cost gives the commit rate the run
+    asked of the disk, and its share of the ceiling is what separates the two kinds of
+    row: one at a fraction of it is bound by its client and is the only kind that is
+    about Absurd. The paced row is left out — its rate was set by the offer, so its
+    share of the ceiling says how big the offer was and nothing about what bound it —
+    and a row whose reps left no median says so rather than reading as free.
+    """
+    entries = [
+        build_measurement(
+            "concurrency_1",
+            {},
+            {"throughput_per_s": 150.0, "commits_per_task": 3.55},
+        ),
+        build_measurement(
+            "concurrency_16",
+            {},
+            {"throughput_per_s": 548.0, "commits_per_task": 3.55},
+        ),
+        build_measurement("concurrency_32", {}, {"throughput_per_s": 0.0}),
+        build_measurement("rate_25pct", {"mode": "rate"}, {"throughput_per_s": 90.0}),
+    ]
+
+    assert (
+        "Commit budget (`tasks/s x commits/task`, against the durable commit "
+        "ceiling):\n"
+        "\n"
+        "- `concurrency_1`: 532 commits/s (150.0 x 3.55), 28% of 1903/s "
+        "— client-bound\n"
+        "- `concurrency_16`: 1945 commits/s (548.0 x 3.55), 102% of 1903/s "
+        "— fsync-bound\n"
+        "- `concurrency_32`: commits per task not recorded, so nothing says what "
+        "bound it\n"
+    ) in render(capsys, tmp_path, "worker_knobs", entries)
+
+
+def test_says_the_commit_ceiling_is_missing_rather_than_omitting_it(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """A run whose calibration probe was refused still runs and still reports.
+
+    What it must not do is read like a calibrated one: the header says the ceiling is
+    missing and every commit budget under it says it has nothing to be measured
+    against, rather than the two lines quietly disappearing.
+    """
+    entries = [
+        build_measurement(
+            "concurrency_1",
+            {},
+            {"throughput_per_s": 150.0, "commits_per_task": 3.55},
+        )
+    ]
+    rendered = render(
+        capsys, tmp_path, "worker_knobs", entries, **dict.fromkeys(COMMIT_CEILING)
+    )
+
+    assert (
+        "- commit ceiling: not measured, so nothing below says whether a throughput "
+        "is this disk's number or Absurd's\n"
+    ) in rendered
+    assert (
+        "- `concurrency_1`: 532 commits/s (150.0 x 3.55), against no ceiling "
+        "— nothing here says what bound it\n"
+    ) in rendered
+
+
+def test_says_which_halves_of_the_commit_ceiling_were_measured(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The three probes are three separate attempts and any of them can be refused.
+
+    A run killed before its closing probe has no after-the-run ceiling and no ratio to
+    quote, which the header names one field at a time rather than dropping the whole
+    line for the one number it is missing.
+    """
+    entries = [build_measurement("concurrency_1", {}, {})]
+
+    rendered = render(
+        capsys,
+        tmp_path,
+        "worker_knobs",
+        entries,
+        commit_ceiling_durable_after_per_s=None,
+        commit_ceiling_nondurable_per_s=None,
+    )
+
+    assert (
+        "- commit ceiling: 1903 commits/s durable, not measured after the run, "
+        "not measured non-durable (ratio not measured)\n"
+    ) in rendered
+
+
+def test_names_the_measurement_a_calibrated_stage_was_configured_from(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The working point cascades into every stage that reads an earlier one back.
+
+    Preferring a rung that measured what was asked and repeated is right, but when
+    most rungs are marked the choice lands on the slowest survivor and every number in
+    this stage was measured at it — so the stage says what it inherited and how well
+    that rung held up.
+    """
+    entries = [build_measurement("workers_1", {"workers": 1}, {})]
+    calibration = {
+        "stage": "worker_knobs",
+        "measurement": "concurrency_8",
+        "throughput_per_s": 397.2,
+        "cv": 0.31,
+        "invalid": False,
+        "unstable": True,
+    }
+
+    assert (
+        "## Process scaling\n"
+        "\n"
+        "Calibrated from `worker_knobs` `concurrency_8`: 397.2 tasks/s, cv 31.0%, "
+        "unstable.\n"
+    ) in render(capsys, tmp_path, "process_scaling", entries, calibration=calibration)
+
+
+def test_names_a_working_point_that_was_never_in_doubt(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """A rung with nothing wrong with it says so, so the reader can stop looking."""
+    entries = [build_measurement("flat", {}, {})]
+    calibration = {
+        "stage": "worker_knobs",
+        "measurement": "batch_2",
+        "throughput_per_s": 158.0,
+        "cv": 0.037,
+        "invalid": False,
+        "unstable": False,
+    }
+
+    assert (
+        "Calibrated from `worker_knobs` `batch_2`: 158.0 tasks/s, cv 3.7%, "
+        "valid and stable.\n"
+    ) in render(capsys, tmp_path, "checkpoint_cost", entries, calibration=calibration)
+
+
+def test_names_a_working_point_nothing_could_be_said_about(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """`--reps 1` is a dry run, so its working point has an unmeasured dispersion.
+
+    An invalid rung is a working point too — calibrating on nothing would be worse —
+    and both faults print, because a stage configured from a rung that measured the
+    wrong thing is the case this line exists for.
+    """
+    entries = [build_measurement("flat", {}, {})]
+    calibration = {
+        "stage": "worker_knobs",
+        "measurement": "concurrency_1",
+        "throughput_per_s": 12.5,
+        "cv": None,
+        "invalid": True,
+        "unstable": False,
+    }
+
+    assert (
+        "Calibrated from `worker_knobs` `concurrency_1`: 12.5 tasks/s, cv n/a, "
+        "invalid, dispersion unmeasured.\n"
+    ) in render(capsys, tmp_path, "checkpoint_cost", entries, calibration=calibration)

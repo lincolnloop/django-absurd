@@ -9,9 +9,12 @@ import typing as t
 
 import time_machine
 from absurd_sdk import RetryStrategy
+from django.db import connections
 from django.tasks import task
 
+import analysis
 from django_absurd import absurd_params
+from django_absurd.queues import resolve_absurd_database
 
 NAP_SECONDS = 30.0
 NAP_INTERVAL_S = 0.02
@@ -23,6 +26,25 @@ def read_stage(results_dir: pathlib.Path, stage: str) -> dict[str, t.Any]:
         (results_dir / f"stage_{stage}.json").read_text()
     )
     return parsed
+
+
+@contextlib.contextmanager
+def hold_the_commit_probe_table() -> t.Iterator[None]:
+    """Occupy the table name the commit-ceiling probe creates, so the probe refuses.
+
+    The probe writes, so every way it can fail on a real server — no CREATE right, a
+    read-only role, an unreachable database — is a way to break the harness's own
+    connection too. A name already taken is the one failure a test can hand it that
+    leaves everything else running, and it is a real one: a probe that dropped a table
+    it had not created would take somebody's data with it.
+    """
+    with connections[resolve_absurd_database()].cursor() as cursor:
+        cursor.execute(f"create table {analysis.COMMIT_PROBE_TABLE} (n int)")
+    try:
+        yield
+    finally:
+        with connections[resolve_absurd_database()].cursor() as cursor:
+            cursor.execute(f"drop table {analysis.COMMIT_PROBE_TABLE}")
 
 
 @contextlib.contextmanager
@@ -83,12 +105,18 @@ def strip_measurement_marks(output: str) -> str:
 
 
 def normalize_measured_durations(rep: dict[str, t.Any]) -> dict[str, t.Any]:
-    """A refused rep with the durations in its error blanked, so it reads as a literal.
+    """A refused rep with everything unpinnable blanked, so it reads as a literal.
 
-    Both numbers in the message are real elapsed times, which no test can pin; what a
-    test can pin is that the guard named them.
+    Both numbers in the message are real elapsed times and both load samples are the
+    machine's real load; what a test can pin is that the guard named the durations and
+    that the rep was bracketed by a sample either side of it.
     """
-    return {**rep, "error": re.sub(r"\d+\.\d+s", "Ns", rep["error"])}
+    return {
+        **rep,
+        "error": re.sub(r"\d+\.\d+s", "Ns", rep["error"]),
+        "load_before": rep["load_before"] >= 0.0,
+        "load_after": rep["load_after"] >= 0.0,
+    }
 
 
 @task(queue_name="bench")

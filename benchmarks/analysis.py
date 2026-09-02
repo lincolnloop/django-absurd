@@ -4,12 +4,25 @@ import time
 import typing as t
 
 import psycopg.sql
+from django import db
 from django.db import connections
 
 from django_absurd.queues import resolve_absurd_database
 
 # Below this the p10..p90 completion window is too short to divide by.
 MIN_TRIMMED_SPAN_S = 0.01
+
+# The table the commit-ceiling probe commits into. A REAL table, not a temporary one:
+# a temp table is not WAL-logged, so its commits never reach the disk and the probe
+# would report the machine's memory speed as its durable ceiling (84,000/s against
+# 953/s measured side by side on the same server).
+COMMIT_PROBE_TABLE = "benchmark_commit_ceiling_probe"
+# ~0.1 s at the ~1,900 commits/s a quiet SSD sustains, and the probe runs three times
+# a run — never during a measurement.
+DURABLE_PROBE_COMMITS = 200
+# The same window's worth with the fsync taken out: at ~400,000 commits/s the durable
+# count would be timing half a millisecond.
+NONDURABLE_PROBE_COMMITS = 5000
 
 # Completions per profile slice. Equal-COUNT slices rather than equal-time ones: a slow
 # measurement puts fewer completions into a fixed time slice, so its slices would read
@@ -101,6 +114,25 @@ having count(*) = {size} and max(ts) > min(ts)
 order by bucket
 """
 
+# Timed and looped SERVER-side: a client loop measures its own round trip plus the
+# fsync, and the constant wanted here is the disk's alone. A procedural block rather
+# than a function — `commit` inside a plpgsql FUNCTION called from a query raises
+# `invalid transaction termination` — and the elapsed time comes back through the
+# probe's own table because a DO block returns nothing.
+COMMIT_PROBE_SQL = """
+do $$
+declare
+  started timestamptz := clock_timestamp();
+begin
+  for i in 1..{commits} loop
+    insert into {table} (n) values (i);
+    commit;
+  end loop;
+  insert into {table} (elapsed_s)
+  values (extract(epoch from clock_timestamp() - started));
+end $$;
+"""
+
 
 def analyze_saturation(queue: str = "bench") -> dict[str, t.Any]:
     """Every metric of one saturation rep, plus how it varied during the drain."""
@@ -154,6 +186,54 @@ def measure_idle_commit_rate(seconds: float) -> float:
     before = read_xact_commit()
     time.sleep(seconds)
     return (read_xact_commit() - before) / seconds
+
+
+def measure_commit_ceiling(*, durable: bool) -> float | None:
+    """Commits/s this server sustains in one session, or ``None`` if it refused.
+
+    The number every throughput in a run has to be read against: 71% of a run's active
+    backend time is WAL durability, so a task rate near this ceiling is a property of
+    the disk rather than of Absurd, and the same code on another machine reports a
+    different one.
+
+    Calibration, not measurement — a run that cannot have its ceiling records that it
+    has none and carries on, because an uncalibrated number that says so beats no run.
+    """
+    commits = DURABLE_PROBE_COMMITS if durable else NONDURABLE_PROBE_COMMITS
+    table = psycopg.sql.Identifier(COMMIT_PROBE_TABLE)
+    try:
+        with connections[resolve_absurd_database()].cursor() as cursor:
+            # Outside the try/finally on purpose: a name already taken belongs to
+            # someone else, and the cleanup below must never drop a table this probe
+            # did not create.
+            cursor.execute(
+                psycopg.sql.SQL(
+                    "create table {table} (n int, elapsed_s float8)"
+                ).format(table=table)
+            )
+            try:
+                if not durable:
+                    cursor.execute("set synchronous_commit = off")
+                cursor.execute(
+                    psycopg.sql.SQL(COMMIT_PROBE_SQL).format(
+                        commits=psycopg.sql.Literal(commits), table=table
+                    )
+                )
+                cursor.execute(
+                    psycopg.sql.SQL("select max(elapsed_s) from {table}").format(
+                        table=table
+                    )
+                )
+                return commits / float(cursor.fetchone()[0])
+            finally:
+                # Reset unconditionally: it is a no-op for the durable probe, and a
+                # branch here would be one more way to leave the session altered.
+                cursor.execute("reset synchronous_commit")
+                cursor.execute(
+                    psycopg.sql.SQL("drop table {table}").format(table=table)
+                )
+    except db.Error:
+        return None
 
 
 def read_completed_run_metrics(

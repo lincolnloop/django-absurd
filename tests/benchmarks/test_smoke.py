@@ -239,6 +239,8 @@ def test_saturation_measurement_refuses_a_rep_the_host_slept_through() -> None:
                     "this phase produced is fiction. Re-run the measurement on a "
                     "machine that stays awake."
                 ),
+                "load_before": True,
+                "load_after": True,
             }
         ],
         "median": {},
@@ -291,6 +293,67 @@ def test_saturation_measurement_records_every_dispersion_of_its_reps() -> None:
         "measured_a_cv": True,
         "endpoints_bracket_the_median": True,
     }
+
+
+def test_saturation_rep_records_what_its_tasks_cost_in_commits() -> None:
+    """A task rate is a commit rate in disguise, and this is the exchange rate.
+
+    Counted as the database's own `xact_commit` across the measured phase over the
+    runs that completed inside it: the claim, the completion and the driver's drain
+    polling, and nothing the preload did, which is over before the phase opens. A
+    report multiplies it by throughput to say whether a measurement was bound by its
+    client or by the disk's fsync.
+
+    Asserted as measured, and as at least the one commit each completion has to make;
+    never at a number, which is the finding.
+    """
+    spec = measurement.MeasurementSpec(
+        name="smoke-commits",
+        mode="saturation",
+        task_path="tasks.noop_sync",
+        tasks=int(MEASURABLE_TASKS),
+        workers=1,
+        worker=runner.WorkerSpec(concurrency=1, poll_interval=0.05),
+        reps=1,
+        timeout_s=60,
+    )
+
+    rep = measurement.run_measurement(spec)["reps"][0]
+
+    assert {
+        "n_runs": rep["n_runs"],
+        "cost_at_least_a_commit_a_task": rep["commits_per_task"] >= 1.0,
+    } == {"n_runs": int(MEASURABLE_TASKS), "cost_at_least_a_commit_a_task": True}
+
+
+def test_saturation_measurement_samples_the_load_on_each_side_of_every_rep() -> None:
+    """The host block is collected once every rep has run, so the load average in it
+    counts the load the harness itself just made and can never answer whether the
+    machine was otherwise busy. Each rep carries its own pair instead.
+
+    Asserted as sampled, never at a level: what else the machine was doing is the
+    finding, and an idle host legitimately reads 0.00.
+    """
+    spec = measurement.MeasurementSpec(
+        name="smoke-load",
+        mode="saturation",
+        task_path="tasks.noop_sync",
+        tasks=int(MEASURABLE_TASKS),
+        workers=1,
+        worker=runner.WorkerSpec(concurrency=1, poll_interval=0.05),
+        reps=2,
+        timeout_s=60,
+    )
+
+    result = measurement.run_measurement(spec)
+
+    assert [
+        {
+            "load_before": rep["load_before"] >= 0.0,
+            "load_after": rep["load_after"] >= 0.0,
+        }
+        for rep in result["reps"]
+    ] == [{"load_before": True, "load_after": True}] * 2
 
 
 def test_saturation_rep_profiles_its_throughput_across_the_drain() -> None:

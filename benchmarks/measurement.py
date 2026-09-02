@@ -53,7 +53,14 @@ def run_measurement(spec: MeasurementSpec) -> dict[str, t.Any]:
     reps = []
     for _ in range(spec.reps):
         truncate_queue_tables(spec.worker.queue)
-        reps.append(run_one_rep(spec))
+        # Bracketing each rep rather than reading the host block's one figure, which
+        # is collected after every rep has run: a 1-minute average sampled there is
+        # mostly the harness's own load, so it cannot say what it was asked to.
+        load_before = host.read_load_average()
+        rep = run_one_rep(spec)
+        reps.append(
+            {**rep, "load_before": load_before, "load_after": host.read_load_average()}
+        )
     return summarize_reps(spec, reps)
 
 
@@ -74,18 +81,33 @@ def run_saturation_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
         spec.task_path, spec.tasks, kwargs=spec.task_kwargs
     )
     procs = runner.start_workers(spec.worker, spec.workers)
+    commits_before = analysis.read_xact_commit()
     try:
         with host.measure_phase() as phase:
             wait_until_drained(spec)
     finally:
         runner.stop_workers(procs)
+    # Read once the workers have exited: a live backend flushes its transaction
+    # counters at most once a second, so a rep that ends inside that window would
+    # lose the commits it just made. Before the analysis queries, which are commits
+    # of the harness's own and no part of what a task cost.
+    commits = analysis.read_xact_commit() - commits_before
     metrics = analysis.analyze_saturation(spec.worker.queue)
     # A terminally failed task still satisfies the drain predicate, so without this
     # the measurement silently covers a smaller sample than it was asked to.
     metrics["missing_tasks"] = spec.tasks - metrics["n_tasks"]
     # Every other number here comes off a trimmed window that excludes the ramp and the
     # tail by construction, so without this a rep cannot say where its own time went.
-    return {"preload_s": preload_s, "phase_s": phase.elapsed_s, **metrics}
+    return {
+        "preload_s": preload_s,
+        "phase_s": phase.elapsed_s,
+        # What the drain asked of the disk, per task: throughput times this is the
+        # commit rate the run demanded, which is only comparable with the commit
+        # ceiling beside it. The preload is outside the phase, so this is the
+        # execution side alone — no enqueue commits in it.
+        "commits_per_task": commits / metrics["n_runs"] if metrics["n_runs"] else None,
+        **metrics,
+    }
 
 
 def run_rate_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
@@ -104,6 +126,9 @@ def run_rate_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
     finally:
         runner.stop_workers(procs)
     # The offer and the drain that followed it, which the trimmed window excludes.
+    # No commits per task: this rep's completed-run count comes off the trimmed middle
+    # of the offer window while the phase spans the whole offer and drain, so the
+    # quotient would divide two different windows into each other.
     return {
         "phase_s": phase.elapsed_s,
         **analysis.analyze_rate(spec.worker.queue, window_start, window_end),

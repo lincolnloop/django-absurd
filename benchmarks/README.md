@@ -49,10 +49,11 @@ repo root's.
 ```
 
 `host.py` sits beside all of this: it records the machine context per measurement
-(cores, load, versions, git SHA) and brackets every measured phase with the suspension
-guard. The flags a run was given are recorded once per results file, beside those
-measurements — see [The results files](#the-results-files). `settings.py`, `manage.py`
-and `tasks.py` are the minimal Django project the workers run in.
+(cores, versions, git SHA), samples the load average around every rep, and brackets
+every measured phase with the suspension guard. The flags a run was given and the
+machine's commit ceiling are recorded once per results file, beside those measurements —
+see [The results files](#the-results-files). `settings.py`, `manage.py` and `tasks.py`
+are the minimal Django project the workers run in.
 
 ## What it found
 
@@ -245,6 +246,29 @@ none, and the report will not render it; re-measure rather than hand-adding one.
 same goes for one written before a measurement carried `invalid`, `unstable`, `cv` and
 its rep endpoints: it records a single `flagged` the report no longer reads.
 
+**Each file also says what the machine could commit.** Beside `options` sit
+`commit_ceiling_durable_per_s`, `commit_ceiling_nondurable_per_s` and
+`commit_ceiling_durable_after_per_s`: commits per second this server sustained in one
+session, measured once before the first measurement of the run and again after the last
+one. The closing probe is not the opening one repeated — measured straight after a full
+run the durable ceiling read 719/s against 1,903/s on the same idle machine, so a run's
+own numbers mean different things at its start and at its end. The probe loops
+server-side, a `do` block committing single-row inserts timed with `clock_timestamp()`,
+because a client loop would measure its own round trips as well as the disk's fsync; it
+writes to a real table it creates and drops rather than a temporary one, since a temp
+table is not WAL-logged and a probe against one reports memory speed as the durable
+ceiling (84,000/s against 953/s, measured side by side). Any of the three can be `null`:
+the probe was refused, the run went ahead regardless, and the report says the
+calibration is missing rather than dropping the line — an uncalibrated number that says
+so beats no run at all.
+
+**A stage calibrated from another names what it inherited**, in a `calibration` block
+holding the stage and measurement that became the working point, its throughput, its CV
+and whether it was marked. The choice prefers a rung that measured what was asked and
+repeated, so when most rungs are marked it lands on the slowest survivor and every
+number in the later stage was measured at it — which the report prints under that
+stage's heading.
+
 ## The measurement model
 
 **Two experiments, and they answer different questions.** A _saturation_ measurement
@@ -275,9 +299,26 @@ than a shape read off a handful of rows. Rate measurements carry no profile: the
 rate is imposed rather than discovered, so slicing it would plot the producer's pacing
 back at the reader.
 
-Reading one: within a rep, remaining depth falls while accumulated database state only
-grows, so the two point opposite ways. Throughput RISING across the slices means depth
-drives the per-task cost, because nothing cumulative can make a drain faster; flat
+**A throughput is a commit rate in disguise, and every saturation rep records the
+exchange rate.** `commits_per_task` is the database's own `xact_commit` delta across the
+measured phase over the runs that completed inside it, so it covers the claim, the
+completion and the driver's drain polling, and excludes the preload, which is over
+before the phase opens. Throughput times that is the commit rate the run asked of the
+disk, and the report prints it against the ceiling under each saturation table: a
+measurement near the ceiling is fsync-bound and its number is a property of the disk
+rather than of Absurd, while one at a fraction of the ceiling is bound by its client and
+is the kind that is about Absurd. Measured on one laptop with Postgres in Docker, 71% of
+active backend time in a full run was WAL durability, the durable ceiling was 1,903
+commits/s and a task cost 3.55 commits — 1903/3.55 is 536 tasks/s against 548 observed
+at the top of the concurrency ladder, which is the ladder climbing from client-bound to
+fsync-bound rather than Absurd scaling. Rate reps carry no `commits_per_task`: their
+completed-run count comes off the trimmed middle of the offer window while the phase
+spans the whole offer and drain, so the quotient would divide two different windows into
+each other.
+
+Reading a profile: within a rep, remaining depth falls while accumulated database state
+only grows, so the two point opposite ways. Throughput RISING across the slices means
+depth drives the per-task cost, because nothing cumulative can make a drain faster; flat
 within a rep while reps disagree rules depth out and points at cumulative state or a
 per-run latch; a sawtooth is contention, and neither.
 
@@ -343,7 +384,13 @@ still decides is CALIBRATION: `pick_best_measurement` prefers a valid, stable ru
 it picks the working point later stages inherit, falling back to the whole set rather
 than refusing. That is choosing a configuration to measure at, not editing a report.
 
-Measure on a quiet machine on AC power; ambient load is recorded per measurement
+**Load is sampled on each side of every rep.** `load_before` and `load_after` sit on the
+rep itself, because the per-measurement `host` block is collected once all its reps are
+over: the 1-minute average in it counts the load the harness had just made, and as
+recorded there it could never answer whether the machine was otherwise busy. The host
+block keeps its versions, core count, SHA and its own `load_avg_1m`.
+
+Measure on a quiet machine on AC power; ambient load is recorded around every rep
 precisely because it pollutes.
 
 **It does not pollute every stage equally.** A rate stage offers a few tasks a second
