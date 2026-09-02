@@ -11,6 +11,16 @@ TABLE_HEADER = (
 )
 TABLE_RULE = "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
 
+# Named by the flag that sets each one, so the header reads back as the command that
+# produced it. Alphabetical: no ordering of these means anything to a reader.
+OPTION_FLAGS = (
+    ("--duration", "duration_s"),
+    ("--io-seconds", "io_seconds"),
+    ("--max-workers", "max_workers"),
+    ("--reps", "reps"),
+    ("--tasks", "tasks"),
+)
+
 
 def render_report(results_dir: Path) -> str:
     """Render every ``stage_*.json`` under ``results_dir`` as one markdown document."""
@@ -38,6 +48,7 @@ def describe_host(stages: list[dict[str, t.Any]]) -> list[str]:
         "",
         f"- git sha: {describe_provenance(shas)}",
         f"- captured at: {describe_capture_window(stamps)}",
+        f"- options: {describe_options(stages)}",
         (
             f"- cpu count: {context['cpu_count']}, "
             f"load average (1m): {context['load_avg_1m']:.2f}"
@@ -51,9 +62,47 @@ def describe_host(stages: list[dict[str, t.Any]]) -> list[str]:
 
 
 def describe_provenance(shas: list[str]) -> str:
-    if len(shas) == 1:
-        return f"`{shas[0]}`"
-    return "mixed (" + ", ".join(f"`{sha}`" for sha in shas) + ")"
+    return describe_alternatives([f"`{sha}`" for sha in shas])
+
+
+def describe_options(stages: list[dict[str, t.Any]]) -> str:
+    """The configuration behind the numbers: every flag, at the value it resolved to.
+
+    All of them, not only the ones that were passed — an omitted flag would be
+    indistinguishable from one this report does not know about, and the whole line is
+    one line either way.
+
+    Stages are run separately and a partial re-run is a documented workflow, so a
+    directory can hold one stage measured at a different size from the rest. A flag
+    they disagree about reads as mixed, the same way a git SHA does.
+    """
+    recorded = [stage["options"] for stage in stages]
+    described: list[str] = []
+    for flag, key in OPTION_FLAGS:
+        # Sorted as numbers rather than as the text they render to, so a mix reads
+        # `8, 60`; an unset flag has no number to sort by and goes last.
+        values = sorted(
+            {entry[key] for entry in recorded},
+            key=lambda value: (value is None, value or 0),
+        )
+        described.append(
+            f"{flag} {describe_alternatives([format_option(v) for v in values])}"
+        )
+    return ", ".join(described)
+
+
+def describe_alternatives(values: list[str]) -> str:
+    """One value plainly; several as a mix, because a results directory can hold
+    stages run from different checkouts or at different sizes."""
+    if len(values) == 1:
+        return values[0]
+    return "mixed (" + ", ".join(values) + ")"
+
+
+def format_option(value: float | None) -> str:
+    # None where a flag has no single default to resolve to: `--tasks` and `--duration`
+    # are each a per-stage production size, recorded per measurement in its own spec.
+    return "stage default" if value is None else f"{value:g}"
 
 
 def describe_capture_window(stamps: list[str]) -> str:

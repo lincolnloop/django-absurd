@@ -52,6 +52,43 @@ def test_runs_the_producer_stage_at_the_size_it_was_asked_for(
     ]
 
 
+def test_records_the_configuration_a_stage_was_run_at(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A results file that cannot name its configuration cannot be compared with
+    another one: the same worker ladder comes out of an unbounded run on a ten-core
+    host and a run bounded to ten on a fourteen-core one.
+
+    Resolved rather than raw, so an unset flag records what it fell back to instead of
+    a null the reader has to go look up — `--io-seconds` was not passed here and the
+    file records the 0.05 s the harness used. `--duration` is the one with no single
+    default to resolve to (a rate stage offers for 60 s, an idle probe runs for 30), so
+    it records that the stage sized itself and each measurement's spec carries what it
+    actually ran at.
+    """
+    stages.main(
+        [
+            "producer_ceiling",
+            "--reps",
+            "1",
+            "--tasks",
+            "10",
+            "--max-workers",
+            "1",
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
+
+    assert utils.read_stage(tmp_path, "producer_ceiling")["options"] == {
+        "duration_s": None,
+        "io_seconds": 0.05,
+        "max_workers": 1,
+        "reps": 1,
+        "tasks": 10,
+    }
+
+
 def test_runs_a_saturation_stage_at_the_size_it_was_asked_for(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -308,13 +345,14 @@ def test_runs_every_calibrated_stage_from_its_prerequisite(
     # The process_scaling ladder is derived from the host's core count, so its names
     # are not fixed. What is fixed is that it anchors at one worker, climbs, and
     # honours the bound — which a two-core host reaches before `--max-workers` does.
-    workers = [
-        entry["spec"]["workers"]
-        for entry in utils.read_stage(tmp_path, "process_scaling")["measurements"]
-    ]
+    scaling = utils.read_stage(tmp_path, "process_scaling")
+    workers = [entry["spec"]["workers"] for entry in scaling["measurements"]]
     assert workers[:2] == [1, 2]
     assert sorted(set(workers)) == workers
     assert max(workers) <= 3
+    # The fleet ceiling the file records is the rung the ladder actually topped out at,
+    # whichever of the bound and the host's core count set it.
+    assert max(workers) == scaling["options"]["max_workers"]
     # latency_under_load calibrates from one of those rungs, so the bound carries
     # into its fleet.
     assert {
@@ -399,10 +437,10 @@ def test_repeats_a_measurement_three_times_when_no_rep_count_is_given(
             ]
         )
 
-    assert [
-        len(entry["reps"])
-        for entry in utils.read_stage(tmp_path, "worker_knobs")["measurements"]
-    ] == [3, 3, 3, 3, 3]
+    result = utils.read_stage(tmp_path, "worker_knobs")
+    assert [len(entry["reps"]) for entry in result["measurements"]] == [3, 3, 3, 3, 3]
+    # And the file says so, rather than leaving the reader to count them.
+    assert result["options"]["reps"] == 3
 
 
 def test_records_an_unknown_git_sha_when_git_is_out_of_reach(

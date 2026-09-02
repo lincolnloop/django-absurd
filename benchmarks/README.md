@@ -50,8 +50,9 @@ repo root's.
 
 `host.py` sits beside all of this: it records the machine context per measurement
 (cores, load, versions, git SHA) and brackets every measured phase with the suspension
-guard. `settings.py`, `manage.py` and `tasks.py` are the minimal Django project the
-workers run in.
+guard. The flags a run was given are recorded once per results file, beside those
+measurements — see [The results files](#the-results-files). `settings.py`, `manage.py`
+and `tasks.py` are the minimal Django project the workers run in.
 
 ## What it found
 
@@ -132,8 +133,9 @@ on the host; only Postgres is in a container, reached over loopback. Half of tha
 is still pinned hard — `db_bench` is an exact image tag with a fixed server config on a
 port nothing else uses, and `uv.lock` plus `requires-python` fix the Python and every
 dependency. The other half is now whichever machine you are on, which is why `host.py`
-stamps cores, load average and versions onto every measurement: numbers are comparable
-with numbers measured the same way, and a run against Postgres somewhere else is not.
+stamps cores, load average and versions onto every measurement and every results file
+records the flags it was run at: numbers are comparable with numbers measured the same
+way, and a run against Postgres somewhere else, or at another size, is not.
 
 `db_bench` sits in the root `compose.yaml` beside `db` and `db_pg_cron` and is still a
 different server: its own volume, its own pinned config, its own port, and a profile
@@ -227,6 +229,19 @@ keeps everything it measured. The directory is git-ignored on purpose: the numbe
 property of whatever machine produced them, and a committed set would read as
 django-absurd's official figures. The test suite never touches these files; it works
 against a throwaway test database and temporary directories.
+
+**Each file says which configuration produced it.** Beside `measurements` sits an
+`options` block holding `--tasks`, `--duration`, `--io-seconds`, `--max-workers` and
+`--reps` **resolved** — an unset flag records what the run actually used, not a null to
+go look up. `--max-workers` is the one nothing else recovers: unset it tracks the host,
+so an unbounded ten-core run and a fourteen-core run bounded to ten write the same
+worker ladder. `--tasks` and `--duration` stay `null`, meaning the stage sized itself —
+neither has one default to name (5,000 no-ops here, 2,000 workflows there; a 60 s offer,
+a 30 s idle probe), and every measurement's `spec` carries the size it ran at. The whole
+set prints on one line of the report header, and a flag two stage files disagree about
+reads as `mixed (8, 60)`, the way a mixed git SHA does — running one stage again at
+another size is a documented workflow. A file written before this block existed has
+none, and the report will not render it; re-measure rather than hand-adding one.
 
 ## The measurement model
 

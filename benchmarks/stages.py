@@ -60,6 +60,10 @@ STAGE_DESCRIPTIONS = {
 # in about 75 s; throughput divides a p10-p90 window; a small backlog is mostly ramp.
 SATURATION_TASKS = 5000
 SATURATION_TIMEOUT_S = 900.0
+# The rep count every stage runs at unless `--reps` says otherwise. Read back off the
+# measurement default rather than restated, so a results file can record one rep count
+# that is true of the whole run.
+DEFAULT_REP_COUNT = measurement.MeasurementSpec.reps
 RATE_OFFER_SECONDS = 60.0
 HOST_CPUS = os.cpu_count() or 1
 # A rate measurement's producer runs on the same box as its workers, so calibrating
@@ -79,9 +83,10 @@ POLL_INTERVALS = (0.05, 0.25, 1.0)
 # so it is the experiment's independent variable rather than a fixed property of it.
 SLEEP_IO_SECONDS = 0.05
 # ~25 s per rep at the slowest mode's ~200 enqueues/s: enough for stable percentiles
-# while 3 reps x 3 modes still finish in a couple of minutes.
+# while 3 reps x 3 modes still finish in a couple of minutes. The shared default rather
+# than a third one, so one recorded rep count describes every stage.
 PRODUCER_ENQUEUE_COUNT = 5000
-PRODUCER_REP_COUNT = 3
+PRODUCER_REP_COUNT = DEFAULT_REP_COUNT
 PRODUCER_SPREAD_LIMIT = 0.15
 # The 4-checkpoint task runs ~4.5x slower than a flat one, so SATURATION_TASKS would
 # push a rep past two minutes; 2000 keeps checkpoint_cost on the same per-rep budget.
@@ -159,9 +164,7 @@ def run_stage(name: str, options: StageOptions) -> None:
     elif name == "sync_vs_async":
         record_measurements(
             "sync_vs_async",
-            build_sync_vs_async_measurements(
-                SLEEP_IO_SECONDS if options.io_seconds is None else options.io_seconds
-            ),
+            build_sync_vs_async_measurements(resolve_io_seconds(options)),
             [],
             options,
         )
@@ -486,11 +489,48 @@ def write_stage_file(
     staged = path.with_suffix(".json.tmp")
     staged.write_text(
         json.dumps(
-            {"stage": stage, "measurements": recorded, **(extra or {})}, indent=2
+            {
+                "stage": stage,
+                "options": resolve_options(options),
+                "measurements": recorded,
+                **(extra or {}),
+            },
+            indent=2,
         )
         + "\n"
     )
     staged.replace(path)
+
+
+def resolve_options(options: StageOptions) -> dict[str, t.Any]:
+    """What the flags came out as, so a results file says which run produced it.
+
+    Beside the per-measurement `host` block rather than inside it: one results file is
+    one run of one stage, so its flags are the same for every measurement in it, while
+    load average and uptime are not.
+
+    Resolved, so an unset flag records what it fell back to instead of a null the
+    reader has to go look up — `--max-workers` most of all, since its default is the
+    host's core count and a bounded run on a big box otherwise reads exactly like an
+    unbounded run on a small one. `--tasks` and `--duration` are the two with no single
+    default to resolve to: a stage's production size is its own (5000 no-ops here, 2000
+    workflows there; a 60 s offer, a 30 s idle probe), and every measurement records
+    the size it actually ran at in its own spec. `results_dir` is where the file went,
+    which the file's own location already says.
+    """
+    return {
+        "duration_s": options.duration_s,
+        "io_seconds": resolve_io_seconds(options),
+        "max_workers": bound_fleet(HOST_CPUS, options),
+        "reps": DEFAULT_REP_COUNT if options.reps is None else options.reps,
+        "tasks": options.tasks,
+    }
+
+
+def resolve_io_seconds(options: StageOptions) -> float:
+    """Read by the stage that sleeps and by the record of what it slept for, so the
+    two cannot drift into disagreeing about the same run."""
+    return SLEEP_IO_SECONDS if options.io_seconds is None else options.io_seconds
 
 
 def summarize_measurement(result: dict[str, t.Any]) -> str:

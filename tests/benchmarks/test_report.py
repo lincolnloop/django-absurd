@@ -17,11 +17,21 @@ HOST = {
     "python": "3.14.3",
 }
 
+OPTIONS = {
+    "duration_s": None,
+    "io_seconds": 0.05,
+    "max_workers": 8,
+    "reps": 3,
+    "tasks": None,
+}
+
 HEADER = (
     "# django-absurd benchmark results\n"
     "\n"
     "- git sha: `deadbeef`\n"
     "- captured at: 2026-08-27T12:00:00+00:00\n"
+    "- options: --duration stage default, --io-seconds 0.05, --max-workers 8, "
+    "--reps 3, --tasks stage default\n"
     "- cpu count: 8, load average (1m): 0.50\n"
     "- python 3.14.3, Django 6.1, absurd-sdk 0.5.0\n"
     "- postgres: PostgreSQL 18.0 on x86_64-pc-linux-gnu\n"
@@ -64,6 +74,17 @@ def build_measurement(
     }
 
 
+def write_stage(
+    tmp_path: Path, stage: str, entries: list[dict[str, t.Any]], **extra: t.Any
+) -> None:
+    """The results file a stage run leaves behind, which is the report's real input."""
+    (tmp_path / f"stage_{stage}.json").write_text(
+        json.dumps(
+            {"stage": stage, "options": OPTIONS, "measurements": entries, **extra}
+        )
+    )
+
+
 def render(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
@@ -77,9 +98,7 @@ def render(
     run and the report — so the only thing worth faking is the measurement, never the
     rendering.
     """
-    (tmp_path / f"stage_{stage}.json").write_text(
-        json.dumps({"stage": stage, "measurements": entries, **extra})
-    )
+    write_stage(tmp_path, stage, entries, **extra)
     report.main(["--results-dir", str(tmp_path)])
     return capsys.readouterr().out
 
@@ -233,6 +252,29 @@ def test_reports_mixed_provenance_when_measurements_disagree(
     assert "- git sha: mixed (`aaa111`, `bbb222`)\n" in rendered
     assert (
         "- captured at: 2026-08-27T12:00:00+00:00 .. 2026-08-27T15:00:00+00:00\n"
+    ) in rendered
+
+
+def test_reports_mixed_options_when_stages_were_run_at_different_sizes(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Stages are run separately and a partial re-run is a documented workflow, so a
+    directory holding one stage measured at another size is a real case rather than a
+    corruption. The flags they disagree about read as mixed, the way a git SHA does;
+    the ones they agree on still read as one value."""
+    entries = [build_measurement("flat", {}, {})]
+    write_stage(
+        tmp_path,
+        "checkpoint_cost",
+        entries,
+        options={**OPTIONS, "reps": 10, "tasks": 60},
+    )
+
+    rendered = render(capsys, tmp_path, "worker_knobs", entries)
+
+    assert (
+        "- options: --duration stage default, --io-seconds 0.05, --max-workers 8, "
+        "--reps mixed (3, 10), --tasks mixed (60, stage default)\n"
     ) in rendered
 
 
