@@ -92,9 +92,9 @@ writing or editing any test file. Running the suites:
   exits 4: `tests/conftest.py` imports auth models with no `DJANGO_SETTINGS_MODULE` set,
   so collection dies on an `ImproperlyConfigured` conftest import error):
   - `uv run pytest tests/core` — core django-absurd; `django_absurd.pg_cron` NOT
-    installed; plain `db` service (`PGPORT`, default 5432).
+    installed; plain `db` service (`PGPORT`, default 5442).
   - `uv run pytest tests/pg_cron` — pg_cron app installed; requires the `db_pg_cron`
-    service (`PGPORT_PGCRON`, default 5434); an ORDINARY test DB (`test_absurd_pg_cron`)
+    service (`PGPORT_PGCRON`, default 5443); an ORDINARY test DB (`test_absurd_pg_cron`)
     with no extension — the central `cron.database_name` on that server is `postgres`, a
     different database entirely, and jobs reach it cross-database.
   - `uv run pytest tests/multidb` — multi-DB router suite; plain `db`.

@@ -14,15 +14,10 @@ TASKS = {"default": absurd_task}
 
 # The parent compose server, like every other suite. The tuned db_bench instance is
 # for real benchmark runs; nothing here measures a rate, so its configuration would
-# buy this suite nothing.
+# buy this suite nothing. Derived from the main suite's entry rather than restated, so
+# the connection cannot drift from it — a copy here kept pointing at 5432 after the
+# suites moved off the default ports.
 DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": os.environ.get("PGDATABASE", "postgres"),
-        "USER": os.environ.get("PGUSER", "postgres"),
-        "PASSWORD": os.environ.get("PGPASSWORD", "postgres"),
-        "HOST": os.environ.get("PGHOST", "localhost"),
-        "PORT": os.environ.get("PGPORT", "5432"),
-        "TEST": {"NAME": f"test_{os.environ.get('PGDATABASE', 'postgres')}_benchmarks"},
-    }
+    "default": DATABASES["default"]  # noqa: F405
+    | {"TEST": {"NAME": f"test_{os.environ.get('PGDATABASE', 'postgres')}_benchmarks"}},
 }

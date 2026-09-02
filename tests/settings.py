@@ -42,7 +42,7 @@ DATABASES = {
         "USER": os.environ.get("PGUSER", "postgres"),
         "PASSWORD": os.environ.get("PGPASSWORD", "postgres"),
         "HOST": os.environ.get("PGHOST", "localhost"),
-        "PORT": os.environ.get("PGPORT", "5432"),
+        "PORT": os.environ.get("PGPORT", "5442"),
         "TEST": {"NAME": "absurd_test_core"},
     },
     "sqlite": {

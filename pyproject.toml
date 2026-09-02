@@ -22,10 +22,10 @@ dev = [
   "pytest-timeout==2.4.0",
   "pytest-xdist==3.8.0",
   "pytest==9.1.1",
-  "ruff==0.16.3",
-  "time-machine==3.4.0",
+  "ruff==0.16.4",
+  "time-machine==3.5.0",
   "types-croniter==6.2.4.20260711",
-  "zensical==0.0.56",
+  "zensical==0.0.57",
 ]
 
 [project]
