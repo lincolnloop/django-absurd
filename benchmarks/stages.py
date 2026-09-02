@@ -61,8 +61,8 @@ STAGE_DESCRIPTIONS = {
     ),
 }
 
-# Sized so the slowest worker_knobs measurement (concurrency 1, ~67 tasks/s) drains
-# in about 75 s; throughput divides a p10-p90 window; a small backlog is mostly ramp.
+# Sized so even the slowest worker_knobs rung drains a backlog whose p10-p90 window is
+# not mostly ramp; throughput divides that window.
 SATURATION_TASKS = 5000
 SATURATION_TIMEOUT_S = 900.0
 # The rep count every stage runs at unless `--reps` says otherwise. Read back off the

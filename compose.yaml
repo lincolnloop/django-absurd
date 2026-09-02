@@ -48,12 +48,11 @@ services:
     # durable commit rate on a Docker volume on macOS sits in one of two regimes ~3.5x
     # apart and nothing selects between them (median 584 c/s, cv 54.7% across
     # interleaved arms), which drove a 20% systematic drift between two identical
-    # `worker_knobs` runs. On RAM the same probe medians 56,659 c/s at cv 69.4% — ~22k
-    # tasks/s of headroom against a ~1,800 tasks/s CPU-bound ceiling — so the commit
-    # ceiling stops constraining anything and its variance stops reaching the
-    # measurement: the drift went to 0.99x and the median within-run cv from ~6% to
-    # 2.7%. Nothing persists, so `benchmarks/README.md` has the reader migrate after
-    # every start.
+    # `worker_knobs` runs. On RAM the same probe medians 56,659 c/s — ~22k tasks/s of
+    # headroom against the ~4,400 tasks/s this rig reaches — so the commit ceiling
+    # stops constraining anything and its variance stops reaching the measurement: the
+    # drift went to 0.99x and the cross-run cv of the ratios to 4.7%. Nothing persists,
+    # so `benchmarks/README.md` has the reader migrate after every start.
     #
     # Profiled so a bare `docker compose up -d` starts the suites' databases and not a
     # tuned server nobody asked for. Naming it on the command line still starts it,
