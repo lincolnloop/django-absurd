@@ -166,7 +166,7 @@ class StageOptions:
     max_workers: int | None = None
     # Not a flag: the machine's own commit ceiling, carried into every stage file this
     # run writes. Mutable because the closing probe lands after those files exist.
-    commit_ceiling: dict[str, dict[str, float] | None] = dataclasses.field(
+    commit_ceiling: dict[str, dict[str, t.Any]] = dataclasses.field(
         default_factory=dict
     )
 
@@ -183,27 +183,42 @@ def run_stages(stage_names: list[str], options: StageOptions) -> None:
         {
             "commit_ceiling_durable": analysis.measure_commit_ceiling(durable=True),
             "commit_ceiling_nondurable": analysis.measure_commit_ceiling(durable=False),
+            # Every file carries this from its first write, so a run killed at any
+            # point says it never took a closing probe rather than reading as a run
+            # whose server refused one.
+            "commit_ceiling_durable_after": analysis.UNPROBED_COMMIT_CEILING,
         }
     )
-    for name in ordered:
-        run_stage(name, options)
+    try:
+        for name in ordered:
+            run_stage(name, options)
+    except Exception:
+        # A stage that raised leaves its session intact, unlike an interrupted wait,
+        # so the stages that did finish still get the ceiling they were read against.
+        record_closing_commit_ceiling(ordered, options)
+        raise
+    record_closing_commit_ceiling(ordered, options)
+
+
+def record_closing_commit_ceiling(
+    stage_names: list[str], options: StageOptions
+) -> None:
+    """Probe the ceiling once more and write it into the files this invocation wrote.
+
+    Last, because the closing probe does not exist until the stages are over — and it
+    says whether the ceiling those stages were read against still held.
+    """
     options.commit_ceiling["commit_ceiling_durable_after"] = (
         analysis.measure_commit_ceiling(durable=True)
     )
-    record_commit_ceiling(ordered, options)
-
-
-def record_commit_ceiling(stage_names: list[str], options: StageOptions) -> None:
-    """Write the after-the-run ceiling into the files this invocation already wrote.
-
-    Last, because the closing probe does not exist until the last stage is done; a run
-    killed before then leaves the field null.
-    """
     for name in stage_names:
         path = options.results_dir / f"stage_{name}.json"
-        write_results_file(
-            path, {**json.loads(path.read_text()), **options.commit_ceiling}
-        )
+        # A stage that raised before writing anything has no file to update, and a
+        # FileNotFoundError raised here would replace the failure that got us here.
+        if path.exists():
+            write_results_file(
+                path, {**json.loads(path.read_text()), **options.commit_ceiling}
+            )
 
 
 def order_by_dependency(stage_names: list[str]) -> list[str]:
@@ -807,8 +822,8 @@ def write_stage_file(
         {
             "stage": stage,
             "options": resolve_options(options),
-            # The three keys always, at null until a probe fills them: omitting them
-            # would read as a file written before the ceiling was ever recorded.
+            # The three keys always: omitting one would read as a file written
+            # before the ceiling was ever recorded.
             **dict.fromkeys(COMMIT_CEILING_KEYS),
             **options.commit_ceiling,
             "measurements": recorded,

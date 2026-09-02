@@ -104,7 +104,10 @@ skip_covered = true
 
 [tool.coverage.run]
 branch = true
-patch = ["subprocess"]
+# `_exit` beside `subprocess`: a benchmark worker child is killed mid-task by
+# `os._exit`, which skips the hook the child's own coverage data is written from, and
+# the line that killed it would read as never executed.
+patch = ["subprocess", "_exit"]
 plugins = [
   "django_coverage_plugin",
 ]

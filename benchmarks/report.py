@@ -146,25 +146,42 @@ def describe_commit_ceiling(stages: list[dict[str, t.Any]]) -> str:
 
 def format_commit_ceiling(stage: dict[str, t.Any]) -> str:
     durable = stage.get("commit_ceiling_durable")
-    if durable is None:
-        return (
-            "not measured, so nothing below says whether a throughput is this "
-            "connection's number or Absurd's"
-        )
     nondurable = stage.get("commit_ceiling_nondurable")
     after = stage.get("commit_ceiling_durable_after")
+    measured = read_measured_probe(durable)
+    if measured is None:
+        return (
+            f"{format_commit_rate(durable)}, so nothing below says whether a "
+            f"throughput is this connection's number or Absurd's"
+        )
     return (
         f"durable {format_commit_rate(durable)}, "
         f"after the run {format_commit_rate(after)}, "
         f"non-durable {format_commit_rate(nondurable)}, "
-        f"{describe_durability_cost(durable, nondurable)}"
+        f"{describe_durability_cost(measured, nondurable)}"
     )
 
 
-def format_commit_rate(ceiling: dict[str, float] | None) -> str:
-    """A probe's median, with the spread that says how much of it to believe."""
+def read_measured_probe(ceiling: dict[str, t.Any] | None) -> dict[str, t.Any] | None:
+    """A probe's rates, or ``None`` where it recorded a reason instead of measuring.
+
+    Every reader of a ceiling block goes through this, so a run whose probe was
+    refused and one whose probe was never taken cannot be read as calibrated, and the
+    reason each gave stays available to print.
+    """
+    if ceiling is None or not ceiling["valid"]:
+        return None
+    return ceiling
+
+
+def format_commit_rate(ceiling: dict[str, t.Any] | None) -> str:
+    """A probe's median with the spread that says how much of it to believe, or what
+    happened instead — a server that refused it and a run that never took it are two
+    different reasons a rate is missing."""
     if ceiling is None:
         return "not measured"
+    if not ceiling["valid"]:
+        return f"not measured: {ceiling['error']}"
     return (
         f"{ceiling['median_per_s']:.0f} "
         f"(cv {ceiling['cv']:.0%}, {ceiling['range_low']:.0f}-"
@@ -173,12 +190,13 @@ def format_commit_rate(ceiling: dict[str, float] | None) -> str:
 
 
 def describe_durability_cost(
-    durable: dict[str, float], nondurable: dict[str, float] | None
+    durable: dict[str, t.Any], nondurable: dict[str, t.Any] | None
 ) -> str:
     """What fsync costs, as the multiple the same server reaches without it."""
-    if nondurable is None:
+    measured = read_measured_probe(nondurable)
+    if measured is None:
         return "ratio not measured"
-    return f"{nondurable['median_per_s'] / durable['median_per_s']:.0f}x without fsync"
+    return f"{measured['median_per_s'] / durable['median_per_s']:.0f}x without fsync"
 
 
 def describe_storage_medium(contexts: list[dict[str, t.Any]]) -> list[str]:
@@ -628,8 +646,8 @@ def build_commit_budget_lines(stage: dict[str, t.Any]) -> list[str]:
     measurements = select_saturation_measurements(stage)
     if not any(entry["median"].get("commits_per_task") for entry in measurements):
         return []
-    opening = stage.get("commit_ceiling_durable")
-    closing = stage.get("commit_ceiling_durable_after")
+    opening = read_measured_probe(stage.get("commit_ceiling_durable"))
+    closing = read_measured_probe(stage.get("commit_ceiling_durable_after"))
     return [
         "",
         (
@@ -643,8 +661,8 @@ def build_commit_budget_lines(stage: dict[str, t.Any]) -> list[str]:
 
 def describe_commit_budget(
     entry: dict[str, t.Any],
-    opening: dict[str, float] | None,
-    closing: dict[str, float] | None,
+    opening: dict[str, t.Any] | None,
+    closing: dict[str, t.Any] | None,
 ) -> str:
     """One row's commit rate, as a band across every durable probe the run recorded.
 
@@ -680,7 +698,7 @@ def describe_commit_budget(
     )
 
 
-def describe_band_probes(closing: dict[str, float] | None) -> str:
+def describe_band_probes(closing: dict[str, t.Any] | None) -> str:
     """Which probes the band came from, since a wide band has two different causes.
 
     A reader comparing two reports has to tell a band widened by mid-run drift from

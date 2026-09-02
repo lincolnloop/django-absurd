@@ -213,11 +213,13 @@ and below three-quarters of it, and a p50 measured above the knee is a function 
 window length rather than of the system.
 
 Two hazards live in those rows. A rung whose drain outruns `RATE_TIMEOUT_S` raises
-`MeasurementTimeoutError`, which reaches no handler: the invocation dies there and every
-stage file it wrote is missing its closing commit ceiling. And 60 s diverges where 20 s
-does not — the fleet completed 2,741-2,954/s inside a 20 s probe and collapsed at a
-comparable offer held for 60 — so a rate the ramp absorbed is not a rate a rung will;
-[the guard](#the-guard-a-backlog-that-grew-measured-nothing) catches that on the rung.
+`MeasurementTimeoutError`, which reaches no handler and takes the invocation with it —
+the stages that finished keep their files and their closing ceiling
+([the results files](#the-results-files)), and everything after that rung is unmeasured.
+And 60 s diverges where 20 s does not — the fleet completed 2,741-2,954/s inside a 20 s
+probe and collapsed at a comparable offer held for 60 — so a rate the ramp absorbed is
+not a rate a rung will; [the guard](#the-guard-a-backlog-that-grew-measured-nothing)
+catches that on the rung.
 
 **What the rungs actually exercise.** Both post-change runs:
 
@@ -482,6 +484,14 @@ than two seconds the host napped mid-phase, the rep is thrown away and the measu
 is marked invalid. A wall clock stepping BACKWARDS is an NTP correction, not a nap, and
 is tolerated.
 
+**A drain waits on the queue AND on the fleet.** A queue polled by itself cannot tell a
+slow drain from an absent one, so a rung whose workers died would sit out its whole
+`timeout_s` — 900 s in saturation — and then report the timeout as the failure, with the
+crash that caused it printed underneath as an afterthought. Any child exit ends the
+wait, a clean one included: a worker that returned 0 has stopped claiming as thoroughly
+as one that died. `stop_workers` then raises the children's own crash over that refusal
+on the way out, so what a reader sees first is the failure and not its symptom.
+
 **The summary rep is the unluckier middle, and which one that is depends on the
 metric.** `pick_median_rep` sorts the valid reps by the ranking key and, at an even rep
 count, takes the WORSE of the two middles — the lower throughput, the lower enqueue
@@ -669,9 +679,27 @@ The probe loops server-side, a `do` block committing single-row inserts timed wi
 the server's fsync. It writes to a real table it creates and drops rather than a
 temporary one, since a temp table is not WAL-logged and a probe against one skips the
 WAL the run itself pays for (84,000/s against 953/s on a disk, measured side by side).
-Any of the three blocks can be `null`: the probe was refused, the run went ahead
-regardless, and the report says the calibration is missing rather than dropping the
-line.
+
+**A block that holds no rate says which of two things happened**, in the `valid`/`error`
+vocabulary a rep already uses. `"the server refused the probe: ..."` is an answer about
+the server — it was asked, and the message it gave is the reader's first clue.
+`"the run ended before this probe was taken"` is not about the server at all: the run
+was interrupted mid-wait, killed, or died at a stage, and nothing here is evidence about
+what that machine could commit. Reading the second as the first is how an interrupted
+run comes to look like a server that cannot commit, so the report prints the reason
+beside every missing rate and calibrates against neither. A run whose probe was refused
+goes ahead regardless — an uncalibrated number that says it is uncalibrated beats no
+number.
+
+Every file carries the closing block from its FIRST write, holding the never-taken
+reason until a probe replaces it, so a run killed outright still says what it never did.
+A stage that raises is not that case: its session is intact where an interrupted wait's
+is not, so the closing probe is still taken and written into the files the finished
+stages left — 75 minutes of measurement must not lose its calibration to the stage that
+died. The probe issues nothing from a `finally`, either: a statement sent after an
+interrupted wait raises over the interruption, and what reaches the caller is then a
+database error where a timeout happened, on a session stuck mid-command for everything
+that follows.
 
 **A calibration that disagrees with itself softens every bound-verdict under it**, and
 it can disagree two ways. Within one probe: `range_low` and `range_high` come off the

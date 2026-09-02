@@ -16,6 +16,16 @@ DRAIN_POLL_INTERVAL_S = 0.5
 LOWER_IS_BETTER_RANKING_KEYS = frozenset({"end_to_end_p50_s"})
 
 
+class WorkerExitedError(Exception):
+    def __init__(self, name: str, exited: int, workers: int) -> None:
+        super().__init__(
+            f"Measurement '{name}' lost {exited} of its {workers} worker process(es) "
+            f"while the queue was still draining, so what is left cannot drain it. "
+            f"Refused here rather than at the drain timeout, which the fleet would "
+            f"otherwise burn in full before anything said the workers were gone."
+        )
+
+
 class MeasurementTimeoutError(Exception):
     def __init__(self, name: str, timeout_s: float) -> None:
         super().__init__(
@@ -88,7 +98,7 @@ def run_saturation_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
     commits_before = analysis.read_xact_commit()
     try:
         with host.measure_phase() as phase:
-            wait_until_drained(spec)
+            wait_until_drained(spec, procs)
     finally:
         runner.stop_workers(procs)
     # Read once the workers have exited, since a live backend flushes its transaction
@@ -128,7 +138,7 @@ def run_rate_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
                 kwargs=spec.task_kwargs,
             )
             window_end = analysis.capture_database_now()
-            wait_until_drained(spec)
+            wait_until_drained(spec, procs)
     finally:
         runner.stop_workers(procs)
     # No commits per task and no statement stats: the completed-run count comes off the
@@ -140,9 +150,19 @@ def run_rate_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
     }
 
 
-def wait_until_drained(spec: MeasurementSpec) -> None:
+def wait_until_drained(spec: MeasurementSpec, workers: list[runner.Worker]) -> None:
+    """Poll the queue until it is empty — and the fleet, which is the other way out.
+
+    A queue polled alone cannot tell a slow drain from an absent one, so a rung whose
+    workers died waits out its whole timeout and then reports the timeout as the
+    failure. The children's own exit is what `stop_workers` raises over this on the
+    way out, so the crash stays the cause.
+    """
     deadline = time.monotonic() + spec.timeout_s
     while analysis.count_unfinished_tasks(spec.worker.queue) > 0:
+        exited = runner.count_exited_workers(workers)
+        if exited:
+            raise WorkerExitedError(spec.name, exited, len(workers))
         if time.monotonic() > deadline:
             raise MeasurementTimeoutError(spec.name, spec.timeout_s)
         time.sleep(DRAIN_POLL_INTERVAL_S)

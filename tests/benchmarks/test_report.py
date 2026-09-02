@@ -40,18 +40,21 @@ OPTIONS = {
 # has to carry that.
 COMMIT_CEILING = {
     "commit_ceiling_durable": {
+        "valid": True,
         "median_per_s": 2016.0,
         "cv": 0.279,
         "range_low": 1600.0,
         "range_high": 2262.0,
     },
     "commit_ceiling_nondurable": {
+        "valid": True,
         "median_per_s": 367723.0,
         "cv": 0.052,
         "range_low": 324000.0,
         "range_high": 380000.0,
     },
     "commit_ceiling_durable_after": {
+        "valid": True,
         "median_per_s": 1904.0,
         "cv": 0.114,
         "range_low": 1700.0,
@@ -1043,6 +1046,7 @@ def test_softens_the_bound_verdict_when_the_calibration_disagrees_with_itself(
         "worker_knobs",
         entries,
         commit_ceiling_durable={
+            "valid": True,
             "median_per_s": 2000.0,
             "cv": 0.012,
             "range_low": 1950.0,
@@ -1060,6 +1064,7 @@ def test_softens_the_bound_verdict_when_the_calibration_disagrees_with_itself(
         "worker_knobs",
         entries,
         commit_ceiling_durable={
+            "valid": True,
             "median_per_s": 2000.0,
             "cv": 0.136,
             "range_low": 1500.0,
@@ -1089,12 +1094,14 @@ def test_bands_the_bound_verdict_across_both_durable_probes(
     ]
     drifted = {
         "commit_ceiling_durable": {
+            "valid": True,
             "median_per_s": 615.0,
             "cv": 0.136,
             "range_low": 465.0,
             "range_high": 673.0,
         },
         "commit_ceiling_durable_after": {
+            "valid": True,
             "median_per_s": 2100.0,
             "cv": 0.024,
             "range_low": 2030.0,
@@ -1136,6 +1143,7 @@ def test_bands_against_the_opening_probe_when_the_run_recorded_no_closing_one(
         "worker_knobs",
         entries,
         commit_ceiling_durable={
+            "valid": True,
             "median_per_s": 615.0,
             "cv": 0.136,
             "range_low": 465.0,
@@ -1188,7 +1196,7 @@ def test_says_where_each_measurement_spent_its_time_per_task(
 def test_says_the_commit_ceiling_is_missing_rather_than_omitting_it(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    """A run whose calibration probe was refused still runs and still reports.
+    """A file carrying no ceiling blocks at all still renders, uncalibrated.
 
     What it must not do is read like a calibrated one: the header says the ceiling is
     missing and every commit budget under it says it has nothing to be measured
@@ -1213,6 +1221,44 @@ def test_says_the_commit_ceiling_is_missing_rather_than_omitting_it(
         "- `concurrency_1`: 532 commits/s per worker connection (150.0 x 3.55 / 1), "
         "against no ceiling — nothing here says what bound it\n"
     ) in rendered
+
+
+def test_tells_a_refused_probe_apart_from_one_the_run_never_took(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Two ways a ceiling can be missing, and only one of them is about the server.
+
+    A refused probe was asked for and answered: the server would not give a rate, and
+    what it said is the reader's first clue. A run cut short — interrupted mid-wait,
+    killed, dead at a stage — never asked, so nothing about its server is in evidence.
+    Reading the second as the first is how an interrupted run comes to look like a
+    server that cannot commit, so the block carries the reason and the header prints
+    it.
+    """
+    entries = [build_measurement("concurrency_1", {}, {})]
+
+    assert (
+        "- commit ceiling (commits/s, one connection): durable 2016 (cv 28%, "
+        "1600-2262), after the run not measured: the run ended before this probe was "
+        "taken, non-durable not measured: the server refused the probe: relation "
+        '"benchmark_commit_ceiling_probe" already exists, ratio not measured\n'
+    ) in render(
+        capsys,
+        tmp_path,
+        "worker_knobs",
+        entries,
+        commit_ceiling_durable_after={
+            "valid": False,
+            "error": "the run ended before this probe was taken",
+        },
+        commit_ceiling_nondurable={
+            "valid": False,
+            "error": (
+                "the server refused the probe: relation "
+                '"benchmark_commit_ceiling_probe" already exists'
+            ),
+        },
+    )
 
 
 def test_says_which_halves_of_the_commit_ceiling_were_measured(

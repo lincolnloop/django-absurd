@@ -1,10 +1,13 @@
 import contextlib
 import datetime as dt
 import json
+import os
 import pathlib
 import re
+import signal
 import threading
 import time
+import types
 import typing as t
 
 import time_machine
@@ -18,6 +21,20 @@ from django_absurd.queues import resolve_absurd_database
 
 NAP_SECONDS = 30.0
 NAP_INTERVAL_S = 0.02
+# Exit code the fixture task below leaves behind, distinctive enough that a test can
+# assert the harness reported the child's own status rather than a generic failure.
+WORKER_EXIT_CODE = 9
+
+
+class ProbeInterrupted(BaseException):
+    """What `interrupt_after` raises: an interruption, not an error.
+
+    A BaseException and deliberately NOT a KeyboardInterrupt, because that is the shape
+    the harness actually meets. `pytest-timeout`'s alarm raises pytest's `Failed`, which
+    derives from BaseException, and psycopg only cancels the running query for a
+    KeyboardInterrupt — so anything else leaves the session mid-command, which is the
+    state under test.
+    """
 
 
 def read_stage(results_dir: pathlib.Path, stage: str) -> dict[str, t.Any]:
@@ -163,3 +180,38 @@ def fail_on_its_only_attempt() -> t.Never:
     its own ever completing — the shape that shrinks a measurement's sample silently."""
     msg = "benchmark fixture: this task always fails"
     raise RuntimeError(msg)
+
+
+@contextlib.contextmanager
+def interrupt_after(seconds: float) -> t.Iterator[None]:
+    """Interrupt this thread mid-body with a real signal, the way a timeout alarm does.
+
+    A test cannot ask psycopg to abandon a wait; the only thing that does is a signal
+    delivered while it is waiting, which is exactly what fires here. The suite's own
+    timeout uses the same alarm, so both the handler and the pending timer are put
+    back on the way out.
+    """
+    previous_handler = signal.signal(signal.SIGALRM, raise_probe_interrupted)
+    previous_delay, previous_interval = signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, previous_delay, previous_interval)
+        signal.signal(signal.SIGALRM, previous_handler)
+
+
+def raise_probe_interrupted(signum: int, frame: types.FrameType | None) -> t.Never:
+    msg = "the wait was interrupted from outside the process"
+    raise ProbeInterrupted(msg)
+
+
+@task(queue_name="bench")
+@absurd_params(max_attempts=1)
+def kill_the_worker_that_claimed_it() -> t.Never:
+    """Ends its own worker process mid-task, leaving the queue with nobody to drain it.
+
+    `os._exit` rather than an exception or a signal: a task that raises is retried and
+    a SIGTERM is what a stopping worker gets anyway, while this is the shape a fleet
+    dies in — a child gone, its claim never completed, and a queue that no longer moves.
+    """
+    os._exit(WORKER_EXIT_CODE)

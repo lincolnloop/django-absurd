@@ -54,6 +54,15 @@ def start_workers(spec: WorkerSpec, count: int) -> list[Worker]:
     return started
 
 
+def count_exited_workers(workers: list[Worker]) -> int:
+    """How many children are no longer running, whatever their exit code.
+
+    Any exit at all, not just a crashing one: a worker that returned 0 mid-measurement
+    has stopped claiming exactly as thoroughly as one that died.
+    """
+    return sum(worker.proc.poll() is not None for worker in workers)
+
+
 def stop_workers(workers: list[Worker]) -> None:
     """SIGTERM every worker, reap it, then report any that had already died."""
     crashed = [worker for worker in workers if worker.proc.poll() not in (None, 0)]
