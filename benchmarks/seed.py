@@ -19,6 +19,7 @@ from django.utils.module_loading import import_string
 import analysis
 import measurement
 import runner
+from django_absurd.exceptions import QueueNotProvisionedError
 from django_absurd.flush import truncate_queue_tables
 from django_absurd.queues import resolve_absurd_database
 
@@ -38,8 +39,11 @@ CLAIMED_BY_SPREAD = 8
 # every cloned run before writing any of them.
 CLONE_CHUNK_ROWS = 100_000
 
+# Unique, so a clone has to leave it null: the one live column the guard tolerates the
+# clone not writing.
+UNCLONED_TASK_COLUMNS = frozenset({"idempotency_key"})
+
 # What the clone writes into `t_<queue>`, and therefore what the shape guard demands.
-# `idempotency_key` is absent on purpose: it is unique, so a clone leaves it null.
 TASK_CLONE_COLUMNS: tuple[tuple[str, psycopg.sql.Composable], ...] = (
     ("task_id", psycopg.sql.SQL("cloned.task_id")),
     ("task_name", psycopg.sql.SQL("template.task_name")),
@@ -83,10 +87,9 @@ RUN_CLONE_COLUMNS: tuple[tuple[str, psycopg.sql.Composable], ...] = (
     ("created_at", psycopg.sql.SQL("template.created_at")),
 )
 
-# One statement per chunk: the keys are generated once, in `cloned`/`cloned_runs`, so
-# the task insert can point each clone at the run that is about to be written for it.
-# `absurd.portable_uuidv7` rather than `pg_catalog.uuidv7`, which the migration reaches
-# for only where the server has it — this keeps the keys chronological everywhere.
+# Keys generated up front, in `cloned`/`cloned_runs`, so the task insert can point each
+# clone at the run about to be written for it. `absurd.portable_uuidv7` because the
+# migration reaches for `pg_catalog.uuidv7` only where the server has it.
 CLONE_SQL = psycopg.sql.SQL("""
 with template_tasks as (
     select template_id, ordinal
@@ -128,16 +131,27 @@ join {runs} template on template.run_id = cloned_run.from_run_id
 """)
 
 
+@dataclasses.dataclass(frozen=True)
+class ColumnDrift:
+    missing: tuple[str, ...]
+    unexpected: tuple[str, ...]
+
+
 class QueueTableShapeError(Exception):
-    def __init__(self, missing: dict[str, tuple[str, ...]]) -> None:
-        detail = "; ".join(
-            f"{table} has no {', '.join(columns)}" for table, columns in missing.items()
-        )
+    def __init__(self, drift: dict[str, ColumnDrift]) -> None:
+        clauses = []
+        for table, columns in drift.items():
+            if columns.missing:
+                clauses.append(f"{table} has no {', '.join(columns.missing)}")
+            if columns.unexpected:
+                clauses.append(f"{table} has unknown {', '.join(columns.unexpected)}")
         super().__init__(
-            f"The queue tables are not the shape this seeder clones: {detail}. "
-            f"Upstream Absurd has moved them, so a clone would write rows that look "
-            f"right and are not. Reconcile TASK_CLONE_COLUMNS and RUN_CLONE_COLUMNS in "
-            f"benchmarks/seed.py against django_absurd's migration, then seed again."
+            f"The queue tables are not the shape this seeder clones: "
+            f"{'; '.join(clauses)}. Upstream Absurd has moved them, so the clone would "
+            f"write rows that look right and are not — a column it has never heard of "
+            f"stays at its default on every cloned row. Reconcile TASK_CLONE_COLUMNS "
+            f"and RUN_CLONE_COLUMNS in benchmarks/seed.py against django_absurd's "
+            f"migration, then seed again."
         )
 
 
@@ -178,21 +192,29 @@ def seed_queue_tables(rows: int, *, queue: str = DEFAULT_QUEUE) -> SeedSummary:
 def check_queue_table_shape(queue: str = DEFAULT_QUEUE) -> None:
     """Refuse a queue whose tables are not the ones the clone knows how to write.
 
-    Cloning writes these tables directly, so it encodes their columns; an upstream
-    change has to fail the seed before any row is written, because rows written to a
-    table half-understood look right and poison every number taken on them.
+    Both directions, because both write rows that look right and are not: a column the
+    clone names and the table no longer has, and a column the table has grown that the
+    clone never sets — the second one real on the templates a worker drained and left
+    at its default on every row copied from them.
     """
-    missing = {
-        f"absurd.{prefix}_{queue}": tuple(
-            name
-            for name, _ in columns
-            if name not in read_live_columns(f"{prefix}_{queue}")
+    drift: dict[str, ColumnDrift] = {}
+    for prefix, columns, tolerated in (
+        ("t", TASK_CLONE_COLUMNS, UNCLONED_TASK_COLUMNS),
+        ("r", RUN_CLONE_COLUMNS, frozenset[str]()),
+    ):
+        live = read_live_columns(f"{prefix}_{queue}")
+        # No columns at all is a queue nobody provisioned, not a queue that drifted.
+        if not live:
+            raise QueueNotProvisionedError(queue)
+        expected = {name for name, _ in columns}
+        found = ColumnDrift(
+            missing=tuple(name for name, _ in columns if name not in live),
+            unexpected=tuple(sorted(live - expected - tolerated)),
         )
-        for prefix, columns in (("t", TASK_CLONE_COLUMNS), ("r", RUN_CLONE_COLUMNS))
-    }
-    absent = {table: names for table, names in missing.items() if names}
-    if absent:
-        raise QueueTableShapeError(absent)
+        if found.missing or found.unexpected:
+            drift[f"absurd.{prefix}_{queue}"] = found
+    if drift:
+        raise QueueTableShapeError(drift)
 
 
 def enqueue_templates(queue: str) -> None:
@@ -293,8 +315,8 @@ def count_table_rows(table: str) -> int:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Fill a queue's tables with a synthetic corpus, so the admin has "
-            "something to page through."
+            f"Fill the '{DEFAULT_QUEUE}' queue's tables with a synthetic corpus, so "
+            f"the admin has something to page through."
         )
     )
     parser.add_argument(
@@ -306,17 +328,12 @@ def main(argv: list[str] | None = None) -> None:
             f"(default: {DEFAULT_ROWS})."
         ),
     )
-    parser.add_argument(
-        "--queue",
-        default=DEFAULT_QUEUE,
-        help=f"Queue to seed (default: '{DEFAULT_QUEUE}').",
-    )
     args = parser.parse_args(argv)
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "settings")
     django.setup()
-    summary = seed_queue_tables(args.rows, queue=args.queue)
+    summary = seed_queue_tables(args.rows)
     print(
-        f"seeded absurd.t_{args.queue}: {summary.tasks} tasks, {summary.runs} runs "
+        f"seeded absurd.t_{DEFAULT_QUEUE}: {summary.tasks} tasks, {summary.runs} runs "
         f"in {summary.elapsed_s:.1f}s"
     )
 

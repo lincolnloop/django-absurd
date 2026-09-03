@@ -27,8 +27,8 @@ DATABASES = {
 # writes. The `absurd_worker` children run on `benchmarks/settings.py` against THIS
 # suite's database, so its table has to be migrated into this one. Named through the
 # module rather than off the star import, which flake8 cannot see a name through.
-# `staticfiles` is what `runserver --insecure` hands the admin its CSS from, so a
-# seeded corpus is browsable rather than only readable (`benchmarks/README.md`).
+# `staticfiles` is what `runserver --insecure` hands the admin its CSS from, when this
+# module is browsing a seeded corpus (`benchmarks/README.md`).
 INSTALLED_APPS = [
     *tests.settings.INSTALLED_APPS,
     "django.contrib.staticfiles",
@@ -36,6 +36,6 @@ INSTALLED_APPS = [
 ]
 STATIC_URL = "static/"
 
-# Named hosts rather than DEBUG, which `runserver` would also accept: a changelist over
-# millions of rows is exactly where Django's debug query log grows without bound.
+# What lets `runserver` start with DEBUG off. Named hosts rather than `DEBUG = True`,
+# which pytest-django silently undoes: a value the suite does not really run under.
 ALLOWED_HOSTS = ["127.0.0.1", "localhost"]

@@ -185,9 +185,9 @@ column first; two runs' rows only compare if their ramps agreed.
 
 ## Browsing a corpus in the admin
 
-`seed.py` fills a queue's tables with millions of rows, so django-absurd's admin has
-something to page through. It enqueues a handful of template tasks through the real
-enqueue API, drains them with a real `absurd_worker`, and clones the drained rows
+`seed.py` fills the `bench` queue's tables with millions of rows, so django-absurd's
+admin has something to page through. It enqueues a handful of template tasks through the
+real enqueue API, drains them with a real `absurd_worker`, and clones the drained rows
 server-side. Every command runs from inside `benchmarks/`, against the suites' plain
 `db` service — nothing here measures a rate, so the tuned `db_bench` would buy it
 nothing.
@@ -206,13 +206,13 @@ uv run python manage.py runserver --insecure
 
 Then open <http://localhost:8000/admin/>. `--rows` is what the queue holds afterwards,
 not what the run adds: the tables are emptied first, so seeding again replaces the
-corpus. `--queue` seeds a queue other than `bench`. One million tasks and the 1.2
-million runs behind them took 20 seconds and 1.1 GB on the reference machine.
+corpus. One million tasks and the 1.2 million runs behind them took 20 seconds and 1.1
+GB on the reference machine.
 
 `PGPORT` is read here exactly as the test suites read it, so export it too if a system
 Postgres already owns 5432. `--insecure` is what serves the admin's CSS with `DEBUG`
-off, and `DEBUG` stays off deliberately: Django's debug query log grows without bound on
-a changelist over millions of rows.
+off; `DEBUG` stays off because the settings module above is one the whole benchmarks
+suite imports, and pytest-django would undo a `DEBUG = True` written into it anyway.
 
 **The corpus is synthetic, and no number taken on it is a property of django-absurd.**
 Every task is a copy of one of six templates, so the ages are uniform, the payloads are
@@ -220,9 +220,11 @@ identical, and `claimed_by` is spread over eight worker names that never claimed
 anything. It answers questions about VOLUME — whether a page loads, which plan the
 changelist gets, what an index is worth — and nothing else.
 
-Seeding refuses outright when the queue tables are not the shape it clones. Cloning
+Seeding refuses outright when the queue tables are not the shape it clones — a column it
+writes that has gone, or a column the table has grown that it does not write. Cloning
 writes those tables directly, so it encodes their columns, and an upstream change has to
-fail the seed rather than fill a table it half-understands with rows that look right.
+fail the seed rather than fill a table it half-understands: a column nothing copies is
+real on the drained templates and left at its default on every row taken from them.
 
 ## Files
 
