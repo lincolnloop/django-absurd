@@ -47,3 +47,36 @@ def test_changelist_and_composite_detail(
     step_name_elem = detail.select_one(".field-step_name .readonly")
     assert step_name_elem is not None
     assert step_name_elem.get_text(strip=True) == "wait/step:1"
+
+
+def test_changelist_orders_newest_run_and_step_first(
+    admin_user: AbstractBaseUser, client: Client
+) -> None:
+    task_id = uuid.uuid4()
+    # sorted() puts the pair in the order Postgres does, so `newer` stands in for
+    # the later of two uuidv7 run ids.
+    older, newer = sorted((uuid.uuid4(), uuid.uuid4()))
+    with connections["default"].cursor() as cur:
+        cur.executemany(
+            'INSERT INTO absurd."w_default" (task_id, run_id, step_name, event_name)'
+            " VALUES (%s, %s, %s, 'evt')",
+            [
+                (task_id, older, "step"),
+                (task_id, newer, "aaa"),
+                (task_id, newer, "zzz"),
+            ],
+        )
+    client.force_login(t.cast("User", admin_user))
+    response = client.get(CHANGELIST)
+    soup = parse_html(response)
+    assert soup.select_one("th.column-run_id.sorted.descending") is not None
+    assert soup.select_one("th.column-step_name.sorted.descending") is not None
+    keys = [
+        t.cast("Tag", r.select_one(".field-natural_key")).get_text(strip=True)
+        for r in result_rows(soup)
+    ]
+    assert (
+        keys.index(f"default:{newer}:zzz")
+        < keys.index(f"default:{newer}:aaa")
+        < keys.index(f"default:{older}:step")
+    )

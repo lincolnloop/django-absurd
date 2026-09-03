@@ -6,6 +6,7 @@ from django.contrib.auth.models import User
 from django.test import Client
 from django.urls import reverse, reverse_lazy
 
+from django_absurd import worker
 from django_absurd.models import Run
 from django_absurd.test import AbsurdTestRuntime
 from tests import tasks
@@ -36,23 +37,20 @@ def run_for(result: "TaskResult[t.Any, t.Any]") -> t.Any:
     return run_model.objects.get(task_id=result.id.split(":", 1)[1])
 
 
-def test_changelist_shows_dates_ordered_by_recent_activity(
+def test_changelist_orders_newest_run_first(
     admin_user: User,
     client: Client,
-    dj_absurd: AbsurdTestRuntime,
 ) -> None:
-    older = tasks.add.enqueue(1, 1)
-    dj_absurd.drain()  # older run starts
+    # The older run lands on a queue nothing drains, so it never starts: creation
+    # order and start order disagree, and only creation order puts `newer` on top.
+    older = tasks.add.using(queue_name="other").enqueue(1, 1)
     newer = tasks.add.enqueue(2, 2)
-    dj_absurd.drain()  # newer run starts later
+    worker.drain_queue("default")
     client.force_login(admin_user)
     response = client.get(CHANGELIST)
     soup = parse_html(response)
-    # the started_at column is the (descending) primary sort, and
-    # a date column shows
-    assert soup.select_one("th.column-started_at.sorted.descending") is not None
     assert soup.select_one(".column-completed_at") is not None
-    # rows actually come back most-recently-started first
+    # rows come back newest-created first
     keys: list[str] = [
         t.cast("Tag", r.select_one(".field-natural_key")).get_text(strip=True)
         for r in result_rows(soup)
