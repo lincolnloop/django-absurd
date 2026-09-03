@@ -1,4 +1,6 @@
+import json
 import pathlib
+import typing as t
 
 import pytest
 from django.db import connections
@@ -300,6 +302,94 @@ def test_records_which_measurement_became_the_working_point(
             "unstable": False,
         }
     ] * 2
+
+
+def test_calibrates_from_the_fastest_rung_no_mark_disqualified(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The working point is an argmax over the rungs a mark left in the running.
+
+    A marked rung measured something other than what it was asked to, so calibrating
+    on one aims every later stage at a number the run itself refused — and the rung
+    that a mark disqualifies is often the FASTEST, because measuring less than it was
+    asked to is exactly what makes it look fast. The two clean rungs differ in
+    throughput so that picking either end of them is a different answer.
+    """
+    (tmp_path / "stage_worker_knobs.json").write_text(
+        json.dumps(
+            {
+                "measurements": [
+                    build_recorded_rung("invalid_c8", 900.0, 8, invalid=True),
+                    build_recorded_rung("unstable_c16", 800.0, 16, unstable=True),
+                    build_recorded_rung("clean_c2", 500.0, 2),
+                    build_recorded_rung("clean_c32", 100.0, 32),
+                ]
+            }
+        )
+    )
+
+    stages.main(
+        [
+            "checkpoint_cost",
+            "--reps",
+            "1",
+            "--tasks",
+            "8",
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
+
+    recorded = utils.read_stage(tmp_path, "checkpoint_cost")
+    assert {
+        "calibration": recorded["calibration"],
+        "concurrency_each_measurement_ran_at": [
+            entry["spec"]["worker"]["concurrency"] for entry in recorded["measurements"]
+        ],
+    } == {
+        "calibration": {
+            "stage": "worker_knobs",
+            "measurement": "clean_c2",
+            "throughput_per_s": 500.0,
+            "cv": 0.02,
+            "invalid": False,
+            "unstable": False,
+        },
+        "concurrency_each_measurement_ran_at": [2, 2],
+    }
+
+
+def build_recorded_rung(
+    name: str,
+    throughput_per_s: float,
+    concurrency: int,
+    *,
+    invalid: bool = False,
+    unstable: bool = False,
+) -> dict[str, t.Any]:
+    """One rung of a recorded stage file, as much of one as a reader of it needs.
+
+    Written rather than measured because the marks are the input: a real ladder is
+    marked by what the machine did during it, and this stage picks between rungs on
+    marks it cannot be asked to produce on demand.
+    """
+    return {
+        "spec": {
+            "name": name,
+            "workers": 1,
+            "worker": {
+                "concurrency": concurrency,
+                "batch_size": None,
+                "poll_interval": 0.05,
+                "claim_timeout": 120,
+                "queue": "bench",
+            },
+        },
+        "median": {"throughput_per_s": throughput_per_s},
+        "cv": 0.02,
+        "invalid": invalid,
+        "unstable": unstable,
+    }
 
 
 def test_runs_a_saturation_stage_at_the_size_it_was_asked_for(
