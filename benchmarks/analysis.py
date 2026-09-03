@@ -71,7 +71,6 @@ LATENCY_KEYS = (
 # disagree; the driver contributes no timestamps of its own.
 COMPLETED_RUNS_SQL = """
 select
-  count(distinct r.task_id),
   count(*),
   percentile_cont(0.10) within group (order by extract(epoch from r.completed_at)),
   percentile_cont(0.90) within group (order by extract(epoch from r.completed_at)),
@@ -107,9 +106,15 @@ group by r.claimed_by
 """
 
 # Deliberately UNFILTERED by state: `fail_run` inserts a NEW row for the retry, so a
-# completed-only count would report every redelivery as zero.
+# completed-only count would report every redelivery as zero. `n_tasks` is the one
+# exception and carries its own filter: it says how much of what the drain was handed
+# it finished, which only the completed state answers.
 RUN_TOTALS_SQL = """
-select count(*), count(distinct r.task_id), coalesce(max(r.attempt), 1)
+select
+  count(*),
+  count(distinct r.task_id),
+  coalesce(max(r.attempt), 1),
+  count(distinct r.task_id) filter (where r.state = 'completed')
 from {runs} r
 join {tasks} t on t.task_id = r.task_id
 where {window}
@@ -218,24 +223,32 @@ where oid = %s::regclass
 
 
 def analyze_saturation(
-    queue: str = "bench", since: dt.datetime | None = None
+    queue: str, since: dt.datetime | None, completed_since: dt.datetime
 ) -> dict[str, t.Any]:
     """Every metric of one saturation rep, plus how it varied during the drain.
 
     ``since`` is what keeps a rep that laid ballast from measuring it: the ballast is
-    enqueued and drained before that mark and the measured tasks after it, and every
-    metric here is defined on rows the window selects.
+    enqueued and drained before that mark and the measured tasks after it.
+
+    ``completed_since`` is where the rep starts counting commits, and a run that
+    finished ahead of it was paid for by commits nobody counted — so the rates and the
+    percentiles are read over that interval and the totals over the whole drain.
+    Filtering it on ``enqueue_at`` would select nothing at all: a saturation rep
+    enqueues every task before its fleet exists.
     """
-    window = (
+    drained = (
         psycopg.sql.SQL("true")
         if since is None
         else psycopg.sql.SQL("t.enqueue_at > {since}").format(
             since=psycopg.sql.Literal(since)
         )
     )
+    measured = psycopg.sql.SQL("{drained} and r.completed_at > {mark}").format(
+        drained=drained, mark=psycopg.sql.Literal(completed_since)
+    )
     return {
-        **read_completed_run_metrics(queue, window),
-        **read_throughput_profile(queue, window),
+        **read_completed_run_metrics(queue, measured, drained),
+        **read_throughput_profile(queue, measured),
     }
 
 
@@ -247,6 +260,9 @@ def analyze_rate(
     Trimmed on ``enqueue_at`` rather than on completion because arrival is what defines
     a rate experiment, and carrying no profile because an imposed offer rate has no
     shape to discover.
+
+    One window does for both the rates and the totals: the offer starts once the fleet
+    is already up, so there is no start-up interval for the totals to reach back over.
     """
     span = (window_end - window_start) / 10
     window = psycopg.sql.SQL("t.enqueue_at between {low} and {high}").format(
@@ -254,7 +270,7 @@ def analyze_rate(
         high=psycopg.sql.Literal(window_end - span),
     )
     return {
-        **read_completed_run_metrics(queue, window),
+        **read_completed_run_metrics(queue, window, window),
         **read_backlog_growth(queue, window_start, window_end),
     }
 
@@ -390,25 +406,33 @@ def summarize_commit_rates(rates: list[float]) -> dict[str, t.Any]:
 
 
 def read_completed_run_metrics(
-    queue: str, window: psycopg.sql.Composable
+    queue: str, measured: psycopg.sql.Composable, drained: psycopg.sql.Composable
 ) -> dict[str, t.Any]:
+    """Percentiles, throughput and fairness over ``measured``; totals over ``drained``.
+
+    Two windows because they answer different questions. A rate is only a rate over the
+    interval it was taken in, while a redelivery and a task nobody completed are facts
+    about the whole drain that have to stay countable outside that interval.
+    """
     runs = psycopg.sql.Identifier("absurd", f"r_{queue}")
     tasks = psycopg.sql.Identifier("absurd", f"t_{queue}")
     with connections[resolve_absurd_database()].cursor() as cursor:
         cursor.execute(
             psycopg.sql.SQL(COMPLETED_RUNS_SQL).format(
-                runs=runs, tasks=tasks, window=window
+                runs=runs, tasks=tasks, window=measured
             )
         )
         row = cursor.fetchone()
         cursor.execute(
             psycopg.sql.SQL(RUN_TOTALS_SQL).format(
-                runs=runs, tasks=tasks, window=window
+                runs=runs, tasks=tasks, window=drained
             )
         )
         totals = cursor.fetchone()
         cursor.execute(
-            psycopg.sql.SQL(FAIRNESS_SQL).format(runs=runs, tasks=tasks, window=window)
+            psycopg.sql.SQL(FAIRNESS_SQL).format(
+                runs=runs, tasks=tasks, window=measured
+            )
         )
         fairness = {name: int(count) for name, count in cursor.fetchall()}
     return build_metrics(row, totals, fairness)
@@ -486,14 +510,17 @@ def read_throughput_profile(
 def build_metrics(
     row: tuple[t.Any, ...], totals: tuple[t.Any, ...], fairness: dict[str, int]
 ) -> dict[str, t.Any]:
-    n_tasks, n_runs, completed_p10, completed_p90 = row[:4]
-    total_runs, total_tasks, max_attempt = totals
+    n_runs, completed_p10, completed_p90 = row[:3]
+    total_runs, total_tasks, max_attempt, n_tasks = totals
     span = (completed_p90 - completed_p10) if completed_p10 is not None else 0.0
     # Too short a trimmed window makes 0.8*n/span an arbitrarily large number rather
     # than a rate, so it is refused rather than published.
     degenerate = span < MIN_TRIMMED_SPAN_S or not n_runs
     shares = sorted(fairness.values())
     metrics: dict[str, t.Any] = {
+        # Tasks over the whole drain and runs over the measured window, which is why
+        # the second can be the smaller: a fleet's first child completes work before
+        # the window opens, and those tasks were still finished.
         "n_tasks": int(n_tasks),
         "n_runs": int(n_runs),
         "total_runs": int(total_runs),
@@ -510,7 +537,7 @@ def build_metrics(
         "fairness_ratio": (shares[0] / shares[-1]) if shares else 0.0,
     }
     metrics.update(
-        dict(zip(LATENCY_KEYS, [value or 0.0 for value in row[4:]], strict=True))
+        dict(zip(LATENCY_KEYS, [value or 0.0 for value in row[3:]], strict=True))
     )
     return metrics
 

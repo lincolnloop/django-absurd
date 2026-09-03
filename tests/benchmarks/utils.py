@@ -274,3 +274,20 @@ def insert_hand_timed_task(
                 completed_at,
             ],
         )
+
+
+def count_runs_completed_after(window_start: str, queue: str = "bench") -> int:
+    """Completed runs the queue holds whose completion is later than ``window_start``.
+
+    Read straight off `r_<queue>` rather than through `analysis`, so a rep's own count
+    is checked against one the harness had no hand in producing.
+    """
+    with connections[resolve_absurd_database()].cursor() as cursor:
+        cursor.execute(
+            psycopg.sql.SQL(
+                "select count(*) from {runs} "
+                "where state = 'completed' and completed_at > %s"
+            ).format(runs=psycopg.sql.Identifier("absurd", f"r_{queue}")),
+            [dt.datetime.fromisoformat(window_start)],
+        )
+        return int(cursor.fetchone()[0])

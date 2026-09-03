@@ -24,6 +24,10 @@ MEASURABLE_TASKS = "60"
 # p10-p90 window a throughput divides by is empty and every measurement in a ladder
 # reports zero, however the worker is configured.
 UNMEASURABLE_TASKS = "1"
+# Deep enough that a two-worker drain outlasts its own fleet start-up, so the rep's
+# window opens on a queue that is still draining. A shallower backlog is emptied by the
+# first child alone and leaves the window nothing to count over.
+STARTUP_OUTLASTING_TASKS = "400"
 # A durable body long enough to hold a thread and no longer, for the stages that are
 # about something else: the production default would put minutes on this suite.
 BRIEF_DURABLE_SECONDS = "0.05"
@@ -1401,3 +1405,50 @@ def test_runs_without_statement_stats_when_the_extension_cannot_be_created(
         "installed": installed,
         "measured_anyway": result["measurements"][0]["median"]["enqueues_per_s"] > 0,
     } == {"installed": 0, "measured_anyway": True}
+
+
+@pytest.mark.timeout(300)
+def test_a_saturation_rep_counts_runs_over_the_window_its_commits_came_from(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The commit counter starts once the fleet is up, so the run counter must too.
+
+    Asserted against a count taken independently from the mark the rep recorded rather
+    than against a ratio: a ratio would encode this machine's speed, while the two
+    counts have to agree on any machine or `commits_per_task` divides one window by
+    another. What it pins end to end is the wiring — that a rep records the mark it
+    divided by, and that the mark it records is the one the run count was taken from.
+    How many runs land the wrong side of it is the machine's to decide, and
+    `tests/benchmarks/test_metrics.py` pins the windowing itself at chosen timestamps.
+
+    Two workers, since the interval the mark excludes is the one in which part of the
+    fleet is claiming and the rest is still starting. The two-worker rung is the last
+    of a ladder bounded there, and every rep truncates the queue tables in front of it,
+    so the rows the count below reads are that rung's own.
+    """
+    (tmp_path / "stage_worker_knobs.json").write_text(
+        json.dumps({"measurements": [build_recorded_rung("clean_c1", 500.0, 1)]})
+    )
+
+    stages.main(
+        [
+            "process_scaling",
+            "--reps",
+            "1",
+            "--tasks",
+            STARTUP_OUTLASTING_TASKS,
+            "--max-workers",
+            "2",
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
+
+    fleet = next(
+        entry
+        for entry in utils.read_stage(tmp_path, "process_scaling")["measurements"]
+        if entry["spec"]["workers"] == 2
+    )
+    assert fleet["median"]["n_runs"] == utils.count_runs_completed_after(
+        fleet["median"]["window_start"]
+    )

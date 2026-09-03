@@ -690,9 +690,9 @@ def test_saturation_rep_records_what_its_tasks_cost_in_commits() -> None:
     rep = measurement.run_measurement(spec)["reps"][0]
 
     assert {
-        "n_runs": rep["n_runs"],
+        "n_tasks": rep["n_tasks"],
         "cost_at_least_a_commit_a_task": rep["commits_per_task"] >= 1.0,
-    } == {"n_runs": int(MEASURABLE_TASKS), "cost_at_least_a_commit_a_task": True}
+    } == {"n_tasks": int(MEASURABLE_TASKS), "cost_at_least_a_commit_a_task": True}
 
 
 def test_saturation_measurement_samples_the_load_on_each_side_of_every_rep() -> None:
@@ -751,7 +751,7 @@ def test_saturation_rep_profiles_its_throughput_across_the_drain() -> None:
     rep = measurement.run_measurement(spec)["reps"][0]
 
     assert {
-        "n_runs": rep["n_runs"],
+        "n_tasks": rep["n_tasks"],
         "full_slices": len(rep["profile_slices"]),
         "every_slice_measured_a_rate": all(rate > 0 for rate in rep["profile_slices"]),
         "median_is_the_middle_slice": (
@@ -759,7 +759,7 @@ def test_saturation_rep_profiles_its_throughput_across_the_drain() -> None:
         ),
         "measured_a_cv": rep["profile_cv"] > 0,
     } == {
-        "n_runs": PROFILED_TASKS,
+        "n_tasks": PROFILED_TASKS,
         "full_slices": 3,
         "every_slice_measured_a_rate": True,
         "median_is_the_middle_slice": True,
@@ -787,12 +787,12 @@ def test_saturation_rep_too_small_to_slice_records_no_profile() -> None:
     rep = measurement.run_measurement(spec)["reps"][0]
 
     assert {
-        "n_runs": rep["n_runs"],
+        "n_tasks": rep["n_tasks"],
         "profile_slices": rep["profile_slices"],
         "profile_median_per_s": rep["profile_median_per_s"],
         "profile_cv": rep["profile_cv"],
     } == {
-        "n_runs": int(MEASURABLE_TASKS),
+        "n_tasks": int(MEASURABLE_TASKS),
         "profile_slices": None,
         "profile_median_per_s": None,
         "profile_cv": None,
@@ -936,12 +936,12 @@ def test_saturation_rep_records_no_statement_stats_where_nothing_counted_them() 
         while_the_name_is_taken = analysis.read_statement_stats()
 
     assert {
-        "n_runs": rep["n_runs"],
+        "n_tasks": rep["n_tasks"],
         "statement_stats": rep["statement_stats"],
         "unreadable_view": analysis.read_statement_stats(),
         "occupied_name": while_the_name_is_taken,
     } == {
-        "n_runs": int(MEASURABLE_TASKS),
+        "n_tasks": int(MEASURABLE_TASKS),
         "statement_stats": None,
         "unreadable_view": None,
         "occupied_name": None,

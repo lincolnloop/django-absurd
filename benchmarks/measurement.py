@@ -112,6 +112,9 @@ def run_saturation_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
     # statement and a commit: the other order bills that read to the tasks.
     statements_before = analysis.read_statement_stats()
     commits_before = analysis.read_xact_commit()
+    # Where the run counter starts, taken one statement after the commit counter's own
+    # start so the two windows differ by a round trip and not by a fleet's start-up.
+    window_start = analysis.capture_database_now()
     try:
         with host.measure_phase() as phase:
             wait_until_drained(spec, procs)
@@ -121,7 +124,7 @@ def run_saturation_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
     # counters at most once a second. Before the analysis queries, which commit too.
     commits = analysis.read_xact_commit() - commits_before
     statements_after = analysis.read_statement_stats()
-    metrics = analysis.analyze_saturation(spec.worker.queue, since)
+    metrics = analysis.analyze_saturation(spec.worker.queue, since, window_start)
     # A terminally failed task still satisfies the drain predicate, so without this
     # the measurement silently covers a smaller sample than it was asked to.
     metrics["missing_tasks"] = spec.tasks - metrics["n_tasks"]
@@ -133,6 +136,9 @@ def run_saturation_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
         # What the tables held when the drain started, `None` outside the experiment
         # that varies it: the rows a rate is read against, live and dead.
         "table": table,
+        # The instant both counters below start from, so a reader can retake any
+        # per-task figure over the interval the harness divided by.
+        "window_start": window_start.isoformat(),
         # The execution side alone — the preload sits outside the phase — so throughput
         # times this is the commit rate the drain asked of the disk.
         "commits_per_task": commits / metrics["n_runs"] if metrics["n_runs"] else None,
