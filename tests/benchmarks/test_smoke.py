@@ -33,13 +33,22 @@ UNABSORBABLE_RATE_PER_S = 800.0
 # A drain ceiling whose lowest ramp probe — a tenth of it — is already the rate above,
 # so a ramp anchored to it cannot absorb even its first offer.
 UNABSORBABLE_CEILING_PER_S = UNABSORBABLE_RATE_PER_S / stages.RATE_RAMP_START_FRACTION
-# A drain ceiling a ramp of TWO workers climbs THROUGH rather than up to, with its
-# rungs at 90/s..683/s. Two workers rather than one because only the ends of the climb
-# are load-bearing and a lone worker holds neither reliably: 45/s each leaves the
-# bottom rung absorbed while one of them stalls, and the pair's knee was measured at
-# 456-683/s, under the top rung. A rung between them refusing early only shortens the
-# climb, which the assertions allow for.
-RAMP_CEILING_PER_S = 900.0
+# Four times what the fleet drains, so its ramp climbs THROUGH the offer rate that same
+# fleet absorbs rather than up to it. Rungs run from a tenth of a ceiling to
+# three-quarters of it, which puts this ladder's bottom at two-fifths of the drain rate
+# and its top at three times it, while the ramps measured here refused between 0.9 and
+# 1.5 times it — the drain is trimmed over a window its own fleet started inside, so it
+# reads a little low. Derived from a drain the machine performs rather than fixed,
+# because absorbing a rung AND refusing one is what this test is about and no constant
+# puts both a fast workstation and a slow shared runner inside that window. A rung
+# refusing early only shortens the climb, which the assertions allow for.
+RAMP_CEILING_OVER_DRAIN = 4.0
+# Enough completions that the trimmed window the ceiling is read off is not a handful
+# of them, and few enough that the drain costs about a second.
+RAMP_DRAIN_TASKS = 400
+# Two workers rather than one because only the ends of the climb are load-bearing and a
+# lone worker holds neither reliably: half the rate each leaves the bottom rung
+# absorbed while one of them stalls.
 RAMP_WORKERS = 2
 # Two offers for ONE producer thread, either side of what a round trip to Postgres
 # allows it: an enqueue takes milliseconds, so two a second leave it idling and three
@@ -306,15 +315,29 @@ def test_rate_ramp_measures_at_the_highest_offer_it_absorbed(
     shown not to absorb. It is kept as the bracket instead: the knee is between the
     two, which is only a bracket at all because the two are different numbers.
 
-    Called directly, and at a ceiling of its own: a stage reads that number off
-    `stage_process_scaling.json`, where it is whatever the machine measured, and a
-    ramp that absorbs or refuses everything it probes cannot show which end it
-    measured at.
+    Called directly, and at a ceiling this machine measures for itself the way the
+    stage reads one off `stage_process_scaling.json`: a ramp that absorbs or refuses
+    everything it probes cannot show which end it measured at, and where a fleet's
+    capacity lies is the machine's to decide.
     """
+    worker = runner.WorkerSpec(concurrency=1, poll_interval=0.05)
+    drained = measurement.run_clean_rep(
+        measurement.MeasurementSpec(
+            name="smoke-ramp-drain",
+            mode="saturation",
+            task_path="tasks.noop_sync",
+            tasks=RAMP_DRAIN_TASKS,
+            workers=RAMP_WORKERS,
+            worker=worker,
+            reps=1,
+            timeout_s=120,
+        )
+    )
+
     ramp = stages.measure_sustainable_rate(
-        runner.WorkerSpec(concurrency=1, poll_interval=0.05),
+        worker,
         RAMP_WORKERS,
-        RAMP_CEILING_PER_S,
+        drained["throughput_per_s"] * RAMP_CEILING_OVER_DRAIN,
         stages.StageOptions(results_dir=tmp_path, duration_s=2.0),
     )
 
@@ -788,9 +811,9 @@ def test_commit_ceiling_probe_times_a_warmed_session_not_a_cold_one() -> None:
     thrown away, and the rounds after it are what the recorded median comes from.
 
     Asserted as a shape — every round's commits made, only the kept rounds' time
-    divided — never at a rate, which is this machine's to decide. The timed rounds are
-    a bit over half the probe's commits, so a probe that summarized its warm-up too
-    would divide close to the whole call rather than the 0.75 of it allowed here.
+    divided — never at a rate, which is this machine's to decide. Five timed rounds out
+    of nine put the honest ratio at 0.52-0.54, and a probe keeping no warm-up budget at
+    0.95-1.32, so the 0.90 allowed here is the loosest bound that still refuses one.
     """
     timed_commits = analysis.PROBE_TIMED_ROUNDS * analysis.DURABLE_PROBE_COMMITS
     committed_before = analysis.read_xact_commit()
@@ -811,7 +834,7 @@ def test_commit_ceiling_probe_times_a_warmed_session_not_a_cold_one() -> None:
         "committed_its_warm_up_rounds_too": (
             committed >= analysis.PROBE_WARM_UP_COMMITS + timed_commits
         ),
-        "timed_only_the_rounds_it_kept": timed_s < 0.75 * elapsed_s,
+        "timed_only_the_rounds_it_kept": timed_s < 0.90 * elapsed_s,
     } == {
         "measured": True,
         "committed_its_warm_up_rounds_too": True,
