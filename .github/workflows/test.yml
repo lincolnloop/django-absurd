@@ -27,6 +27,7 @@ jobs:
           - py312-django61
           - py314-django61
           - dev
+          - benchmarks
           - py312-django61-mypy
           - py314-django61-mypy
     env:
@@ -62,10 +63,10 @@ jobs:
           report_type: test_results
           flags: ${{ matrix.env }}
           fail_ci_if_error: true
-          # `tests/benchmarks` is a `dev`-only suite, so only that env writes its file.
-          files:
-            junit-core.xml,junit-pg_cron.xml,junit-multidb.xml${{ matrix.env == 'dev'
-            && ',junit-benchmarks.xml' || '' }}
+          # The `benchmarks` env runs that suite and nothing else; every other env
+          # runs the other three and never writes its file.
+          files: ${{ matrix.env == 'benchmarks' && 'junit-benchmarks.xml' ||
+            'junit-core.xml,junit-pg_cron.xml,junit-multidb.xml' }}
 
   examples:
     name: examples/${{ matrix.example }} pytest suite

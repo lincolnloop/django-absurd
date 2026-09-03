@@ -120,9 +120,12 @@ writing or editing any test file. Running the suites:
   both in a worktree — published ports are host-global, so a compose project name does
   not keep a worktree off the main checkout's 5442/5443.
 - **The two gates to run before a commit** — not five separate commands:
-  - `uvx --with tox-uv tox -e dev` — all four suites against the dev env only. Reach for
-    the bare `uvx --with tox-uv tox` (full Python×Django matrix + min-max mypy) only
-    when a change could plausibly break on another version, not while iterating.
+  - `uvx --with tox-uv tox -e dev,benchmarks` — all four suites at one Python and one
+    Django. `tests/benchmarks` has an env of its own so CI runs it as a parallel job, so
+    naming both envs is what covers everything; the order matters for coverage, below.
+    Reach for the bare `uvx --with tox-uv tox` (full Python×Django matrix + min-max
+    mypy) only when a change could plausibly break on another version, not while
+    iterating.
   - `uv run pre-commit run --all-files` — owns ruff-check, ruff-format, **mypy**, and
     prettier. Never invoke `ruff` or `mypy` directly; pre-commit already runs them, and
     a hand-rolled invocation drifts from the hook's flags and exclusions.
@@ -136,17 +139,19 @@ writing or editing any test file. Running the suites:
 - **The combined coverage number only exists after all four suites run in order.**
   `tests/core` passes `--cov` (no append, truncating `.coverage`); the rest append. So a
   suite run alone leaves `.coverage` holding a partial picture, and `coverage.xml` is
-  overwritten by whichever suite ran last. Read a total only after a full `tox -e dev`;
-  a single-suite percentage means nothing on its own.
+  overwritten by whichever suite ran last. Read a total only after a full
+  `tox -e dev,benchmarks`, in that order — `dev` runs `tests/core` first, so it is the
+  run that truncates. A single-suite percentage means nothing on its own, and
+  `benchmarks` alone leaves `.coverage` holding that suite only.
 - **Every tox test env runs the suites under `pytest-xdist`** (`-n auto` on each
   `pytest` command line, mypy envs excluded), so parallel safety is exercised on every
   push instead of only when someone remembers to pass `-n`. Worker count is xdist's own
   `PYTEST_XDIST_AUTO_NUM_WORKERS`, which applies to `auto` only: CI pins it to 2 in
   `test.yml`, and unset it takes every core. **Pin it in your environment too** —
   `tests/multidb` creates a pair of databases per worker, and an unpinned `auto` on a
-  many-core box times that out. `tox -e dev -- -n0` gives a serial baseline for telling
-  a real failure from an xdist-only one. A bare `uv run pytest <path>` is unaffected —
-  `-n` is in no suite's `addopts`, so pass it there yourself.
+  many-core box times that out. `tox -e dev,benchmarks -- -n0` gives a serial baseline
+  for telling a real failure from an xdist-only one. A bare `uv run pytest <path>` is
+  unaffected — `-n` is in no suite's `addopts`, so pass it there yourself.
 - Each suite runs with `--reuse-db` (addopts); add `--create-db` to rebuild after a
   migration change — including `tests/pg_cron`: its test DB is an ordinary one that
   pg_cron's launcher holds no session on (the launcher only ever connects to the central
