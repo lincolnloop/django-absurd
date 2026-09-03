@@ -406,8 +406,8 @@ a shallower queue, not a ramp.
 launches every child before waiting on any readiness line, and a saturation rep's
 preload is already in the queue — so the first child up drains alone for as long as the
 slowest of the others takes to start, and those completions sit inside the window the
-throughput is taken over. That is one child's interpreter and Django startup, 0.20 s,
-whatever the process count.
+throughput is taken over. At least one child's start-up, 0.20 s measured for a solo
+launch; what N concurrent launches cost is unmeasured.
 
 Figures below were measured with the launches serialized, where that same start-up cost
 one child per EXTRA process — 1.5 s inside an eight-process arm — so read the shape and
@@ -966,7 +966,7 @@ stage's heading.
 
 ## Which findings survive the durable regime
 
-Every figure here but `pooled_vs_split`'s durable arms measures nano-tasks at saturation
+Every figure here but `pooled_vs_split`'s durable arms measures nano-tasks
 ([the durable workload](#the-durable-workload-and-the-backends-it-holds)). django-absurd
 is mostly used for durable agent tool calls — seconds to minutes per task, checkpointed,
 often suspended — so most of the above answers a question that workload does not ask. A

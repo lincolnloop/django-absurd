@@ -170,7 +170,8 @@ whole run reading low is usually the working point it inherited, not the machine
 **Most of what is above was measured on tasks that finish in microseconds.** Only
 `pooled_vs_split` also runs the long, database-touching workload django-absurd is
 primarily for; every other stage uses an empty task body, and its advice is advice about
-that regime. `--durable-seconds` is how you take the long arms to a realistic duration.
+that regime. `--durable-seconds` is how you take the long arms to a realistic duration,
+and [`CLAUDE.md`](CLAUDE.md) says which findings carry over.
 
 **Measure on a quiet machine on AC power.** The macOS indexer alone was worth 1-1.4
 cores sustained. It spoils the saturation stages, which drive the box to its limit, and
