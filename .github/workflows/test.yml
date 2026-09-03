@@ -45,7 +45,12 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       - name: Start Postgres services
-        run: docker compose up -d --build --wait db db_pg_cron
+        # A mypy env reads the tree and never connects, and `tests/benchmarks` installs
+        # no `django_absurd.pg_cron`, so neither pays for the extension image.
+        if: ${{ !contains(matrix.env, 'mypy') }}
+        run: >-
+          docker compose up -d --build --wait
+          ${{ matrix.env == 'benchmarks' && 'db' || 'db db_pg_cron' }}
       - name: Run tox
         run: uvx --with tox-uv tox -e "${{ matrix.env }}"
       - name: Upload coverage to Codecov
