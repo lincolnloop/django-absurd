@@ -105,10 +105,8 @@ where r.state = 'completed' and {window}
 group by r.claimed_by
 """
 
-# Deliberately UNFILTERED by state: `fail_run` inserts a NEW row for the retry, so a
-# completed-only count would report every redelivery as zero. `n_tasks` is the one
-# exception and carries its own filter: it says how much of what the drain was handed
-# it finished, which only the completed state answers.
+# UNFILTERED by state, since `fail_run` inserts a NEW row for the retry and a
+# completed-only count would report every redelivery as zero — `n_tasks` excepted.
 RUN_TOTALS_SQL = """
 select
   count(*),
@@ -234,7 +232,9 @@ def analyze_saturation(
     finished ahead of it was paid for by commits nobody counted — so the rates and the
     percentiles are read over that interval and the totals over the whole drain.
     Filtering it on ``enqueue_at`` would select nothing at all: a saturation rep
-    enqueues every task before its fleet exists.
+    enqueues every task before its fleet exists. The profile keeps the whole drain —
+    its slices are equal-count and trimmed already, so a second window moves the
+    boundaries and nothing else.
     """
     drained = (
         psycopg.sql.SQL("true")
@@ -248,7 +248,7 @@ def analyze_saturation(
     )
     return {
         **read_completed_run_metrics(queue, measured, drained),
-        **read_throughput_profile(queue, measured),
+        **read_throughput_profile(queue, drained),
     }
 
 
@@ -518,9 +518,8 @@ def build_metrics(
     degenerate = span < MIN_TRIMMED_SPAN_S or not n_runs
     shares = sorted(fairness.values())
     metrics: dict[str, t.Any] = {
-        # Tasks over the whole drain and runs over the measured window, which is why
-        # the second can be the smaller: a fleet's first child completes work before
-        # the window opens, and those tasks were still finished.
+        # Tasks over the whole drain, runs over the measured window: a completion
+        # can land ahead of that window and the task is finished either way.
         "n_tasks": int(n_tasks),
         "n_runs": int(n_runs),
         "total_runs": int(total_runs),

@@ -24,10 +24,6 @@ MEASURABLE_TASKS = "60"
 # p10-p90 window a throughput divides by is empty and every measurement in a ladder
 # reports zero, however the worker is configured.
 UNMEASURABLE_TASKS = "1"
-# Deep enough that a two-worker drain outlasts its own fleet start-up, so the rep's
-# window opens on a queue that is still draining. A shallower backlog is emptied by the
-# first child alone and leaves the window nothing to count over.
-STARTUP_OUTLASTING_TASKS = "400"
 # A durable body long enough to hold a thread and no longer, for the stages that are
 # about something else: the production default would put minutes on this suite.
 BRIEF_DURABLE_SECONDS = "0.05"
@@ -1421,10 +1417,11 @@ def test_a_saturation_rep_counts_runs_over_the_window_its_commits_came_from(
     How many runs land the wrong side of it is the machine's to decide, and
     `tests/benchmarks/test_metrics.py` pins the windowing itself at chosen timestamps.
 
-    Two workers, since the interval the mark excludes is the one in which part of the
-    fleet is claiming and the rest is still starting. The two-worker rung is the last
-    of a ladder bounded there, and every rep truncates the queue tables in front of it,
-    so the rows the count below reads are that rung's own.
+    Two workers, because that interval can only hold completions while part of a fleet
+    is claiming and the rest is still starting; the children here come up a fraction of
+    a millisecond apart and it usually holds none. The two-worker rung is the last of a
+    ladder bounded there, and every rep truncates the queue tables in front of it, so
+    the rows the count below reads are that rung's own.
     """
     (tmp_path / "stage_worker_knobs.json").write_text(
         json.dumps({"measurements": [build_recorded_rung("clean_c1", 500.0, 1)]})
@@ -1436,7 +1433,7 @@ def test_a_saturation_rep_counts_runs_over_the_window_its_commits_came_from(
             "--reps",
             "1",
             "--tasks",
-            STARTUP_OUTLASTING_TASKS,
+            MEASURABLE_TASKS,
             "--max-workers",
             "2",
             "--results-dir",

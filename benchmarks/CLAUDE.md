@@ -405,8 +405,8 @@ a shallower queue, not a ramp.
 **Above one process the fleet starts inside the measured drain.** `start_workers`
 launches every child before waiting on any readiness line, and a saturation rep's
 preload is already in the queue — so the first child up drains alone for as long as the
-slowest of the others takes to start, and those completions sit inside the window the
-throughput is taken over. At least one child's start-up, 0.20 s measured for a solo
+slowest of the others takes to start, and those completions land ahead of the mark a
+rep's counts are windowed on. At least one child's start-up, 0.20 s measured for a solo
 launch; what N concurrent launches cost is unmeasured.
 
 Figures below were measured with the launches serialized, where that same start-up cost
@@ -423,23 +423,29 @@ grow. (All four runs, 12 reps.) A concurrent launch shortens what lands in the w
 it does not empty it, so a short multi-process arm still reads low by whatever fraction
 of its drain ran short-handed.
 
-**`commits_per_task` and `calls_per_task` take the same defect the other way up.** Both
-divide a phase-window delta — `xact_commit`, and `pg_stat_statements` — by `n_runs`,
-which `analyze_saturation` counts over the WHOLE drain (`window = true`). Tasks finished
-before the phase opened are in the denominator and their commits are not, so both counts
-read low above one process, by the share of the drain that ran during the stagger. What
-that costs in practice is not established: the measured `commits_per_task` column falls
-from 2.13 at one, two and five processes to 1.88 at ten, which is the right direction,
-but a bias proportional to the stagger would have moved the two- and five-process rungs
-too and it did not. Treat the spread across process counts as unresolved rather than as
-shape.
+**`commits_per_task` and `calls_per_task` divide by a windowed run count.** Both divide
+a phase-window delta — `xact_commit`, and `pg_stat_statements` — by `n_runs`, and
+`analyze_saturation` counts `n_runs` over the runs whose `completed_at` is past a mark
+the rep captures beside its commit counter, so numerator and denominator cover one
+interval. The counts a rep's sample is judged on — `n_tasks`, `extra_runs` — are read
+over the whole drain instead, on the ballast predicate (`t.enqueue_at`) alone: a failed
+run carries no completion time, so filtering those on completion would report every
+redelivery as zero. What the correction is worth is a measurement, and the figures here
+predate it. Their `commits_per_task` column falls from 2.13 at one, two and five
+processes to 1.88 at ten, which is the direction a start-up bias pushes, but a bias
+proportional to the stagger would have moved the two- and five-process rungs too and it
+did not. Treat that spread across process counts as unresolved rather than as shape
+until a run on the windowed tree reports it.
 
-That is a real defect and a bigger constant is the wrong fix for it: it would dilute the
-stagger only by measuring a deeper queue for both arms of a pair, at four times the
-cost, while degrading every single-process rung it touches. What would fix it is a
-windowed analysis — a saturation rep capturing the database clock the way a rate rep
-already does, and counting both completions and runs from there. That moves every
-saturation figure in this file, and it is not done here.
+A bigger `SATURATION_TASKS` is the wrong fix for a start-up that lands inside a measured
+drain: it dilutes the stagger only by measuring a deeper queue for both arms of a pair,
+at four times the cost, while degrading every single-process rung it touches. The fix in
+the tree is the windowed analysis — a saturation rep captures the database clock the way
+a rate rep already does and counts its runs from there, on `r.completed_at` and never on
+`t.enqueue_at`, which a saturation rep has written every row of before its fleet exists.
+The throughput profile is the one thing left on the whole drain: its slices are
+equal-count and trimmed already. How far all this moves the saturation figures in this
+file is what a run on that tree reports.
 
 ## Storage: two regimes on a volume, and none on RAM
 
