@@ -87,9 +87,8 @@ RUN_CLONE_COLUMNS: tuple[tuple[str, psycopg.sql.Composable], ...] = (
     ("created_at", psycopg.sql.SQL("template.created_at")),
 )
 
-# Keys generated up front, in `cloned`/`cloned_runs`, so the task insert can point each
-# clone at the run about to be written for it. `absurd.portable_uuidv7` because the
-# migration reaches for `pg_catalog.uuidv7` only where the server has it.
+# Keys generated up front, not from RETURNING, which cannot say which template a clone
+# came from; `portable_uuidv7` because only some servers carry `pg_catalog.uuidv7`.
 CLONE_SQL = psycopg.sql.SQL("""
 with template_tasks as (
     select template_id, ordinal
