@@ -150,13 +150,7 @@ def test_a_saturation_rep_counts_runs_over_the_window_its_commits_came_from(tmp_
     rep = json.loads((tmp_path / "stage_process_scaling.json").read_text())
     two = next(m for m in rep["measurements"] if m["processes"] == 2)
 
-    assert {
-        "counted_runs": two["n_runs"],
-        "runs_completed_after_the_mark": count_runs_completed_after(two["window_start"]),
-    } == {
-        "counted_runs": two["n_runs"],
-        "runs_completed_after_the_mark": two["n_runs"],
-    }
+    assert two["n_runs"] == count_runs_completed_after(two["window_start"])
 ```
 
 `count_runs_completed_after` is a new helper in `tests/benchmarks/utils.py`, beside the
