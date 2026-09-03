@@ -65,13 +65,20 @@ The defaults need about 5 GB free in the Docker VM (1 GB of shared buffers plus 
 tmpfs). Set any of these in the shell that starts `db_bench`, then restart it and re-run
 `migrate`:
 
-| variable                | default | change it when                                             |
-| ----------------------- | ------- | ---------------------------------------------------------- |
-| `BENCH_SHARED_BUFFERS`  | `1GB`   | the Docker VM has under ~4 GB free — try `256MB`           |
-| `BENCH_MAX_CONNECTIONS` | `100`   | you run over ~40 worker processes (2 server backends each) |
-| `BENCH_TMPFS_SIZE`      | `4g`    | the VM is small — `512m` covers a single stage             |
-| `BENCH_CPUS`            | unset   | you want the server pinned to N cores; unset = no limit    |
-| `BENCH_MEMORY`          | unset   | you want the server's memory capped; unset = no limit      |
+| variable                | default | change it when                                          |
+| ----------------------- | ------- | ------------------------------------------------------- |
+| `BENCH_SHARED_BUFFERS`  | `1GB`   | the Docker VM has under ~4 GB free — try `256MB`        |
+| `BENCH_MAX_CONNECTIONS` | `100`   | you run over ~40 worker processes (2 backends each)     |
+| `BENCH_TMPFS_SIZE`      | `4g`    | the VM is small — `512m` covers a single stage          |
+| `BENCH_CPUS`            | unset   | you want the server pinned to N cores; unset = no limit |
+| `BENCH_MEMORY`          | unset   | you want the server's memory capped; unset = no limit   |
+
+**Two backends per worker process is the count for task bodies like the ones here, which
+touch no ORM.** Django's connections are thread-local and a worker runs sync bodies on a
+thread pool sized to `--concurrency`, so a body that queries the ORM opens one more per
+busy thread and holds it while the body runs: budget `--concurrency + 2` per process for
+that workload — 126 connections at 7 processes running the concurrency 16 recommended
+below.
 
 Too small a tmpfs does not fail at startup: the run dies partway through on a Postgres
 write error, so raise it if a long run aborts. Every value above is recorded in the
@@ -143,6 +150,13 @@ harness has not found Absurd's limit; it has only ever found its own.
 the same commit, 25 shared measurements: median CV 4.7%, mean 5.1%, worst 12.5%, one run
 systematically below the other two. Under about 12% is not evidence of anything, and a
 whole run reading low is usually the working point it inherited, not the machine.
+
+**Every workload here is a nano-task.** The five bodies are two no-ops, two sleeps and a
+4-step workflow, driven at the highest rate a fleet will take. django-absurd is mostly
+used for durable agent tool calls and long-running work — seconds to minutes per task,
+checkpointed, often suspended — where a 1.5 ms claim amortises into nothing. These
+tables rank configurations for THIS regime; they do not characterise that one.
+[`CLAUDE.md`](CLAUDE.md) says which findings carry over.
 
 **Measure on a quiet machine on AC power.** The macOS indexer alone was worth 1-1.4
 cores sustained. It spoils the saturation stages, which drive the box to its limit, and

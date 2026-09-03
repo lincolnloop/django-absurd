@@ -66,7 +66,18 @@ reps of `warmup`, `a`, `b` and `c2`:
 
     commits per task     1.72 - 3.01   part shape, part ramp; the split is open
     row updates          ~4            ~2 on r_bench, ~2 on t_bench
-    backends per worker  2             SDK connection + Django ORM, at ANY --concurrency
+    backends per worker  2             SDK connection + Django ORM, for a body that
+                                       touches no ORM itself
+
+**That 2 holds only for task bodies that do not touch the ORM**, which is every workload
+in `tasks.py`. Django's connections are thread-local and `open_worker_runtime` runs sync
+bodies on a `ThreadPoolExecutor(max_workers=options.concurrency)`, so a body doing ORM
+work opens a third backend per busy thread and holds it for the body's whole duration —
+up to `C + 2` per process, 126 at the 7 x 16 this file recommends, against a
+`BENCH_MAX_CONNECTIONS` of 100 and a stock `max_connections` of 100. Nothing here
+measured that: `measure_shape_connections` counts backends across starting a fleet and
+runs no task, so it observes worker STARTUP connections and cannot see a body-opened
+one.
 
 From `pg_stat_statements` with `track=all`, at `worker_knobs` `concurrency_1` — the only
 shape where the client remainder is exact
@@ -417,16 +428,15 @@ cumulative state or a per-run latch. A sawtooth is contention, and neither.
 it covers claim, completion and the driver's drain polling and excludes the preload.
 Throughput times that is the commit rate the run asked of the database, and the report
 prints it under each saturation table — divided by the worker count first, because **the
-ceiling is one connection's**. A worker process opens exactly two backends whatever its
-`--concurrency` (the SDK's connection and Django's), so its claim traffic funnels
-through one connection however many threads are behind it, while the box has several
-times that capacity spread across more of them; concurrent backends share an fsync
-through group commit, so that scaling is sublinear (measured once on the volume in its
-fast regime: 1,953 c/s at one connection, 4,748 at four, 13,238 at sixteen — read the
-shape, not the levels, and note that a single-connection ceiling is a per-run
-measurement rather than a constant of the machine). Comparing a fleet's total against
-one connection's ceiling would call an eight-process measurement saturated while each of
-its connections idled.
+ceiling is one connection's**. A worker process's claims all ride the SDK's one
+connection however many threads are behind it — so its claim traffic funnels through a
+single backend whatever its `--concurrency`, while the box has several times that
+capacity spread across more of them; concurrent backends share an fsync through group
+commit, so that scaling is sublinear (measured once on the volume in its fast regime:
+1,953 c/s at one connection, 4,748 at four, 13,238 at sixteen — read the shape, not the
+levels, and note that a single-connection ceiling is a per-run measurement rather than a
+constant of the machine). Comparing a fleet's total against one connection's ceiling
+would call an eight-process measurement saturated while each of its connections idled.
 
 So a row is **connection-bound** when its per-connection commit rate is near the ceiling
 — that number belongs to Postgres and moves on another machine — and **client-bound**
@@ -632,8 +642,10 @@ matter:
   concurrency on two backends and `4x1` reaches it on eight, so the shapes differ in
   connection count as well as in claim path, and the report says so above the ratio
   rather than leaving it to be read as the claim path alone. Measured per shape as a
-  delta across starting the fleet, so the day a pooled worker opens a connection per
-  slot the same line will say the comparison is clean.
+  delta across starting the fleet, before any rep runs, so what it counts is what a
+  WORKER opens at startup: the day a pooled worker opens a connection per slot the same
+  line will say so. A connection a task BODY opens is invisible to it —
+  `measure_shape_connections` never enqueues or runs a task.
 
 ## The results files
 
@@ -768,6 +780,33 @@ and whether it was marked. The choice prefers a rung that measured what was aske
 repeated, so when most rungs are marked it lands on the slowest survivor and every
 number in the later stage was measured at it — which the report prints under that
 stage's heading.
+
+## Which findings survive the durable regime
+
+Everything here measures nano-tasks at saturation. django-absurd is mostly used for
+durable agent tool calls — seconds to minutes per task, checkpointed, often suspended —
+so most of the above answers a question that workload does not ask. A claim costing
+1.41-1.56 ms is the whole story at 4,000 tasks/s and rounding error at 4 tasks/s.
+
+Carries over:
+
+- **What a `ctx.step` costs.** A checkpoint per tool call IS the durable shape. The
+  `checkpoint_cost` stage measures it and **no finding for it is written up in this
+  file** — the most durable-relevant number the harness produces is the one nobody
+  recorded. Fix that before quoting anything else here at a durable workload.
+- **The connection budget, `C + 2` backends per process once a body touches the ORM**
+  ([Overhead](#overhead-itemised)). Not a throughput fact, and it binds precisely when
+  holds are long: a durable body holds its thread, and its connection, for minutes.
+- **`r_bench` bloats and `t_bench` does not** (10,000 dead tuples against 5,000 live).
+  Retries and suspensions make run rows, so a durable workload compounds this.
+- **Table size costing throughput.** A durable workload accumulates history by design,
+  which turns retention into a throughput concern rather than housekeeping.
+
+Does not carry over: peak tasks/s, the process x concurrency sweep, `--batch-size`, the
+producer ceiling. Those answer how fast a flood of trivial tasks drains.
+
+Not measured at all: a task that sleeps for minutes, checkpoints repeatedly, and
+suspends. No stage exercises that shape, so nothing here bounds it.
 
 ## Comparing two runs: refactors, version bumps, bisection
 
