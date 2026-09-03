@@ -25,7 +25,7 @@ def get_default_backend() -> AbsurdBackend:
 
 @task(queue_name="default")
 async def hold_until_released(name: str) -> None:
-    """Occupy one worker slot until the test lets go of it."""
+    """Hold one in-flight run open until the test lets go of it."""
     ORDER.append(name)
     STARTED[name].set()
     await HOLD["gate"].wait()
@@ -39,11 +39,11 @@ async def record_started(name: str) -> None:
 
 @task(queue_name="default")
 async def hold_until_released_then_unwind(name: str) -> None:
-    """Occupy one slot, and finish unwinding only after yielding once more.
+    """Hold one in-flight run open, and finish unwinding only after yielding once more.
 
     The cleanup arm is the point: a handler that awaits anything while unwinding —
     a durable step, an async close — is still on the loop after ``cancel()`` merely
-    requests its cancellation, and only an await of the cancelled slot reaches its
+    requests its cancellation, and only an await of the cancelled run reaches its
     ``-unwound`` line.
     """
     ORDER.append(name)
@@ -64,10 +64,10 @@ def arm_events(*names: str) -> None:
 
 
 def test_worker_starts_a_later_task_while_a_slow_one_still_runs() -> None:
-    # A worker of C slots must keep claiming while one slot is busy. Enqueue C+1
-    # tasks so the extra one cannot ride in the same claim batch as the slow task:
-    # that is what forces a second claim, and a worker that joins its whole batch
-    # before claiming again never issues it.
+    # A worker at concurrency C must keep claiming while one run still executes.
+    # Enqueue C+1 tasks so the extra one cannot ride in the same claim batch as the
+    # slow task: that is what forces a second claim, and a worker that joins its
+    # whole batch before claiming again never issues it.
     #
     # Deterministic, not timed: the slow task blocks on an Event the test owns, and
     # each task announces its own start on another. The only clock is the wait_for
@@ -99,12 +99,12 @@ def test_worker_starts_a_later_task_while_a_slow_one_still_runs() -> None:
     asyncio.run(drive())
 
     assert STARTED["fast-2"].is_set(), (
-        "the worker never started the third task while the slow one held a slot: "
+        "the worker never started the third task while the slow one still ran: "
         f"started {ORDER}"
     )
 
 
-def test_one_slot_runs_a_claimed_batch_in_order() -> None:
+def test_concurrency_one_runs_a_claimed_batch_in_order() -> None:
     call_command("absurd_sync_queues")
     arm_events("first", "second", "third")
 
@@ -147,14 +147,14 @@ def test_stopping_lets_in_flight_work_finish_and_claims_nothing_new() -> None:
         stop = asyncio.Event()
         async with aworker_client(get_default_backend(), "default") as client:
 
-            async def stop_once_the_slow_task_holds_a_slot() -> None:
+            async def stop_once_the_slow_task_is_executing() -> None:
                 await asyncio.wait_for(STARTED["slow"].wait(), timeout=5)
                 stop.set()
                 HOLD["gate"].set()
 
             await asyncio.gather(
                 run_blocking_worker(client, WorkerOptions(concurrency=1), stop=stop),
-                stop_once_the_slow_task_holds_a_slot(),
+                stop_once_the_slow_task_is_executing(),
             )
 
     asyncio.run(drive())
@@ -163,7 +163,7 @@ def test_stopping_lets_in_flight_work_finish_and_claims_nothing_new() -> None:
     assert not STARTED["unclaimed"].is_set()
 
 
-def test_stopping_at_concurrency_above_one_still_finishes_a_held_slot(
+def test_stopping_at_concurrency_above_one_still_finishes_an_in_flight_run(
     dj_absurd: AbsurdTestRuntime,
 ) -> None:
     # The concurrency=1 stop test above takes the other code path entirely, so only
@@ -225,7 +225,7 @@ def test_cancelling_the_worker_leaves_no_handler_running_on_the_loop() -> None:
     asyncio.run(drive())
 
 
-def test_cancelling_the_worker_waits_for_each_slot_to_finish_unwinding() -> None:
+def test_cancelling_the_worker_waits_for_each_run_to_finish_unwinding() -> None:
     # What the test above cannot see: a handler parked on an Event unwinds in the same
     # loop turn that resolves ``await worker``, so a cancel-without-await still leaves
     # no leftover task behind. Here the handler yields once while unwinding, which the

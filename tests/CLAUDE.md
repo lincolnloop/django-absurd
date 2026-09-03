@@ -19,7 +19,7 @@ pre-commit gates), see [`../CLAUDE.md`](../CLAUDE.md).
   `assert not qs.exists()`. Truthiness passes for the wrong object too: drop the
   `.exists()` call in a refactor and `assert qs` still passes on a non-empty queryset,
   while `is True` fails. Same for any predicate helper returning `bool`.
-- **Shared fixtures live in the parent `tests/conftest.py`**, inherited by all three
+- **Shared fixtures live in the parent `tests/conftest.py`**, inherited by all four
   suites via `--confcutdir=..` in each suite's `pytest.toml` (each suite's rootdir is
   its own dir, so without `confcutdir` a parent conftest isn't discovered). Do NOT
   re-import fixtures into a suite conftest — a suite `conftest.py` holds only
@@ -37,13 +37,25 @@ pre-commit gates), see [`../CLAUDE.md`](../CLAUDE.md).
   ahead of Python is an unkillable deadlock for a sync task. The fixture works unchanged
   in an `async def` test. See
   [Testing — the `dj_absurd` fixture](../docs/web/testing.md#the-dj_absurd-fixture).
+  - **`tests/benchmarks` is exempt.** It drives a measurement harness through real
+    `absurd_worker` children and real sleeps, and elapsed time on a real clock is the
+    thing being measured; freezing either clock erases it.
 - **`time_machine.travel(..., tick=False)` directly is for pure-Python math only** —
   cron arithmetic (`get_next_datetime`) and the like, where no row, worker, or Absurd
   deadline is involved. Reaching for the fixture there would write a database GUC for
   nothing; reaching for time-machine on an executing test leaves Postgres on real time
   (that mistake shipped once — `test_cleanup.py` passed only because `cleanup_ttl` was
-  0). The one sanctioned ticking use is `tests/core/test_scheduler.py`'s live worker
-  crossing a `*/1` boundary, which needs real time to pass.
+  0). Two ticking uses are sanctioned:
+  - `tests/core/test_scheduler.py`'s live worker crossing a `*/1` boundary, which needs
+    real time to pass.
+  - `tests/benchmarks/utils.py`'s `nap_the_wall_clock`, which walks `time.time` away
+    from `perf_counter` on purpose — that disagreement is the only input the harness's
+    suspension guard reads, so here the drift IS the phenomenon under test. The
+    `dj_absurd` fixture is wrong twice over: it moves Postgres too, erasing the
+    disagreement, and its GUC never reaches an `absurd_worker` child. Safe only because
+    nothing in the harness's own process derives a database deadline from the wall clock
+    — every drain deadline is monotonic and every recorded timestamp is a Postgres
+    column.
 - **freezegun is banned** — it patches `time.monotonic`, which IS asyncio's event-loop
   clock, so a frozen freezegun deadlocks the drain unkillably. Do not reintroduce it.
   `pytest-asyncio` is a dev dependency for writing `async def` tests; nothing in
@@ -169,7 +181,7 @@ Measured on this repo; the point is to spend the slow gate once, not per edit.
   Every suite's `pytest.toml` turns coverage on via `addopts`, and that instrumentation
   dominates a single-file run; `-q` keeps the output scannable.
 - **Run `tox -e dev` once, before the commit** — not after every edit. It is ~2.5
-  minutes because it builds three suites; nothing about a one-file change needs that
+  minutes because it builds four suites; nothing about a one-file change needs that
   loop.
 - **`-n4` for a whole-suite run**, which every suite tolerates including
   `tests/pg_cron`. Skip it for a single file, where the worker spin-up costs more than
@@ -186,8 +198,9 @@ Measured on this repo; the point is to spend the slow gate once, not per edit.
   to its file. The catalog row outlives the per-test flush, so the second `--reuse-db`
   run of that file reports nothing created. Passes alone, fails on repeat.
 - **A deadlock/duplicate-key storm across unrelated tests means a concurrent run**, not
-  a code defect — suites from a worktree reach this checkout's Postgres on 5442. Confirm
-  nothing else is running before bisecting.
+  a code defect — suites from a worktree reach this checkout's Postgres on 5442 unless
+  it exported its own `PGPORT`/`PGPORT_PGCRON`. Confirm nothing else is running before
+  bisecting.
 
 ### When an agent runs the gates
 

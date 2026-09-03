@@ -7,6 +7,7 @@ dev = [
   "absurdctl==0.5.0",
   "beautifulsoup4==4.15.0",
   "build==1.5.0",
+  "dj-database-url==3.1.2",
   "django-coverage-plugin==3.2.2",
   "django-stubs==6.1.0",
   "git-cliff==2.13.1",
@@ -90,19 +91,32 @@ exclude_also = [
   # a `msg = "..."` line immediately followed by `raise NotImplementedError(msg)`
   # (the errmsg-lint idiom) — exclude the assignment too, not just the raise.
   'msg = [rf]?".*"\n\s*raise NotImplementedError\(msg\)',
+  # A script entrypoint only ever runs as `python -m`, never under the test runner,
+  # and a test that re-executed the module would measure the subprocess, not this line.
+  'if __name__ == "__main__":',
 ]
+# The harness is a uv project of its own, so running it leaves a `.venv` inside a
+# measured directory. Omitting it here rather than only under `run` is what counts:
+# these files are never executed, so they reach the report through the scan for
+# unexecuted files under `source`, which reads this section and not that one.
+omit = ["benchmarks/.venv/*"]
 skip_covered = true
 
 [tool.coverage.run]
 branch = true
-patch = ["subprocess"]
+# `_exit` beside `subprocess`: a benchmark worker child is killed mid-task by
+# `os._exit`, which skips the hook the child's own coverage data is written from, and
+# the line that killed it would read as never executed.
+patch = ["subprocess", "_exit"]
 plugins = [
   "django_coverage_plugin",
 ]
-source = ["django_absurd", "tests"]
+source = ["benchmarks", "django_absurd", "tests"]
 
 [tool.django-stubs]
 django_settings_module = "tests.pg_cron.settings"
+
+[tool.hatch]
 
 [tool.hatch.build.targets.sdist]
 # Allowlist — only the package ships in the sdist (plus the always-included
@@ -115,6 +129,9 @@ packages = ["django_absurd"]
 [tool.hatch.version]
 source = "vcs"
 
+# `benchmarks/` is its own import root (no `__init__.py`, so its commands run from
+# inside it), which without these two keys mypy reads BOTH ways — `stages` and
+# `benchmarks.stages` — and refuses the whole run over the duplicate.
 [tool.mypy]
 exclude = [
   "^build/",
@@ -122,11 +139,15 @@ exclude = [
   "^\\.tox/",
   "^examples/",
 ]
+explicit_package_bases = true
+mypy_path = ["benchmarks"]
 plugins = ["mypy_django_plugin.main"]
 strict = true
 
 [tool.pytest.ini_options]
 addopts = [
+  "--ignore=benchmarks",
+  "--ignore=tests/benchmarks",
   "--ignore=tests/core",
   "--ignore=tests/multidb",
   "--ignore=tests/pg_cron",
@@ -134,6 +155,9 @@ addopts = [
 ]
 
 [tool.ruff]
+# `benchmarks/` beside the repo root so isort files the harness's own top-level
+# modules (`import stages`, `import host`) as first-party wherever they are imported.
+src = [".", "benchmarks"]
 target-version = "py312"
 
 [tool.ruff.lint]
@@ -158,6 +182,12 @@ select = ["ALL"]
   "S101",  # Allow use of asserts
   "S603",  # Allow subprocess calls in tests
   "SLF001",  # Allow private member access in tests (e.g. _meta)
+]
+"benchmarks/**/*" = [
+  "INP001",  # the harness IS the import root, so its commands run from inside it
+  "S603",  # Allow subprocess calls: the harness spawns real worker processes
+  "S607",  # Allow `git`/`docker` by name: the harness runs on a developer PATH
+  "T201",  # Allow print: the stage/report drivers are CLIs
 ]
 "examples/*/app.py" = [
   "INP001",  # single-file nanodjango demo apps are intentionally not packages

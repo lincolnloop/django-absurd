@@ -2,6 +2,7 @@
 *.pyc
 .claude/worktrees/
 .coverage
+.coverage.*
 .direnv/
 .envrc
 .mypy_cache/
@@ -9,6 +10,7 @@
 .python-version
 .ruff_cache/
 .venv/
+/benchmarks/results/
 /site/
 __pycache__/
 build/

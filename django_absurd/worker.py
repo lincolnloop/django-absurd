@@ -571,25 +571,27 @@ async def run_blocking_worker(
     # Both loops below are ported from
     # https://github.com/earendil-works/absurd/pull/137, because the SDK's
     # AsyncAbsurd.start_worker awaits its whole claimed batch before claiming again —
-    # one slow task then idles every other slot. Delete them in favour of
+    # one slow task then idles the rest of the claimed batch. Delete them in favour of
     # client.start_worker once a released SDK carries that fix.
     try:
         if options.concurrency <= 1:
-            await run_one_slot_at_a_time(client, options, stop_signal, worker_id)
+            await execute_one_run_at_a_time(client, options, stop_signal, worker_id)
         else:
-            await refill_slots_until_stopped(client, options, stop_signal, worker_id)
+            await refill_in_flight_runs_until_stopped(
+                client, options, stop_signal, worker_id
+            )
     finally:
         loop.remove_signal_handler(signal.SIGINT)
         loop.remove_signal_handler(signal.SIGTERM)
 
 
-async def run_one_slot_at_a_time(
+async def execute_one_run_at_a_time(
     client: AsyncAbsurd,
     options: WorkerOptions,
     stop: asyncio.Event,
     worker_id: str,
 ) -> None:
-    """Claim a whole batch and execute it sequentially — the single-slot fast path.
+    """Claim a whole batch and execute it sequentially — the concurrency-1 fast path.
 
     Straight from the SDK's SYNC worker, which has always had it. Without this branch
     the windowed loop's cap of ``min(batch_size, free capacity)`` would silently turn
@@ -605,13 +607,13 @@ async def run_one_slot_at_a_time(
             await client._execute_task(claimed_task, options.claim_timeout)  # noqa: SLF001 -- SDK exposes no public counted dispatch; mirrors work_batch
 
 
-async def refill_slots_until_stopped(
+async def refill_in_flight_runs_until_stopped(
     client: AsyncAbsurd,
     options: WorkerOptions,
     stop: asyncio.Event,
     worker_id: str,
 ) -> None:
-    """Keep ``concurrency`` slots busy, claiming again the moment one frees.
+    """Keep ``concurrency`` runs in flight, claiming again the moment one finishes.
 
     ONE ``executing`` window across iterations is the whole point: rebuilding it per
     batch is what makes the SDK's async worker wait on its slowest claimed task before
@@ -621,16 +623,16 @@ async def refill_slots_until_stopped(
     executing: set[asyncio.Task[None]] = set()
     try:
         while not stop.is_set():
-            reap_finished_slots(executing)
+            reap_finished_runs(executing)
             capacity = options.concurrency - len(executing)
             if capacity <= 0:
-                await wait_for_slot_progress(executing, stop, options.poll_interval)
+                await wait_for_run_progress(executing, stop, options.poll_interval)
                 continue
             claimed = await client.claim_tasks(
                 min(effective_batch_size, capacity), options.claim_timeout, worker_id
             )
             if not claimed:
-                await wait_for_slot_progress(executing, stop, options.poll_interval)
+                await wait_for_run_progress(executing, stop, options.poll_interval)
                 continue
             for claimed_task in claimed:
                 executing.add(
@@ -642,20 +644,20 @@ async def refill_slots_until_stopped(
         # The connection every one of these runs writes through is about to close, so
         # none of them may outlive the loop. The sync worker gets this free from
         # ThreadPoolExecutor.__exit__; the async loop has to do it by hand.
-        await cancel_and_drain_slots(executing)
+        await cancel_and_drain_runs(executing)
         raise
     finally:
         # A stop means stop CLAIMING: the window it already owns runs to completion.
-        await finish_remaining_slots(executing)
+        await finish_remaining_runs(executing)
 
 
-async def cancel_and_drain_slots(executing: set[asyncio.Task[None]]) -> None:
+async def cancel_and_drain_runs(executing: set[asyncio.Task[None]]) -> None:
     """Cancel the whole in-flight window and wait for it to unwind.
 
     Awaiting is the point: ``cancel()`` only requests, so returning without it leaves
     handlers still on the loop. Emptying ``executing`` leaves nothing for the caller's
     ``finally`` to await a second time — that pass is the graceful one, and it would
-    re-raise a slot's own ``CancelledError`` in place of the loop's.
+    re-raise an in-flight run's own ``CancelledError`` in place of the loop's.
     """
     for entry in executing:
         entry.cancel()
@@ -663,13 +665,13 @@ async def cancel_and_drain_slots(executing: set[asyncio.Task[None]]) -> None:
     executing.clear()
 
 
-async def finish_remaining_slots(executing: set[asyncio.Task[None]]) -> None:
+async def finish_remaining_runs(executing: set[asyncio.Task[None]]) -> None:
     """Await the whole in-flight window, then surface the first machinery failure.
 
-    Two steps rather than one bare ``gather``: a gather raises the instant one slot
-    fails, abandoning its siblings mid-execution against a connection
-    ``aworker_client`` is about to close. ``asyncio.wait`` settles every slot first, so
-    the gather after it only re-raises — and it marks the other slots' exceptions
+    Two steps rather than one bare ``gather``: a gather raises the instant one run's
+    machinery fails, abandoning its siblings mid-execution against a connection
+    ``aworker_client`` is about to close. ``asyncio.wait`` settles every run first, so
+    the gather after it only re-raises — and it marks the other runs' exceptions
     retrieved, so none resurfaces as "Task exception was never retrieved". What
     surfaces here is never a task failing: ``_execute_task`` records a handler's own
     failure against the run and returns normally.
@@ -680,8 +682,8 @@ async def finish_remaining_slots(executing: set[asyncio.Task[None]]) -> None:
     await asyncio.gather(*executing)
 
 
-def reap_finished_slots(executing: set[asyncio.Task[None]]) -> None:
-    """Free every finished slot, re-raising whatever its task raised.
+def reap_finished_runs(executing: set[asyncio.Task[None]]) -> None:
+    """Reap every finished run, re-raising whatever its machinery raised.
 
     ``_execute_task`` records a handler's own failure against the run and returns, so
     an exception surfacing here is the worker's own machinery breaking — never a task
@@ -692,14 +694,14 @@ def reap_finished_slots(executing: set[asyncio.Task[None]]) -> None:
         finished.result()
 
 
-async def wait_for_slot_progress(
+async def wait_for_run_progress(
     executing: set[asyncio.Task[None]], stop: asyncio.Event, poll_interval: float
 ) -> None:
-    """Wait until a slot frees, or ``poll_interval`` passes, whichever comes first.
+    """Wait until a run finishes, or ``poll_interval`` passes, whichever comes first.
 
     ``asyncio.wait`` only observes; the loop head reaps what it reports. It needs no
     stop of its own: waking early on one would only reach a ``finally`` that awaits
-    the very slots being waited on here. An EMPTY window has nothing to wait on, so
+    the very runs being waited on here. An EMPTY window has nothing to wait on, so
     that arm is a plain idle and races the stop like every other idle does.
     """
     if not executing:
