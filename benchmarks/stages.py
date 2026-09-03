@@ -3,10 +3,12 @@ import dataclasses
 import json
 import os
 import sys
+import time
 import typing as t
 from pathlib import Path
 
 import django
+from django.utils.module_loading import import_string
 
 import analysis
 import host
@@ -16,6 +18,7 @@ import runner
 from django_absurd.flush import truncate_queue_tables
 from report import DEFAULT_RESULTS_DIR, describe_marks, format_dispersion
 
+DURABLE_WORK = "tasks.run_durable_work"
 NOOP_ASYNC = "tasks.noop_async"
 NOOP_SYNC = "tasks.noop_sync"
 RUN_STEPS = "tasks.run_steps"
@@ -44,7 +47,7 @@ STAGE_DESCRIPTIONS = {
     ),
     "pooled_vs_split": (
         "one total concurrency reached two ways: slots in one process, or one slot in "
-        "each of that many processes"
+        "each of that many processes, on a nano-task body and on a durable one"
     ),
     "poll_interval": ("latency under a paced offer, plus idle claim-rate probes"),
     "sync_vs_async": "async vs sync task bodies at the same 50 ms of simulated IO",
@@ -103,6 +106,18 @@ POLL_INTERVALS = (0.05, 0.25, 1.0)
 # What the sleep tasks simulate as IO — the experiment's independent variable, since
 # its finding is only ever true AT a duration.
 SLEEP_IO_SECONDS = 0.05
+# How long a durable body holds its worker thread. The floor of the regime it stands
+# for, not the middle of it: every durable rep costs its arm's tasks over its slots
+# times this, so a full run's wall clock scales straight off it. Thirty seconds is the
+# same experiment at an agent tool call's real duration, at fifteen times the bill.
+DURABLE_SECONDS = 2.0
+# Rounds of durable work each slot runs in a rep, which is what sizes those arms: a
+# fixed task count would run for minutes at one shape and seconds at another.
+DURABLE_ROUNDS_PER_SLOT = 8
+# How often the connection probe reads `pg_stat_activity` while a fleet works. Each
+# read is a query on the harness's own connection, so this is a sampling rate rather
+# than a cost the fleet pays.
+BACKEND_SAMPLE_INTERVAL_S = 0.05
 # ~25 s per rep at the slowest mode's rate: enough for stable percentiles while
 # 3 reps x 3 modes still finish in a couple of minutes.
 PRODUCER_ENQUEUE_COUNT = 5000
@@ -161,6 +176,7 @@ class StageOptions:
     tasks: int | None = None
     duration_s: float | None = None
     io_seconds: float | None = None
+    durable_seconds: float | None = None
     # The size flags above bound the WORK; this one bounds the TOPOLOGY, which
     # otherwise tracks the host — a 128-core box spawns hundreds of workers a stage.
     max_workers: int | None = None
@@ -327,7 +343,9 @@ def run_pooled_vs_split(options: StageOptions) -> None:
     # order the arms have run in so far rather than the order they were meant to.
     run_order: list[str] = []
     extra = {
-        "shape_connections": [measure_shape_connections(spec) for spec in specs],
+        "shape_connections": measure_shape_connections(
+            specs, resolve_durable_seconds(options)
+        ),
         "run_order": run_order,
         "skipped_pairs": skipped,
     }
@@ -613,25 +631,44 @@ def build_worker_ladder(ceiling: int) -> list[int]:
 def build_pooled_vs_split_measurements(
     totals: list[int], options: StageOptions
 ) -> list[measurement.MeasurementSpec]:
-    """Both shapes of each total, pooled arm first, at the same task count.
+    """Both shapes of each total on both workloads, pooled arm first, pairs adjacent.
+
+    Two workloads because the shapes differ in what a body can hold. A nano-task body
+    is over before its thread means anything, so the ranking of processes over threads
+    was only ever measured where the answer costs least; a durable body holds a pool
+    thread — and the Django connection its ORM work opens — for seconds, which is the
+    regime django-absurd is for.
 
     Sized here rather than by `record_measurements`, which this stage cannot use: its
-    reps interleave between the arms instead of running measurement by measurement.
+    reps interleave between the arms instead of running measurement by measurement. The
+    durable arms are sized per SLOT, so every shape runs the same number of rounds
+    rather than the same number of tasks.
     """
+    durable_seconds = resolve_durable_seconds(options)
     return [
         apply_size_overrides(
             measurement.MeasurementSpec(
-                name=f"{shape}_{total}",
+                name=f"{shape}{suffix}_{total}",
                 mode="saturation",
-                task_path=NOOP_SYNC,
+                task_path=task_path,
+                task_kwargs=task_kwargs,
                 worker=runner.WorkerSpec(concurrency=concurrency),
                 workers=workers,
-                tasks=SATURATION_TASKS,
+                tasks=tasks,
                 timeout_s=SATURATION_TIMEOUT_S,
             ),
             options,
         )
         for total in totals
+        for suffix, task_path, task_kwargs, tasks in (
+            ("", NOOP_SYNC, None, SATURATION_TASKS),
+            (
+                "_durable",
+                DURABLE_WORK,
+                {"seconds": durable_seconds},
+                DURABLE_ROUNDS_PER_SLOT * total,
+            ),
+        )
         for shape, workers, concurrency in (
             ("pooled", 1, total),
             ("split", total, 1),
@@ -720,28 +757,85 @@ def build_checkpoint_cost_measurements(
 
 
 def measure_shape_connections(
-    spec: measurement.MeasurementSpec,
-) -> dict[str, t.Any]:
-    """How many Postgres backends one shape opens, as a delta across starting it.
+    specs: list[measurement.MeasurementSpec], durable_seconds: float
+) -> list[dict[str, t.Any]]:
+    """What each distinct SHAPE costs in Postgres backends, idle and working.
 
-    A delta because the harness's own connections sit on the same database. Sampled
-    before any rep, so the probe's own queries stay outside every measured phase.
+    Once per shape rather than once per measurement: connection cost is a property of
+    the topology, and the arms of a pair share theirs whatever they run.
     """
+    probed: dict[tuple[int, int], dict[str, t.Any]] = {}
+    for spec in specs:
+        shape = (spec.workers, spec.worker.concurrency)
+        if shape not in probed:
+            probed[shape] = probe_shape_backends(
+                spec.worker, spec.workers, durable_seconds
+            )
+    return list(probed.values())
+
+
+def probe_shape_backends(
+    worker: runner.WorkerSpec, workers: int, durable_seconds: float
+) -> dict[str, t.Any]:
+    """One shape's backends: the delta across starting it, then the peak under work.
+
+    A delta because the harness's own connections sit on the same database. Run before
+    any rep, so the probe's own queries stay outside every measured phase.
+
+    The busy sample runs the DURABLE workload whatever the arms it describes are
+    measured on. A body only opens a connection of its own by touching the ORM, and
+    only holds it while it runs, so a nano-task fleet has nothing for a sampler to see
+    and this number would be the idle one repeated.
+    """
+    slots = workers * worker.concurrency
+    truncate_queue_tables(worker.queue)
     before = analysis.count_client_backends()
-    procs = runner.start_workers(spec.worker, spec.workers)
+    procs = runner.start_workers(worker, workers)
     try:
-        opened = analysis.count_client_backends() - before
+        idle = analysis.count_client_backends() - before
+        # Two rounds, so every slot still has work in hand while the sample runs even
+        # where one process claimed a whole round to itself.
+        offer_durable_work(2 * slots, durable_seconds)
+        busy = sample_peak_backends(before, worker.poll_interval, durable_seconds)
     finally:
         runner.stop_workers(procs)
-    print(
-        f"{spec.name}: {opened} backends for {spec.workers} x {spec.worker.concurrency}"
-    )
+    print(f"{workers}x{worker.concurrency}: {idle} backends idle, {busy} working")
     return {
-        "measurement": spec.name,
-        "processes": spec.workers,
-        "concurrency": spec.worker.concurrency,
-        "connections": opened,
+        "shape": f"{workers}x{worker.concurrency}",
+        "processes": workers,
+        "concurrency": worker.concurrency,
+        "connections_idle": idle,
+        "connections_busy": busy,
     }
+
+
+def offer_durable_work(count: int, durable_seconds: float) -> None:
+    """Enqueue what the connection probe samples under, on the harness's OWN connection.
+
+    Not `producer.preload_tasks`, whose pool threads each open a backend of their own: a
+    closed one lingers in `pg_stat_activity` for long enough that the next sample counts
+    it, and nothing in the view separates it from a worker's. Enqueueing here spends the
+    connection the probe is already asking from, which `count_client_backends` excludes.
+    """
+    task_object = import_string(DURABLE_WORK)
+    for _ in range(count):
+        task_object.enqueue(seconds=durable_seconds)
+
+
+def sample_peak_backends(
+    baseline: int, poll_interval: float, durable_seconds: float
+) -> int:
+    """The most backends seen over one durable body's worth of sampling.
+
+    A peak and not a reading: claims land a poll apart, so the instant every slot is
+    working is not the instant the sampling starts.
+    """
+    deadline = time.monotonic() + 2 * poll_interval + 2 * durable_seconds
+    peak = 0
+    while time.monotonic() < deadline:
+        peak = max(peak, analysis.count_client_backends() - baseline)
+        time.sleep(BACKEND_SAMPLE_INTERVAL_S)
+    return peak
 
 
 def measure_idle_probes(
@@ -850,6 +944,7 @@ def resolve_options(options: StageOptions) -> dict[str, t.Any]:
     ran at.
     """
     return {
+        "durable_seconds": resolve_durable_seconds(options),
         "duration_s": options.duration_s,
         "io_seconds": resolve_io_seconds(options),
         "max_workers": bound_fleet(HOST_CPUS, options),
@@ -862,6 +957,14 @@ def resolve_io_seconds(options: StageOptions) -> float:
     """Seconds of simulated IO, read by the stage that sleeps and by the record of
     what it slept for, so the two cannot disagree about one run."""
     return SLEEP_IO_SECONDS if options.io_seconds is None else options.io_seconds
+
+
+def resolve_durable_seconds(options: StageOptions) -> float:
+    """How long a durable body holds its thread, read by the stage that runs one, by
+    the connection probe that samples under it, and by the record of both."""
+    return (
+        DURABLE_SECONDS if options.durable_seconds is None else options.durable_seconds
+    )
 
 
 def resolve_rate_ramp_seconds(options: StageOptions) -> float:
@@ -1034,6 +1137,17 @@ def main(argv: list[str] | None = None) -> None:
             f"(default: {SLEEP_IO_SECONDS:g}); no other stage sleeps."
         ),
     )
+    parser.add_argument(
+        "--durable-seconds",
+        default=None,
+        type=float,
+        help=(
+            "Seconds a durable task body holds its worker thread for, in "
+            f"pooled_vs_split's durable arms and in its connection probe (default: "
+            f"{DURABLE_SECONDS:g}). A durable rep costs this times its rounds, so "
+            "raising it to an agent tool call's real duration raises the bill with it."
+        ),
+    )
     args = parser.parse_args(argv)
     stages = args.stages or list(STAGE_NAMES)
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "settings")
@@ -1054,9 +1168,11 @@ def build_stage_options(args: argparse.Namespace) -> StageOptions:
     """The parsed flags as one stage's options, refusing a size nothing could measure.
 
     Refused here because each goes wrong silently downstream: an empty ladder writes no
-    file while reporting success, and a zero-length window still gets divided by.
+    file while reporting success, a zero-length window still gets divided by, and a
+    durable body of no duration is the nano-task arm again under a durable name.
     """
     for flag, value, floor in (
+        ("--durable-seconds", args.durable_seconds, SMALLEST_MEASURABLE_DURATION_S),
         ("--max-workers", args.max_workers, 1),
         ("--tasks", args.tasks, 1),
         ("--duration", args.duration, SMALLEST_MEASURABLE_DURATION_S),
@@ -1069,6 +1185,7 @@ def build_stage_options(args: argparse.Namespace) -> StageOptions:
         tasks=args.tasks,
         duration_s=args.duration,
         io_seconds=args.io_seconds,
+        durable_seconds=args.durable_seconds,
         max_workers=args.max_workers,
     )
 

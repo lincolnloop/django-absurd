@@ -16,6 +16,13 @@ PRODUCER_TABLE_HEADER = (
 )
 PRODUCER_TABLE_RULE = "| " + " | ".join(["---"] * 9) + " |"
 
+# What a stage measuring one shape on two workloads calls each of them. Any other task
+# path reads back as itself: a label nobody wrote is worse than the import path.
+WORKLOAD_LABELS = {
+    "tasks.noop_sync": "nano-task",
+    "tasks.run_durable_work": "durable",
+}
+
 # Printed once for the whole document rather than under each table: it is how to read
 # every row here, and nothing in it varies by stage.
 MARK_LEGEND = (
@@ -70,6 +77,7 @@ TMPFS_CLUSTER_NAME = "bench-tmpfs"
 # Named by the flag that sets each one, so the header reads back as the command that
 # produced it. Alphabetical: no ordering of these means anything to a reader.
 OPTION_FLAGS = (
+    ("--durable-seconds", "durable_seconds"),
     ("--duration", "duration_s"),
     ("--io-seconds", "io_seconds"),
     ("--max-workers", "max_workers"),
@@ -570,23 +578,29 @@ def render_shape_connections(stage: dict[str, t.Any]) -> list[str]:
         return []
     return [
         "",
-        "Postgres backends each shape opened (measured across starting its fleet):",
+        (
+            "Postgres backends each shape opened, idle and with a durable body in "
+            "every slot:"
+        ),
         "",
-        "| measurement | processes | concurrency | connections |",
-        "| --- | --- | --- | --- |",
+        "| shape | processes | concurrency | idle | working |",
+        "| --- | --- | --- | --- | --- |",
         *[
             render_row(
                 [
-                    shape["measurement"],
+                    shape["shape"],
                     str(shape["processes"]),
                     str(shape["concurrency"]),
-                    str(shape["connections"]),
+                    str(shape["connections_idle"]),
+                    str(shape["connections_busy"]),
                 ]
             )
             for shape in shapes
         ],
         "",
         describe_connection_confound(shapes),
+        "",
+        describe_working_backends(shapes),
     ]
 
 
@@ -599,7 +613,7 @@ def describe_connection_confound(shapes: list[dict[str, t.Any]]) -> str:
     opened_by_total: dict[int, set[int]] = {}
     for shape in shapes:
         total = shape["processes"] * shape["concurrency"]
-        opened_by_total.setdefault(total, set()).add(shape["connections"])
+        opened_by_total.setdefault(total, set()).add(shape["connections_idle"])
     unequal = sorted(
         total for total, opened in opened_by_total.items() if len(opened) > 1
     )
@@ -614,6 +628,36 @@ def describe_connection_confound(shapes: list[dict[str, t.Any]]) -> str:
         "the one process holding them, a split arm gets a set per process. Every ratio "
         "below is the claim path AND the connection count, and nothing here separates "
         "the two."
+    )
+
+
+def describe_working_backends(shapes: list[dict[str, t.Any]]) -> str:
+    """What a body that holds a worker thread adds to a shape's connection count.
+
+    The idle column is what an operator sizing `max_connections` off an idle fleet
+    would see, and it is the wrong number for a durable workload: a sync body runs on
+    the worker's own thread pool, Django's connections are thread-local, and ORM work
+    inside one opens a backend that lives exactly as long as the body.
+    """
+    measured = ", ".join(
+        f"{shape['shape']} {shape['connections_idle']} -> {shape['connections_busy']}"
+        for shape in shapes
+    )
+    per_slot = {
+        (shape["connections_busy"] - shape["connections_idle"])
+        / (shape["processes"] * shape["concurrency"])
+        for shape in shapes
+    }
+    verdict = (
+        "one more backend per busy slot, so a worker process holds its concurrency "
+        "plus two while every slot is working"
+        if per_slot == {1.0}
+        else "a different number per busy slot on each shape, so read the column and "
+        "not a rule"
+    )
+    return (
+        f"A durable body raised that count ({measured}): {verdict}. Size a server's "
+        "`max_connections` off the working column, never the idle one."
     )
 
 
@@ -863,20 +907,24 @@ def describe_depth_confound(
 
 
 def build_pooled_vs_split_lines(measurements: list[dict[str, t.Any]]) -> list[str]:
-    """`split / pooled` at every total both shapes of the pair were measured at.
+    """`split / pooled` at every total and workload both shapes were measured at.
 
     Paired on the shapes themselves rather than on the measurement names, so the
-    pairing cannot come apart from what was actually run.
+    pairing cannot come apart from what was actually run — and on the workload as well
+    as the total, because the same total is measured on a nano-task body and on a
+    durable one and one ratio cannot stand for both.
     """
-    paired: dict[int, dict[str, dict[str, t.Any]]] = {}
+    paired: dict[tuple[int, str], dict[str, dict[str, t.Any]]] = {}
     for entry in measurements:
         spec = entry["spec"]
         shape = "pooled" if spec["workers"] == 1 else "split"
         total = spec["workers"] * spec["worker"]["concurrency"]
-        paired.setdefault(total, {})[shape] = entry
+        paired.setdefault((total, describe_workload(spec["task_path"])), {})[shape] = (
+            entry
+        )
     complete = [
-        (total, pair)
-        for total, pair in sorted(paired.items())
+        (key, pair)
+        for key, pair in sorted(paired.items())
         if {"pooled", "split"} <= pair.keys()
         and pair["pooled"]["median"].get(THROUGHPUT_KEY, 0.0)
     ]
@@ -889,11 +937,20 @@ def build_pooled_vs_split_lines(measurements: list[dict[str, t.Any]]) -> list[st
         "Split / pooled throughput at the same total concurrency:",
         "",
         *[
-            f"- total {total}: "
+            f"- total {total}, {workload} bodies: "
             + describe_quotient(pair["split"], pair["pooled"], THROUGHPUT_KEY, 1, "x")
-            for total, pair in complete
+            for (total, workload), pair in complete
         ],
     ]
+
+
+def describe_workload(task_path: str) -> str:
+    """What a measurement's task path is a workload OF, for a line that pairs on it.
+
+    The path itself would do, and reads as noise in a bullet whose subject is the
+    regime rather than the import.
+    """
+    return WORKLOAD_LABELS.get(task_path, task_path)
 
 
 def build_async_ratio_lines(measurements: list[dict[str, t.Any]]) -> list[str]:

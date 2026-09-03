@@ -27,20 +27,23 @@ and it is idempotent, so just run it every time.
 All eight stages took about 40 minutes on the reference machine (14 cores, at
 `--max-workers 10 --reps 3`), `latency_under_load` about 15 of them. Name stages to run
 only those; `--tasks`, `--duration`, `--reps` and `--max-workers` size them down to a
-dry run, and `--io-seconds` sets how long `sync_vs_async` pretends to do IO for. Results
-land in `benchmarks/results/`, which is git-ignored — the numbers belong to the machine
-that produced them.
+dry run, `--io-seconds` sets how long `sync_vs_async` pretends to do IO for, and
+`--durable-seconds` sets how long `pooled_vs_split`'s durable arms hold a worker thread
+(2 s by default — raise it to 30 to measure at an agent tool call's real duration, and
+expect that stage to cost roughly fifteen times as much). Results land in
+`benchmarks/results/`, which is git-ignored — the numbers belong to the machine that
+produced them.
 
-| stage                | what it answers                                             |
-| -------------------- | ----------------------------------------------------------- |
-| `worker_knobs`       | what `--concurrency`, `--batch-size` and async dispatch buy |
-| `process_scaling`    | how throughput scales with worker processes                 |
-| `pooled_vs_split`    | one total concurrency, reached two ways                     |
-| `poll_interval`      | what `--poll-interval` costs and buys                       |
-| `sync_vs_async`      | whether async task bodies beat sync ones                    |
-| `checkpoint_cost`    | what a `ctx.step` checkpoint costs                          |
-| `producer_ceiling`   | how fast the enqueue side can go                            |
-| `latency_under_load` | end-to-end latency at fractions of a sustainable offer rate |
+| stage                | what it answers                                                  |
+| -------------------- | ---------------------------------------------------------------- |
+| `worker_knobs`       | what `--concurrency`, `--batch-size` and async dispatch buy      |
+| `process_scaling`    | how throughput scales with worker processes                      |
+| `pooled_vs_split`    | one total concurrency, reached two ways, on short and long tasks |
+| `poll_interval`      | what `--poll-interval` costs and buys                            |
+| `sync_vs_async`      | whether async task bodies beat sync ones                         |
+| `checkpoint_cost`    | what a `ctx.step` checkpoint costs                               |
+| `producer_ceiling`   | how fast the enqueue side can go                                 |
+| `latency_under_load` | end-to-end latency at fractions of a sustainable offer rate      |
 
 Stages run in dependency order whatever order you type them in, but nothing runs a
 prerequisite you did not name: `process_scaling`, `poll_interval` and `checkpoint_cost`
@@ -65,20 +68,13 @@ The defaults need about 5 GB free in the Docker VM (1 GB of shared buffers plus 
 tmpfs). Set any of these in the shell that starts `db_bench`, then restart it and re-run
 `migrate`:
 
-| variable                | default | change it when                                          |
-| ----------------------- | ------- | ------------------------------------------------------- |
-| `BENCH_SHARED_BUFFERS`  | `1GB`   | the Docker VM has under ~4 GB free — try `256MB`        |
-| `BENCH_MAX_CONNECTIONS` | `100`   | you run over ~40 worker processes (2 backends each)     |
-| `BENCH_TMPFS_SIZE`      | `4g`    | the VM is small — `512m` covers a single stage          |
-| `BENCH_CPUS`            | unset   | you want the server pinned to N cores; unset = no limit |
-| `BENCH_MEMORY`          | unset   | you want the server's memory capped; unset = no limit   |
-
-**Two backends per worker process is the count for task bodies like the ones here, which
-touch no ORM.** Django's connections are thread-local and a worker runs sync bodies on a
-thread pool sized to `--concurrency`, so a body that queries the ORM opens one more per
-busy thread and holds it while the body runs: budget `--concurrency + 2` per process for
-that workload — 126 connections at 7 processes running the concurrency 16 recommended
-below.
+| variable                | default | change it when                                                                          |
+| ----------------------- | ------- | --------------------------------------------------------------------------------------- |
+| `BENCH_SHARED_BUFFERS`  | `1GB`   | the Docker VM has under ~4 GB free — try `256MB`                                        |
+| `BENCH_MAX_CONNECTIONS` | `100`   | you run many worker processes — each holds 2 backends idle, `--concurrency + 2` working |
+| `BENCH_TMPFS_SIZE`      | `4g`    | the VM is small — `512m` covers a single stage                                          |
+| `BENCH_CPUS`            | unset   | you want the server pinned to N cores; unset = no limit                                 |
+| `BENCH_MEMORY`          | unset   | you want the server's memory capped; unset = no limit                                   |
 
 Too small a tmpfs does not fail at startup: the run dies partway through on a Postgres
 write error, so raise it if a long run aborts. Every value above is recorded in the
@@ -111,6 +107,10 @@ Under each saturation table is a commit-budget line saying what limited that row
 `client-bound` is our Python, `connection-bound` is Postgres, `unresolved` means the
 calibration could not tell.
 
+`pooled_vs_split` adds a backend table with two columns: `idle` is what its fleet opened
+with nothing to do, `working` is what it held with a long task running in every slot.
+Size a server's `max_connections` off the second one.
+
 ## What it found
 
 Measured on one 14-core laptop with the data directory in RAM, over four runs of one
@@ -133,6 +133,11 @@ commit; every range below is across those runs. Read the directions, not the rat
 - **A queue that is deeper is slower.** Throughput rises as a backlog drains, a fitted
   median +15.7% within a rep over 150 reps, so a saturation number averages a curve and
   does not compare across `--tasks` values.
+- **A long task holds a Postgres connection of its own the whole time it runs.** A
+  worker process opens 2 backends while its slots are idle and one more for every slot
+  running a task that touches the database, so it holds up to `--concurrency + 2` — 18
+  at the concurrency 16 above, which is five worker processes against a default
+  `max_connections` of 100. This is a count, not a rate, so it holds on any machine.
 
 ## Caveats that change what you can do with a number
 
@@ -151,12 +156,10 @@ the same commit, 25 shared measurements: median CV 4.7%, mean 5.1%, worst 12.5%,
 systematically below the other two. Under about 12% is not evidence of anything, and a
 whole run reading low is usually the working point it inherited, not the machine.
 
-**Every workload here is a nano-task.** The five bodies are two no-ops, two sleeps and a
-4-step workflow, driven at the highest rate a fleet will take. django-absurd is mostly
-used for durable agent tool calls and long-running work — seconds to minutes per task,
-checkpointed, often suspended — where a 1.5 ms claim amortises into nothing. These
-tables rank configurations for THIS regime; they do not characterise that one.
-[`CLAUDE.md`](CLAUDE.md) says which findings carry over.
+**Most of what is above was measured on tasks that finish in microseconds.** Only
+`pooled_vs_split` also runs the long, database-touching workload django-absurd is
+primarily for; every other stage uses an empty task body, and its advice is advice about
+that regime. `--durable-seconds` is how you take the long arms to a realistic duration.
 
 **Measure on a quiet machine on AC power.** The macOS indexer alone was worth 1-1.4
 cores sustained. It spoils the saturation stages, which drive the box to its limit, and
@@ -173,11 +176,12 @@ column first; two runs' rows only compare if their ramps agreed.
 `stages.py`, `measurement.py`, `producer.py`, `runner.py`, `analysis.py` and `report.py`
 are the pipeline above. Beside them, `settings.py` (Django settings: `DATABASE_URL`,
 else `PGPORT_BENCH` against `absurd_bench`), `manage.py` (for `migrate` and the worker
-children), `tasks.py` (the five workloads: two no-ops, two sleeps, one 4-step workflow),
-`host.py` (host context capture and the suspension guard), and `pyproject.toml` plus
-`uv.lock` (the harness's own pinned uv project, django-absurd by path).
-[`CLAUDE.md`](CLAUDE.md) holds the reasoning: the measurement model, the results-file
-schema, and every number's evidence.
+children), `tasks.py` (the six workloads: two no-ops, two sleeps, one 4-step workflow
+and one long body that reads and writes rows), `workload/` (the one-model Django app
+that long body works on), `host.py` (host context capture and the suspension guard), and
+`pyproject.toml` plus `uv.lock` (the harness's own pinned uv project, django-absurd by
+path). [`CLAUDE.md`](CLAUDE.md) holds the reasoning: the measurement model, the
+results-file schema, and every number's evidence.
 
 ## Running the tests
 

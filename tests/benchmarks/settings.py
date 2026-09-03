@@ -1,6 +1,7 @@
 import os
 import typing as t
 
+import tests.settings
 from tests.settings import *  # noqa: F403
 
 # The harness's own queue, declared here rather than reusing the main suite's: the
@@ -21,3 +22,9 @@ DATABASES = {
     "default": DATABASES["default"]  # noqa: F405
     | {"TEST": {"NAME": f"test_{os.environ.get('PGDATABASE', 'postgres')}_benchmarks"}},
 }
+
+# The harness's own workload app, holding the model a durable task body reads and
+# writes. The `absurd_worker` children run on `benchmarks/settings.py` against THIS
+# suite's database, so its table has to be migrated into this one. Named through the
+# module rather than off the star import, which flake8 cannot see a name through.
+INSTALLED_APPS = [*tests.settings.INSTALLED_APPS, "workload"]

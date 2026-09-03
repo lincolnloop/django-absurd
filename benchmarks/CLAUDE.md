@@ -79,6 +79,10 @@ measured that: `measure_shape_connections` counts backends across starting a fle
 runs no task, so it observes worker STARTUP connections and cannot see a body-opened
 one.
 
+That last row is a property of an EMPTY body, not of a worker: a body that touches the
+ORM opens one more backend per busy slot and holds it while it runs
+([the durable workload](#the-durable-workload-and-the-backends-it-holds)).
+
 From `pg_stat_statements` with `track=all`, at `worker_knobs` `concurrency_1` — the only
 shape where the client remainder is exact
 ([the measurement model](#the-measurement-model)). Each figure is a range over the
@@ -387,6 +391,73 @@ Wall-clock cost is not why the volume went, though. The reason is that no single
 probe characterises a run on it: one run opened at 615 c/s and closed at 2,100, a
 ceiling that moved 3.4x DURING the run.
 
+## The durable workload, and the backends it holds
+
+Every workload here but one finishes in microseconds and touches no ORM, so every
+finding above is a finding about the NANO-TASK regime. django-absurd's primary use case
+is the other one: a durable agent tool call runs for seconds to minutes and reads and
+writes application rows. `tasks.run_durable_work` is that regime — it inserts a
+`workload.WorkItem`, spends `--durable-seconds` updating and re-reading it, and clears
+it. Its own app and its own table, because a body writing into Absurd's tables would
+move the very columns every metric here is defined on; cleared on the way out, because a
+table that only grows makes every later rep of a measurement slower for a reason no
+column records.
+
+**A sync body holds a Postgres backend for as long as it runs.**
+`django_absurd/worker.py`'s `open_worker_runtime` installs a
+`ThreadPoolExecutor(max_workers=concurrency)` as the loop's default executor, and every
+sync task body lands on it through `asyncio.to_thread`. Django's connections are
+thread-local, so the first ORM statement in a body opens a THIRD backend on that thread,
+held until the body returns and `close_old_connections` closes it again. Measured by
+`pooled_vs_split`'s connection probe, on the suites' plain `db` server rather than in a
+benchmark run — these are counts, so no server's tuning changes them:
+
+    shape   idle backends   every slot working
+    1x4     2               6
+    4x1     8               12
+
+One more per busy slot, exactly. So a worker process holds up to **`--concurrency` + 2**
+backends and a fleet holds `processes x (concurrency + 2)`: 18 per process at the
+concurrency 16 the nano-task ladder recommends, which is five processes against a stock
+`max_connections` of 100. A nano-task fleet never reaches that count — an empty body
+opens nothing — so an idle-fleet reading is the whole story there and is the wrong
+number to size a server against anywhere else.
+
+**The probe samples while work is running, which is the only time that count exists.**
+It starts the fleet, reads the idle delta, offers two rounds of durable work per slot,
+then takes the peak of `pg_stat_activity` every 50 ms for
+`2 x poll_interval + 2 x --durable-seconds`. Two rounds so every slot still has work in
+hand while the sample runs even where one process claimed a whole round to itself. It
+runs the durable workload whatever the arm it describes is measured on: a nano-task body
+never holds a thread long enough for a sampler to see, so that column would be the idle
+one repeated. And it is per SHAPE, not per measurement — connection cost is a property
+of the topology, and the arms of a pair share theirs whatever they run.
+
+Its offer goes through the harness's OWN connection rather than `preload_tasks`, whose
+pool threads each open a backend: a closed backend lingers in `pg_stat_activity` long
+enough for the next sample to count it, and nothing in the view separates a producer's
+from a worker's. Measured with the ORM taken out of the durable body, where the true
+answer is the idle count repeated: the threaded preloader read `1x4 2 -> 3` and
+`4x1 8 -> 9` on the first probe of each shape and the honest `2 -> 2` and `8 -> 8` on
+the second.
+
+**`pooled_vs_split` is the only stage with a durable arm.** Both totals are measured on
+both workloads — `pooled_4`/`split_4` against `pooled_durable_4`/`split_durable_4` — and
+the report ranks the shapes once per workload, because a body that holds a thread and
+one that does not are two different questions about the same topology. Everything else
+here — the concurrency ladder, the process ladder, the poll intervals, the checkpoint
+multiplier, the rate rungs — is still nano-task only, so read each of them as a finding
+about that regime and nothing else. The durable arms are sized per SLOT
+(`DURABLE_ROUNDS_PER_SLOT` rounds each) rather than at a fixed task count: a fixed count
+runs for minutes at one shape and seconds at the other.
+
+**`--durable-seconds` defaults to 2, the FLOOR of the regime rather than the middle of
+it.** A durable rep costs its rounds times this value, so the flag is that stage's whole
+wall clock. `--durable-seconds 30` is the same experiment at an agent tool call's real
+duration and roughly fifteen times the bill. Below `SMALLEST_MEASURABLE_DURATION_S` it
+is refused: a body that holds nothing is the nano-task arm again, recorded under a
+durable name.
+
 ## Incidental, worth raising upstream
 
 - `r_bench` bloats and `t_bench` does not: 10,000 dead tuples against 5,000 live, versus
@@ -428,15 +499,18 @@ cumulative state or a per-run latch. A sawtooth is contention, and neither.
 it covers claim, completion and the driver's drain polling and excludes the preload.
 Throughput times that is the commit rate the run asked of the database, and the report
 prints it under each saturation table — divided by the worker count first, because **the
-ceiling is one connection's**. A worker process's claims all ride the SDK's one
-connection however many threads are behind it — so its claim traffic funnels through a
-single backend whatever its `--concurrency`, while the box has several times that
-capacity spread across more of them; concurrent backends share an fsync through group
-commit, so that scaling is sublinear (measured once on the volume in its fast regime:
-1,953 c/s at one connection, 4,748 at four, 13,238 at sixteen — read the shape, not the
-levels, and note that a single-connection ceiling is a per-run measurement rather than a
-constant of the machine). Comparing a fleet's total against one connection's ceiling
-would call an eight-process measurement saturated while each of its connections idled.
+ceiling is one connection's**. A worker process with idle slots opens exactly two
+backends whatever its `--concurrency` (the SDK's connection and Django's), and its CLAIM
+traffic funnels through the SDK's one however many threads are behind it — a body that
+touches the ORM opens a third of its own, which does no claiming and is counted
+separately ([the durable workload](#the-durable-workload-and-the-backends-it-holds)).
+The box has several times that capacity spread across more of them; concurrent backends
+share an fsync through group commit, so that scaling is sublinear (measured once on the
+volume in its fast regime: 1,953 c/s at one connection, 4,748 at four, 13,238 at sixteen
+— read the shape, not the levels, and note that a single-connection ceiling is a per-run
+measurement rather than a constant of the machine). Comparing a fleet's total against
+one connection's ceiling would call an eight-process measurement saturated while each of
+its connections idled.
 
 So a row is **connection-bound** when its per-connection commit rate is near the ceiling
 — that number belongs to Postgres and moves on another machine — and **client-bound**
@@ -522,6 +596,17 @@ wait, a clean one included: a worker that returned 0 has stopped claiming as tho
 as one that died. `stop_workers` then raises the children's own crash over that refusal
 on the way out, so what a reader sees first is the failure and not its symptom.
 
+**A fleet starts all at once, because the queue is already full when it does.**
+`start_workers` launches every child before waiting for any child's readiness line. A
+saturation rep preloads its backlog BEFORE starting the fleet, so the first child begins
+draining while the rest are still starting — and throughput is taken over the completion
+timestamps, trimmed p10-p90, which puts those early completions inside the measured
+window at a fraction of the fleet that was asked for. Waiting for each child in turn
+stretched that stretch by one child's whole start-up per extra process and read every
+multi-process rung low, the more so the more processes it had. The waits are still
+written one after another; the children are already running by then, so each one that
+reported readiness during an earlier wait returns at once.
+
 **The summary rep is the unluckier middle, and which one that is depends on the
 metric.** `pick_median_rep` sorts the valid reps by the ranking key and, at an even rep
 count, takes the WORSE of the two middles — the lower throughput, the lower enqueue
@@ -602,22 +687,23 @@ rate: the drain rate of the rung it picks is only where the ramp starts climbing
 per-worker efficiency is still readable, then quarter, half, three-quarter and full.
 Eight cores gives 1, 2, 4, 6, 8; thirty-two gives 1, 2, 8, 16, 24, 32.
 
-**`--max-workers` is the size flag for topology.** `--tasks`, `--duration` and
-`--io-seconds` size the work; nothing sized the fleet, and the fleet tracked the host.
-Thirty-two cores means 83 worker processes spawned across `process_scaling` alone, and
-128 cores means 323. `--max-workers N` lowers the ceiling the ladder is derived from, so
-a bounded ladder is still a ladder rather than one rung repeated: `--max-workers 3`
-gives 1, 2, 3. The same bound caps the `poll_interval` idle probes, drops whole any
-`pooled_vs_split` pair whose split arm it cannot spawn, and narrows which
-`process_scaling` rung `latency_under_load` may calibrate from, so the offered rate
-stays a rate that fleet actually measured. Bound both stages together: `--max-workers`
-on `latency_under_load` alone reads back a `stage_process_scaling.json` measured on a
-larger fleet.
+**`--max-workers` is the size flag for topology.** `--tasks`, `--duration`,
+`--io-seconds` and `--durable-seconds` size the work; nothing sized the fleet, and the
+fleet tracked the host. Thirty-two cores means 83 worker processes spawned across
+`process_scaling` alone, and 128 cores means 323. `--max-workers N` lowers the ceiling
+the ladder is derived from, so a bounded ladder is still a ladder rather than one rung
+repeated: `--max-workers 3` gives 1, 2, 3. The same bound caps the `poll_interval` idle
+probes, drops whole any `pooled_vs_split` pair whose split arm it cannot spawn, and
+narrows which `process_scaling` rung `latency_under_load` may calibrate from, so the
+offered rate stays a rate that fleet actually measured. Bound both stages together:
+`--max-workers` on `latency_under_load` alone reads back a `stage_process_scaling.json`
+measured on a larger fleet.
 
 A size below what a stage can measure is refused before anything runs, rather than
 crashing partway or writing a number describing work that never happened: fewer than one
-worker, fewer than one task, or a rate window of no length. `--io-seconds 0` stays legal
-— no simulated IO is a real point on that experiment's axis.
+worker, fewer than one task, a rate window of no length, or a durable body of no
+duration, which is the nano-task arm again under a durable name. `--io-seconds 0` stays
+legal — no simulated IO is a real point on that experiment's axis.
 
 **`pooled_vs_split` measures the diagonal the other two miss.** `worker_knobs` sweeps
 concurrency at one process and `process_scaling` sweeps processes at one concurrency, so
@@ -625,8 +711,10 @@ the two ways of reaching the SAME total were never put against each other: `pool
 1x4, `split_4` is 4x1, and the same for 8. The shapes are fixed twice over — not
 calibrated from an earlier stage, since configuring one arm from a winner would make the
 pair unequal in a second way, and not derived from the host, because a shape that means
-something different on every machine cannot be compared across machines. Three mechanics
-matter:
+something different on every machine cannot be compared across machines. Each total runs
+on both workloads, so the stage answers the diagonal twice
+([the durable workload](#the-durable-workload-and-the-backends-it-holds)). Three
+mechanics matter:
 
 - **A pair is skipped whole, never half-run.** Running `1x8` against a bounded `4x1`
   would be an unequal comparison presented as an equal one, so neither arm runs and both
@@ -638,14 +726,14 @@ matter:
   database state only grows across a stage; a fixed order would hand one arm of every
   pair the emptier tables, which is exactly how an earlier control in this repo came to
   be invalidated. The order they ran in is recorded and printed.
-- **Connection count is measured, because it is a confound.** `1x4` reaches four-way
-  concurrency on two backends and `4x1` reaches it on eight, so the shapes differ in
-  connection count as well as in claim path, and the report says so above the ratio
-  rather than leaving it to be read as the claim path alone. Measured per shape as a
-  delta across starting the fleet, before any rep runs, so what it counts is what a
-  WORKER opens at startup: the day a pooled worker opens a connection per slot the same
-  line will say so. A connection a task BODY opens is invisible to it —
-  `measure_shape_connections` never enqueues or runs a task.
+- **Connection count is measured, because it is a confound.** Idle, `1x4` reaches
+  four-way concurrency on two backends and `4x1` reaches it on eight, so the shapes
+  differ in connection count as well as in claim path, and the report says so above the
+  ratio rather than leaving it to be read as the claim path alone. The delta across
+  starting the fleet is only half of it: the probe then runs durable work and takes the
+  peak, so the report also carries what a body that holds a thread costs — 6 and 12 for
+  those same two shapes. The day a pooled worker opens a claim connection per slot the
+  same line will say the comparison is clean.
 
 ## The results files
 
@@ -657,18 +745,19 @@ beside the JSON so a run and its reading stay together, stamped because a second
 would otherwise overwrite the first reading while its own JSON sat right there.
 
 **Each file says which configuration produced it.** Beside `measurements` sits an
-`options` block holding `--tasks`, `--duration`, `--io-seconds`, `--max-workers` and
-`--reps` RESOLVED — an unset flag records what the run actually used, not a null to go
-look up. `--max-workers` is the one nothing else recovers: unset it tracks the host, so
-an unbounded ten-core run and a fourteen-core run bounded to ten write the same ladder.
-`--tasks` and `--duration` stay `null`, meaning the stage sized itself — neither has one
-default to name, and every measurement's `spec` carries the size it ran at. The whole
-set prints on one header line, and a flag two stage files disagree about reads as
-`mixed (8, 60)`, the way a mixed git SHA does. A file written before this block existed
-has none and the report will not render it; re-measure rather than hand-adding one. The
-same goes for one written before a measurement carried `invalid`, `unstable`, `cv` and
-its rep endpoints: it records a single `flagged` the report no longer reads. Results
-from before the stages were named cannot be diffed against these either.
+`options` block holding `--tasks`, `--duration`, `--io-seconds`, `--durable-seconds`,
+`--max-workers` and `--reps` RESOLVED — an unset flag records what the run actually
+used, not a null to go look up. `--max-workers` is the one nothing else recovers: unset
+it tracks the host, so an unbounded ten-core run and a fourteen-core run bounded to ten
+write the same ladder. `--tasks` and `--duration` stay `null`, meaning the stage sized
+itself — neither has one default to name, and every measurement's `spec` carries the
+size it ran at. The whole set prints on one header line, and a flag two stage files
+disagree about reads as `mixed (8, 60)`, the way a mixed git SHA does. A file written
+before this block existed has none and the report will not render it; re-measure rather
+than hand-adding one. The same goes for one written before a measurement carried
+`invalid`, `unstable`, `cv` and its rep endpoints: it records a single `flagged` the
+report no longer reads. Results from before the stages were named cannot be diffed
+against these either.
 
 **Each file also says what one connection to this server could commit.** Beside
 `options` sit `commit_ceiling_durable`, `commit_ceiling_nondurable` and
@@ -761,8 +850,10 @@ not. `null` means nothing counted statements on that server, which is not the sa
 nothing having run.
 
 **A stage that compares two topologies records how it compared them.**
-`stage_pooled_vs_split.json` carries `shape_connections` (the backends each shape
-opened), `run_order` (the arms as they actually ran, which is what says no arm always
+`stage_pooled_vs_split.json` carries `shape_connections` — one row per distinct shape,
+`{shape, processes, concurrency, connections_idle, connections_busy}`, the last two
+being the delta across starting that fleet and the peak while a durable body holds every
+slot — plus `run_order` (the arms as they actually ran, which is what says no arm always
 went first) and `skipped_pairs` (the pairs the worker bound refused, and the bound).
 Empty `measurements` with non-empty `skipped_pairs` is a stage asked for more processes
 than it was allowed to spawn, not a crashed run.

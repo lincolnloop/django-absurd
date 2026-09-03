@@ -27,6 +27,7 @@ HOST = {
 }
 
 OPTIONS = {
+    "durable_seconds": 2.0,
     "duration_s": None,
     "io_seconds": 0.05,
     "max_workers": 8,
@@ -138,8 +139,8 @@ HEADER = (
     "\n"
     "- git sha: `deadbeef`\n"
     "- captured at: 2026-08-27T12:00:00+00:00\n"
-    "- options: --duration stage default, --io-seconds 0.05, --max-workers 8, "
-    "--reps 3, --tasks stage default\n"
+    "- options: --durable-seconds 2, --duration stage default, --io-seconds 0.05, "
+    "--max-workers 8, --reps 3, --tasks stage default\n"
     "- host cpu count: 8, load average (1m): 0.50\n"
     "- server: shared_buffers 128MB, max_connections 100, requested container "
     "limits: cpus unknown, memory unknown\n"
@@ -735,8 +736,9 @@ def test_reports_mixed_options_when_stages_were_run_at_different_sizes(
     rendered = render(capsys, tmp_path, "worker_knobs", entries)
 
     assert (
-        "- options: --duration stage default, --io-seconds 0.05, --max-workers 8, "
-        "--reps mixed (3, 10), --tasks mixed (60, stage default)\n"
+        "- options: --durable-seconds 2, --duration stage default, "
+        "--io-seconds 0.05, --max-workers 8, --reps mixed (3, 10), "
+        "--tasks mixed (60, stage default)\n"
     ) in rendered
 
 
@@ -1508,7 +1510,7 @@ def test_renders_split_over_pooled_throughput_for_pooled_vs_split(
     assert (
         "Split / pooled throughput at the same total concurrency:\n"
         "\n"
-        "- total 4: 1.50x (reps 1.23-1.83x)\n"
+        "- total 4, nano-task bodies: 1.50x (reps 1.23-1.83x)\n"
     ) in rendered
     assert (
         "Arms ran in this order, reversed each rep so neither always went first: "
@@ -1516,42 +1518,97 @@ def test_renders_split_over_pooled_throughput_for_pooled_vs_split(
     ) in rendered
 
 
+def test_ranks_the_two_shapes_once_per_workload_they_were_measured_on(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """One total, two workloads, two rankings — never one standing for both.
+
+    A nano-task body is over before its thread means anything and a durable one holds
+    that thread for seconds, so which shape wins is a separate question per workload.
+    Pairing on the total alone let whichever arm was recorded last silently replace the
+    other and print one ratio under a heading that covers two experiments.
+    """
+    rendered = render(
+        capsys,
+        tmp_path,
+        "pooled_vs_split",
+        [
+            *build_pooled_vs_split_entries(),
+            build_measurement(
+                "pooled_durable_4",
+                {
+                    "workers": 1,
+                    "worker": POOLED_WORKER,
+                    "task_path": "tasks.run_durable_work",
+                },
+                {"throughput_per_s": 2.0},
+            ),
+            build_measurement(
+                "split_durable_4",
+                {
+                    "workers": 4,
+                    "worker": SPLIT_WORKER,
+                    "task_path": "tasks.run_durable_work",
+                },
+                {"throughput_per_s": 2.2},
+            ),
+        ],
+    )
+
+    assert (
+        "Split / pooled throughput at the same total concurrency:\n"
+        "\n"
+        "- total 4, durable bodies: 1.10x\n"
+        "- total 4, nano-task bodies: 1.50x (reps 1.23-1.83x)\n"
+    ) in rendered
+
+
 def test_says_the_two_shapes_of_a_pair_opened_different_numbers_of_backends(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    """A worker process opens two backends whatever its concurrency, so the two ways
-    of reaching one total concurrency do not reach it on the same connections.
+    """An idle worker process opens two backends whatever its concurrency, so the two
+    ways of reaching one total concurrency do not reach it on the same connections.
 
     That is a confound in the stage's own comparison and the report says so rather
-    than leaving a ratio to be read as the claim path alone.
+    than leaving a ratio to be read as the claim path alone. Beside it, what a body
+    that holds a thread adds: one backend per busy slot, which is the number an
+    operator has to size `max_connections` against.
     """
     shapes = [
         {
-            "measurement": "pooled_4",
+            "shape": "1x4",
             "processes": 1,
             "concurrency": 4,
-            "connections": 2,
+            "connections_idle": 2,
+            "connections_busy": 6,
         },
         {
-            "measurement": "split_4",
+            "shape": "4x1",
             "processes": 4,
             "concurrency": 1,
-            "connections": 8,
+            "connections_idle": 8,
+            "connections_busy": 12,
         },
     ]
 
     assert (
-        "Postgres backends each shape opened (measured across starting its fleet):\n"
+        "Postgres backends each shape opened, idle and with a durable body in every "
+        "slot:\n"
         "\n"
-        "| measurement | processes | concurrency | connections |\n"
-        "| --- | --- | --- | --- |\n"
-        "| pooled_4 | 1 | 4 | 2 |\n"
-        "| split_4 | 4 | 1 | 8 |\n"
+        "| shape | processes | concurrency | idle | working |\n"
+        "| --- | --- | --- | --- | --- |\n"
+        "| 1x4 | 1 | 4 | 2 | 6 |\n"
+        "| 4x1 | 4 | 1 | 8 | 12 |\n"
         "\n"
         "At total 4 the two shapes opened different numbers of backends — a pooled "
         "arm's slots share the connections of the one process holding them, a split "
         "arm gets a set per process. Every ratio below is the claim path AND the "
         "connection count, and nothing here separates the two.\n"
+        "\n"
+        "A durable body raised that count (1x4 2 -> 6, 4x1 8 -> 12): one more backend "
+        "per busy slot, so a worker process holds its concurrency plus two while every "
+        "slot is working. Size a server's `max_connections` off the working column, "
+        "never the idle one.\n"
     ) in render(
         capsys,
         tmp_path,
@@ -1567,26 +1624,34 @@ def test_says_a_pair_whose_shapes_opened_the_same_backends_is_clean(
     """The other reading of the same measurement, which is why it is measured.
 
     If a pooled arm ever opens a connection per slot the ratio becomes the claim path
-    and nothing else, and the report has to be able to say that too.
+    and nothing else, and the report has to be able to say that too. The same goes for
+    the working column: a fleet that did not open one backend per busy slot is read off
+    the column rather than off a rule that no longer holds.
     """
     shapes = [
         {
-            "measurement": "pooled_4",
+            "shape": "1x4",
             "processes": 1,
             "concurrency": 4,
-            "connections": 8,
+            "connections_idle": 8,
+            "connections_busy": 8,
         },
         {
-            "measurement": "split_4",
+            "shape": "4x1",
             "processes": 4,
             "concurrency": 1,
-            "connections": 8,
+            "connections_idle": 8,
+            "connections_busy": 12,
         },
     ]
 
     assert (
         "Both shapes of every pair opened the same number of backends, so a ratio "
         "below is the claim path and nothing else.\n"
+        "\n"
+        "A durable body raised that count (1x4 8 -> 8, 4x1 8 -> 12): a different "
+        "number per busy slot on each shape, so read the column and not a rule. Size a "
+        "server's `max_connections` off the working column, never the idle one.\n"
     ) in render(
         capsys,
         tmp_path,

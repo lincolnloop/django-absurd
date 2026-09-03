@@ -24,6 +24,12 @@ MEASURABLE_TASKS = "60"
 # p10-p90 window a throughput divides by is empty and every measurement in a ladder
 # reports zero, however the worker is configured.
 UNMEASURABLE_TASKS = "1"
+# A durable body long enough to hold a thread and no longer, for the stages that are
+# about something else: the production default would put minutes on this suite.
+BRIEF_DURABLE_SECONDS = "0.05"
+# Long enough that the connection probe's sampler, which reads `pg_stat_activity`
+# every 50 ms, cannot miss the window in which every slot is working.
+SAMPLEABLE_DURABLE_SECONDS = "0.5"
 
 
 def test_runs_the_producer_stage_at_the_size_it_was_asked_for(
@@ -73,11 +79,11 @@ def test_records_the_configuration_a_stage_was_run_at(
     host and a run bounded to ten on a fourteen-core one.
 
     Resolved rather than raw, so an unset flag records what it fell back to instead of
-    a null the reader has to go look up — `--io-seconds` was not passed here and the
-    file records the 0.05 s the harness used. `--duration` is the one with no single
-    default to resolve to (a rate stage offers for 60 s, an idle probe runs for 30), so
-    it records that the stage sized itself and each measurement's spec carries what it
-    actually ran at.
+    a null the reader has to go look up — neither `--io-seconds` nor `--durable-seconds`
+    was passed here and the file records the 0.05 s and the 2 s the harness used.
+    `--duration` is the one with no single default to resolve to (a rate stage offers
+    for 60 s, an idle probe runs for 30), so it records that the stage sized itself and
+    each measurement's spec carries what it actually ran at.
     """
     stages.main(
         [
@@ -94,6 +100,7 @@ def test_records_the_configuration_a_stage_was_run_at(
     )
 
     assert utils.read_stage(tmp_path, "producer_ceiling")["options"] == {
+        "durable_seconds": 2.0,
         "duration_s": None,
         "io_seconds": 0.05,
         "max_workers": 1,
@@ -590,6 +597,7 @@ def test_records_how_long_each_measured_phase_took(tmp_path: pathlib.Path) -> No
 @pytest.mark.parametrize(
     ("flag", "value", "floor"),
     [
+        ("--durable-seconds", "0", "0.001"),
         ("--duration", "0", "0.001"),
         ("--max-workers", "-3", "1"),
         ("--max-workers", "0", "1"),
@@ -608,7 +616,8 @@ def test_refuses_a_size_that_leaves_a_stage_nothing_to_measure(
     Each goes wrong in its own way and none announces it: an empty ladder writes no
     results file while reporting success, a negative fleet divides an idle probe's
     claim rate into a rate no worker produced, no tasks leaves a percentile nothing to
-    sort, and a zero-length window is what a rate divides by.
+    sort, a zero-length window is what a rate divides by, and a durable body of no
+    duration is the nano-task arm again under a durable name.
     """
     with pytest.raises(SystemExit) as exit_info:
         stages.main(["process_scaling", flag, value, "--results-dir", str(tmp_path)])
@@ -1078,6 +1087,9 @@ def test_alternates_the_two_shapes_of_a_pooled_vs_split_pair_across_its_reps(
     first would drain the emptier tables every time and nothing in its row would say
     so. Reversing the schedule on the odd reps is what stops that lining up — the
     mistake that invalidated an earlier control in this repo.
+
+    Four arms, not two: each total is measured on a nano-task body and on a durable
+    one, and the durable pair alternates like any other.
     """
     stages.main(
         [
@@ -1086,6 +1098,8 @@ def test_alternates_the_two_shapes_of_a_pooled_vs_split_pair_across_its_reps(
             "2",
             "--tasks",
             MEASURABLE_TASKS,
+            "--durable-seconds",
+            BRIEF_DURABLE_SECONDS,
             "--max-workers",
             "4",
             "--results-dir",
@@ -1099,22 +1113,40 @@ def test_alternates_the_two_shapes_of_a_pooled_vs_split_pair_across_its_reps(
         "reps": [len(entry["reps"]) for entry in result["measurements"]],
         "run_order": result["run_order"],
     } == {
-        "measurements": ["pooled_4", "split_4"],
-        "reps": [2, 2],
-        "run_order": ["pooled_4", "split_4", "split_4", "pooled_4"],
+        "measurements": [
+            "pooled_4",
+            "split_4",
+            "pooled_durable_4",
+            "split_durable_4",
+        ],
+        "reps": [2, 2, 2, 2],
+        "run_order": [
+            "pooled_4",
+            "split_4",
+            "pooled_durable_4",
+            "split_durable_4",
+            "split_durable_4",
+            "pooled_durable_4",
+            "split_4",
+            "pooled_4",
+        ],
     }
 
 
 def test_records_the_backends_each_pooled_vs_split_shape_opened(
     tmp_path: pathlib.Path,
 ) -> None:
-    """The comparison's own confound, measured rather than assumed.
+    """The comparison's own confound, and what a working body does to it.
 
-    A worker process opens two backends whatever its concurrency: the SDK client's
-    own connection and Django's. So the two ways of reaching one total concurrency do
-    NOT reach it on the same number of connections — four slots in one process share
-    one claim connection where four processes have four — and the stage records that
-    for the report to say out loud.
+    An IDLE worker process opens two backends whatever its concurrency: the SDK
+    client's own connection and Django's. So the two ways of reaching one total
+    concurrency do not reach it on the same number of connections — four slots in one
+    process share one claim connection where four processes have four.
+
+    A durable body changes the second number entirely. A sync body runs on the
+    worker's own thread pool and Django's connections are thread-local, so ORM work
+    inside one opens a backend that lives as long as the body: every busy slot is one
+    more backend, and a process working flat out holds its concurrency plus two.
 
     The 8 pair is skipped whole rather than run at the bound: an 8x1 quietly bounded
     to 4x1 is an unequal comparison presented as an equal one.
@@ -1126,6 +1158,8 @@ def test_records_the_backends_each_pooled_vs_split_shape_opened(
             "1",
             "--tasks",
             MEASURABLE_TASKS,
+            "--durable-seconds",
+            SAMPLEABLE_DURABLE_SECONDS,
             "--max-workers",
             "4",
             "--results-dir",
@@ -1139,19 +1173,26 @@ def test_records_the_backends_each_pooled_vs_split_shape_opened(
         "shape_connections": result["shape_connections"],
         "skipped_pairs": result["skipped_pairs"],
     } == {
-        "measurements": ["pooled_4", "split_4"],
+        "measurements": [
+            "pooled_4",
+            "split_4",
+            "pooled_durable_4",
+            "split_durable_4",
+        ],
         "shape_connections": [
             {
-                "measurement": "pooled_4",
+                "shape": "1x4",
                 "processes": 1,
                 "concurrency": 4,
-                "connections": 2,
+                "connections_idle": 2,
+                "connections_busy": 6,
             },
             {
-                "measurement": "split_4",
+                "shape": "4x1",
                 "processes": 4,
                 "concurrency": 1,
-                "connections": 8,
+                "connections_idle": 8,
+                "connections_busy": 12,
             },
         ],
         "skipped_pairs": [{"total": 8, "max_workers": 4}],
@@ -1198,7 +1239,8 @@ def test_measures_no_pooled_vs_split_pair_the_worker_bound_cannot_spawn(
     }
     assert capsys.readouterr().out == (
         "stage POOLED_VS_SPLIT: one total concurrency reached two ways: slots in one "
-        "process, or one slot in each of that many processes\n"
+        "process, or one slot in each of that many processes, on a nano-task body and "
+        "on a durable one\n"
         "total 4: not run, --max-workers 1 cannot spawn its 4-process split arm\n"
         "total 8: not run, --max-workers 1 cannot spawn its 8-process split arm\n"
     )

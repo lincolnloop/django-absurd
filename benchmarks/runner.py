@@ -40,18 +40,42 @@ class WorkerSpec:
 
 
 def start_workers(spec: WorkerSpec, count: int) -> list[Worker]:
-    """Spawn ``count`` ``absurd_worker`` children, each already claiming."""
+    """Spawn ``count`` ``absurd_worker`` children at once, each already claiming.
+
+    Every child is launched before any readiness line is waited for. A saturation rep's
+    backlog is preloaded before this is called, so the first child drains alone for as
+    long as the rest take to start — and its completions are inside the window the
+    throughput is taken over. Waiting between launches lengthened that by one child's
+    whole start-up per extra process, and read every multi-process rung low.
+    """
     environ = build_worker_env()
+    # `launched` drains as each child becomes a `Worker`, so at any failure below it
+    # holds exactly the children nothing is reading yet — the ones that would leak.
+    launched: list[subprocess.Popen[str]] = []
     started: list[Worker] = []
     try:
-        for index in range(count):
-            # A comprehension would discard the children already started when one
-            # fails, leaking them for the rest of the run.
-            started.append(spawn_worker(spec, index, environ))  # noqa: PERF401
+        while len(launched) < count:
+            launched.append(launch_worker(spec, len(launched), environ))
+        while launched:
+            started.append(wait_for_worker_ready(launched.pop(0)))
     except BaseException:
         stop_workers(started)
+        kill_workers(launched)
         raise
     return started
+
+
+def kill_workers(launched: "list[subprocess.Popen[str]]") -> None:
+    """End children that never reached the readiness protocol, so none is left behind.
+
+    Not ``stop_workers``, which reports a child that died as a measurement failure:
+    these are being taken down because something else already failed. Nothing is
+    pumping their output either, so nothing else would ever reap them.
+    """
+    for proc in launched:
+        proc.kill()
+        proc.wait()
+        t.cast("t.IO[str]", proc.stdout).close()
 
 
 def count_exited_workers(workers: list[Worker]) -> int:
@@ -86,7 +110,9 @@ def stop_workers(workers: list[Worker]) -> None:
         raise RuntimeError(msg)
 
 
-def spawn_worker(spec: WorkerSpec, index: int, environ: dict[str, str]) -> Worker:
+def launch_worker(
+    spec: WorkerSpec, index: int, environ: dict[str, str]
+) -> "subprocess.Popen[str]":
     argv = [
         sys.executable,
         str(MANAGE_PY),
@@ -106,7 +132,7 @@ def spawn_worker(spec: WorkerSpec, index: int, environ: dict[str, str]) -> Worke
         argv += ["--batch-size", str(spec.batch_size)]
     # Popen execs a fresh interpreter rather than forking, so the child opens its own
     # Postgres connection instead of inheriting the parent's socket.
-    proc = subprocess.Popen(
+    return subprocess.Popen(
         argv,
         cwd=REPO_ROOT,
         env=environ,
@@ -114,7 +140,6 @@ def spawn_worker(spec: WorkerSpec, index: int, environ: dict[str, str]) -> Worke
         stdout=subprocess.PIPE,
         text=True,
     )
-    return wait_for_worker_ready(proc)
 
 
 def build_worker_env() -> dict[str, str]:
