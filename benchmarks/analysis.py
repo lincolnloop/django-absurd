@@ -26,7 +26,11 @@ BACKLOG_GROWTH_FLOOR_TASKS = 8
 # The table the commit-ceiling probe commits into. A REAL table, not a temporary one:
 # a temp table is not WAL-logged, so the probe would report memory speed as durable.
 COMMIT_PROBE_TABLE = "benchmark_commit_ceiling_probe"
-# Commits per timed round: ~0.15 s at the rate a warmed session sustains.
+# Commits per timed round. Sized on the volume, where ~2,000 commits/s made this a
+# 0.15 s round; on tmpfs a warmed session commits 204,000-241,000/s, so the same round
+# times 1.2-1.5 ms — the regime the count below exists to stay out of. Unchanged
+# anyway: every ceiling in `CLAUDE.md` was measured at 300, and re-sizing it makes none
+# of them comparable.
 DURABLE_PROBE_COMMITS = 300
 # The same window with fsync out of the way, where the durable count above would
 # be timing under a millisecond.
@@ -37,6 +41,13 @@ PROBE_WARM_UP_COMMITS = 1200
 # Timed rounds kept. The durable rate is a distribution and not a constant, so the
 # ceiling is recorded as a median with its own dispersion beside it.
 PROBE_TIMED_ROUNDS = 5
+# What a ceiling block holds until a probe replaces it, so a run cut short — killed,
+# interrupted mid-wait, or dead at a stage — records that it never took one. A server
+# that refused a probe is a different fact and gets a different block.
+UNPROBED_COMMIT_CEILING = {
+    "valid": False,
+    "error": "the run ended before this probe was taken",
+}
 
 # Completions per profile slice. Equal-COUNT rather than equal-time, so a slow
 # measurement's slices are not noisier for purely statistical reasons.
@@ -264,8 +275,8 @@ def measure_idle_commit_rate(seconds: float) -> float:
     return (read_xact_commit() - before) / seconds
 
 
-def measure_commit_ceiling(*, durable: bool) -> dict[str, float] | None:
-    """What one WARM session commits per second, as a distribution, or ``None``.
+def measure_commit_ceiling(*, durable: bool) -> dict[str, t.Any]:
+    """What one WARM session commits per second, as a distribution, or why it is not.
 
     The ceiling every throughput in a run is read against: near it, a per-connection
     task rate is a property of Postgres on this disk rather than of Absurd.
@@ -275,8 +286,8 @@ def measure_commit_ceiling(*, durable: bool) -> dict[str, float] | None:
     bound-verdict widens on. ONE session, because a worker opens one claim connection
     whatever its ``--concurrency`` — see `benchmarks/CLAUDE.md`.
 
-    Calibration, not measurement: a run that cannot have its ceiling records that it
-    has none and carries on.
+    Calibration, not measurement: a run whose server refuses the probe records the
+    refusal in a rep's own ``valid``/``error`` vocabulary and carries on.
     """
     commits = DURABLE_PROBE_COMMITS if durable else NONDURABLE_PROBE_COMMITS
     table = psycopg.sql.Identifier(COMMIT_PROBE_TABLE)
@@ -284,53 +295,67 @@ def measure_commit_ceiling(*, durable: bool) -> dict[str, float] | None:
         commits=psycopg.sql.Literal(commits), table=table
     )
     warm_up_rounds = math.ceil(PROBE_WARM_UP_COMMITS / commits)
+    connection = connections[resolve_absurd_database()]
     try:
-        with connections[resolve_absurd_database()].cursor() as cursor:
-            # Outside the try/finally on purpose: a name already taken belongs to
-            # someone else, and the cleanup must never drop a table it did not create.
+        with connection.cursor() as cursor:
+            # A name already taken belongs to someone else, and the cleanup below must
+            # never drop a table it did not create.
             cursor.execute(
                 psycopg.sql.SQL(
                     "create table {table} (n int, elapsed_s float8)"
                 ).format(table=table)
             )
-            try:
-                if not durable:
-                    cursor.execute("set synchronous_commit = off")
-                rates = []
-                for _ in range(warm_up_rounds + PROBE_TIMED_ROUNDS):
-                    # Emptied first so the row read back is this round's own elapsed
-                    # and never a slower earlier round's.
-                    cursor.execute(
-                        psycopg.sql.SQL("truncate {table}").format(table=table)
-                    )
-                    cursor.execute(probe)
-                    cursor.execute(
-                        psycopg.sql.SQL("select max(elapsed_s) from {table}").format(
-                            table=table
-                        )
-                    )
-                    rates.append(commits / float(cursor.fetchone()[0]))
-                # Warmed on this cursor's own connection: the climb is per connection,
-                # so a session warmed anywhere else leaves this one paying for it.
-                return summarize_commit_rates(rates[warm_up_rounds:])
-            finally:
-                # Reset unconditionally: a no-op for the durable probe, and a branch
-                # here would be one more way to leave the session altered.
-                cursor.execute("reset synchronous_commit")
+            if not durable:
+                cursor.execute("set synchronous_commit = off")
+            rates = []
+            for _ in range(warm_up_rounds + PROBE_TIMED_ROUNDS):
+                # Emptied first so the row read back is this round's own elapsed
+                # and never a slower earlier round's.
+                cursor.execute(psycopg.sql.SQL("truncate {table}").format(table=table))
+                cursor.execute(probe)
                 cursor.execute(
-                    psycopg.sql.SQL("drop table {table}").format(table=table)
+                    psycopg.sql.SQL("select max(elapsed_s) from {table}").format(
+                        table=table
+                    )
                 )
-    except db.Error:
-        return None
+                rates.append(commits / float(cursor.fetchone()[0]))
+            # Cleanup on the way out of a probe that finished, never from a `finally`:
+            # a statement issued after an interrupted wait raises over the interruption
+            # and hands the rest of the process a session stuck mid-command.
+            cursor.execute("reset synchronous_commit")
+            cursor.execute(psycopg.sql.SQL("drop table {table}").format(table=table))
+    except db.Error as exc:
+        return describe_refused_probe(exc)
+    except BaseException:
+        # An interrupted wait leaves the session mid-command, where every later
+        # statement reads `another command is already in progress`. Nothing can be
+        # issued on it, so it is dropped rather than reset, and the interruption goes
+        # on untouched.
+        connection.close()
+        raise
+    # Warmed on that session itself: the climb is per connection, so a session warmed
+    # anywhere else leaves this one paying for it.
+    return summarize_commit_rates(rates[warm_up_rounds:])
 
 
-def summarize_commit_rates(rates: list[float]) -> dict[str, float]:
+def describe_refused_probe(exc: db.Error) -> dict[str, t.Any]:
+    """A probe the server was asked for and would not give, and what it said.
+
+    Distinct from `UNPROBED_COMMIT_CEILING`: one is a server that answered no, the
+    other is a run that never asked, and a reader deciding whether to trust a rate
+    needs to tell them apart.
+    """
+    return {"valid": False, "error": f"the server refused the probe: {exc}"}
+
+
+def summarize_commit_rates(rates: list[float]) -> dict[str, t.Any]:
     """One probe's timed rounds, in the vocabulary a measurement's reps already use.
 
     The endpoints ride along with the CV because a percentage is what a reader has to
     un-reduce to see what was measured.
     """
     return {
+        "valid": True,
         "median_per_s": statistics.median(rates),
         "cv": statistics.stdev(rates) / statistics.fmean(rates),
         "range_low": min(rates),

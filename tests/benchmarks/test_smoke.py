@@ -476,6 +476,53 @@ def test_saturation_measurement_records_every_dispersion_of_its_reps() -> None:
     }
 
 
+def test_saturation_measurement_of_two_reps_reports_the_slower_one() -> None:
+    """An even rep count has two middles, and the summary takes the unlucky one.
+
+    Whichever way two real reps land, the measurement reports the LOWER throughput of
+    the pair — asserted as the low endpoint rather than as a level, since which rep is
+    faster is not something a test can arrange.
+    """
+    spec = measurement.MeasurementSpec(
+        name="smoke-two-reps-saturation",
+        mode="saturation",
+        task_path="tasks.noop_sync",
+        tasks=int(MEASURABLE_TASKS),
+        workers=1,
+        worker=runner.WorkerSpec(concurrency=1, poll_interval=0.05),
+        reps=2,
+        timeout_s=60,
+    )
+
+    result = measurement.run_measurement(spec)
+
+    assert (result["median"]["throughput_per_s"] == result["range_low"]) is True
+
+
+def test_rate_measurement_of_two_reps_reports_the_slower_one() -> None:
+    """The same rule, on the metric that runs the other way.
+
+    A rate measurement ranks on end-to-end p50, where LOW is the lucky rep, so the
+    unlucky middle is the high endpoint — the opposite index from a saturation
+    measurement, and taking the low one both times published the better rep.
+    """
+    spec = measurement.MeasurementSpec(
+        name="smoke-two-reps-rate",
+        mode="rate",
+        task_path="tasks.noop_sync",
+        rate_per_s=ABSORBABLE_RATE_PER_S,
+        duration_s=2.0,
+        workers=1,
+        worker=runner.WorkerSpec(concurrency=1, poll_interval=0.05),
+        reps=2,
+        timeout_s=120,
+    )
+
+    result = measurement.run_measurement(spec)
+
+    assert (result["median"]["end_to_end_p50_s"] == result["range_high"]) is True
+
+
 def test_saturation_rep_records_what_its_tasks_cost_in_commits() -> None:
     """A task rate is a commit rate in disguise, and this is the exchange rate.
 
@@ -639,10 +686,10 @@ def test_commit_ceiling_probe_times_a_warmed_session_not_a_cold_one() -> None:
     committed = analysis.read_xact_commit() - committed_before
     # An unmeasured ceiling has no timed window at all, which the dict below reports as
     # the whole call rather than dividing by None.
-    timed_s = timed_commits / ceiling["median_per_s"] if ceiling else elapsed_s
+    timed_s = timed_commits / ceiling["median_per_s"] if ceiling["valid"] else elapsed_s
 
     assert {
-        "measured": ceiling is not None,
+        "measured": ceiling["valid"],
         "committed_its_warm_up_rounds_too": (
             committed >= analysis.PROBE_WARM_UP_COMMITS + timed_commits
         ),
@@ -652,6 +699,71 @@ def test_commit_ceiling_probe_times_a_warmed_session_not_a_cold_one() -> None:
         "committed_its_warm_up_rounds_too": True,
         "timed_only_the_rounds_it_kept": True,
     }
+
+
+def test_an_interrupted_commit_probe_leaves_the_session_usable() -> None:
+    """A probe abandoned mid-wait must cost the process nothing but the probe.
+
+    A signal delivered while psycopg waits on the socket leaves the session stuck
+    mid-command, where every later statement reads `another command is already in
+    progress`. Issuing the probe's own cleanup there raises over the interruption and
+    hands that session on, so one interrupted probe becomes every later failure in the
+    process — which is how a single 120 s test alarm took 57 unrelated tests down with
+    it. The session is dropped instead, and the interruption travels on untouched.
+
+    The alarm is the real mechanism rather than a simulation of it: `pytest-timeout`
+    raises from a SIGALRM handler exactly like this, and a BaseException that is not a
+    KeyboardInterrupt is what psycopg declines to cancel the query for.
+    """
+    with pytest.raises(utils.ProbeInterrupted), utils.interrupt_after(0.2):
+        analysis.measure_commit_ceiling(durable=True)
+
+    with connections[resolve_absurd_database()].cursor() as cursor:
+        cursor.execute("select 1")
+        answered = cursor.fetchone()
+        # The probe's own table outlives the interruption, and a later probe on this
+        # database would read a name it does not own as a refusal.
+        cursor.execute(f"drop table if exists {analysis.COMMIT_PROBE_TABLE}")
+
+    assert answered == (1,)
+
+
+def test_saturation_measurement_refuses_a_fleet_that_died_mid_drain() -> None:
+    """A queue polled alone cannot tell a slow drain from an absent fleet.
+
+    The task ends its own worker, so nothing is left to claim and the backlog never
+    moves again. Waiting that out would burn the whole timeout — 900 s for the
+    saturation stages — and then report the timeout as the failure, with the crash that
+    caused it printed underneath. The children's exit is what the measurement is
+    refused on, and the crash is what it is refused with.
+    """
+    spec = measurement.MeasurementSpec(
+        name="smoke-dead-fleet",
+        mode="saturation",
+        task_path="tests.benchmarks.utils.kill_the_worker_that_claimed_it",
+        tasks=1,
+        workers=1,
+        worker=runner.WorkerSpec(concurrency=1, poll_interval=0.05),
+        reps=1,
+        timeout_s=120.0,
+    )
+    started = time.monotonic()
+
+    with pytest.raises(RuntimeError) as error_info:
+        measurement.run_measurement(spec)
+
+    assert str(error_info.value).startswith(
+        f"1 absurd_worker child(ren) exited before the measurement finished (codes "
+        f"[{utils.WORKER_EXIT_CODE}]); it measured a worker count it never had. "
+        f"Last output:"
+    )
+    assert str(error_info.value.__context__) == (
+        "Measurement 'smoke-dead-fleet' lost 1 of its 1 worker process(es) while the "
+        "queue was still draining, so what is left cannot drain it. Refused here "
+        "rather than at the drain timeout, which the fleet would otherwise burn in "
+        "full before anything said the workers were gone."
+    )
+    assert (time.monotonic() - started < 30.0) is True
 
 
 def test_saturation_rep_records_no_statement_stats_where_nothing_counted_them() -> None:

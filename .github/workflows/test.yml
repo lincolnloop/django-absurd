@@ -62,7 +62,10 @@ jobs:
           report_type: test_results
           flags: ${{ matrix.env }}
           fail_ci_if_error: true
-          files: junit-core.xml,junit-pg_cron.xml,junit-multidb.xml,junit-benchmarks.xml
+          # `tests/benchmarks` is a `dev`-only suite, so only that env writes its file.
+          files:
+            junit-core.xml,junit-pg_cron.xml,junit-multidb.xml${{ matrix.env == 'dev'
+            && ',junit-benchmarks.xml' || '' }}
 
   examples:
     name: examples/${{ matrix.example }} pytest suite

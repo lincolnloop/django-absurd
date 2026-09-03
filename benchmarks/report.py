@@ -6,10 +6,10 @@ from pathlib import Path
 DEFAULT_RESULTS_DIR = Path(__file__).resolve().parent / "results"
 
 TABLE_HEADER = (
-    "| measurement | mode | workers | concurrency | batch | poll | tasks/s "
+    "| measurement | mode | backlog | workers | concurrency | batch | poll | tasks/s "
     "| e2e p50 s | e2e p90 s | e2e p99 s | rep range | spread | cv | notes |"
 )
-TABLE_RULE = "| " + " | ".join(["---"] * 14) + " |"
+TABLE_RULE = "| " + " | ".join(["---"] * 15) + " |"
 PRODUCER_TABLE_HEADER = (
     "| mode | enqueues | enqueues/s | enqueue p50 s | enqueue p99 s "
     "| rep range | spread | cv | notes |"
@@ -27,6 +27,15 @@ MARK_LEGEND = (
         "and disagreed, beyond the measurement's CV limit. `?` — fewer than two "
         "valid reps, so dispersion was never measured. A marked measurement stays "
         "in every table and in every number derived below one."
+    ),
+    "",
+    (
+        "`backlog` is the `--tasks` depth a saturation rep preloaded and then drained, "
+        "blank in rate mode, which preloads nothing. Throughput RISES as a backlog "
+        "drains, so a saturation rate averages a curve whose starting depth is in this "
+        "column: two rows with different backlogs are two different experiments, and "
+        "anything derived across them carries a depth penalty as well as whatever it "
+        "meant to measure."
     ),
     "",
     (
@@ -137,25 +146,42 @@ def describe_commit_ceiling(stages: list[dict[str, t.Any]]) -> str:
 
 def format_commit_ceiling(stage: dict[str, t.Any]) -> str:
     durable = stage.get("commit_ceiling_durable")
-    if durable is None:
-        return (
-            "not measured, so nothing below says whether a throughput is this "
-            "connection's number or Absurd's"
-        )
     nondurable = stage.get("commit_ceiling_nondurable")
     after = stage.get("commit_ceiling_durable_after")
+    measured = read_measured_probe(durable)
+    if measured is None:
+        return (
+            f"{format_commit_rate(durable)}, so nothing below says whether a "
+            f"throughput is this connection's number or Absurd's"
+        )
     return (
         f"durable {format_commit_rate(durable)}, "
         f"after the run {format_commit_rate(after)}, "
         f"non-durable {format_commit_rate(nondurable)}, "
-        f"{describe_durability_cost(durable, nondurable)}"
+        f"{describe_durability_cost(measured, nondurable)}"
     )
 
 
-def format_commit_rate(ceiling: dict[str, float] | None) -> str:
-    """A probe's median, with the spread that says how much of it to believe."""
+def read_measured_probe(ceiling: dict[str, t.Any] | None) -> dict[str, t.Any] | None:
+    """A probe's rates, or ``None`` where it recorded a reason instead of measuring.
+
+    Every reader of a ceiling block goes through this, so a run whose probe was
+    refused and one whose probe was never taken cannot be read as calibrated, and the
+    reason each gave stays available to print.
+    """
+    if ceiling is None or not ceiling["valid"]:
+        return None
+    return ceiling
+
+
+def format_commit_rate(ceiling: dict[str, t.Any] | None) -> str:
+    """A probe's median with the spread that says how much of it to believe, or what
+    happened instead — a server that refused it and a run that never took it are two
+    different reasons a rate is missing."""
     if ceiling is None:
         return "not measured"
+    if not ceiling["valid"]:
+        return f"not measured: {ceiling['error']}"
     return (
         f"{ceiling['median_per_s']:.0f} "
         f"(cv {ceiling['cv']:.0%}, {ceiling['range_low']:.0f}-"
@@ -164,12 +190,13 @@ def format_commit_rate(ceiling: dict[str, float] | None) -> str:
 
 
 def describe_durability_cost(
-    durable: dict[str, float], nondurable: dict[str, float] | None
+    durable: dict[str, t.Any], nondurable: dict[str, t.Any] | None
 ) -> str:
     """What fsync costs, as the multiple the same server reaches without it."""
-    if nondurable is None:
+    measured = read_measured_probe(nondurable)
+    if measured is None:
         return "ratio not measured"
-    return f"{nondurable['median_per_s'] / durable['median_per_s']:.0f}x without fsync"
+    return f"{measured['median_per_s'] / durable['median_per_s']:.0f}x without fsync"
 
 
 def describe_storage_medium(contexts: list[dict[str, t.Any]]) -> list[str]:
@@ -378,6 +405,9 @@ def render_measurement_row(entry: dict[str, t.Any]) -> str:
         [
             spec["name"],
             spec["mode"],
+            # The depth a rate row never had: it starts on an empty queue and is
+            # sized by its offer, so a `0` here would read as a measured zero.
+            "" if paced else str(spec["tasks"]),
             str(spec["workers"]),
             str(worker["concurrency"]),
             "default" if worker["batch_size"] is None else str(worker["batch_size"]),
@@ -408,15 +438,20 @@ def render_rate_ramp(stage: dict[str, t.Any]) -> list[str]:
         describe_sustainable_rate(ramp),
         "",
         (
-            "| offered/s | offer s | absorbed | e2e p50 s | backlog at midpoint "
-            "| backlog at end |"
+            "| offered/s | offer s | achieved/s | producer kept up | absorbed "
+            "| e2e p50 s | backlog at midpoint | backlog at end |"
         ),
-        "| " + " | ".join(["---"] * 6) + " |",
+        "| " + " | ".join(["---"] * 8) + " |",
         *[
             render_row(
                 [
                     f"{probe['rate_per_s']:.1f}",
                     f"{ramp['offer_seconds']:g}",
+                    # What the producer managed against what it aimed at, because a
+                    # probe the enqueue side never delivered says nothing about the
+                    # fleet — and `absorbed` alone cannot tell the two apart.
+                    f"{probe['rep'].get('achieved_rate_per_s', 0.0):.1f}",
+                    "yes" if probe["rep"].get("offered_ok", True) else "no",
                     "yes" if probe["sustained"] else "no",
                     f"{probe['rep'].get('end_to_end_p50_s', 0.0):.4f}",
                     str(probe["rep"].get("backlog_mid", 0)),
@@ -429,11 +464,13 @@ def render_rate_ramp(stage: dict[str, t.Any]) -> list[str]:
 
 
 def describe_sustainable_rate(ramp: dict[str, t.Any]) -> str:
-    """What the ramp settled on, and why it is not the drain rate beside it.
+    """What the ramp settled on, and the two limits it cannot tell apart.
 
     A fleet draining a backlog has work waiting at every claim; a paced one has to keep
-    up in real time. So the two rates are different quantities and the drain one is the
-    larger, which is what taking fractions of it got wrong.
+    up in real time, so the two rates are different quantities and the drain one is the
+    larger — which is why the rungs are fractions of the ramp's rate and not of it. The
+    ramp stops at the first offer that did not come off cleanly, and the producer runs
+    on the same box as the workers, so that offer bounds whichever ran out first.
     """
     drain = (
         f"The drain rate this stage calibrated from was "
@@ -447,22 +484,35 @@ def describe_sustainable_rate(ramp: dict[str, t.Any]) -> str:
             f"an unproven rate and the marks on them are the finding. {drain}"
         )
     return (
-        f"Offer rate: {ramp['rate_per_s']:.1f}/s, the highest offer the fleet "
-        f"absorbed; {describe_rate_bracket(ramp)} The rows above offer fractions of "
-        f"it. {drain}"
+        f"Offer rate: {ramp['rate_per_s']:.1f}/s, the highest offer this ramp got "
+        f"through cleanly — the LOWER of the fleet's knee and the producer's own "
+        f"ceiling, and the ramp does not say which of the two it found. "
+        f"{describe_rate_bracket(ramp)} The rows above offer fractions of it. {drain}"
     )
 
 
 def describe_rate_bracket(ramp: dict[str, t.Any]) -> str:
-    """Where the knee is, which is between two probes and never at one of them."""
+    """What the first refusal bounds — which is the fleet only if the producer kept
+    up in it, and the enqueue side otherwise."""
     if ramp["bracket_high_per_s"] is None:
         return (
-            "the ramp ran out of climb below the drain rate without finding an offer "
+            "The ramp ran out of climb below the drain rate without finding an offer "
             "it could not, so the knee is at or above the top of the ramp."
         )
+    refused = next(probe for probe in ramp["probes"] if not probe["sustained"])
+    rep = refused["rep"]
+    if rep.get("offered_ok", True):
+        return (
+            f"It refused {ramp['bracket_high_per_s']:.1f}/s with the producer still "
+            f"delivering its target, so that refusal is the FLEET's and the knee is "
+            f"between the two; nothing here refines it."
+        )
     return (
-        f"it refused {ramp['bracket_high_per_s']:.1f}/s, so the knee is between the "
-        f"two and nothing here refines it."
+        f"It refused {ramp['bracket_high_per_s']:.1f}/s, but the producer itself only "
+        f"achieved {rep.get('achieved_rate_per_s', 0.0):.1f}/s there, so that "
+        f"refusal bounds the ENQUEUE side and not the fleet — which completed "
+        f"{rep.get('throughput_per_s', 0.0):.1f}/s inside the same probe. The fleet's "
+        f"own knee is somewhere above that, unmeasured."
     )
 
 
@@ -596,8 +646,8 @@ def build_commit_budget_lines(stage: dict[str, t.Any]) -> list[str]:
     measurements = select_saturation_measurements(stage)
     if not any(entry["median"].get("commits_per_task") for entry in measurements):
         return []
-    opening = stage.get("commit_ceiling_durable")
-    closing = stage.get("commit_ceiling_durable_after")
+    opening = read_measured_probe(stage.get("commit_ceiling_durable"))
+    closing = read_measured_probe(stage.get("commit_ceiling_durable_after"))
     return [
         "",
         (
@@ -611,8 +661,8 @@ def build_commit_budget_lines(stage: dict[str, t.Any]) -> list[str]:
 
 def describe_commit_budget(
     entry: dict[str, t.Any],
-    opening: dict[str, float] | None,
-    closing: dict[str, float] | None,
+    opening: dict[str, t.Any] | None,
+    closing: dict[str, t.Any] | None,
 ) -> str:
     """One row's commit rate, as a band across every durable probe the run recorded.
 
@@ -648,7 +698,7 @@ def describe_commit_budget(
     )
 
 
-def describe_band_probes(closing: dict[str, float] | None) -> str:
+def describe_band_probes(closing: dict[str, t.Any] | None) -> str:
     """Which probes the band came from, since a wide band has two different causes.
 
     A reader comparing two reports has to tell a band widened by mid-run drift from
@@ -781,8 +831,35 @@ def build_scaling_efficiency_lines(measurements: list[dict[str, t.Any]]) -> list
     for entry in measurements:
         workers = entry["spec"]["workers"]
         efficiency = describe_quotient(entry, single, THROUGHPUT_KEY, workers, "")
-        lines.append(f"- {workers} worker(s): {efficiency}")
-    return lines
+        backlog = entry["spec"]["tasks"]
+        lines.append(f"- {workers} worker(s): {efficiency}, backlog {backlog}")
+    return lines + describe_depth_confound(measurements, single)
+
+
+def describe_depth_confound(
+    measurements: list[dict[str, t.Any]], single: dict[str, t.Any]
+) -> list[str]:
+    """Said under the efficiencies when the rungs they divide drained different
+    depths, because the quotient then carries a depth penalty as well as the scaling.
+
+    The direction is knowable even though the size is not: a deeper backlog is
+    slower, and every rung above one worker is the deeper one, so each figure is a
+    floor rather than an estimate.
+    """
+    depths = {entry["spec"]["tasks"] for entry in measurements}
+    if len(depths) < 2:
+        return []
+    return [
+        "",
+        (
+            f"CONFOUNDED: these rungs drained different backlogs "
+            f"({min(depths)} to {max(depths)}, against {single['spec']['tasks']} at "
+            f"one worker) and a deeper backlog is slower, so each efficiency divides "
+            f"a deeper measurement by a shallower one. Read them as lower bounds on "
+            f"the scaling, not as measurements of it; only a ladder run at one depth "
+            f"would separate the two."
+        ),
+    ]
 
 
 def build_pooled_vs_split_lines(measurements: list[dict[str, t.Any]]) -> list[str]:

@@ -40,18 +40,21 @@ OPTIONS = {
 # has to carry that.
 COMMIT_CEILING = {
     "commit_ceiling_durable": {
+        "valid": True,
         "median_per_s": 2016.0,
         "cv": 0.279,
         "range_low": 1600.0,
         "range_high": 2262.0,
     },
     "commit_ceiling_nondurable": {
+        "valid": True,
         "median_per_s": 367723.0,
         "cv": 0.052,
         "range_low": 324000.0,
         "range_high": 380000.0,
     },
     "commit_ceiling_durable_after": {
+        "valid": True,
         "median_per_s": 1904.0,
         "cv": 0.114,
         "range_low": 1700.0,
@@ -154,6 +157,13 @@ HEADER = (
     "so dispersion was never measured. A marked measurement stays in every table and "
     "in every number derived below one.\n"
     "\n"
+    "`backlog` is the `--tasks` depth a saturation rep preloaded and then drained, "
+    "blank in rate mode, which preloads nothing. Throughput RISES as a backlog "
+    "drains, so a saturation rate averages a curve whose starting depth is in this "
+    "column: two rows with different backlogs are two different experiments, and "
+    "anything derived across them carries a depth penalty as well as whatever it "
+    "meant to measure.\n"
+    "\n"
     "`rep range`, `spread` and `cv` are over the metric the reps were ranked on: "
     "tasks/s in saturation mode, end-to-end p50 s in rate mode, enqueues/s in "
     "producer mode. `spread` is `(max - min) / median`, shown because the endpoints "
@@ -162,10 +172,10 @@ HEADER = (
 )
 
 MEASUREMENT_TABLE_HEAD = (
-    "| measurement | mode | workers | concurrency | batch | poll | tasks/s "
+    "| measurement | mode | backlog | workers | concurrency | batch | poll | tasks/s "
     "| e2e p50 s | e2e p90 s | e2e p99 s | rep range | spread | cv | notes |\n"
     "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- "
-    "| --- | --- |\n"
+    "| --- | --- | --- |\n"
 )
 
 
@@ -193,6 +203,9 @@ def build_measurement(
         "name": name,
         "mode": "saturation",
         "workers": 1,
+        # The depth a rung preloaded, which the table prints because a saturation rate
+        # averages the drain of it and two different ones are two experiments.
+        "tasks": 5000,
         "task_path": "tasks.noop_sync",
         "worker": {"concurrency": 1, "batch_size": None, "poll_interval": 0.25},
         **spec,
@@ -260,7 +273,9 @@ def build_rate_ramp(**overrides: t.Any) -> dict[str, t.Any]:
     """The ramp a rate stage records, the way `stages.measure_sustainable_rate` does.
 
     Three probes climbing towards the drain rate: two the fleet absorbed and the one it
-    did not, whose backlog doubled across its own offer window.
+    did not, whose backlog doubled across its own offer window. The refused one has
+    the producer delivering its whole target, which is what makes the refusal the
+    fleet's — the other case is `build_producer_bound_ramp`.
     """
     return {
         "drain_ceiling_per_s": 4200.0,
@@ -273,6 +288,9 @@ def build_rate_ramp(**overrides: t.Any) -> dict[str, t.Any]:
                 "rate_per_s": 933.3,
                 "sustained": True,
                 "rep": {
+                    "achieved_rate_per_s": 933.2,
+                    "offered_ok": True,
+                    "throughput_per_s": 933.0,
                     "end_to_end_p50_s": 0.014,
                     "backlog_mid": 30,
                     "backlog_end": 26,
@@ -282,6 +300,9 @@ def build_rate_ramp(**overrides: t.Any) -> dict[str, t.Any]:
                 "rate_per_s": 1400.0,
                 "sustained": True,
                 "rep": {
+                    "achieved_rate_per_s": 1399.8,
+                    "offered_ok": True,
+                    "throughput_per_s": 1399.1,
                     "end_to_end_p50_s": 0.018,
                     "backlog_mid": 42,
                     "backlog_end": 39,
@@ -291,6 +312,9 @@ def build_rate_ramp(**overrides: t.Any) -> dict[str, t.Any]:
                 "rate_per_s": 2100.0,
                 "sustained": False,
                 "rep": {
+                    "achieved_rate_per_s": 2099.6,
+                    "offered_ok": True,
+                    "throughput_per_s": 1704.0,
                     "end_to_end_p50_s": 8.4,
                     "backlog_mid": 24000,
                     "backlog_end": 51000,
@@ -299,6 +323,22 @@ def build_rate_ramp(**overrides: t.Any) -> dict[str, t.Any]:
         ],
         **overrides,
     }
+
+
+def build_producer_bound_ramp() -> dict[str, t.Any]:
+    """The same ramp, refused by an offer the PRODUCER never delivered.
+
+    Both sides run on one box, so the enqueue loop misses its own deadlines before the
+    fleet runs out — which is what the recorded ramps did. The rep is otherwise the
+    refused probe's: a backlog that grew, on an offer nobody made in full.
+    """
+    ramp = build_rate_ramp()
+    ramp["probes"][-1]["rep"] |= {
+        "achieved_rate_per_s": 1890.0,
+        "offered_ok": False,
+        "throughput_per_s": 1804.0,
+    }
+    return ramp
 
 
 def build_pooled_vs_split_entries() -> list[dict[str, t.Any]]:
@@ -354,9 +394,9 @@ def test_renders_stage_tables_from_result_files(
         "## Worker knobs\n"
         "\n"
         + MEASUREMENT_TABLE_HEAD
-        + "| concurrency_1 | saturation | 1 | 1 | default | 0.25 "
+        + "| concurrency_1 | saturation | 5000 | 1 | 1 | default | 0.25 "
         "| 412.5 |  |  |  | 412.5-412.5 | 4.0% | 2.0% |  |\n"
-        "| concurrency_2 | saturation | 1 | 2 | 4 | 0.25 "
+        "| concurrency_2 | saturation | 5000 | 1 | 2 | 4 | 0.25 "
         "| 800.0 |  |  |  | 614-990 | 47.0% | 31.0% | ~ |\n"
         "\n"
         "Throughput relative to `concurrency_1`:\n"
@@ -425,9 +465,9 @@ def test_derives_from_an_invalid_measurement_rather_than_dropping_it(
         "## Worker knobs\n"
         "\n"
         + MEASUREMENT_TABLE_HEAD
-        + "| concurrency_1 | saturation | 1 | 1 | default | 0.25 "
+        + "| concurrency_1 | saturation | 5000 | 1 | 1 | default | 0.25 "
         "| 412.5 |  |  |  | 0-500 | 4.0% | 2.0% | ! |\n"
-        "| concurrency_2 | saturation | 1 | 1 | default | 0.25 "
+        "| concurrency_2 | saturation | 5000 | 1 | 1 | default | 0.25 "
         "| 825.0 |  |  |  | 825-825 | 4.0% | 2.0% |  |\n"
         "\n"
         "Throughput relative to `concurrency_1`:\n"
@@ -460,7 +500,7 @@ def test_marks_a_measurement_whose_dispersion_was_never_measured(
         "## Worker knobs\n"
         "\n"
         + MEASUREMENT_TABLE_HEAD
-        + "| concurrency_1 | saturation | 1 | 1 | default | 0.25 "
+        + "| concurrency_1 | saturation | 5000 | 1 | 1 | default | 0.25 "
         "| 412.5 |  |  |  | 412.5-412.5 | n/a | n/a | ? |\n"
         "\n"
         "Throughput relative to `concurrency_1`:\n"
@@ -492,9 +532,9 @@ def test_leaves_latency_columns_empty_for_a_saturation_measurement(
         "## Worker knobs\n"
         "\n"
         + MEASUREMENT_TABLE_HEAD
-        + "| concurrency_1 | saturation | 1 | 1 | default | 0.25 "
+        + "| concurrency_1 | saturation | 5000 | 1 | 1 | default | 0.25 "
         "| 412.5 |  |  |  | 412.5-412.5 | 4.0% | 2.0% |  |\n"
-        "| rate_25pct | rate | 1 | 1 | default | 0.25 "
+        "| rate_25pct | rate |  | 1 | 1 | default | 0.25 "
         "| 90.0 | 0.0120 | 0.0300 | 0.0500 | 0.012-0.012 | 4.0% | 2.0% |  |\n"
         "\n"
         "Throughput relative to `concurrency_1`:\n"
@@ -535,9 +575,9 @@ def test_renders_a_measurement_whose_every_rep_was_refused(
         "## Worker knobs\n"
         "\n"
         + MEASUREMENT_TABLE_HEAD
-        + "| concurrency_1 | saturation | 1 | 1 | default | 0.25 "
+        + "| concurrency_1 | saturation | 5000 | 1 | 1 | default | 0.25 "
         "| 0.0 |  |  |  | n/a | n/a | n/a | ! ? |\n"
-        "| concurrency_2 | saturation | 1 | 1 | default | 0.25 "
+        "| concurrency_2 | saturation | 5000 | 1 | 1 | default | 0.25 "
         "| 800.0 |  |  |  | 800-800 | 4.0% | 2.0% |  |\n"
         "\n"
         "Reference measurement measured nothing; nothing derived.\n"
@@ -703,22 +743,61 @@ def test_reports_mixed_options_when_stages_were_run_at_different_sizes(
 def test_renders_scaling_efficiency_for_process_scaling(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    """The single-worker rung is the divisor, so its own spread widens every rung."""
+    """The single-worker rung is the divisor, so its own spread widens every rung.
+
+    Each rung's backlog prints with its efficiency: the ladder sizes its preload from
+    the worker count, so the divisor is usually the shallowest rung in the stage.
+    """
     entries = [
         build_measurement(
             "workers_1",
-            {"workers": 1},
+            {"tasks": 4000, "workers": 1},
             {"throughput_per_s": 100.0},
             {"range_high": 110.0, "range_low": 90.0},
         ),
-        build_measurement("workers_2", {"workers": 2}, {"throughput_per_s": 180.0}),
+        build_measurement(
+            "workers_2", {"tasks": 4000, "workers": 2}, {"throughput_per_s": 180.0}
+        ),
     ]
 
     assert (
         "Scaling efficiency `T(N) / (N x T(1))`:\n"
         "\n"
-        "- 1 worker(s): 1.00 (reps 0.82-1.22)\n"
-        "- 2 worker(s): 0.90 (reps 0.82-1.00)\n"
+        "- 1 worker(s): 1.00 (reps 0.82-1.22), backlog 4000\n"
+        "- 2 worker(s): 0.90 (reps 0.82-1.00), backlog 4000\n"
+    ) in render(capsys, tmp_path, "process_scaling", entries)
+
+
+def test_says_a_scaling_ladder_measured_at_two_depths_confounded_itself(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The ladder sizes its preload from the worker count, so its rungs drain
+    different depths and the efficiency divides one depth by another.
+
+    A deeper backlog is slower and the deeper rung is always the numerator, so the
+    direction is known even though the size is not — which makes every figure a lower
+    bound rather than a measurement, and it has to say so where it is read.
+    """
+    entries = [
+        build_measurement(
+            "workers_1", {"tasks": 4000, "workers": 1}, {"throughput_per_s": 100.0}
+        ),
+        build_measurement(
+            "workers_5", {"tasks": 10000, "workers": 5}, {"throughput_per_s": 300.0}
+        ),
+    ]
+
+    assert (
+        "Scaling efficiency `T(N) / (N x T(1))`:\n"
+        "\n"
+        "- 1 worker(s): 1.00, backlog 4000\n"
+        "- 5 worker(s): 0.60, backlog 10000\n"
+        "\n"
+        "CONFOUNDED: these rungs drained different backlogs (4000 to 10000, against "
+        "4000 at one worker) and a deeper backlog is slower, so each efficiency "
+        "divides a deeper measurement by a shallower one. Read them as lower bounds "
+        "on the scaling, not as measurements of it; only a ladder run at one depth "
+        "would separate the two.\n"
     ) in render(capsys, tmp_path, "process_scaling", entries)
 
 
@@ -967,6 +1046,7 @@ def test_softens_the_bound_verdict_when_the_calibration_disagrees_with_itself(
         "worker_knobs",
         entries,
         commit_ceiling_durable={
+            "valid": True,
             "median_per_s": 2000.0,
             "cv": 0.012,
             "range_low": 1950.0,
@@ -984,6 +1064,7 @@ def test_softens_the_bound_verdict_when_the_calibration_disagrees_with_itself(
         "worker_knobs",
         entries,
         commit_ceiling_durable={
+            "valid": True,
             "median_per_s": 2000.0,
             "cv": 0.136,
             "range_low": 1500.0,
@@ -1013,12 +1094,14 @@ def test_bands_the_bound_verdict_across_both_durable_probes(
     ]
     drifted = {
         "commit_ceiling_durable": {
+            "valid": True,
             "median_per_s": 615.0,
             "cv": 0.136,
             "range_low": 465.0,
             "range_high": 673.0,
         },
         "commit_ceiling_durable_after": {
+            "valid": True,
             "median_per_s": 2100.0,
             "cv": 0.024,
             "range_low": 2030.0,
@@ -1060,6 +1143,7 @@ def test_bands_against_the_opening_probe_when_the_run_recorded_no_closing_one(
         "worker_knobs",
         entries,
         commit_ceiling_durable={
+            "valid": True,
             "median_per_s": 615.0,
             "cv": 0.136,
             "range_low": 465.0,
@@ -1112,7 +1196,7 @@ def test_says_where_each_measurement_spent_its_time_per_task(
 def test_says_the_commit_ceiling_is_missing_rather_than_omitting_it(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    """A run whose calibration probe was refused still runs and still reports.
+    """A file carrying no ceiling blocks at all still renders, uncalibrated.
 
     What it must not do is read like a calibrated one: the header says the ceiling is
     missing and every commit budget under it says it has nothing to be measured
@@ -1137,6 +1221,44 @@ def test_says_the_commit_ceiling_is_missing_rather_than_omitting_it(
         "- `concurrency_1`: 532 commits/s per worker connection (150.0 x 3.55 / 1), "
         "against no ceiling — nothing here says what bound it\n"
     ) in rendered
+
+
+def test_tells_a_refused_probe_apart_from_one_the_run_never_took(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Two ways a ceiling can be missing, and only one of them is about the server.
+
+    A refused probe was asked for and answered: the server would not give a rate, and
+    what it said is the reader's first clue. A run cut short — interrupted mid-wait,
+    killed, dead at a stage — never asked, so nothing about its server is in evidence.
+    Reading the second as the first is how an interrupted run comes to look like a
+    server that cannot commit, so the block carries the reason and the header prints
+    it.
+    """
+    entries = [build_measurement("concurrency_1", {}, {})]
+
+    assert (
+        "- commit ceiling (commits/s, one connection): durable 2016 (cv 28%, "
+        "1600-2262), after the run not measured: the run ended before this probe was "
+        "taken, non-durable not measured: the server refused the probe: relation "
+        '"benchmark_commit_ceiling_probe" already exists, ratio not measured\n'
+    ) in render(
+        capsys,
+        tmp_path,
+        "worker_knobs",
+        entries,
+        commit_ceiling_durable_after={
+            "valid": False,
+            "error": "the run ended before this probe was taken",
+        },
+        commit_ceiling_nondurable={
+            "valid": False,
+            "error": (
+                "the server refused the probe: relation "
+                '"benchmark_commit_ceiling_probe" already exists'
+            ),
+        },
+    )
 
 
 def test_says_which_halves_of_the_commit_ceiling_were_measured(
@@ -1246,7 +1368,8 @@ def test_renders_the_ramp_that_measured_a_rate_stage_its_offer_rate(
 
     The two rates in the block are different quantities: the fleet drained 4200/s off
     a backlog and absorbed 1400/s as it arrived, which is why fractions of the drain
-    rate over-offered. Each probe's backlogs are what the verdict was read off.
+    rate over-offered. Each probe carries what the producer actually delivered beside
+    the verdict, because a refusal only bounds the fleet if the offer was made in full.
     """
     entries = [build_measurement("rate_25pct", {"mode": "rate"}, {})]
 
@@ -1259,19 +1382,51 @@ def test_renders_the_ramp_that_measured_a_rate_stage_its_offer_rate(
     )
 
     assert (
-        "Offer rate: 1400.0/s, the highest offer the fleet absorbed; it refused "
-        "2100.0/s, so the knee is between the two and nothing here refines it. The "
-        "rows above offer fractions of it. The drain rate this stage calibrated from "
-        "was 4200.0/s, which is what the fleet completes with a backlog already "
-        "waiting rather than what it can absorb as it arrives.\n"
+        "Offer rate: 1400.0/s, the highest offer this ramp got through cleanly — the "
+        "LOWER of the fleet's knee and the producer's own ceiling, and the ramp does "
+        "not say which of the two it found. It refused 2100.0/s with the producer "
+        "still delivering its target, so that refusal is the FLEET's and the knee is "
+        "between the two; nothing here refines it. The rows above offer fractions of "
+        "it. The drain rate this stage calibrated from was 4200.0/s, which is what "
+        "the fleet completes with a backlog already waiting rather than what it can "
+        "absorb as it arrives.\n"
         "\n"
-        "| offered/s | offer s | absorbed | e2e p50 s | backlog at midpoint "
-        "| backlog at end |\n"
-        "| --- | --- | --- | --- | --- | --- |\n"
-        "| 933.3 | 20 | yes | 0.0140 | 30 | 26 |\n"
-        "| 1400.0 | 20 | yes | 0.0180 | 42 | 39 |\n"
-        "| 2100.0 | 20 | no | 8.4000 | 24000 | 51000 |\n"
+        "| offered/s | offer s | achieved/s | producer kept up | absorbed "
+        "| e2e p50 s | backlog at midpoint | backlog at end |\n"
+        "| --- | --- | --- | --- | --- | --- | --- | --- |\n"
+        "| 933.3 | 20 | 933.2 | yes | yes | 0.0140 | 30 | 26 |\n"
+        "| 1400.0 | 20 | 1399.8 | yes | yes | 0.0180 | 42 | 39 |\n"
+        "| 2100.0 | 20 | 2099.6 | yes | no | 8.4000 | 24000 | 51000 |\n"
     ) in rendered
+
+
+def test_says_a_ramp_stopped_by_the_producer_bounds_the_enqueue_side(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The refusal that reads as the fleet's limit and is not.
+
+    Producer and workers share the box, so the enqueue loop can miss its own deadlines
+    before the fleet runs out — and `absorbed` alone cannot tell that apart from a
+    fleet that fell behind. The rate the fleet DID complete in the refused probe is
+    printed with it, because it is a floor on the fleet the ramp never reached.
+    """
+    entries = [build_measurement("rate_25pct", {"mode": "rate"}, {})]
+
+    rendered = render(
+        capsys,
+        tmp_path,
+        "latency_under_load",
+        entries,
+        sustainable_rate=build_producer_bound_ramp(),
+    )
+
+    assert (
+        "It refused 2100.0/s, but the producer itself only achieved 1890.0/s there, "
+        "so that refusal bounds the ENQUEUE side and not the fleet — which completed "
+        "1804.0/s inside the same probe. The fleet's own knee is somewhere above "
+        "that, unmeasured."
+    ) in rendered
+    assert "| 2100.0 | 20 | 1890.0 | no | no | 8.4000 | 24000 | 51000 |\n" in rendered
 
 
 def test_says_a_ramp_that_ran_out_of_ceiling_never_found_the_knee(
@@ -1294,9 +1449,11 @@ def test_says_a_ramp_that_ran_out_of_ceiling_never_found_the_knee(
     )
 
     assert (
-        "Offer rate: 1400.0/s, the highest offer the fleet absorbed; the ramp ran out "
-        "of climb below the drain rate without finding an offer it could not, so the "
-        "knee is at or above the top of the ramp."
+        "Offer rate: 1400.0/s, the highest offer this ramp got through cleanly — the "
+        "LOWER of the fleet's knee and the producer's own ceiling, and the ramp does "
+        "not say which of the two it found. The ramp ran out of climb below the drain "
+        "rate without finding an offer it could not, so the knee is at or above the "
+        "top of the ramp."
     ) in rendered
 
 

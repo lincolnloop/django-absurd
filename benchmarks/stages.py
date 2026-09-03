@@ -59,8 +59,9 @@ STAGE_DESCRIPTIONS = {
 
 # The depth every rung sharing a table is measured at, so `--tasks` is a comparability
 # key rather than a size: 20,000 was measured and REFUSED — it moves the medians
-# 0.42-0.60x on depth alone, tightens no CV, and costs up to 10x the wall clock. See
-# `benchmarks/CLAUDE.md`.
+# 0.42-0.60x on depth alone, leaves the cross-rep CV inside the bracket 5,000 already
+# spanned while making the within-rep profile noisier, and costs up to 10x the wall
+# clock. See `benchmarks/CLAUDE.md`.
 SATURATION_TASKS = 5000
 SATURATION_TIMEOUT_S = 900.0
 # Read back off the measurement default rather than restated, so a results file
@@ -86,7 +87,11 @@ RATE_RAMP_STEP = 1.5
 RATE_RAMP_SECONDS = 20.0
 # Reps this close are not called unstable however far apart they read relatively: a
 # rate measurement ranks on a latency, which every relative dispersion divides by.
-RATE_SPREAD_FLOOR_S = 0.15
+# 10 ms and not the 150 ms this started at: `latency_under_load`'s rungs measure p50s of
+# 9-30 ms and `poll_0.05` 39-42 ms, so a floor above their whole healthy range put `~`
+# out of reach of every one of them and an unmarked rate table said nothing. Under the
+# smallest rung's own p50, so a rep that genuinely lurched still clears it.
+RATE_SPREAD_FLOOR_S = 0.010
 IDLE_PROBE_SECONDS = 30.0
 # A rate is divided by its own window, so a zero-length one has nothing to report.
 SMALLEST_MEASURABLE_DURATION_S = 0.001
@@ -161,7 +166,7 @@ class StageOptions:
     max_workers: int | None = None
     # Not a flag: the machine's own commit ceiling, carried into every stage file this
     # run writes. Mutable because the closing probe lands after those files exist.
-    commit_ceiling: dict[str, dict[str, float] | None] = dataclasses.field(
+    commit_ceiling: dict[str, dict[str, t.Any]] = dataclasses.field(
         default_factory=dict
     )
 
@@ -178,27 +183,42 @@ def run_stages(stage_names: list[str], options: StageOptions) -> None:
         {
             "commit_ceiling_durable": analysis.measure_commit_ceiling(durable=True),
             "commit_ceiling_nondurable": analysis.measure_commit_ceiling(durable=False),
+            # Every file carries this from its first write, so a run killed at any
+            # point says it never took a closing probe rather than reading as a run
+            # whose server refused one.
+            "commit_ceiling_durable_after": analysis.UNPROBED_COMMIT_CEILING,
         }
     )
-    for name in ordered:
-        run_stage(name, options)
+    try:
+        for name in ordered:
+            run_stage(name, options)
+    except Exception:
+        # A stage that raised leaves its session intact, unlike an interrupted wait,
+        # so the stages that did finish still get the ceiling they were read against.
+        record_closing_commit_ceiling(ordered, options)
+        raise
+    record_closing_commit_ceiling(ordered, options)
+
+
+def record_closing_commit_ceiling(
+    stage_names: list[str], options: StageOptions
+) -> None:
+    """Probe the ceiling once more and write it into the files this invocation wrote.
+
+    Last, because the closing probe does not exist until the stages are over — and it
+    says whether the ceiling those stages were read against still held.
+    """
     options.commit_ceiling["commit_ceiling_durable_after"] = (
         analysis.measure_commit_ceiling(durable=True)
     )
-    record_commit_ceiling(ordered, options)
-
-
-def record_commit_ceiling(stage_names: list[str], options: StageOptions) -> None:
-    """Write the after-the-run ceiling into the files this invocation already wrote.
-
-    Last, because the closing probe does not exist until the last stage is done; a run
-    killed before then leaves the field null.
-    """
     for name in stage_names:
         path = options.results_dir / f"stage_{name}.json"
-        write_results_file(
-            path, {**json.loads(path.read_text()), **options.commit_ceiling}
-        )
+        # A stage that raised before writing anything has no file to update, and a
+        # FileNotFoundError raised here would replace the failure that got us here.
+        if path.exists():
+            write_results_file(
+                path, {**json.loads(path.read_text()), **options.commit_ceiling}
+            )
 
 
 def order_by_dependency(stage_names: list[str]) -> list[str]:
@@ -556,6 +576,14 @@ def build_async_dispatch_measurements(
 def build_process_scaling_measurements(
     winner: runner.WorkerSpec, max_workers: int
 ) -> list[measurement.MeasurementSpec]:
+    """The worker ladder, each rung preloaded with 2,000 tasks per worker.
+
+    Sized per rung so a ten-worker fleet still has a drain long enough to trim, which
+    CONFOUNDS the ladder: its rungs run at 4,000 to 20,000 tasks and a deeper backlog
+    is slower, so no rate here compares with the rate above it and the report marks
+    the scaling efficiency it derives. Fixing it means one depth for every rung — see
+    `benchmarks/CLAUDE.md`, which also records the direction the confound points.
+    """
     return [
         measurement.MeasurementSpec(
             name=f"workers_{count}",
@@ -794,8 +822,8 @@ def write_stage_file(
         {
             "stage": stage,
             "options": resolve_options(options),
-            # The three keys always, at null until a probe fills them: omitting them
-            # would read as a file written before the ceiling was ever recorded.
+            # The three keys always: omitting one would read as a file written
+            # before the ceiling was ever recorded.
             **dict.fromkeys(COMMIT_CEILING_KEYS),
             **options.commit_ceiling,
             "measurements": recorded,
@@ -871,7 +899,7 @@ def summarize_producer_reps(
     valid = sorted(
         (rep for rep in reps if rep["valid"]), key=lambda rep: rep["enqueues_per_s"]
     )
-    median: dict[str, t.Any] = valid[(len(valid) - 1) // 2] if valid else {}
+    median = measurement.pick_median_rep(valid, "enqueues_per_s")
     # The shared helpers rather than a second copy of the arithmetic, which needs
     # every dispersion guard fixed in two places.
     cv = measurement.measure_cv(valid, "enqueues_per_s")

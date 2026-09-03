@@ -129,6 +129,7 @@ def test_records_the_commit_ceiling_this_machine_was_measured_against(
     result = utils.read_stage(tmp_path, "producer_ceiling")
     durable = result["commit_ceiling_durable"]
     assert {
+        "measured": durable["valid"],
         "durable": durable["median_per_s"] > 0,
         "durable_after": result["commit_ceiling_durable_after"]["median_per_s"] > 0,
         "measured_its_own_dispersion": durable["cv"] >= 0,
@@ -140,6 +141,7 @@ def test_records_the_commit_ceiling_this_machine_was_measured_against(
             > durable["median_per_s"]
         ),
     } == {
+        "measured": True,
         "durable": True,
         "durable_after": True,
         "measured_its_own_dispersion": True,
@@ -148,14 +150,16 @@ def test_records_the_commit_ceiling_this_machine_was_measured_against(
     }
 
 
-def test_records_no_commit_ceiling_when_the_probe_was_refused(
+def test_records_what_the_server_said_when_the_probe_was_refused(
     tmp_path: pathlib.Path,
 ) -> None:
-    """A run nobody could calibrate still runs; it records that it has no ceiling.
+    """A run nobody could calibrate still runs; it records why it has no ceiling.
 
     Refusing to measure because a calibration probe failed would be worse than
-    reporting an uncalibrated number and saying so, which is what the null here and
-    the report's header line together do.
+    reporting an uncalibrated number and saying so, which is what these blocks and the
+    report's header line together do. What they say is that the server was ASKED and
+    said no — a run that ended before a probe was ever taken records the other thing,
+    and a reader deciding whether to trust a rate has to tell them apart.
     """
     with utils.hold_the_commit_probe_table():
         stages.main(
@@ -177,10 +181,72 @@ def test_records_no_commit_ceiling_when_the_probe_was_refused(
         "commit_ceiling_durable_after": result["commit_ceiling_durable_after"],
         "measured_anyway": result["measurements"][0]["median"]["enqueues_per_s"] > 0,
     } == {
-        "commit_ceiling_durable": None,
-        "commit_ceiling_nondurable": None,
-        "commit_ceiling_durable_after": None,
+        "commit_ceiling_durable": {
+            "valid": False,
+            "error": (
+                "the server refused the probe: relation "
+                '"benchmark_commit_ceiling_probe" already exists'
+            ),
+        },
+        "commit_ceiling_nondurable": {
+            "valid": False,
+            "error": (
+                "the server refused the probe: relation "
+                '"benchmark_commit_ceiling_probe" already exists'
+            ),
+        },
+        "commit_ceiling_durable_after": {
+            "valid": False,
+            "error": (
+                "the server refused the probe: relation "
+                '"benchmark_commit_ceiling_probe" already exists'
+            ),
+        },
         "measured_anyway": True,
+    }
+
+
+def test_a_run_that_died_still_records_the_ceiling_its_stages_were_read_against(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A stage that raises must not take the finished stages' calibration with it.
+
+    The closing probe is what says whether the ceiling those stages were read against
+    still held, and it lands after the last stage — so an invocation that dies at a
+    later one has to take it anyway, or 75 minutes of measurement bands against the
+    opening probe alone for the sake of the stage that failed. The stage that never
+    wrote a file is skipped rather than being an error of its own.
+
+    latency_under_load reads `stage_process_scaling.json` back off disk, and there is
+    none here, so it raises after producer_ceiling has finished and written its own.
+    """
+    with pytest.raises(SystemExit) as exit_info:
+        stages.main(
+            [
+                "producer_ceiling",
+                "latency_under_load",
+                "--reps",
+                "1",
+                "--tasks",
+                "10",
+                "--results-dir",
+                str(tmp_path),
+            ]
+        )
+
+    result = utils.read_stage(tmp_path, "producer_ceiling")
+    assert {
+        "exit_code": exit_info.value.code,
+        "kept_its_measurements": len(result["measurements"]),
+        "closing_probe_measured": result["commit_ceiling_durable_after"]["valid"],
+        "wrote_the_stage_that_never_ran": (
+            tmp_path / "stage_latency_under_load.json"
+        ).exists(),
+    } == {
+        "exit_code": 1,
+        "kept_its_measurements": 3,
+        "closing_probe_measured": True,
+        "wrote_the_stage_that_never_ran": False,
     }
 
 
@@ -467,6 +533,13 @@ def test_refuses_a_size_that_leaves_a_stage_nothing_to_measure(
     )
 
 
+# Four stages in one body, where every other test here drives one: the suite's own
+# 120 s alarm is sized for a single stage, and firing it mid-drain would fail the test
+# for its length rather than for anything it asserts. Raised rather than split because
+# what is under test IS the chain — each stage reads the previous one back off disk,
+# so splitting it either re-runs worker_knobs per test or moves the same 70 seconds
+# into one test's fixture setup, where the same alarm still covers it.
+@pytest.mark.timeout(600)
 def test_runs_every_calibrated_stage_from_its_prerequisite(
     tmp_path: pathlib.Path,
 ) -> None:

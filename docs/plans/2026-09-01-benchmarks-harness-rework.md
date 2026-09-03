@@ -147,6 +147,14 @@ From `benchmarks/README.md` and, where they appear, the docs page being deleted:
   context stay. Do not replace it with a ratio against the flagged baseline.
 - "only the ratios travel" where stated generally
 
+A second pass over `benchmarks/CLAUDE.md` and `benchmarks/README.md` found the same
+failure inside the rework's own docs — figures that trace to no saved run, a scaling
+multiple divided across two queue depths, a producer-side refusal reported as the
+fleet's. Retracted claim by claim in
+[the spec](../specs/2026-09-01-benchmarks-harness-rework.md#retracted-in-review-and-why);
+the reference docs state only the current position, with the run behind each figure
+named.
+
 Not a deletion in the harness README, which keeps the number under the provenance stamp.
 It does NOT go in the user guide: the same branch marks that whole regime as unbacked by
 anything in the repo, so citing one of its numbers as guidance two files away

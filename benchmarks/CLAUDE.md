@@ -8,12 +8,26 @@ what a human does.
 
 ## How to read every number in this file
 
-All figures are from the tmpfs runs with the macOS indexer suppressed, on one 14-core
-laptop at `--max-workers 10 --reps 3`. Runs `warmup` and `b` are the clean pair (per-rep
-load medians 2.54 and 3.38); run `a` ran at load 6.70 with peaks to 15.01 while the
-indexer held 1-1.4 cores, and reads 6-10% low. The offer-rate and queue-depth figures
-come from three later runs on the same server in the same session — two of
-`latency_under_load` after it was changed, and one `worker_knobs` at `--tasks 20000`.
+Every figure names the run it came from, and one quoted from several runs is a range
+across them. All of them are tmpfs runs with the macOS indexer suppressed, on one
+14-core laptop at `--max-workers 10 --reps 3`: four complete runs — `warmup`, `a`, `b`,
+`c2` — plus `c`, which recorded `worker_knobs` alone. The offer-rate figures come from
+two later `latency_under_load` runs (`after1`, `after2`) and the depth figures from one
+`worker_knobs` at `--tasks 20000`, same server, same session.
+
+**Runs with different calibration points did not measure the same configuration.** `a`'s
+`worker_knobs` winner was `batch_32`, so every stage downstream of it ran
+`--concurrency 16 --batch-size 32` where `warmup`, `b` and `c2` ran concurrency 16 with
+the default batch; and its `latency_under_load` calibrated from `workers_5` rather than
+`workers_7`, so its rate rungs were offered to five workers where the other three runs'
+went to seven. An `a` row beside a `b` row is two experiments, not one measurement
+repeated. Read the `Calibrated from` line first, always.
+
+Load is sampled on each side of every rep. Median of every `load_before`/`load_after`
+sample: `warmup` 2.68, `c2` 3.39, `b` 3.40, `a` 5.11. It does not account for a whole
+run reading low — `c2` and `b` sat at 3.39 and 3.40 and still disagreed by up to 18% on
+individual rungs. Measure on a quiet machine regardless: the macOS indexer alone was
+measured at 1-1.4 cores sustained.
 
 **Every ceiling proposed during this work turned out to be the measurement environment
 rather than Absurd: disk fsync, then one connection's commit rate, then CPU. The harness
@@ -26,83 +40,109 @@ they are labelled, and their levels mean nothing now.
 
 ## Repeatability: rank things, do not confirm small changes
 
-Three full runs of one commit, 25 shared saturation measurements:
+Runs `warmup`, `b` and `c2` — one commit, one calibration point — over the 25 saturation
+measurements they share:
 
     median CV      4.7%      (14 of 25 under 5%)
     mean CV        5.1%
     worst CV      12.5%
 
-The clean pair alone: median run-to-run ratio 0.987, CV of ratios 4.7%, ratios spanning
-0.88-1.15. On the disk volume the same comparison read median ratio 1.20, CV 31.7%,
-ratios 0.02-1.71 — so the storage change is what bought repeatability.
+`b` against `warmup` over the same 25: median ratio 0.98, CV of ratios 3.7%, ratios
+spanning 0.88-1.08.
 
-**4.7% is not a precision guarantee for a single measurement.** The third run sits
-systematically BELOW the other two on several of them (`workers_1` 1,066 against
-1,211/1,306; `async_dispatch` 888 against 1,137/1,071), which is a mild between-run bias
-and not pure scatter. Treat a difference under ~12% as noise.
+**4.7% is not a precision guarantee for a single measurement.** `c2` sits systematically
+BELOW the other two on several of them (`workers_1` 1,066 against 1,211/1,306;
+`async_dispatch` 888 against 1,137/1,071; 8-20% low on `concurrency_2`, `concurrency_4`
+and `batch_32`) at the same per-rep load as `b`, so there is a between-run bias on top
+of scatter. Treat a difference under ~12% as noise.
 
-Two conditions produced it and both matter: the data directory on tmpfs, and the macOS
-indexer suppressed. `latency_under_load`'s upper rungs used to be the exception, at CVs
-of 160%+; they were over-offered rather than noisy, and now repeat at 0.6-3.7% —
-[a drain rate is not an arrival rate](#a-drain-rate-is-not-an-arrival-rate).
+Two conditions produced these figures and both matter: the data directory on tmpfs, and
+the macOS indexer suppressed.
 
 ## Overhead, itemised
 
-Per `noop_sync` task (empty body), worker side:
+Per `noop_sync` task (empty body), worker side, across the 204 `noop_sync` saturation
+reps of `warmup`, `a`, `b` and `c2`:
 
-    commits per task     1.85 - 2.67   varies with SHAPE, not just with batching
+    commits per task     1.72 - 3.01   part shape, part ramp; the split is open
     row updates          ~4            ~2 on r_bench, ~2 on t_bench
     backends per worker  2             SDK connection + Django ORM, at ANY --concurrency
 
-From `pg_stat_statements` with `track=all`, top-level rows only:
+From `pg_stat_statements` with `track=all`, at `worker_knobs` `concurrency_1` — the only
+shape where the client remainder is exact
+([the measurement model](#the-measurement-model)). Each figure is a range over the
+median rep of the five saved runs:
 
-    wall 2.82 ms/task = server 1.64 ms + client 1.18 ms
+    wall 2.82 - 3.14 ms/task = server 1.57 - 1.77 ms + client 1.16 - 1.48 ms
 
-    1.00 calls/task  1.4718 ms  claim_task            (top level)
-    1.00 calls/task  0.9058 ms    candidate CTE       (nested)
-    1.00 calls/task  0.2684 ms    cancellation scan   (nested)
-    1.00 calls/task  0.0990 ms  complete_run          (top level)
+    1.00 calls/task  1.41 - 1.56 ms  claim_task            (top level)
+    1.00 calls/task  0.84 - 0.92 ms    candidate CTE       (nested)
+    1.00 calls/task  0.27 - 0.30 ms    cancellation scan   (nested)
+    1.00 calls/task  0.09 - 0.12 ms  complete_run          (top level)
 
-- WAL durability was 71% of a full run's active backend time on the volume, which is why
-  every rate here is read against a commit ceiling rather than on its own.
-- Claiming costs ~15x completing. All per-task database cost is acquiring work.
-- 42% of a task's wall time is client-side Python. That is what a GIL serialises, and it
-  is the mechanism behind processes beating in-process concurrency.
-- The cancellation scan is 18% of the claim, on every claim.
+- WAL durability was 71% of a full run's active backend time on the volume (disk-era),
+  which is why every rate here is read against a commit ceiling rather than on its own.
+- Claiming costs 13-16x completing. All per-task database cost is acquiring work.
+- The cancellation scan is 18-19% of the claim, on every claim.
+- **40-47% of a task's wall time is outside the server, and what serialises it is not
+  established.** `client_ms_per_task` is wall minus server, so it holds our Python, the
+  SDK's and the round-trip waits — and a round trip releases the GIL. Two mechanisms fit
+  every figure here: the GIL, or the single claim connection a worker process owns. Both
+  predict processes beating in-process concurrency.
 
-## Throughput: 4,441 tasks/s, and no knee on either axis
+## Throughput: both axes were still buying at the top of the sweep
 
-    shape    tasks/s   commits/task
-    10x16    4,441.7   1.85          <- best measured
-     7x16    4,182.3   2.03
-     5x16    3,727.7   2.13
-     2x16    2,292.8   2.13
-     8x1     2,028.3   2.67
+    shape    tasks/s              backlog   commits/task
+    10x16    4,008.5 - 4,441.7    20,000    1.72 - 1.88
+     7x16    4,052.1 - 4,231.4    14,000    1.96 - 2.07
+     5x16    3,623.1 - 3,727.7    10,000    2.13
+     2x16    2,074.6 - 2,292.8     4,000    2.13
+     1x16    1,066.1 - 1,306.3     4,000    2.13
+     8x1     1,924.4 - 2,028.3     5,000    2.35 - 2.69
 
-Both axes still paid at the top of the sweep:
+`process_scaling` rungs over `warmup`, `b` and `c2`; `8x1` is `pooled_vs_split`'s
+`split_8`. **`--tasks` belongs beside every rate in that table.**
+`build_process_scaling_measurements` sizes the preload as `max(4000, 2000 * count)`, so
+the ladder's rungs drain 4,000 to 20,000 tasks, and four times the backlog costs 40-58%
+of the throughput on its own
+([Queue depth costs throughput](#queue-depth-costs-throughput)). No rate in that table
+compares with the rate above it.
 
-    concurrency at 1 process:     1->16 gives 360.6 -> 1,231.1 tasks/s   (3.4x)
-    processes at concurrency 16:  1->10 gives 1,211.5 -> 4,441.7         (3.7x)
-    diagonal at equal total:      4x1 beats 1x4 by 2.08x; 8x1 beats 1x8 by 2.24x
+    concurrency at 1 process, all 5,000 tasks:  1->16 gives 333-361 -> 1,096-1,231
+                                                tasks/s, 3.0-3.7x over four runs
+    diagonal at equal total, 5,000 both arms:   4x1 beats 1x4 by 1.95-2.28x
+                                                8x1 beats 1x8 by 2.17-2.29x
 
-10x16 is 160 concurrent tasks on 14 cores and still the top cell, still climbing. In
-particular in-process concurrency does NOT saturate around 3x: 3.4x at concurrency 16
-with no rung flattening.
+Those two comparisons hold one depth each, so both are measurements: in-process
+concurrency does not saturate around 3x, and processes beat threads at the same total.
+The process axis has no multiple — its raw 1->10 quotients read 3.3-3.8x across
+`warmup`, `b` and `c2`, each dividing a 20,000-task rung by a 4,000-task one, and the
+deeper rung is the slower-reading one, so 3.3x is a LOWER BOUND. The report's
+`T(N)/(N x T(1))` block prints each rung's backlog and marks itself `CONFOUNDED` for the
+same reason.
 
-Advice that survives: scale with PROCESSES, concurrency around 16, batch the claims.
+Advice: scale with PROCESSES, concurrency around 16, batch the claims.
+
+**Future work: run the ladder at one depth.** A fixed preload across every rung, sized
+for the fastest one, is what makes the process axis a measurement.
 
 ## Queue depth costs throughput
 
-    within-rep drift, 46 reps across two runs: median +13.3%, positive in 37 of 46
+Throughput RISES as a backlog drains. Within-rep drift — the least-squares trend over a
+rep's `profile_slices`, read as total fractional change across the drain — over the 150
+saturation reps of `warmup` and `b`:
 
-Throughput RISES as the queue drains. This was the original hypothesis; it was recorded
-as refuted off a single disk run whose sign was inverted by storage noise, and it is
-confirmed on RAM across two runs. Nothing cumulative can make a drain faster, which is
-what makes the sign readable at all.
+    median +15.7%, positive in 120 of 150
+
+The magnitude moves with the definition and the rep set — the same trend over just those
+runs' 48 `worker_knobs` reps reads +19.3% in 36 of 48, last-slice-over-first +17.7% over
+the 150 — so quote one only with both beside it. The SIGN is what nothing cumulative
+could produce: accumulated state cannot make a drain faster.
 
 Consequence: a saturation measurement averages a curve, so its single number depends on
-the starting depth and is not comparable across `--tasks` values. `profile_slices` is
-what makes that visible.
+the starting depth and does not compare across `--tasks` values. `profile_slices` makes
+the curve visible; the report's `backlog` column makes the depth visible beside the
+rate.
 
 **How much depth costs, measured directly.** The whole `worker_knobs` concurrency ladder
 at `--tasks 20000` against the four baseline runs at 5,000, same machine, same session:
@@ -114,80 +154,96 @@ at `--tasks 20000` against the four baseline runs at 5,000, same machine, same s
     concurrency_8    809-913             415.7     0.47
     concurrency_16   1,096-1,231         716.4     0.60
 
-Four times the backlog costs 40-58% of the throughput on every rung — an order of
-magnitude more than the +13.3% within-rep drift, because the drift is measured over the
-part of the drain that is left rather than across two starting depths. The within-rep
-drift grows to match: at 20,000 the first slice reads 0.46 of the median slice, against
-0.79-1.01 at 5,000, so a rep at that size climbs by more than 2x across its own drain.
+Four times the backlog costs 40-58% of the throughput on every rung. The within-rep
+drift grows with depth with it: the same fitted trend reads a median +19% over the
+ladder's 60 reps at 5,000 and +46% over its 15 reps at 20,000, while slice 0 reads
+0.60-1.09 of its rep's median slice at 5,000 against 0.46-0.93 at 20,000.
 
 That is why `--tasks` is a comparability key and not a size knob, and it is the measured
 answer to raising `SATURATION_TASKS`:
-[the window is long enough already](#saturation_tasks-stays-at-5000).
+[the window is long enough already](#saturation_tasks-stays-at-5000). It is also why
+`process_scaling`, which sizes its own preload from the worker count, reports no scaling
+multiple:
+[both axes were still buying](#throughput-both-axes-were-still-buying-at-the-top-of-the-sweep).
 
 ## A drain rate is not an arrival rate
 
 A saturated fleet has work waiting at every claim; a paced one has to keep up in real
 time, claim polls that find nothing included. So the two rates are different quantities
-and the drain one is the larger — which is what `latency_under_load` used to get wrong.
-Its rungs were fractions of the `process_scaling` drain ceiling, and from `rate_50pct`
-up they offered more than the fleet could absorb. Four runs on RAM, 7 workers x
-concurrency 16, whose drain rate measured 4,182-4,231 tasks/s:
-
-    rung          offered/s      p50 latency      throughput/s    cv
-    rate_25pct    1,013-1,058    15-18 ms         1,013-1,057     3-65%
-    rate_50pct    2,026-2,116    30 ms - 2.6 s    1,314-2,093     2-167%
-    rate_75pct    3,039-3,174    35-86 SECONDS    529-718         10-18%
-
-The 75% rung is the shape of the error. Offered 3,100/s, the same fleet that drains
-4,200/s completed 620 — a seventh of it — because a queue that deep is a different
-workload: the tables are 150,000 rows of unfinished work, the producer is competing for
-the cores, and every claim scans more. Its p50 is then a function of how long the window
-was, not of the system. The 50% rung sat right on the knee and came out bimodal: reps at
-31 ms beside reps at 1.3-2.6 s in the same measurement, which is where the 167% CV came
-from.
-
-It also aborted runs. Three of those four never recorded a `rate_90pct` row: the drain
-after that offer outran `RATE_TIMEOUT_S`, and `MeasurementTimeoutError` reaches no
-handler, so the invocation died there — which is why every stage file in those three
-runs is missing its closing commit ceiling.
-
-**So the stage measures the arrival rate itself.** A ramp offers for 20 s at a time,
-climbing from a tenth of the drain ceiling by half again a step, and stops at the first
-offer the fleet did not absorb; the highest one it did absorb is the working point, and
-the rungs are fractions of THAT. The whole ramp is recorded probe by probe under
+and the drain one is the larger, and `latency_under_load` measures its own arrival rate
+rather than taking fractions of a drain rate. A ramp offers for 20 s at a time, climbing
+from a tenth of the drain ceiling by half again a step, and stops at the first offer
+that did not come off cleanly; the highest one that did is the working point, and the
+rungs are fractions of THAT. The whole ramp is recorded probe by probe under
 `sustainable_rate`, because a working point nothing can see is a number a reader cannot
-argue with. On this server it found 2,142 tasks/s sustainable and 3,213 refused against
-a 4,231 drain rate — the knee is around half the drain rate, which is exactly why the
-old 50% rung was the bimodal one. What the rungs read after the change:
+argue with.
 
-    rung          offered/s   p50 latency   cv     marks
-    rate_25pct        535.5      9.7 ms     3.6%   none
-    rate_50pct      1,070.7     15.3 ms     0.6%   none
-    rate_75pct      1,605.7     23.1 ms     3.7%   none
-    rate_90pct      1,926.7     29.9 ms     1.8%   none
+**The ramp stops at the lower of two limits and does not say which.** The producer runs
+on the same box as the workers, so a probe fails either because the fleet fell behind or
+because the enqueue loop never made the offer. On this server, both at once: `after1`
+and `after2` absorbed 2,142.1/s and refused 3,213.2/s, and the refused probe tripped
+both guards in both runs.
 
-A monotonic latency curve against offered load, which is what the stage is for, and the
-first run of it with nothing marked. It cost ~15 minutes against 17-24, because the
-rungs that took the longest were the ones carrying no information.
+    run      target/s   producer achieved/s   deadlines missed   fleet completed/s   backlog growth
+    after1    3,213.2               2,894.8   61,225 / 64,264              2,741.2   4,472 / 30,300
+    after2    3,213.2               3,016.4   60,961 / 64,264              2,954.3   2,614 / 31,511
 
-**At a matched offer rate the new rungs reproduce the old ones.** 1,071/s reads 15.3 ms
-here against 15.2-15.9 ms at 1,046-1,058/s before, and 1,606/s reads 23.1 ms against
-22.1 ms at 1,433/s. The change removed rows, not signal.
+`offered_ok` false — the producer delivered 90-94% of its target — AND `backlog_grew`
+true under what it did deliver. So 2,142/s is the highest offer this rig got through
+cleanly, and it bounds the two sides jointly. The report prints `achieved/s` and
+`producer kept up` beside every probe, and its offer-rate line names both limits.
 
-**And the stage now repeats.** A second run of it, back to back, absorbed and refused
-the same probes and read 10.5/16.1/24.0/28.8 ms against 9.7/15.3/23.1/29.9 — ratios of
-0.96-1.08, inside the rig's own 12% floor, every row unmarked in both. Both runs read
-the same `stage_process_scaling.json` back, though, so what repeated is which offer the
-fleet absorbed and not the drain ceiling the ramp climbs from: a run whose
-`process_scaling` lands 12% elsewhere probes 12% elsewhere too, and its rung rates move
-with it. That is what makes `sustainable_rate` the first thing to compare between two of
-these reports.
+**The fleet's own knee is measured by over-offering it, which the ramp cannot do.**
+Three runs at 7 workers x concurrency 16 — `warmup`, `b`, `c2`, whose `workers_7` drain
+rates measured 4,052-4,231 tasks/s — offered fractions of that drain rate for 60 s a
+rung:
 
-**The knee is bracketed, never resolved.** Probes are 1.5x apart, so the ramp says the
-rate is between 2,142 and 3,213 tasks/s and nothing here refines it; the working point
-is deliberately the low end of that bracket. And a probe offers for 20 s while a rung
-offers for 60, so a rate that only diverges over a longer window survives the ramp — the
-guard below is what catches that, on the rung itself.
+    rung          offered/s      p50 (medians)   throughput/s (medians)   cv
+    rate_25pct    1,013-1,058    15-18 ms        1,013-1,057              3-65%
+    rate_50pct    2,026-2,116    30-34 ms        1,982-2,084              2-167%
+    rate_75pct    3,039-3,174    39-68 SECONDS   619-718                  10-18%
+
+Medians throughout, so one column cannot be read against another's endpoints. At
+2,026-2,116/s the fleet kept up in seven of nine reps and went bimodal in two — 29-34 ms
+beside 1.30 s and 2.61 s in the same measurement, which is the 167% CV. At 3,039-3,174/s
+it collapsed to 619-718/s while the producer delivered its full offer in seven of nine:
+`warmup`'s first rep offered 188,203 tasks over 60 s, delivered 3,136/s of them, and its
+trimmed window completed 619/s. So the knee is at or a little above half the drain rate
+and below three-quarters of it, and a p50 measured above the knee is a function of the
+window length rather than of the system.
+
+Two hazards live in those rows. A rung whose drain outruns `RATE_TIMEOUT_S` raises
+`MeasurementTimeoutError`, which reaches no handler and takes the invocation with it —
+the stages that finished keep their files and their closing ceiling
+([the results files](#the-results-files)), and everything after that rung is unmeasured.
+And 60 s diverges where 20 s does not — the fleet completed 2,741-2,954/s inside a 20 s
+probe and collapsed at a comparable offer held for 60 — so a rate the ramp absorbed is
+not a rate a rung will; [the guard](#the-guard-a-backlog-that-grew-measured-nothing)
+catches that on the rung.
+
+**What the rungs actually exercise.** Both post-change runs:
+
+    rung          offered/s   p50 (after1 / after2)   cv (after1 / after2)   marks
+    rate_25pct        535.5   9.7 / 10.5 ms           3.6% / 3.5%            none
+    rate_50pct      1,071.1   15.3 / 16.1 ms          0.6% / 3.4%            none
+    rate_75pct      1,606.6   23.1 / 24.0 ms          3.7% / 0.9%            none
+    rate_90pct      1,927.9   29.9 / 28.8 ms          1.8% / 2.9%            none
+
+A monotonic latency curve against offered load, which is what the stage is for, at 14.2
+minutes of measured phase per run, ramp included. **The top rung asks the fleet for
+1,927.9/s, so a change that only shows above about 2,100/s — where these runs put the
+knee — is invisible to this stage.**
+
+Back to back, the two runs absorbed and refused the same probes and their rungs agree to
+0.96-1.08 — inside the rig's own 12% floor. Both read the same
+`stage_process_scaling.json` back, though, so what repeats is which offer got through
+and not the drain ceiling the ramp climbs from: a run whose `process_scaling` lands 12%
+elsewhere probes 12% elsewhere too, and its rung rates move with it. That is what makes
+`sustainable_rate` the first thing to compare between two of these reports.
+
+**The knee is bracketed, never resolved.** Probes are 1.5x apart, so the ramp puts the
+working point between 2,142 and 3,213 tasks/s and nothing here refines it; it is
+deliberately the low end of that bracket.
 
 **A ramp whose first probe diverges does not abort the stage.** It measures at that
 lowest rate, records `sustained: false`, and the marks on the rungs become the finding.
@@ -202,18 +258,19 @@ more than 5% of the tasks offered between those two points is `invalid`: it meas
 climb towards a rate rather than the rate.
 
 A share and not a count, because one threshold has to cover a five-task smoke offer and
-a 120,000-task one. In steady state the backlog is one Little's-law-worth of in-flight
-work at each end, so the growth cancels to a fraction of a percent — under 0.2% at 160
-concurrent tasks over a 60-second offer — while a fleet absorbing 95% of its offer reads
-5% and the refused 3,213/s probe read 4,472 tasks of growth on 64,000 offered. Under 8
-tasks of growth the share is not consulted, so a smoke-sized offer cannot trip it on
-scheduling jitter.
+a 120,000-task one. **The denominator is `offered_after_midpoint`, the tasks offered
+between the two readings — half the window, not the whole offer.** In steady state the
+backlog is one Little's-law-worth of in-flight work at each end, so the growth cancels
+to a fraction of a percent — under 0.2% at 160 concurrent tasks over a 60-second offer —
+while a fleet absorbing 95% of its offer reads 5%. The refused 3,213/s probe read 4,472
+tasks of growth against the 30,300 offered after its midpoint, 14.8%, and 2,614 against
+31,511, 8.3%, in the second run.
 
-5% rather than tighter, on evidence: `rate_90pct` above ended two of its three reps with
-backlogs of 1,149 and 2,345 tasks against ~52 at the midpoint, 2-4% of the offer, and
-all three reps still agreed on the p50 within 1.8% — the rep with no spike at all read
-30.6 ms against 29.5 and 29.9. A 2% limit would have thrown that measurement away for a
-transient that demonstrably did not reach the number.
+5% rather than tighter, on evidence: `after1`'s `rate_90pct` ended two of its three reps
+with backlogs of 1,149 and 2,345 tasks against 46 and 52 at the midpoint — 1.9% and 4.0%
+of the ~57,800 offered after the midpoint — and all three reps still agreed on the p50
+within 1.8%: the rep with no spike at all read 30.6 ms against 29.5 and 29.9. A 2% limit
+would throw that measurement away for a transient that does not reach the number.
 
 The blind spot is the other side of the same threshold: a fleet absorbing 96% of its
 offer diverges slowly and this guard will not say so. That is part of why the top rung
@@ -222,47 +279,70 @@ is 90% of a measured knee rather than 100%.
 ## `SATURATION_TASKS` stays at 5,000
 
 5,000 was sized when `concurrency_1` drained 67 tasks/s, which made a 75-second window.
-On RAM the same rung drains 360/s, so the window is now ~14 s and the fastest rung using
-the constant is 4.5 s — short enough to ask whether what it measures is mostly the fleet
-getting going. Tested by running the whole ladder at `--tasks 20000` and comparing it
-with the four baseline runs:
+On RAM the same rung drains 333-361/s, so the window is now 13-16 s and the fastest rung
+using the constant is 4 s — short enough to ask whether what it measures is mostly the
+fleet getting going. Tested by running the whole ladder at `--tasks 20000` and comparing
+it with the four baseline runs. Everything below is the concurrency ladder's five rungs,
+3 reps each — 60 reps at 5,000 against 15 at 20,000:
 
     what moved            5,000 (4 runs)     20,000
     medians               (the table above)  0.42-0.60x
     cross-rep cv          0.7-7.3%           1.9-4.5%
-    within-rep profile_cv 5.6-11.0%          10.9-22.4%
-    slowest rep           14.7 s             148.1 s
+    within-rep profile_cv 2.6-16.9%          8.7-29.0%
+    slowest rep           15.7 s             148.1 s
 
-So a longer window does not tighten anything: every CV at 20,000 lands inside the
-bracket the same rungs already spanned at 5,000, and the within-rep profile gets noisier
-because the drain now crosses more of the depth curve. What it does change is the
-experiment — the medians move by more than half, which is depth and not precision — at
-four times the tasks and up to ten times the wall clock. **Rejected.**
+So a longer window does not tighten anything: the cross-rep CV at 20,000 lands inside
+the bracket the same rungs already spanned at 5,000, and the within-rep profile gets
+NOISIER — its whole band moves up — because the drain now crosses more of the depth
+curve. What it does change is the experiment — the medians move by more than half, which
+is depth and not precision — at four times the tasks and up to ten times the wall clock.
+**Rejected.**
 
-The premise behind the question is also wrong for these rungs. Worker startup is outside
-the measured window by construction: `start_workers` waits for each child's readiness
-line and `measure_phase` opens afterwards, and the p10-p90 trim then drops the first
-tenth of the completions. The data agrees — slice 0 sits at 0.79-1.01 of the median
-slice across every single-process rung, and the SHORTEST drains show the LEAST deficit
-(`concurrency_16` and `batch_32`, 4.5 s, read 1.00-1.07) while the longest shows the
-most (`concurrency_1`, 14.7 s, reads 0.79-0.90). Dropping slice 0 moves a rep's fitted
-drift by under 3 points. A short drain here is not a ramp; it is a shallower queue.
+A short drain is not a fleet getting going, either — at one process. `start_workers`
+waits for that child's readiness line before `measure_phase` opens, and the p10-p90 trim
+then drops the first tenth of the completions. Over the concurrency ladder's 60 reps
+slice 0 sits at 0.60-1.09 of its rep's median slice, and the SHORT rungs show no deficit
+to explain — `concurrency_16` and `batch_32` (4.0-5.1 s) read 0.78-1.10 while
+`concurrency_1` (13.1-15.7 s) reads 0.60-0.93. Dropping slice 0 moves a rep's fitted
+drift by a median 0.9 points across those 60 reps and at most 7.4. A short drain here is
+a shallower queue, not a ramp.
 
-**Where a ramp IS in the window: the multi-process arms.** `split_8` (8x1, 5,000 tasks,
-2.0 s) reads slice 0 at 0.22-0.23 of its median and climbs 482 → 2,440 tasks/s across
-its own drain, while the pooled arm of the same pair (1x8, 6.1 s) sits flat at
-0.97-0.99. The contamination tracks the PROCESS COUNT and not the window length: eight
-fresh interpreters warming their claim path up inside a two-second drain. `split_8`
-publishes 1,924-2,028 tasks/s against settled slices of 2,300-2,500, so it understates
-by ~17%, and `pooled_vs_split`'s split/pooled ratio is understated with it — its
-direction is not in doubt either way, and it would only grow.
+### Where a ramp IS in the window: the multi-process arms
+
+**Above one process the fleet starts inside the measured drain.** `start_workers` spawns
+children one at a time, blocking on each one's readiness line, and the preload is
+already in the queue — so worker 0 claims for the whole stagger before the last child
+exists. A child's interpreter and Django startup times at 0.20 s, putting roughly 1.5 s
+of staggered start inside an eight-process arm and 2 s inside a ten-process one.
+
+`split_8` (8x1, 5,000 tasks, 1.5-2.0 s) reads slice 0 at 0.21-0.24 of its median and
+climbs from 479-523 to 2,286-2,714 tasks/s across its own drain, while the pooled arm of
+the same pair (1x8, 5.5-6.1 s) sits at 0.95-1.05. The contamination tracks the PROCESS
+COUNT and not the window length, and the pooled arm is what rules out a warm-up
+explanation: one interpreter warms its claim path as much as eight do, and it shows no
+deficit. `split_8` publishes 1,920-2,055 tasks/s against its own median slices of
+2,060-2,253, so it understates by 7-15% and `pooled_vs_split`'s split/pooled ratio is
+understated with it — the direction of that ratio is not in doubt either way, and it
+would only grow. (All four runs, 12 reps.)
+
+**`commits_per_task` and `calls_per_task` take the same defect the other way up.** Both
+divide a phase-window delta — `xact_commit`, and `pg_stat_statements` — by `n_runs`,
+which `analyze_saturation` counts over the WHOLE drain (`window = true`). Tasks finished
+before the phase opened are in the denominator and their commits are not, so both counts
+read low above one process, by the share of the drain that ran during the stagger. What
+that costs in practice is not established: the measured `commits_per_task` column falls
+from 2.13 at one, two and five processes to 1.88 at ten, which is the right direction,
+but a bias proportional to the stagger would have moved the two- and five-process rungs
+too and it did not. Treat the spread across process counts as unresolved rather than as
+shape.
 
 That is a real defect and a bigger constant is the wrong fix for it: it would dilute the
-warm-up only by measuring a deeper queue for both arms of a pair, at four times the
-cost, while degrading every single-process rung it touches. What it wants is a windowed
-analysis — a saturation rep capturing the database clock the way a rate rep already
-does, and counting completions from there — which moves every saturation figure in this
-file and is not done here.
+stagger only by measuring a deeper queue for both arms of a pair, at four times the
+cost, while degrading every single-process rung it touches. Two things would: spawning
+the children concurrently rather than one at a time, and a windowed analysis — a
+saturation rep capturing the database clock the way a rate rep already does, and
+counting both completions and runs from there. The second moves every saturation figure
+in this file. Neither is done here.
 
 ## Storage: two regimes on a volume, and none on RAM
 
@@ -274,11 +354,21 @@ Ten arms each, interleaved so the media alternate, one configuration throughout:
 The volume was the single largest source of irreproducibility here: its durable commit
 rate sits in one of two regimes about 3.5x apart and nothing the harness controls
 selects between them. RAM is not better storage; it is storage taken out of the
-measurement. At 56,659 commits/s and ~2.5 commits per task the database could sustain
-~22,000 tasks/s against the ~4,400 this rig actually reaches, so the commit ceiling
-stops constraining anything and its own spread stops reaching the numbers below it. The
-runs themselves recorded 200,000-240,000 commits/s. `synchronous_commit=on` and
-`fsync=on` are unchanged: the durability request is the same one, only the medium moved.
+measurement.
+
+**A run's own probe is the figure to use, and the interleaved arms above are not it.**
+Those arms are one connection alternating media without the per-session warm-up a
+results file's probe does, and their tmpfs median is 56,659 c/s. The five saved runs'
+opening probes — warmed, on the session that then times — recorded 203,804-240,964
+durable commits/s (cv 3.7-14.6%) and 512,453-617,208 non-durable; `a`'s closing probe
+read 307,377. Every commit-budget verdict in a report is read against the in-run
+figures; the interleaved arms establish the ratio between the media and nothing else.
+
+Either way the ceiling stops constraining: at 203,804 c/s and the 1.72-3.01 commits per
+task measured here the database could sustain 68,000-118,000 tasks/s against the
+4,000-4,400 this rig reaches, so neither the ceiling nor its spread reaches the numbers
+below it. `synchronous_commit=on` and `fsync=on` are unchanged: the durability request
+is the same one, only the medium moved.
 
 A stage took ~14 minutes on the volume and ~4-5 minutes on RAM.
 
@@ -414,6 +504,20 @@ than two seconds the host napped mid-phase, the rep is thrown away and the measu
 is marked invalid. A wall clock stepping BACKWARDS is an NTP correction, not a nap, and
 is tolerated.
 
+**A drain waits on the queue AND on the fleet.** A queue polled by itself cannot tell a
+slow drain from an absent one, so a rung whose workers died would sit out its whole
+`timeout_s` — 900 s in saturation — and then report the timeout as the failure, with the
+crash that caused it printed underneath as an afterthought. Any child exit ends the
+wait, a clean one included: a worker that returned 0 has stopped claiming as thoroughly
+as one that died. `stop_workers` then raises the children's own crash over that refusal
+on the way out, so what a reader sees first is the failure and not its symptom.
+
+**The summary rep is the unluckier middle, and which one that is depends on the
+metric.** `pick_median_rep` sorts the valid reps by the ranking key and, at an even rep
+count, takes the WORSE of the two middles — the lower throughput, the lower enqueue
+rate, the HIGHER end-to-end p50 — because a measurement must not be summarized by its
+luckiest rep, and the metric is what says which one that is.
+
 **Marking is the honesty mechanism, and nothing is suppressed.** Every rep votes, not
 just the median one: a rep that under-offered has a LOWER latency, so it sorts away from
 the median and would never be looked at. Two unrelated things can be wrong, so two
@@ -443,8 +547,14 @@ repeat sit at 1.0-3.4%, ones that genuinely lurch at 25-50%, and 10% is the gap 
 them. `spread` and the endpoints (`range_low`, `range_high`) are still recorded and the
 report prints the endpoints, because `209-501` is what a reader wants to see — they have
 simply stopped being the trigger. A `spread_floor` guards the test in the ranking key's
-own units: reps within 150 ms of each other are not called unstable however far apart
-they read relatively — reps of 67/89/173 ms read as a 119% spread.
+own units: reps closer together than the floor are not called unstable however far apart
+they read relatively. Saturation mode sets none — a throughput's relative and absolute
+dispersion say the same thing — and the rate stages set `RATE_SPREAD_FLOOR_S`, 10 ms.
+**A floor has to sit BELOW the measurements it guards, or it disables the mark instead
+of steadying it:** `latency_under_load`'s rungs read p50s of 9-30 ms and `poll_0.05`
+39-42 ms, so no combination of their reps clears a floor set anywhere near a tenth of a
+second. At 10 ms a rung that lurches still marks, and a 10% CV on reps milliseconds
+apart does not.
 
 Fewer than two valid reps is an unknown dispersion rather than a zero: `spread` and `cv`
 record `null` and the row is marked `?`, so a measurement that measured nothing cannot
@@ -572,10 +682,12 @@ a median with its dispersion and never as a scalar. Eight volume-era trials spre
 `synchronous_commit = off` held to 5%; two warmed opening probes, one per run, read
 1,984/s and 615/s. Nothing here selects between those two regimes. The two probes are
 also sized differently on purpose — `DURABLE_PROBE_COMMITS` 300 against
-`NONDURABLE_PROBE_COMMITS` 5,000 — because the non-durable rate reached ~370,000
-commits/s on the same stack, where 300 commits would be timing under a millisecond. A
-round read straight after a run once came back at 719/s: that was a cold session, not a
-depressed server, and it is why all three probes warm.
+`NONDURABLE_PROBE_COMMITS` 5,000 — because the non-durable rate reached 512,000-617,000
+commits/s across the five saved runs, where 300 commits would be timing under a
+millisecond. (On tmpfs the durable count is barely out of that regime either:
+[Storage](#storage-two-regimes-on-a-volume-and-none-on-ram).) A round read straight
+after a run once came back at 719/s: that was a cold session, not a depressed server,
+and it is why all three probes warm.
 
 The opening probe runs before the first measurement and the closing one after the last.
 The closing probe is not the opening one repeated: a run leaves behind the bloat and the
@@ -587,9 +699,27 @@ The probe loops server-side, a `do` block committing single-row inserts timed wi
 the server's fsync. It writes to a real table it creates and drops rather than a
 temporary one, since a temp table is not WAL-logged and a probe against one skips the
 WAL the run itself pays for (84,000/s against 953/s on a disk, measured side by side).
-Any of the three blocks can be `null`: the probe was refused, the run went ahead
-regardless, and the report says the calibration is missing rather than dropping the
-line.
+
+**A block that holds no rate says which of two things happened**, in the `valid`/`error`
+vocabulary a rep already uses. `"the server refused the probe: ..."` is an answer about
+the server — it was asked, and the message it gave is the reader's first clue.
+`"the run ended before this probe was taken"` is not about the server at all: the run
+was interrupted mid-wait, killed, or died at a stage, and nothing here is evidence about
+what that machine could commit. Reading the second as the first is how an interrupted
+run comes to look like a server that cannot commit, so the report prints the reason
+beside every missing rate and calibrates against neither. A run whose probe was refused
+goes ahead regardless — an uncalibrated number that says it is uncalibrated beats no
+number.
+
+Every file carries the closing block from its FIRST write, holding the never-taken
+reason until a probe replaces it, so a run killed outright still says what it never did.
+A stage that raises is not that case: its session is intact where an interrupted wait's
+is not, so the closing probe is still taken and written into the files the finished
+stages left — 75 minutes of measurement must not lose its calibration to the stage that
+died. The probe issues nothing from a `finally`, either: a statement sent after an
+interrupted wait raises over the interruption, and what reaches the caller is then a
+database error where a timeout happened, on a session stuck mid-command for everything
+that follows.
 
 **A calibration that disagrees with itself softens every bound-verdict under it**, and
 it can disagree two ways. Within one probe: `range_low` and `range_high` come off the
@@ -653,9 +783,13 @@ order:
    one file's opening and closing probes says the same about that file. Re-run rather
    than reading on.
 2. **the structural counts** — `commits_per_task` per measurement, each statement's
-   `calls_per_task` in `statement_stats`, `shape_connections`. These are exact and
-   portable, so movement in them is the change itself and is worth chasing; a claim path
-   that grew a statement shows here and nowhere else.
+   `calls_per_task` in `statement_stats`, `shape_connections`. Counts rather than
+   timings, so a claim path that grew a statement shows here at a magnitude no
+   throughput number could resolve, and nowhere else. `shape_connections` is exact. The
+   two per-task counts are exact at ONE worker process and read low above it
+   ([the multi-process arms](#where-a-ramp-is-in-the-window-the-multi-process-arms)), so
+   compare them at the SAME process count — where the bias is common to both runs — and
+   do not read a difference between rungs of `process_scaling` as shape.
 3. **the `options` and `calibration` blocks.** Same flags, or the runs measured
    different experiments — a deeper queue is slower, so a saturation rate does not
    compare across `--tasks`. And a stage that calibrates inherits the winning rung, so a
@@ -666,11 +800,13 @@ order:
    changed places is a finding; a rung that changed by 10% and kept its place is not.
 
 **The floor: a difference under about 12% is not evidence of anything.** Three runs of
-identical code gave a median CV of 4.7% and a worst of 12.5%, and the third sat
+identical code gave a median CV of 4.7% and a worst of 12.5%, and one of them sat
 systematically below the other two, so there is between-run bias on top of scatter. Only
 a delta clearing that floor on SEVERAL measurements at once, in one direction, is a
-change. Check `load_before`/`load_after` too: a run at load 6.7 measured 6-10% low
-against one at 2.5.
+change. `load_before`/`load_after` are worth reading but will not explain such a delta:
+the two runs whose per-rep load medians were 3.39 and 3.40 still disagreed by up to 18%
+on individual rungs. A whole run's numbers moving together is usually the working point
+it inherited — read the `calibration` block first.
 
 Two `latency_under_load` reports compare rung for rung only if their ramps found the
 same rate: the rungs are fractions of a MEASURED offer rate, so a run whose knee moved
