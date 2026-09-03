@@ -3,7 +3,7 @@
 # convention. Build context = repo root.
 FROM python:3.14.6-slim
 
-COPY --from=ghcr.io/astral-sh/uv:0.12.8 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.12.9 /uv /uvx /bin/
 
 ENV PYTHONUNBUFFERED=1
 ENV UV_COMPILE_BYTECODE=1
