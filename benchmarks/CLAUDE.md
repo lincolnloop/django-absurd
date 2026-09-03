@@ -69,18 +69,12 @@ reps of `warmup`, `a`, `b` and `c2`:
     backends per worker  2             SDK connection + Django ORM, for a body that
                                        touches no ORM itself
 
-**That 2 holds only for task bodies that do not touch the ORM**, which is every workload
-in `tasks.py`. Django's connections are thread-local and `open_worker_runtime` runs sync
-bodies on a `ThreadPoolExecutor(max_workers=options.concurrency)`, so a body doing ORM
-work opens a third backend per busy thread and holds it for the body's whole duration —
-up to `C + 2` per process, 126 at the 7 x 16 this file recommends, against a
-`BENCH_MAX_CONNECTIONS` of 100 and a stock `max_connections` of 100. Nothing here
-measured that: `measure_shape_connections` counts backends across starting a fleet and
-runs no task, so it observes worker STARTUP connections and cannot see a body-opened
-one.
-
 That last row is a property of an EMPTY body, not of a worker: a body that touches the
-ORM opens one more backend per busy slot and holds it while it runs
+ORM opens one more backend per busy slot and holds it while it runs, so a process holds
+up to `--concurrency` + 2 — 18 at the concurrency 16 this file recommends, against a
+`BENCH_MAX_CONNECTIONS` and a stock `max_connections` of 100.
+`measure_shape_connections` measures both counts, sampling `pg_stat_activity` while
+durable work runs for the second
 ([the durable workload](#the-durable-workload-and-the-backends-it-holds)).
 
 From `pg_stat_statements` with `track=all`, at `worker_knobs` `concurrency_1` — the only
@@ -408,21 +402,26 @@ a shallower queue, not a ramp.
 
 ### Where a ramp IS in the window: the multi-process arms
 
-**Above one process the fleet starts inside the measured drain.** `start_workers` spawns
-children one at a time, blocking on each one's readiness line, and the preload is
-already in the queue — so worker 0 claims for the whole stagger before the last child
-exists. A child's interpreter and Django startup times at 0.20 s, putting roughly 1.5 s
-of staggered start inside an eight-process arm and 2 s inside a ten-process one.
+**Above one process the fleet starts inside the measured drain.** `start_workers`
+launches every child before waiting on any readiness line, and a saturation rep's
+preload is already in the queue — so the first child up drains alone for as long as the
+slowest of the others takes to start, and those completions sit inside the window the
+throughput is taken over. That is one child's interpreter and Django startup, 0.20 s,
+whatever the process count.
 
-`split_8` (8x1, 5,000 tasks, 1.5-2.0 s) reads slice 0 at 0.21-0.24 of its median and
-climbs from 479-523 to 2,286-2,714 tasks/s across its own drain, while the pooled arm of
-the same pair (1x8, 5.5-6.1 s) sits at 0.95-1.05. The contamination tracks the PROCESS
-COUNT and not the window length, and the pooled arm is what rules out a warm-up
-explanation: one interpreter warms its claim path as much as eight do, and it shows no
-deficit. `split_8` publishes 1,920-2,055 tasks/s against its own median slices of
-2,060-2,253, so it understates by 7-15% and `pooled_vs_split`'s split/pooled ratio is
-understated with it — the direction of that ratio is not in doubt either way, and it
-would only grow. (All four runs, 12 reps.)
+Figures below were measured with the launches serialized, where that same start-up cost
+one child per EXTRA process — 1.5 s inside an eight-process arm — so read the shape and
+not the levels. `split_8` (8x1, 5,000 tasks, 1.5-2.0 s) read slice 0 at 0.21-0.24 of its
+median and climbed from 479-523 to 2,286-2,714 tasks/s across its own drain, while the
+pooled arm of the same pair (1x8, 5.5-6.1 s) sat at 0.95-1.05. The contamination tracked
+the PROCESS COUNT and not the window length, and the pooled arm is what rules out a
+warm-up explanation: one interpreter warms its claim path as much as eight do, and it
+showed no deficit. `split_8` published 1,920-2,055 tasks/s against its own median slices
+of 2,060-2,253, so it understated by 7-15% and `pooled_vs_split`'s split/pooled ratio
+with it — the direction of that ratio is not in doubt either way, and it would only
+grow. (All four runs, 12 reps.) A concurrent launch shortens what lands in the window;
+it does not empty it, so a short multi-process arm still reads low by whatever fraction
+of its drain ran short-handed.
 
 **`commits_per_task` and `calls_per_task` take the same defect the other way up.** Both
 divide a phase-window delta — `xact_commit`, and `pg_stat_statements` — by `n_runs`,
@@ -437,11 +436,10 @@ shape.
 
 That is a real defect and a bigger constant is the wrong fix for it: it would dilute the
 stagger only by measuring a deeper queue for both arms of a pair, at four times the
-cost, while degrading every single-process rung it touches. Two things would: spawning
-the children concurrently rather than one at a time, and a windowed analysis — a
-saturation rep capturing the database clock the way a rate rep already does, and
-counting both completions and runs from there. The second moves every saturation figure
-in this file. Neither is done here.
+cost, while degrading every single-process rung it touches. What would fix it is a
+windowed analysis — a saturation rep capturing the database clock the way a rate rep
+already does, and counting both completions and runs from there. That moves every
+saturation figure in this file, and it is not done here.
 
 ## Storage: two regimes on a volume, and none on RAM
 
@@ -968,10 +966,12 @@ stage's heading.
 
 ## Which findings survive the durable regime
 
-Everything here measures nano-tasks at saturation. django-absurd is mostly used for
-durable agent tool calls — seconds to minutes per task, checkpointed, often suspended —
-so most of the above answers a question that workload does not ask. A claim costing
-1.41-1.56 ms is the whole story at 4,000 tasks/s and rounding error at 4 tasks/s.
+Every figure here but `pooled_vs_split`'s durable arms measures nano-tasks at saturation
+([the durable workload](#the-durable-workload-and-the-backends-it-holds)). django-absurd
+is mostly used for durable agent tool calls — seconds to minutes per task, checkpointed,
+often suspended — so most of the above answers a question that workload does not ask. A
+claim costing 1.41-1.56 ms is the whole story at 4,000 tasks/s and rounding error at 4
+tasks/s.
 
 Carries over:
 
