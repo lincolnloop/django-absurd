@@ -270,6 +270,74 @@ def render(
     return capsys.readouterr().out
 
 
+def build_size_vs_depth_entries() -> list[dict[str, t.Any]]:
+    """One size_vs_depth run's three arms: one pending depth, three tables under it.
+
+    The ballasted arms hold four times the rows at the same pending work, and the
+    vacuumed one carries the same live rows with the drain's dead ones reclaimed —
+    which is what a reader divides the three throughputs against.
+    """
+    return [
+        build_measurement(
+            "fresh_table",
+            {"ballast_tasks": 0, "vacuum_ballast": False},
+            {
+                "throughput_per_s": 360.6,
+                "table": {
+                    "tasks": {
+                        "live_tuples": 5000,
+                        "dead_tuples": 0,
+                        "total_bytes": 1540096,
+                    },
+                    "runs": {
+                        "live_tuples": 5000,
+                        "dead_tuples": 0,
+                        "total_bytes": 1310720,
+                    },
+                },
+            },
+        ),
+        build_measurement(
+            "aged_table",
+            {"ballast_tasks": 15000, "vacuum_ballast": False},
+            {
+                "throughput_per_s": 147.0,
+                "table": {
+                    "tasks": {
+                        "live_tuples": 20000,
+                        "dead_tuples": 120,
+                        "total_bytes": 6144000,
+                    },
+                    "runs": {
+                        "live_tuples": 20000,
+                        "dead_tuples": 30000,
+                        "total_bytes": 9437184,
+                    },
+                },
+            },
+        ),
+        build_measurement(
+            "vacuumed_table",
+            {"ballast_tasks": 15000, "vacuum_ballast": True},
+            {
+                "throughput_per_s": 300.0,
+                "table": {
+                    "tasks": {
+                        "live_tuples": 20000,
+                        "dead_tuples": 0,
+                        "total_bytes": 6144000,
+                    },
+                    "runs": {
+                        "live_tuples": 20000,
+                        "dead_tuples": 0,
+                        "total_bytes": 9437184,
+                    },
+                },
+            },
+        ),
+    ]
+
+
 def build_rate_ramp(**overrides: t.Any) -> dict[str, t.Any]:
     """The ramp a rate stage records, the way `stages.measure_sustainable_rate` does.
 
@@ -883,6 +951,65 @@ def test_falls_back_to_ratios_when_checkpoint_cost_lost_half_its_pair(
 
     assert ("Throughput relative to `flat`:\n\n- `flat`: 1.00x\n") in render(
         capsys, tmp_path, "checkpoint_cost", entries
+    )
+
+
+def test_renders_what_a_bigger_table_cost_for_size_vs_depth(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The one comparison the stage exists for, and the tables it was made on.
+
+    Every arm drained the same pending depth, so a ratio below 1 is the table under it
+    and nothing else. The vacuumed arm is what splits that between live rows and the
+    dead ones a drain leaves behind, and the row counts print beside the ratios
+    because that split is only readable against them.
+    """
+    rendered = render(capsys, tmp_path, "size_vs_depth", build_size_vs_depth_entries())
+
+    assert (
+        "Rows the queue tables held when each drain started:\n"
+        "\n"
+        "| measurement | task rows | dead task rows | tasks MB | run rows "
+        "| dead run rows | runs MB |\n"
+        "| --- | --- | --- | --- | --- | --- | --- |\n"
+        "| fresh_table | 5000 | 0 | 1.5 | 5000 | 0 | 1.3 |\n"
+        "| aged_table | 20000 | 120 | 6.1 | 20000 | 30000 | 9.4 |\n"
+        "| vacuumed_table | 20000 | 0 | 6.1 | 20000 | 0 | 9.4 |\n"
+    ) in rendered
+    assert (
+        "Throughput against `fresh_table`, which drained the same 5000 pending tasks "
+        "on a table holding nothing else:\n"
+        "\n"
+        "- `fresh_table`: 1.00x, no ballast\n"
+        "- `aged_table`: 0.41x, 15000 tasks of ballast\n"
+        "- `vacuumed_table`: 0.83x, 15000 tasks of ballast, vacuumed\n"
+        "\n"
+        "A ratio below 1 is table SIZE, every arm having drained the same pending "
+        "work; what the vacuumed arm gives back of it is the share that was dead rows "
+        "rather than live ones.\n"
+    ) in rendered
+
+
+def test_says_nothing_derives_when_the_fresh_size_vs_depth_arm_measured_no_rate(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Every ratio in this stage divides by the arm that drained an empty table, so a
+    run whose reps of that arm all came out degenerate has nothing to divide by."""
+    entries = [
+        build_measurement(
+            "fresh_table",
+            {"ballast_tasks": 0, "vacuum_ballast": False},
+            {"throughput_per_s": 0.0},
+        ),
+        build_measurement(
+            "aged_table",
+            {"ballast_tasks": 15000, "vacuum_ballast": False},
+            {"throughput_per_s": 147.0},
+        ),
+    ]
+
+    assert ("Reference measurement measured nothing; nothing derived.\n") in render(
+        capsys, tmp_path, "size_vs_depth", entries
     )
 
 

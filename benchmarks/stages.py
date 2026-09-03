@@ -31,6 +31,7 @@ STAGE_NAMES = (
     "worker_knobs",
     "process_scaling",
     "pooled_vs_split",
+    "size_vs_depth",
     "poll_interval",
     "sync_vs_async",
     "checkpoint_cost",
@@ -48,6 +49,10 @@ STAGE_DESCRIPTIONS = {
     "pooled_vs_split": (
         "one total concurrency reached two ways: slots in one process, or one slot in "
         "each of that many processes, on a nano-task body and on a durable one"
+    ),
+    "size_vs_depth": (
+        "one pending depth drained on three sizes of table: empty, ballasted with "
+        "finished work, and ballasted then vacuumed"
     ),
     "poll_interval": ("latency under a paced offer, plus idle claim-rate probes"),
     "sync_vs_async": "async vs sync task bodies at the same 50 ms of simulated IO",
@@ -103,6 +108,11 @@ IDLE_PROBE_WORKERS = 4
 # host: a shape that differs by machine cannot be compared across machines.
 POOLED_VS_SPLIT_TOTALS = (4, 8)
 POLL_INTERVALS = (0.05, 0.25, 1.0)
+# Finished tasks a size_vs_depth arm leaves in the tables before its own preload, as a
+# multiple of the depth it then measures. 3 makes the ballasted arms' tables four
+# times the fresh one's — the same ratio as the 5,000-against-20,000 comparison that
+# cost 2.45x and moved both size and depth at once, with depth now held still.
+SIZE_BALLAST_MULTIPLE = 3
 # What the sleep tasks simulate as IO — the experiment's independent variable, since
 # its finding is only ever true AT a duration.
 SLEEP_IO_SECONDS = 0.05
@@ -255,6 +265,10 @@ def run_stage(name: str, options: StageOptions) -> None:
         run_process_scaling(options)
     elif name == "pooled_vs_split":
         run_pooled_vs_split(options)
+    elif name == "size_vs_depth":
+        record_measurements(
+            "size_vs_depth", build_size_vs_depth_measurements(), [], options
+        )
     elif name == "poll_interval":
         run_poll_interval(options)
     elif name == "sync_vs_async":
@@ -704,6 +718,41 @@ def summarize_pooled_vs_split(
     ]
 
 
+def build_size_vs_depth_measurements() -> list[measurement.MeasurementSpec]:
+    """One pending depth on three tables: empty, ballasted, and ballasted then vacuumed.
+
+    Table SIZE and queue DEPTH move together in every other saturation measurement
+    here, because a rep preloads what it drains — so the 0.42x that four times the
+    `--tasks` cost cannot say which of the two it was. These arms hold the depth still
+    and vary only what the table already holds under it, and the vacuumed arm splits
+    that again into rows that are live and rows a drain left dead.
+
+    At one process and one slot, where the claim path is the whole per-task cost and
+    `statement_stats` is exact, so the report says WHICH statement a bigger table made
+    more expensive rather than only that one did. Calibrated from nothing: an arm
+    configured from an earlier stage's winner would differ from its own control in a
+    second way.
+    """
+    ballast = SIZE_BALLAST_MULTIPLE * SATURATION_TASKS
+    return [
+        measurement.MeasurementSpec(
+            name=name,
+            mode="saturation",
+            task_path=NOOP_SYNC,
+            worker=runner.WorkerSpec(concurrency=1),
+            tasks=SATURATION_TASKS,
+            ballast_tasks=ballast_tasks,
+            vacuum_ballast=vacuum_ballast,
+            timeout_s=SATURATION_TIMEOUT_S,
+        )
+        for name, ballast_tasks, vacuum_ballast in (
+            ("fresh_table", 0, False),
+            ("aged_table", ballast, False),
+            ("vacuumed_table", ballast, True),
+        )
+    ]
+
+
 def build_poll_interval_measurements(
     winner: runner.WorkerSpec,
 ) -> list[measurement.MeasurementSpec]:
@@ -894,6 +943,13 @@ def apply_size_overrides(
         replacements["reps"] = options.reps
     if options.tasks is not None and spec.mode == "saturation":
         replacements["tasks"] = options.tasks
+        if spec.ballast_tasks:
+            # Kept at the ratio to the measured depth the stage chose, so `--tasks`
+            # shrinks the whole experiment rather than leaving a smoke run to drain a
+            # production ballast.
+            replacements["ballast_tasks"] = (
+                spec.ballast_tasks * options.tasks // spec.tasks
+            )
     if options.duration_s is not None and spec.mode == "rate":
         replacements["duration_s"] = options.duration_s
     return dataclasses.replace(spec, **replacements) if replacements else spec

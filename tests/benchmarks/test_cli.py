@@ -1246,6 +1246,88 @@ def test_measures_no_pooled_vs_split_pair_the_worker_bound_cannot_spawn(
     )
 
 
+def test_measures_one_pending_depth_on_three_sizes_of_table(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The stage's whole design, in the two things a results file has to show.
+
+    Every arm drains exactly `--tasks` tasks: the ballast is enqueued and drained
+    BEFORE the measured tasks exist, and the window every metric is read over starts
+    after it, so a ballast that leaked into the measurement would show up here as a
+    task count that is not the one that was asked for. The ballast keeps its ratio to
+    that depth, so `--tasks` shrinks the whole experiment rather than leaving a smoke
+    run to drain the production ballast.
+
+    And the tables the three arms drained on, read after the measured preload and
+    before the fleet: the ballasted arms carry four times the rows at the same pending
+    depth, which is the independent variable — four times in BOTH tables, an enqueue
+    writing a run row as well as a task row — and the vacuumed one starts on a runs
+    table holding no dead rows, which is what separates a table with more LIVE rows
+    from one carrying the dead ones a drain leaves behind. Whether the unvacuumed arm
+    still has its dead rows by then is a property of the run — autovacuum may have
+    reclaimed them already — which is why every rep records the count rather than the
+    stage asserting it.
+    """
+    stages.main(
+        [
+            "size_vs_depth",
+            "--reps",
+            "1",
+            "--tasks",
+            MEASURABLE_TASKS,
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
+
+    result = utils.read_stage(tmp_path, "size_vs_depth")
+    assert [
+        {
+            "name": entry["spec"]["name"],
+            "ballast_tasks": entry["spec"]["ballast_tasks"],
+            "vacuum_ballast": entry["spec"]["vacuum_ballast"],
+            "n_tasks": entry["median"]["n_tasks"],
+            "missing_tasks": entry["median"]["missing_tasks"],
+            "task_rows": entry["median"]["table"]["tasks"]["live_tuples"],
+            "run_rows": entry["median"]["table"]["runs"]["live_tuples"],
+        }
+        for entry in result["measurements"]
+    ] == [
+        {
+            "name": "fresh_table",
+            "ballast_tasks": 0,
+            "vacuum_ballast": False,
+            "n_tasks": 60,
+            "missing_tasks": 0,
+            "task_rows": 60,
+            "run_rows": 60,
+        },
+        {
+            "name": "aged_table",
+            "ballast_tasks": 180,
+            "vacuum_ballast": False,
+            "n_tasks": 60,
+            "missing_tasks": 0,
+            "task_rows": 240,
+            "run_rows": 240,
+        },
+        {
+            "name": "vacuumed_table",
+            "ballast_tasks": 180,
+            "vacuum_ballast": True,
+            "n_tasks": 60,
+            "missing_tasks": 0,
+            "task_rows": 240,
+            "run_rows": 240,
+        },
+    ]
+    assert [
+        entry["median"]["table"]["runs"]["dead_tuples"]
+        for entry in result["measurements"]
+        if entry["spec"]["vacuum_ballast"]
+    ] == [0]
+
+
 def test_installs_the_extension_a_run_itemises_its_tasks_with(
     tmp_path: pathlib.Path,
 ) -> None:

@@ -24,10 +24,12 @@ RAM, so a restart hands you back an empty server, and a run against one dies par
 through its first measurement with `schema "absurd" does not exist`. It takes a second
 and it is idempotent, so just run it every time.
 
-All eight stages took about 40 minutes on the reference machine (14 cores, at
-`--max-workers 10 --reps 3`), `latency_under_load` about 15 of them. Name stages to run
-only those; `--tasks`, `--duration`, `--reps` and `--max-workers` size them down to a
-dry run, `--io-seconds` sets how long `sync_vs_async` pretends to do IO for, and
+Eight of the nine stages took about 40 minutes together on the reference machine (14
+cores, at `--max-workers 10 --reps 3`), `latency_under_load` about 15 of them.
+`size_vs_depth` is the ninth and nothing has timed it there: it drains four tasks for
+every one it measures, so budget another quarter of an hour. Name stages to run only
+those; `--tasks`, `--duration`, `--reps` and `--max-workers` size them down to a dry
+run, `--io-seconds` sets how long `sync_vs_async` pretends to do IO for, and
 `--durable-seconds` sets how long `pooled_vs_split`'s durable arms hold a worker thread
 (2 s by default — raise it to 30 to measure at an agent tool call's real duration, and
 expect that stage to cost roughly fifteen times as much). Results land in
@@ -39,6 +41,7 @@ produced them.
 | `worker_knobs`       | what `--concurrency`, `--batch-size` and async dispatch buy      |
 | `process_scaling`    | how throughput scales with worker processes                      |
 | `pooled_vs_split`    | one total concurrency, reached two ways, on short and long tasks |
+| `size_vs_depth`      | whether a big table or a deep queue is what costs throughput     |
 | `poll_interval`      | what `--poll-interval` costs and buys                            |
 | `sync_vs_async`      | whether async task bodies beat sync ones                         |
 | `checkpoint_cost`    | what a `ctx.step` checkpoint costs                               |
@@ -111,6 +114,11 @@ calibration could not tell.
 with nothing to do, `working` is what it held with a long task running in every slot.
 Size a server's `max_connections` off the second one.
 
+`size_vs_depth` adds a table of what its queue tables held when each drain started —
+live rows, dead rows and megabytes. Every one of its arms drained the same amount of
+pending work, so the ratios under that table are what a bigger table cost on its own,
+and the vacuumed arm says how much of that was dead rows rather than live ones.
+
 ## What it found
 
 Measured on one 14-core laptop with the data directory in RAM, over four runs of one
@@ -132,7 +140,10 @@ commit; every range below is across those runs. Read the directions, not the rat
   every claim is a scan for cancellations.
 - **A queue that is deeper is slower.** Throughput rises as a backlog drains, a fitted
   median +15.7% within a rep over 150 reps, so a saturation number averages a curve and
-  does not compare across `--tasks` values.
+  does not compare across `--tasks` values. Four times the `--tasks` also costs 40-58%
+  of the rate outright — but that moves the table's size and the queue's depth together,
+  because a rep preloads what it drains. `size_vs_depth` is the stage that holds depth
+  still and moves only size; no figure here comes from a run that included it.
 - **A long task holds a Postgres connection of its own the whole time it runs.** A
   worker process opens 2 backends while its slots are idle and one more for every slot
   running a task that touches the database, so it holds up to `--concurrency + 2` — 18

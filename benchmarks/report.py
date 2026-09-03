@@ -328,6 +328,7 @@ def render_stage(stage: dict[str, t.Any]) -> list[str]:
     lines += render_skipped_pairs(stage)
     lines += render_shape_connections(stage)
     lines += render_run_order(stage)
+    lines += render_table_state(stage)
     lines += build_commit_budget_lines(stage)
     lines += build_statement_cost_lines(stage)
     lines += build_derived_lines(stage["stage"], measurements)
@@ -678,6 +679,49 @@ def render_run_order(stage: dict[str, t.Any]) -> list[str]:
     ]
 
 
+def render_table_state(stage: dict[str, t.Any]) -> list[str]:
+    """What each measurement's queue tables held when its drain started.
+
+    The rows a rate is read against, for the stage that varies them: two arms draining
+    the same pending work differ in the table under it, and nothing else in the table
+    above says so. Live and dead separately, because a drain leaves both.
+    """
+    measured = [
+        entry for entry in stage["measurements"] if entry["median"].get("table")
+    ]
+    if not measured:
+        return []
+    return [
+        "",
+        "Rows the queue tables held when each drain started:",
+        "",
+        (
+            "| measurement | task rows | dead task rows | tasks MB | run rows "
+            "| dead run rows | runs MB |"
+        ),
+        "| " + " | ".join(["---"] * 7) + " |",
+        *[
+            render_row(
+                [
+                    entry["spec"]["name"],
+                    str(entry["median"]["table"]["tasks"]["live_tuples"]),
+                    str(entry["median"]["table"]["tasks"]["dead_tuples"]),
+                    format_megabytes(entry["median"]["table"]["tasks"]["total_bytes"]),
+                    str(entry["median"]["table"]["runs"]["live_tuples"]),
+                    str(entry["median"]["table"]["runs"]["dead_tuples"]),
+                    format_megabytes(entry["median"]["table"]["runs"]["total_bytes"]),
+                ]
+            )
+            for entry in measured
+        ],
+    ]
+
+
+def format_megabytes(total_bytes: int) -> str:
+    """Bytes as MB, because a relation size is read for its order of magnitude."""
+    return f"{total_bytes / 1e6:.1f}"
+
+
 def build_commit_budget_lines(stage: dict[str, t.Any]) -> list[str]:
     """What bound each saturation measurement: its own client, or its connection.
 
@@ -854,15 +898,20 @@ def build_derived_lines(stage: str, measurements: list[dict[str, t.Any]]) -> lis
         return build_scaling_efficiency_lines(measurements)
     if stage == "pooled_vs_split":
         return build_pooled_vs_split_lines(measurements)
+    if stage == "size_vs_depth":
+        return build_size_vs_depth_lines(measurements)
     if stage == "sync_vs_async":
         return build_async_ratio_lines(measurements)
     if stage == "checkpoint_cost":
         return build_checkpoint_multiplier_lines(measurements)
-    if all(entry["spec"]["mode"] == "rate" for entry in measurements):
-        # In rate mode throughput is set by the OFFER, so a throughput ratio there
-        # only restates the configured rate; latency is what those vary.
-        return build_ratio_lines(measurements, "end_to_end_p50_s", "End-to-end p50")
-    return build_ratio_lines(measurements, THROUGHPUT_KEY, "Throughput")
+    # In rate mode throughput is set by the OFFER, so a throughput ratio there only
+    # restates the configured rate; latency is what those vary.
+    metric, label = (
+        ("end_to_end_p50_s", "End-to-end p50")
+        if all(entry["spec"]["mode"] == "rate" for entry in measurements)
+        else (THROUGHPUT_KEY, "Throughput")
+    )
+    return build_ratio_lines(measurements, metric, label)
 
 
 def build_scaling_efficiency_lines(measurements: list[dict[str, t.Any]]) -> list[str]:
@@ -904,6 +953,49 @@ def describe_depth_confound(
             f"would separate the two."
         ),
     ]
+
+
+def build_size_vs_depth_lines(measurements: list[dict[str, t.Any]]) -> list[str]:
+    """What a bigger table cost at one fixed depth of pending work.
+
+    Referenced against the arm that drained the same tasks on an empty table, found by
+    the ballast it laid rather than by its name, so the pairing cannot come apart from
+    what was actually run.
+    """
+    fresh = next(
+        (entry for entry in measurements if not entry["spec"]["ballast_tasks"]), None
+    )
+    if fresh is None or not fresh["median"].get(THROUGHPUT_KEY, 0.0):
+        return build_ratio_lines(measurements, THROUGHPUT_KEY, "Throughput")
+    return [
+        "",
+        (
+            f"Throughput against `{fresh['spec']['name']}`, which drained the same "
+            f"{fresh['spec']['tasks']} pending tasks on a table holding nothing else:"
+        ),
+        "",
+        *[
+            f"- `{entry['spec']['name']}`: "
+            f"{describe_quotient(entry, fresh, THROUGHPUT_KEY, 1, 'x')}, "
+            f"{describe_ballast(entry['spec'])}"
+            for entry in measurements
+        ],
+        "",
+        (
+            "A ratio below 1 is table SIZE, every arm having drained the same pending "
+            "work; what the vacuumed arm gives back of it is the share that was dead "
+            "rows rather than live ones."
+        ),
+    ]
+
+
+def describe_ballast(spec: dict[str, t.Any]) -> str:
+    """What an arm laid in the tables before the drain its own bullet reports."""
+    if not spec["ballast_tasks"]:
+        return "no ballast"
+    if spec["vacuum_ballast"]:
+        return f"{spec['ballast_tasks']} tasks of ballast, vacuumed"
+    return f"{spec['ballast_tasks']} tasks of ballast"
 
 
 def build_pooled_vs_split_lines(measurements: list[dict[str, t.Any]]) -> list[str]:

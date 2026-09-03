@@ -181,6 +181,90 @@ answer to raising `SATURATION_TASKS`:
 multiple:
 [both axes were still buying](#throughput-both-axes-were-still-buying-at-the-top-of-the-sweep).
 
+## Size or depth: the experiment that separates them
+
+Four times the `--tasks` costs 40-58% of the throughput
+([Queue depth costs throughput](#queue-depth-costs-throughput)), and that figure moves
+two things at once. **A rep preloads exactly what it drains**, so `--tasks 20000`
+measures a queue 20,000 deep AND tables 20,000 rows long, where `--tasks 5000` measures
+5,000 of each. Two effects are inside one ratio:
+
+- Within a rep the tables are a fixed length and only the UNCLAIMED count falls, N to 0.
+  That is the within-rep drift: a fitted median +19% across the concurrency ladder's 60
+  reps at 5,000.
+- Across the arms the TABLES are four times longer for the whole rep. The
+  `concurrency_1` pair reads 360.6 against 147.0 tasks/s, which is 2.45x — and the same
+  pair on the volume read only 1.38x, storage having masked it.
+
+A 2.45x that a +19% cannot account for is mostly the other variable, and the claim path
+is where table length would land: a candidate CTE joining `r_bench` and `t_bench`, plus
+a cancellation scan over `t_bench`, both scaling with what the tables hold rather than
+with what is outstanding. That is a hypothesis, and `size_vs_depth` is the stage that
+tests it.
+
+**Three arms, one worker, one slot, `SATURATION_TASKS` of pending work each:**
+
+    fresh_table      5,000 pending, on tables holding nothing else
+    aged_table       5,000 pending, on tables holding 15,000 finished tasks as well
+    vacuumed_table   the same, with the ballast's dead rows reclaimed first
+
+The ballast is enqueued and drained BEFORE the measured tasks exist, by the same fleet
+that then does the measuring, and `lay_ballast` returns a database timestamp that
+`analyze_saturation` windows every metric on (`t.enqueue_at > mark`). So the ballast's
+preload, its drain and the vacuum all sit outside the measured phase, outside the
+`xact_commit` and `pg_stat_statements` snapshots that bracket it, and outside the
+trimmed completion window the throughput divides. A ballasted rep's `preload_s` times
+its own 5,000 tasks and not the 15,000 in front of them.
+
+**What a result would say.** `aged_table` at the fresh arm's rate means the 2.45x was
+depth, and retention is housekeeping. `aged_table` down at 0.42x of it means the 2.45x
+was SIZE, and then `cleanup_tasks`, retention policy and partitioned storage are
+throughput features rather than tidiness — the kind of finding worth raising upstream.
+Anything between is a split, and `vacuumed_table` says how much of whichever it is was
+dead rows rather than live ones.
+
+**One process and one slot, because the itemisation is the point.**
+`server_exec_ms_per_task` and `commits_per_task` are exact at one worker and read low
+above it ([the measurement model](#the-measurement-model)), so at 1x1 the report's
+statement block says WHICH statement got dearer — the candidate CTE, the cancellation
+scan, or neither — rather than only that the arm was slower. A magnitude with no
+mechanism behind it would not support the upstream ask.
+
+### The confounds, and what the stage does about each
+
+- **Index depth is part of "size" and is not separated from it.** A 20,000-row B-tree is
+  deeper than a 5,000-row one and its pages are likelier to miss shared buffers. Nothing
+  here tells a deeper index apart from a longer heap; both are what "a bigger table"
+  means for this experiment, and a result names the pair rather than either alone.
+- **Planner statistics are equalised, not left to chance.** A freshly bulk-loaded table
+  and one that has churned carry different staleness, so `refresh_table_state` ANALYZEs
+  both queue tables in EVERY arm, after the measured preload and before the fleet starts
+  — a plan chosen on a stale row count then cannot be what separates two arms. Safe
+  because that step was costed on its own and moved no drain number outside the baseline
+  bracket ([Three consistency knobs](#three-consistency-knobs-measured-and-refused)),
+  which is also why the harness applies it nowhere else.
+- **Dead rows are measured, never assumed.** Draining 15,000 tasks leaves dead versions
+  behind, and `r_bench`'s are not HOT-pruned
+  ([Incidental](#incidental-worth-raising-upstream)). `vacuumed_table` is the arm that
+  separates them from live rows — and every rep records what its tables ACTUALLY held
+  when its drain opened, live tuples, dead tuples and total bytes for `t_bench` and
+  `r_bench` alike, because autovacuum may have reclaimed some of the unvacuumed arm's
+  first. The arm names the intent; the recorded rows are the evidence.
+- **The vacuum is plain, not FULL.** It takes the dead versions out of the heap and the
+  indexes a claim reads, which is the thing under test, and leaves the relation the size
+  the drain grew it to. So an arm that stays slow after it still holds every page it
+  held before, and the recorded bytes are what say so.
+- **An enqueue writes a run row as well as a task row**, so `r_bench` is as long as
+  `t_bench` from the preload onwards and the two grow together across the arms. There is
+  no arm here that lengthens one without the other.
+
+**What it costs.** Nothing has run this stage at production size. From the rates above —
+360 tasks/s at 5,000 pending, 147/s at 20,000 — a fresh rep is ~14 s of drain and a
+ballasted one is its 15,000-task ballast plus its own 5,000, so three arms at `--reps 3`
+is on the order of fifteen minutes. `--tasks` scales the ballast with the measured depth
+(the stage's 3:1 ratio is preserved), so `--tasks 200 --reps 1` is a dry run of the
+whole thing.
+
 ## A drain rate is not an arrival rate
 
 A saturated fleet has work waiting at every claim; a paced one has to keep up in real
@@ -446,10 +530,10 @@ both workloads — `pooled_4`/`split_4` against `pooled_durable_4`/`split_durabl
 the report ranks the shapes once per workload, because a body that holds a thread and
 one that does not are two different questions about the same topology. Everything else
 here — the concurrency ladder, the process ladder, the poll intervals, the checkpoint
-multiplier, the rate rungs — is still nano-task only, so read each of them as a finding
-about that regime and nothing else. The durable arms are sized per SLOT
-(`DURABLE_ROUNDS_PER_SLOT` rounds each) rather than at a fixed task count: a fixed count
-runs for minutes at one shape and seconds at the other.
+multiplier, the rate rungs, the size arms — is still nano-task only, so read each of
+them as a finding about that regime and nothing else. The durable arms are sized per
+SLOT (`DURABLE_ROUNDS_PER_SLOT` rounds each) rather than at a fixed task count: a fixed
+count runs for minutes at one shape and seconds at the other.
 
 **`--durable-seconds` defaults to 2, the FLOOR of the regime rather than the middle of
 it.** A durable rep costs its rounds times this value, so the flag is that stage's whole
@@ -849,6 +933,16 @@ microsecond bookkeeping; the totals beside it are summed over all of them, cappe
 not. `null` means nothing counted statements on that server, which is not the same as
 nothing having run.
 
+**A rep that varied the table it drained on records what that table held.** `table` sits
+on the rep beside `preload_s`, holding `live_tuples`, `dead_tuples` and `total_bytes`
+for the tasks table and the runs table — read after the measured preload and before the
+fleet, with an ANALYZE in front of it so the counts and the plans a claim gets come off
+the same statistics. `null` on every measurement outside that experiment, whose
+`spec.ballast_tasks` is `null` too;
+[Size or depth](#size-or-depth-the-experiment-that-separates-them) is what the block is
+for. `spec.vacuum_ballast` beside it says whether the arm reclaimed the ballast's dead
+rows before measuring, which is what makes the recorded `dead_tuples` readable.
+
 **A stage that compares two topologies records how it compared them.**
 `stage_pooled_vs_split.json` carries `shape_connections` — one row per distinct shape,
 `{shape, processes, concurrency, connections_idle, connections_busy}`, the last two
@@ -979,9 +1073,9 @@ Postgres would either refuse to start or die when the tmpfs filled. A rig meant 
 on more than one machine cannot hardcode the one it was built on.
 
 **The 4g tmpfs is headroom, not a requirement of the data.** Measured: the database
-itself is 69 MB, and two full `worker_knobs` runs used 355 MB. 4g covers a full
-eight-stage run's WAL; `512m` is comfortable for single-stage work. That is why the
-README tells a small machine to lower it rather than declaring itself unsupported.
+itself is 69 MB, and two full `worker_knobs` runs used 355 MB. 4g covers a whole run's
+WAL; `512m` is comfortable for single-stage work. That is why the README tells a small
+machine to lower it rather than declaring itself unsupported.
 
 **A too-small tmpfs fails late and there is no preflight check for it.** The server
 starts, the run proceeds, and Postgres dies partway through on a write error, having

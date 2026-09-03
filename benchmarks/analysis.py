@@ -204,9 +204,35 @@ end $$;
 """
 
 
-def analyze_saturation(queue: str = "bench") -> dict[str, t.Any]:
-    """Every metric of one saturation rep, plus how it varied during the drain."""
-    window = psycopg.sql.SQL("true")
+# Live and dead rows as the statistics collector last estimated them, beside a size
+# that is exact. Keyed on the relation's own oid, so the row exists whatever the
+# collector has seen.
+TABLE_STATE_SQL = """
+select
+  pg_stat_get_live_tuples(oid),
+  pg_stat_get_dead_tuples(oid),
+  pg_total_relation_size(oid)
+from pg_class
+where oid = %s::regclass
+"""
+
+
+def analyze_saturation(
+    queue: str = "bench", since: dt.datetime | None = None
+) -> dict[str, t.Any]:
+    """Every metric of one saturation rep, plus how it varied during the drain.
+
+    ``since`` is what keeps a rep that laid ballast from measuring it: the ballast is
+    enqueued and drained before that mark and the measured tasks after it, and every
+    metric here is defined on rows the window selects.
+    """
+    window = (
+        psycopg.sql.SQL("true")
+        if since is None
+        else psycopg.sql.SQL("t.enqueue_at > {since}").format(
+            since=psycopg.sql.Literal(since)
+        )
+    )
     return {
         **read_completed_run_metrics(queue, window),
         **read_throughput_profile(queue, window),
@@ -501,6 +527,62 @@ def build_throughput_profile(rows: list[tuple[t.Any, ...]]) -> dict[str, t.Any]:
         "profile_slices": slices,
         "profile_median_per_s": statistics.median(slices),
         "profile_cv": statistics.stdev(slices) / statistics.fmean(slices),
+    }
+
+
+def vacuum_queue_tables(queue: str) -> None:
+    """Reclaim the dead rows a drain left in the queue tables.
+
+    Plain VACUUM, not FULL: it takes the dead versions out of the heap and the indexes
+    a claim reads, which is the thing under test, and leaves the relation the size the
+    drain grew it to — so an arm that stays slow after this still holds every page it
+    held before, and `read_table_state` records that beside the row counts.
+    """
+    with connections[resolve_absurd_database()].cursor() as cursor:
+        for table in (f"t_{queue}", f"r_{queue}"):
+            cursor.execute(
+                psycopg.sql.SQL("vacuum {table}").format(
+                    table=psycopg.sql.Identifier("absurd", table)
+                )
+            )
+
+
+def refresh_table_state(queue: str) -> dict[str, dict[str, int]]:
+    """ANALYZE the queue tables, then read back what each of them now holds.
+
+    ANALYZE first because the row counts below and the plans a claim gets are read off
+    the same statistics, and a table just bulk-loaded and one that has churned carry
+    different staleness — which would otherwise be a second difference between two
+    arms meant to differ only in size. Costed separately and found to move no drain
+    number (`benchmarks/CLAUDE.md`), so equalising it is free.
+    """
+    with connections[resolve_absurd_database()].cursor() as cursor:
+        for table in (f"t_{queue}", f"r_{queue}"):
+            cursor.execute(
+                psycopg.sql.SQL("analyze {table}").format(
+                    table=psycopg.sql.Identifier("absurd", table)
+                )
+            )
+    return {
+        role: read_table_state(f"absurd.{prefix}_{queue}")
+        for role, prefix in (("tasks", "t"), ("runs", "r"))
+    }
+
+
+def read_table_state(table: str) -> dict[str, int]:
+    """One table's live rows, dead rows and total bytes, indexes and TOAST included.
+
+    Through `pg_stat_get_*` on the relation rather than `pg_stat_user_tables`, which
+    has no row for a table the statistics collector has never seen and would leave the
+    caller a missing key where the honest answer is zero.
+    """
+    with connections[resolve_absurd_database()].cursor() as cursor:
+        cursor.execute(TABLE_STATE_SQL, [table])
+        live, dead, total_bytes = cursor.fetchone()
+    return {
+        "live_tuples": int(live),
+        "dead_tuples": int(dead),
+        "total_bytes": int(total_bytes),
     }
 
 
