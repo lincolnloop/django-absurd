@@ -1,3 +1,4 @@
+import dataclasses
 import pathlib
 import time
 import typing as t
@@ -7,6 +8,7 @@ from django.db import connections
 
 import analysis
 import measurement
+import producer
 import runner
 import stages
 from django_absurd.queues import resolve_absurd_database
@@ -31,6 +33,20 @@ UNABSORBABLE_RATE_PER_S = 800.0
 # A drain ceiling whose lowest ramp probe — a tenth of it — is already the rate above,
 # so a ramp anchored to it cannot absorb even its first offer.
 UNABSORBABLE_CEILING_PER_S = UNABSORBABLE_RATE_PER_S / stages.RATE_RAMP_START_FRACTION
+# A drain ceiling a ramp of TWO workers climbs THROUGH rather than up to, with its
+# rungs at 90/s..683/s. Two workers rather than one because only the ends of the climb
+# are load-bearing and a lone worker holds neither reliably: 45/s each leaves the
+# bottom rung absorbed while one of them stalls, and the pair's knee was measured at
+# 456-683/s, under the top rung. A rung between them refusing early only shortens the
+# climb, which the assertions allow for.
+RAMP_CEILING_PER_S = 900.0
+RAMP_WORKERS = 2
+# Two offers for ONE producer thread, either side of what a round trip to Postgres
+# allows it: an enqueue takes milliseconds, so two a second leave it idling and three
+# thousand a second are beyond it however long it is given. The windows differ only in
+# what they cost — the second one is 900 enqueues, and every one of them is late.
+DELIVERABLE_OFFER = (2.0, 2.0)
+UNDELIVERABLE_OFFER = (3000.0, 0.3)
 
 # One phase's statement counters as `pg_stat_statements` hands them over, either side
 # of it. Cumulative, so the figures per task are the difference: the claim and its
@@ -279,6 +295,53 @@ def test_rate_ramp_that_absorbed_nothing_measures_at_the_lowest_rate_it_probed(
     }
 
 
+def test_rate_ramp_measures_at_the_highest_offer_it_absorbed(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The working point is the last rate that came off cleanly, not the one that
+    stopped the climb.
+
+    The ramp stops at the first refusal, so the refused rate is the one nearest to
+    hand and measuring there offers the rungs below a rate this fleet has just been
+    shown not to absorb. It is kept as the bracket instead: the knee is between the
+    two, which is only a bracket at all because the two are different numbers.
+
+    Called directly, and at a ceiling of its own: a stage reads that number off
+    `stage_process_scaling.json`, where it is whatever the machine measured, and a
+    ramp that absorbs or refuses everything it probes cannot show which end it
+    measured at.
+    """
+    ramp = stages.measure_sustainable_rate(
+        runner.WorkerSpec(concurrency=1, poll_interval=0.05),
+        RAMP_WORKERS,
+        RAMP_CEILING_PER_S,
+        stages.StageOptions(results_dir=tmp_path, duration_s=2.0),
+    )
+
+    absorbed = [probe["rate_per_s"] for probe in ramp["probes"] if probe["sustained"]]
+    refused = [
+        probe["rate_per_s"] for probe in ramp["probes"] if not probe["sustained"]
+    ]
+    assert {
+        "climbed_before_it_refused": len(absorbed) >= 1,
+        "stopped_at_the_first_refusal": [probe["sustained"] for probe in ramp["probes"]]
+        == [True] * len(absorbed) + [False],
+    } == {"climbed_before_it_refused": True, "stopped_at_the_first_refusal": True}
+    assert {
+        "rate_per_s": ramp["rate_per_s"],
+        "bracket_high_per_s": ramp["bracket_high_per_s"],
+        "sustained": ramp["sustained"],
+        "measured_below_the_offer_it_refused": (
+            ramp["rate_per_s"] < ramp["bracket_high_per_s"]
+        ),
+    } == {
+        "rate_per_s": max(absorbed),
+        "bracket_high_per_s": min(refused),
+        "sustained": True,
+        "measured_below_the_offer_it_refused": True,
+    }
+
+
 def test_backlog_growth_is_read_as_a_share_of_the_offer_it_grew_under() -> None:
     """The rule the guard turns on, at the two boundaries no real offer can hold still.
 
@@ -310,6 +373,61 @@ def test_backlog_growth_is_read_as_a_share_of_the_offer_it_grew_under() -> None:
             "backlog_grew": False,
         },
     }
+
+
+def test_rate_producer_marks_an_offer_it_could_not_keep_up_with() -> None:
+    """A rate the producer never delivered is not a rate the fleet was offered.
+
+    The enqueue side runs on the same box as the workers, so a rung can fall over
+    because the producer ran out of thread rather than because the fleet ran out of
+    capacity — and the two want opposite conclusions. The offer carries its own
+    verdict so a measurement reading it is refused rather than published as a fleet
+    result, and so a report can attribute the refusal to the right side.
+
+    Each arm is assembled into a rep the way `measurement.run_rate_rep` does, because
+    the flag only means anything through the rules that mark a rep.
+    """
+    delivered, starved = (
+        producer.run_rate_producer(
+            "tasks.noop_sync", rate_per_s, offer_seconds, threads=1
+        )
+        for rate_per_s, offer_seconds in (DELIVERABLE_OFFER, UNDELIVERABLE_OFFER)
+    )
+
+    assert [
+        {
+            "offered": offer.offered,
+            "offered_ok": offer.offered_ok,
+            "fell_short_of_the_rate_it_aimed_at": (
+                offer.achieved_rate_per_s < rate_per_s
+            ),
+            "missed_every_deadline_after_the_first": (
+                offer.missed_deadline_count == offer.offered - 1
+            ),
+            "rep_invalid": measurement.is_rep_invalid(
+                {"valid": True, **dataclasses.asdict(offer)}
+            ),
+        }
+        for offer, (rate_per_s, _) in (
+            (delivered, DELIVERABLE_OFFER),
+            (starved, UNDELIVERABLE_OFFER),
+        )
+    ] == [
+        {
+            "offered": 4,
+            "offered_ok": True,
+            "fell_short_of_the_rate_it_aimed_at": False,
+            "missed_every_deadline_after_the_first": False,
+            "rep_invalid": False,
+        },
+        {
+            "offered": 900,
+            "offered_ok": False,
+            "fell_short_of_the_rate_it_aimed_at": True,
+            "missed_every_deadline_after_the_first": True,
+            "rep_invalid": True,
+        },
+    ]
 
 
 def test_saturation_measurement_invalidates_a_task_that_outlived_its_claim_lease() -> (

@@ -198,8 +198,9 @@ Measured on this repo; the point is to spend the slow gate once, not per edit.
   to its file. The catalog row outlives the per-test flush, so the second `--reuse-db`
   run of that file reports nothing created. Passes alone, fails on repeat.
 - **A deadlock/duplicate-key storm across unrelated tests means a concurrent run**, not
-  a code defect — suites from a worktree reach this checkout's Postgres on 5442. Confirm
-  nothing else is running before bisecting.
+  a code defect — suites from a worktree reach this checkout's Postgres on 5442 unless
+  it exported its own `PGPORT`/`PGPORT_PGCRON`. Confirm nothing else is running before
+  bisecting.
 
 ### When an agent runs the gates
 

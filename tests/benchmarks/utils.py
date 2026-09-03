@@ -9,7 +9,9 @@ import threading
 import time
 import types
 import typing as t
+import uuid
 
+import psycopg.sql
 import time_machine
 from absurd_sdk import RetryStrategy
 from django.db import connections
@@ -215,3 +217,60 @@ def kill_the_worker_that_claimed_it() -> t.Never:
     dies in — a child gone, its claim never completed, and a queue that no longer moves.
     """
     os._exit(WORKER_EXIT_CODE)
+
+
+def insert_hand_timed_task(
+    queue: str,
+    enqueue_at: dt.datetime,
+    started_at: dt.datetime,
+    completed_at: dt.datetime,
+    claimed_by: str,
+    *,
+    redelivered: bool = False,
+) -> None:
+    """One task and its completed run, at timestamps the caller chose itself.
+
+    Written straight into Absurd's own tables: every metric is defined on these
+    columns, and a real drain only produces timestamps nothing can predict, so a
+    number a test can compute by hand has to be timed by hand.
+
+    ``redelivered`` adds the failed first attempt in front of the completed one, which
+    is what a run count that no state filters is there to notice.
+    """
+    task_id = uuid.uuid4()
+    attempt = 2 if redelivered else 1
+    with connections[resolve_absurd_database()].cursor() as cursor:
+        cursor.execute(
+            psycopg.sql.SQL(
+                "insert into {tasks} "
+                "(task_id, task_name, params, enqueue_at, state, attempts) "
+                "values (%s, 'tasks.noop_sync', '{{}}', %s, 'completed', %s)"
+            ).format(tasks=psycopg.sql.Identifier("absurd", f"t_{queue}")),
+            [task_id, enqueue_at, attempt],
+        )
+        if redelivered:
+            cursor.execute(
+                psycopg.sql.SQL(
+                    "insert into {runs} "
+                    "(run_id, task_id, attempt, state, claimed_by, available_at) "
+                    "values (%s, %s, 1, 'failed', %s, %s)"
+                ).format(runs=psycopg.sql.Identifier("absurd", f"r_{queue}")),
+                [uuid.uuid4(), task_id, claimed_by, enqueue_at],
+            )
+        cursor.execute(
+            psycopg.sql.SQL(
+                "insert into {runs} "
+                "(run_id, task_id, attempt, state, claimed_by, available_at, "
+                "started_at, completed_at) "
+                "values (%s, %s, %s, 'completed', %s, %s, %s, %s)"
+            ).format(runs=psycopg.sql.Identifier("absurd", f"r_{queue}")),
+            [
+                uuid.uuid4(),
+                task_id,
+                attempt,
+                claimed_by,
+                enqueue_at,
+                started_at,
+                completed_at,
+            ],
+        )

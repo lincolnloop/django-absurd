@@ -116,7 +116,9 @@ writing or editing any test file. Running the suites:
   settings connect to — so one value keeps them consistent. Set it whenever a system
   Postgres already owns 5432: otherwise `tests/core` runs against that server, and a
   system cluster with pg_cron installed makes `test_central_connection.py`'s "no
-  pg_cron" assertion never fire. `PGPORT_PGCRON` does the same for `db_pg_cron`.
+  pg_cron" assertion never fire. `PGPORT_PGCRON` does the same for `db_pg_cron`. Export
+  both in a worktree — published ports are host-global, so a compose project name does
+  not keep a worktree off the main checkout's 5442/5443.
 - **The two gates to run before a commit** — not five separate commands:
   - `uvx --with tox-uv tox -e dev` — all four suites against the dev env only. Reach for
     the bare `uvx --with tox-uv tox` (full Python×Django matrix + min-max mypy) only
