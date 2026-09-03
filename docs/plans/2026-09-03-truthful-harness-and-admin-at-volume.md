@@ -4,12 +4,14 @@
 > superpowers:subagent-driven-development (recommended) or superpowers:executing-plans
 > to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Every number `benchmarks/` publishes traces to one dated defect-free run, and
-a person can click through the admin at millions of rows.
+**Goal:** Every multi-process number `benchmarks/` publishes traces to one dated run on
+a tree with no known measurement defect, and a person can click through the admin at
+millions of rows.
 
-**Architecture:** Land three existing commits plus a flake fix on one branch. Build the
-two probes the run still needs — suspension, clone seeder. Take one full run. Rewrite
-the findings from it. Then a dev-only Django project, seeded, clickable.
+**Architecture:** Land three existing commits, the flake fix, the windowing fix, the
+clone seeder and one suspension test on a single harness branch. Merge. Take one run.
+Restate the findings from it on a second branch. Then a dev-only admin project on a
+third.
 
 **Tech Stack:** Python 3.12+, Django 6.0+, psycopg3, Postgres 18, pytest + pytest-xdist,
 tox, docker compose.
@@ -27,9 +29,15 @@ tox, docker compose.
 - Docs and docstrings state what IS. No "previously", "now", before/after framing.
 - Function-based pytest tests only, never class-based.
 - **Never** add a ruff ignore, `noqa`, or `# pragma: no cover`. Fix the code or ask.
+- **Never** monkeypatch. `tests/CLAUDE.md` allows exactly one carve-out and this work is
+  not it. Drive a condition through the real entrypoint instead.
+- **Never** unit-test an internal helper. Tests go through public entrypoints.
 - **Never** add AI attribution to a commit. **Never** `git commit --amend`. **Never**
   bare `git stash` — the stash stack is shared across worktrees; use a WIP commit.
-- Assert positive observables. Never assert absence.
+- Assert positive observables. Never assert absence, including "no sort node".
+- Any test whose worker children must see committed rows needs
+  `pytest.mark.django_db(transaction=True)` — children cannot see an open transaction's
+  writes.
 - Ports in this worktree: `export PGPORT=5452 PGPORT_PGCRON=5453 PGPORT_BENCH=5460`.
   Required on every command touching Postgres, including `docker compose up`.
 - No `timeout`/`gtimeout` on this machine. Bounded waits are a Python poll loop.
@@ -37,75 +45,81 @@ tox, docker compose.
 - Gates before a commit: `uvx --with tox-uv tox -e dev,bench_harness` and
   `uv run pre-commit run --all-files`. `git add -A` BEFORE pre-commit — `--all-files`
   skips untracked. Never invoke ruff or mypy directly.
-- Codecov gates MERGED coverage at 100%, project + patch.
+- Codecov gates MERGED coverage at 100%, project + patch. `[tool.coverage.run] source`
+  is `["benchmarks", "django_absurd", "tests"]`, and unexecuted files under those roots
+  are scanned in — so a new module no test imports lands at 0% and turns the patch
+  status red.
 
 ---
 
 ## File structure
 
-| File                          | Responsibility                                             |
-| ----------------------------- | ---------------------------------------------------------- |
-| `benchmarks/tasks.py`         | Task bodies. Gains a suspending sleeper, sync and async.   |
-| `benchmarks/stages.py`        | Stage registry + builders. Gains `slot_occupancy`.         |
-| `benchmarks/measurement.py`   | `MeasurementSpec` and the rep loop. Gains sleeper preload. |
-| `benchmarks/analysis.py`      | SQL-side reads. Gains a sleeper-run state count.           |
-| `benchmarks/report.py`        | Rendering. Gains the occupancy block.                      |
-| `benchmarks/seed.py`          | NEW. Template → clone → `ANALYZE`, plus the drift guard.   |
-| `benchmarks/admin_at_volume/` | NEW, Phase 4. Dev-only Django project + compose service.   |
-| `tests/benchmarks/`           | Tiny-N CI coverage for every one of the above.             |
-
-Phase 4 is separable — its own branch, and it would stand as its own plan if you would
-rather split it. Kept here because it shares the seeder.
+| File                          | Responsibility                                                       |
+| ----------------------------- | -------------------------------------------------------------------- |
+| `benchmarks/measurement.py`   | `MeasurementSpec` and the rep loop. Takes the post-fleet mark.       |
+| `benchmarks/analysis.py`      | SQL-side reads. Already accepts a `since` mark.                      |
+| `benchmarks/seed.py`          | NEW. Templates → drain → clone → `ANALYZE`, plus the drift guard.    |
+| `benchmarks/admin_at_volume/` | NEW, task 9. Seeder consumer + probe. No settings module of its own. |
+| `tests/benchmarks/`           | Tiny-N CI coverage for the seeder, the windowing and the probe.      |
+| `tests/core/`                 | The suspension test. It is a library behaviour, not a harness one.   |
 
 ---
 
-### Task 1: Consolidate the three existing commits
+### Task 1: Consolidate the three commits and delete the doc section they falsify
 
 **Files:**
 
-- Modify: whole tree via cherry-pick
+- Modify: whole tree via cherry-pick; `benchmarks/CLAUDE.md`
 
 **Interfaces:**
 
 - Produces: `run_durable_work(seconds, touches)` in `benchmarks/tasks.py`;
-  `probe_shape_backends` in `benchmarks/stages.py`; `size_vs_depth` stage;
+  `probe_shape_backends` in `benchmarks/stages.py`; the `size_vs_depth` stage;
+  `analyze_saturation(queue, since)` in `benchmarks/analysis.py`; the
   `benchmarks/workload/` app; `tests/core/test_claim_lease.py`.
 
-- [ ] **Step 1: Confirm the branch base**
-
-Run: `/usr/bin/git log --oneline -1` in the `pr-257` worktree. Expected: the branch is
-`benchmarks__truthful-harness` at `origin/main`.
-
-- [ ] **Step 2: Cherry-pick, oldest first**
+- [ ] **Step 1: Cherry-pick, oldest first**
 
 ```bash
-/usr/bin/git cherry-pick 1286bf1   # durable workload, C+2 probe, concurrent spawn
-/usr/bin/git cherry-pick c516581   # size_vs_depth stage
+/usr/bin/git cherry-pick 1286bf1   # durable workload, backend probe, concurrent spawn
 /usr/bin/git cherry-pick 1c9a8dd   # claim-lease tests
+/usr/bin/git cherry-pick c516581   # size_vs_depth stage
 ```
 
-Cherry-pick, not merge: `benchmarks__size-vs-depth` was cut off
-`benchmarks__durable-workload`, so merging both drags `1286bf1` through twice. Resolve
-any conflict in favour of the later commit's version of `stages.py`, then re-read the
-surrounding function to check the merge left it coherent.
+`benchmarks__size-vs-depth` was cut off `benchmarks__durable-workload`, so merging both
+would drag `1286bf1` through twice. On a conflict in `stages.py`, take the later
+commit's version, then re-read the whole surrounding function to confirm the result is
+coherent rather than merely conflict-free.
+
+- [ ] **Step 2: Delete the section the concurrent-spawn commit falsifies**
+
+`benchmarks/CLAUDE.md` describes `start_workers` spawning children one at a time and
+blocking on each readiness line. After `1286bf1` it also says the fleet starts all at
+once. Delete the stale description. Documentation states what IS, so leaving both is a
+contradiction, not history.
+
+Keep the `commits_per_task` / `calls_per_task` note. That defect is still real — Task 3
+fixes it, and Task 8 removes the note once a run proves it gone.
 
 - [ ] **Step 3: Run both suites**
 
 Run: `PGPORT=5452 uv run pytest tests/benchmarks -n4` then
-`PGPORT=5452 uv run pytest tests/core -n4` Expected: PASS. `tests/benchmarks` is 113 on
-this branch, `tests/core` 566+.
+`PGPORT=5452 uv run pytest tests/core -n4` Expected: PASS.
 
-- [ ] **Step 4: Commit nothing**
+- [ ] **Step 4: Commit the doc deletion only**
 
-Cherry-picks already committed. Do not squash them; each carries its own reasoning.
+```bash
+/usr/bin/git add -A && uv run pre-commit run --all-files
+/usr/bin/git commit -m "docs: describe one fleet start-up, not two"
+```
 
 ---
 
-### Task 2: Loosen the two CI-flaky assertions
+### Task 2: Give the flaky assertions tolerances a shared runner can meet
 
 **Files:**
 
-- Modify: `tests/benchmarks/test_smoke.py` (rate-ramp test ~:298, commit-ceiling ~:780)
+- Modify: `tests/benchmarks/test_smoke.py`
 
 **Interfaces:**
 
@@ -113,13 +127,16 @@ Cherry-picks already committed. Do not squash them; each carries its own reasoni
   `stages.RATE_RAMP_START_FRACTION`, `analysis.PROBE_WARM_UP_COMMITS`,
   `analysis.PROBE_TIMED_ROUNDS`, `analysis.DURABLE_PROBE_COMMITS`.
 
-Both tests pass locally every time and failed on a CI runner on a markdown-only commit —
-environment sensitivity, not regression. Roughly 1 in 2.
+Observed once, on CI run `33710633257`, job `dev`, on a commit that changed only
+markdown — environment sensitivity, not a regression. One failure against eleven
+successes in the last twelve `test.yml` runs, so this is rare rather than routine; it is
+worth fixing because `bench_harness` becomes a required check in Task 6, not because it
+fires often.
 
 **Failure 1**, `test_rate_ramp_measures_at_the_highest_offer_it_absorbed`: key
-`climbed_before_it_refused` was False. The ramp refused its FIRST rung, so `absorbed`
+`climbed_before_it_refused` was False — the ramp refused its FIRST rung, so `absorbed`
 came back empty. `RAMP_CEILING_PER_S = 900.0` is fixed and `RATE_RAMP_START_FRACTION` of
-it exceeded what a 2-worker fleet on that runner could absorb.
+it exceeded what a 2-worker fleet on that runner absorbed.
 
 The bind: the test needs the ramp to absorb ≥1 rung AND then refuse one. Absorb
 everything and the length check fails; absorb nothing and `climbed_before_it_refused`
@@ -127,43 +144,36 @@ fails. A fixed ceiling cannot put both a fast workstation and a slow shared runn
 inside that window.
 
 **Failure 2**, `test_commit_ceiling_probe_times_a_warmed_session_not_a_cold_one`: key
-`timed_only_the_rounds_it_kept` was False. Check is `timed_s < 0.75 * elapsed_s`. Timed
-rounds are nominally a bit over half the probe's commits, so the honest ratio sits near
-0.55; runner noise inside the timed rounds pushes it past 0.75. A probe that summarized
-its warm-up too lands near 1.0, so headroom exists between honest and broken.
+`timed_only_the_rounds_it_kept` was False. Check is `timed_s < 0.75 * elapsed_s`; the
+honest ratio sits near 0.55 and runner noise pushed it past 0.75. A probe that
+summarized its warm-up too lands near 1.0, so headroom exists between honest and broken.
 
-- [ ] **Step 1: Reproduce the reasoning, not the failure**
+- [ ] **Step 1: Confirm both diagnoses against the source**
 
-A slow shared runner cannot be reproduced on this machine. Read both tests and confirm
-the two diagnoses above against the source before changing anything. If either reading
-is wrong, stop and report.
+A slow shared runner cannot be reproduced here, so this step is reading, not running. If
+either diagnosis is wrong, stop and report rather than proceeding on it.
 
-- [ ] **Step 2: Make the ramp's ladder straddle real capacity**
+- [ ] **Step 2: Make the ramp's ladder straddle demonstrated capacity**
 
-Derive the ramp's ceiling from a ceiling the machine demonstrates — a short real drain —
-rather than the fixed 900.0, so the first rung is absorbable and the top rung is beyond
-reach by construction. This is what the production stage already does: it reads the
-drain ceiling off `stage_process_scaling.json`. The sibling test above already covers
-refuse-everything via `UNABSORBABLE_CEILING_PER_S`, so this test need not.
+Derive the ceiling from a short real drain the machine performs, so the first rung is
+absorbable and the top rung is beyond reach by construction — which is what the
+production stage does, reading the drain ceiling off `stage_process_scaling.json`. The
+sibling test above already covers refuse-everything via `UNABSORBABLE_CEILING_PER_S`.
 
-If a simpler construction makes the straddle robust, take it and say why in the commit.
+- [ ] **Step 3: Raise the ceiling threshold to the loosest value that still fails the
+      mutant**
 
-- [ ] **Step 3: Raise the commit-ceiling threshold to the loosest value that still fails
-      the mutant**
-
-Update the docstring, which already carries this reasoning, to match the number chosen.
-The docstring states what IS — no before/after framing.
+Update the docstring to match the number chosen. It states what IS.
 
 - [ ] **Step 4: Prove both guards still bite**
 
 For EACH test: mutate production code in `benchmarks/` so the guarded property breaks,
-run the test, confirm FAIL, revert, confirm PASS. Record the exact mutation and result
-in the commit body. A loosened assertion you cannot break is worse than the flake.
+run the test, confirm FAIL, revert, confirm PASS. Record both mutations in the commit
+body.
 
 - [ ] **Step 5: Run the suite three times**
 
-Run: `PGPORT=5452 uv run pytest tests/benchmarks -n4` ×3 Expected: PASS each time. Three
-runs because the thing being fixed is intermittent.
+Run: `PGPORT=5452 uv run pytest tests/benchmarks -n4` ×3 Expected: PASS each time.
 
 - [ ] **Step 6: Commit**
 
@@ -174,223 +184,90 @@ runs because the thing being fixed is intermittent.
 
 ---
 
-### Task 3: Make `bench_harness` a required check
+### Task 3: Window saturation reps on a mark taken after the fleet is up
 
 **Files:**
 
-- Modify: GitHub ruleset `18038740` on `lincolnloop/django-absurd` (no repo files)
+- Modify: `benchmarks/measurement.py`
+- Test: `tests/benchmarks/test_cli.py`
 
 **Interfaces:**
 
-- Consumes: the `bench_harness` job added to `.github/workflows/test.yml` on `main`.
+- Consumes: `analyze_saturation(queue, since)` and the mark helper `c516581` added to
+  `benchmarks/analysis.py` — read that commit for the exact names before writing.
+- Produces: no new public name. Saturation reps pass a mark where they pass `None`
+  today.
 
-Fifteen checks are required today, including `dev`. `bench_harness` becomes the
-sixteenth.
+Concurrent spawn shrinks the stagger but does not remove it: children still reach
+readiness a few hundred milliseconds apart, and the first one claims alone until the
+last exists. `benchmarks/CLAUDE.md` documents `commits_per_task` and `calls_per_task`
+reading low above one process for this reason and names windowing as the fix. `c516581`
+already threads `since` through `analyze_saturation`, but only `size_vs_depth` passes
+one, and it captures the mark BEFORE the fleet starts — excluding ballast, not stagger.
 
-- [ ] **Step 1: Confirm Task 2 landed and is green**
-
-The ordering is the point: requiring this check at a 1-in-2 flake rate blocks the very
-PRs that fix it. Do not start this task before Task 2 is merged.
-
-- [ ] **Step 2: Read the current required-check list**
-
-```bash
-gh api repos/lincolnloop/django-absurd/rulesets/18038740 \
-  -q '.rules[] | select(.type=="required_status_checks") | .parameters.required_status_checks[].context'
-```
-
-- [ ] **Step 3: Add the context, preserving every existing entry**
-
-PATCH the ruleset with the existing list plus `bench_harness`. Read the response back
-and diff it against Step 2's output plus the one addition. A dropped entry here silently
-removes a merge gate.
-
-- [ ] **Step 4: Verify on a live PR**
-
-Confirm `bench_harness` shows as required on an open PR before considering this done.
-
----
-
-### Task 4: A suspending sleeper task, sync and async
-
-**Files:**
-
-- Modify: `benchmarks/tasks.py`
-- Test: `tests/benchmarks/test_smoke.py`
-
-**Interfaces:**
-
-- Produces: `sleep_durably(seconds)` and `sleep_durably_async(seconds)` in
-  `benchmarks/tasks.py`. Both suspend via the Absurd context's durable sleep rather than
-  blocking. Distinct from the existing `sleep_sync` / `sleep_async`, which block on
-  purpose.
-
-Nothing in `benchmarks/` suspends today. Every body is a blocking sleep, an `asyncio`
-sleep, a noop, or a `ctx.step` workflow. The async twin is required, not optional: only
-the sync path crosses the `--concurrency`-sized thread pool, so a finding without both
-cannot say whether the bridge or the loop is responsible.
+This is the smallest change in the plan and the only one that makes a trust condition
+the spec already claims actually true.
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
-def test_a_durable_sleeper_leaves_its_run_sleeping_not_running(tmp_path):
-    """A suspended task holds no claim, so it occupies no worker slot.
+@pytest.mark.django_db(transaction=True)
+def test_a_multi_process_rep_counts_only_commits_made_after_its_fleet_was_up(tmp_path):
+    """Commits a worker makes while its siblings are still starting belong to
+    no measured window.
 
-    Asserted on the run's own state rather than on a timing: `sleeping` is the
-    state that cannot coexist with a held claim, so it is the observable that
-    can only be true if the sleep released the slot.
+    Asserted through commits_per_task, which is a ratio of counted commits to
+    counted tasks: a rep that starts counting before the fleet is up counts a
+    fraction of the commits against all of the tasks, so the ratio reads below
+    the single-process value. Two processes are enough to produce a stagger.
     """
-    task_id = tasks.sleep_durably.enqueue(seconds=30.0)
-    with running_worker(concurrency=1):
-        wait_until_state(task_id, "sleeping", timeout_s=20.0)
+    stages.main(["process_scaling", "--results-dir", str(tmp_path), "--tasks", "400"])
 
-    assert count_runs_by_state(task_id) == {"sleeping": 1}
+    measurements = json.loads(
+        (tmp_path / "stage_process_scaling.json").read_text()
+    )["measurements"]
+    by_count = {m["processes"]: m for m in measurements}
+
+    assert (
+        by_count[2]["commits_per_task"] >= by_count[1]["commits_per_task"] * 0.9
+    ) is True
 ```
 
 - [ ] **Step 2: Run it and watch it fail**
 
-Run:
-`PGPORT=5452 uv run pytest tests/benchmarks/test_smoke.py::test_a_durable_sleeper_leaves_its_run_sleeping_not_running -v`
-Expected: FAIL — `tasks.sleep_durably` does not exist.
+Run: `PGPORT=5452 uv run pytest tests/benchmarks/test_cli.py -k commits_made_after -v`
+Expected: FAIL — the two-process ratio reads low.
 
-- [ ] **Step 3: Add both task bodies**
+If it PASSES at this small N, the stagger is not observable at 400 tasks on this
+machine. Raise N until it fails, and if it will not fail at any N the suite can afford,
+say so and stop: a test that cannot observe the defect must not be committed as if it
+guards it.
 
-Add the sync body, taking a duration and suspending for it through the Absurd context's
-durable sleep. Add the async twin the same way. Register both on the harness's `bench`
-queue alongside the existing bodies. Keep the duration a parameter so the CI test can
-pass seconds and a real run can pass minutes.
+- [ ] **Step 3: Take the mark after `start_workers` returns**
 
-Follow the naming rule — the verb is in the name. Do not reuse `sleep_sync`; that body
-blocks deliberately and its comment says so.
+In the saturation rep, capture a database mark once the fleet is up and readiness is
+confirmed, and pass it where `None` goes today. The preload already happens before the
+fleet, so the mark must be captured after the fleet and before the drain is timed.
 
 - [ ] **Step 4: Run it and watch it pass**
 
-Run: same command as Step 2. Expected: PASS.
+Run: same as Step 2. Expected: PASS.
 
-- [ ] **Step 5: Add the async twin's test**
+- [ ] **Step 5: Confirm nothing else moved**
 
-Same assertion against `sleep_durably_async`. Two tests, not one parametrized over both
-— the sync case crosses the thread pool and the async case does not, so a shared failure
-message would hide which path broke.
+Run: `PGPORT=5452 uv run pytest tests/benchmarks -n4` Expected: PASS. `size_vs_depth`
+already passes its own mark; check its tests still hold.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 /usr/bin/git add -A && uv run pre-commit run --all-files
-/usr/bin/git commit -m "test: add durable sleepers, sync and async"
+/usr/bin/git commit -m "test: count a rep's commits from the moment its fleet is up"
 ```
 
 ---
 
-### Task 5: The `slot_occupancy` stage
-
-**Files:**
-
-- Modify: `benchmarks/stages.py`, `benchmarks/measurement.py`, `benchmarks/analysis.py`,
-  `benchmarks/report.py`
-- Test: `tests/benchmarks/test_cli.py`, `tests/benchmarks/test_report.py`
-
-**Interfaces:**
-
-- Consumes: `tasks.sleep_durably`, `tasks.sleep_durably_async` from Task 4.
-- Produces: stage name `slot_occupancy` in `stages.STAGE_NAMES` and
-  `stages.STAGE_DESCRIPTIONS`; `analysis.count_sleeper_runs_by_state(queue, task_ids)`
-  returning a mapping of state to count; report keys `running_max` and `sleeping_min`.
-
-**The question.** A sync task's durable sleep hops to the worker's event loop while the
-body sits in a thread of a pool sized to `--concurrency`. If that thread stayed parked,
-N sleepers would hold N of C slots and everything behind them starves. The docs say the
-task suspends durably and resumes later. That is the claim under test, not a premise.
-
-**Shape.** Two arms per workload, run one at a time so they never measure each other.
-`control` drains a fixed quick batch on one worker with no sleepers. `sleepers` drains
-the same batch on the same worker with N tasks already suspended in a sleep far longer
-than the window. Both arms pay the same worker start-up and the same warm-up task before
-the clock starts. The ratio is the finding: near 1 means the sleep released its slot. An
-arm that never drains fails the run rather than recording a number.
-
-- [ ] **Step 1: Write the failing CLI test**
-
-```python
-def test_slot_occupancy_reports_both_arms_and_a_state_count(tmp_path):
-    """The ratio is only trustworthy beside a count that needs no clock.
-
-    A timing says the quick batch was not slowed; the state count says why —
-    the sleepers held no claims. Asserted as a shape so a machine's own speed
-    never decides whether this passes.
-    """
-    written = run_stage_cli("slot_occupancy", tmp_path, tasks=60, sleepers=4)
-    result = json.loads(written.read_text())
-
-    arms = {arm["name"]: arm for arm in result["arms"]}
-    assert set(arms) == {"control", "sleepers", "control_async", "sleepers_async"}
-    assert {
-        "every_arm_drained": all(arm["missing_tasks"] == 0 for arm in arms.values()),
-        "every_arm_ran_the_batch": all(
-            arm["n_tasks"] == 60 for arm in arms.values()
-        ),
-        "sleepers_were_counted": arms["sleepers"]["sleeping_min"] == 4,
-        "no_sleeper_held_a_claim": arms["sleepers"]["running_max"] == 0,
-    } == {
-        "every_arm_drained": True,
-        "every_arm_ran_the_batch": True,
-        "sleepers_were_counted": True,
-        "no_sleeper_held_a_claim": True,
-    }
-```
-
-- [ ] **Step 2: Run it and watch it fail**
-
-Run: `PGPORT=5452 uv run pytest tests/benchmarks/test_cli.py -k slot_occupancy -v`
-Expected: FAIL — `slot_occupancy` is not a stage choice.
-
-- [ ] **Step 3: Add the state count to `analysis.py`**
-
-A function that, given the queue and the sleepers' task ids, aggregates their runs by
-state. `running` holds a claim and therefore a slot; `sleeping` holds neither. Return
-the mapping; let the caller decide what is worst.
-
-- [ ] **Step 4: Teach `measurement.py` to preload sleepers**
-
-A spec field for the sleeper count, defaulting to none so no existing measurement
-changes behaviour. When set, enqueue that many durable sleepers and wait until every one
-of them reports `sleeping` BEFORE the measured batch is enqueued — a sleeper still
-starting up would otherwise be counted as occupying a slot it is about to release.
-
-Sample the state count while the quick batch drains, keeping the worst `running` and the
-least `sleeping` seen.
-
-- [ ] **Step 5: Add the stage builder**
-
-Four arms — `control`, `sleepers`, `control_async`, `sleepers_async` — run sequentially.
-Register the name and a one-line description in the registry beside the existing stages.
-
-- [ ] **Step 6: Render it**
-
-An occupancy block in the report: per arm the elapsed time, the enqueue share, the ratio
-against its own control, and the two state counts. Print the ratio's meaning next to it
-in one line, the way the other stages' derived lines read.
-
-- [ ] **Step 7: Run the tests**
-
-Run: `PGPORT=5452 uv run pytest tests/benchmarks -n4` Expected: PASS, including a report
-test asserting the rendered block.
-
-- [ ] **Step 8: Prove the guard bites**
-
-Mutate the preload so it does not wait for sleepers to reach `sleeping`, and confirm the
-CLI test fails. Revert. Record it in the commit body.
-
-- [ ] **Step 9: Commit**
-
-```bash
-/usr/bin/git add -A && uv run pre-commit run --all-files
-/usr/bin/git commit -m "test: measure whether a durable sleep releases its worker slot"
-```
-
----
-
-### Task 6: The clone seeder and its drift guard
+### Task 4: The clone seeder and its drift guard
 
 **Files:**
 
@@ -399,37 +276,45 @@ CLI test fails. Revert. Record it in the commit body.
 
 **Interfaces:**
 
-- Produces: `seed_queue_tables(rows, *, queue)` returning a summary of what it wrote —
-  task count, run count, elapsed seconds; and `check_queue_table_shape()`, which raises
-  when the live columns differ from what the clone writes.
+- Produces: `seed_queue_tables(rows, *, queue)` returning a summary with `tasks`, `runs`
+  and `elapsed_s`, counted from the tables themselves; `check_queue_table_shape()`,
+  raising `QueueTableShapeError` when live columns differ from what the clone writes.
 
-Volume by enqueueing one task at a time does not reach millions. The archived clone
-wrote template rows through the real API then cloned them server-side in SQL: 250k
-tasks + 375k runs in 21 s.
+Volume by enqueueing one task at a time does not reach millions. Write template rows
+through the real API, drain some of them so finished runs exist, then clone server-side.
 
-**The drift guard is the load-bearing part.** Cloning writes queue tables directly, so
-it encodes their shape. When upstream changes a column the clone must fail loudly rather
-than write plausible-looking wrong rows. A silent drift here poisons every number taken
-on seeded data.
+**Two things the archive got right and are easy to lose.** First, the drift guard:
+cloning writes queue tables directly, so it encodes their shape, and when upstream
+changes a column it must fail loudly rather than write plausible-looking wrong rows.
+Second, the drain: enqueueing writes `pending` tasks and NO finished runs, so a corpus
+built by enqueueing alone leaves the runs table empty and the admin's runs changelist
+with nothing to page.
 
-- [ ] **Step 1: Write the drift guard's failing test first**
+- [ ] **Step 1: Write the drift guard's failing test**
 
 ```python
-def test_seeding_refuses_a_queue_table_whose_columns_it_does_not_know(monkeypatch):
+@pytest.mark.django_db(transaction=True)
+def test_seeding_refuses_a_queue_table_whose_shape_it_does_not_know():
     """The guard fails the seed, not the read.
 
     A clone that writes a table it half-understands produces rows that look
-    right and are not, so the only safe failure is at the seed. Asserted by
-    naming the offending column, since a bare refusal would not tell the next
-    reader which upstream change moved.
+    right and are not, so the only safe failure is before any row is written.
+    Driven by really altering the table rather than by patching what the
+    seeder believes, so the guard is tested against the condition it exists
+    for. The error names the column so the next reader learns which upstream
+    change moved.
     """
-    monkeypatch.setattr(seed, "CLONED_TASK_COLUMNS", ("task_id", "not_a_column"))
+    with connections[resolve_absurd_database()].cursor() as cursor:
+        cursor.execute("alter table absurd.t_bench drop column if exists params")
 
     with pytest.raises(seed.QueueTableShapeError) as caught:
-        seed.check_queue_table_shape()
+        seed.seed_queue_tables(rows=10, queue="bench")
 
-    assert "not_a_column" in str(caught.value)
+    assert "params" in str(caught.value)
 ```
+
+The `_isolate_queues` fixture in `tests/conftest.py` hard-drops the schema before and
+after, so the altered table does not leak. Apply it.
 
 - [ ] **Step 2: Run it and watch it fail**
 
@@ -439,37 +324,45 @@ Run: `PGPORT=5452 uv run pytest tests/benchmarks/test_seed.py -v` Expected: FAIL
 - [ ] **Step 3: Write the guard**
 
 Read the live columns for each queue table from `information_schema`, compare against
-the tuples the clone writes, and raise a typed error naming every column that is
-expected and absent. The error owns its message; the caller assembles no text. Name the
-error for the condition.
+what the clone writes, and raise a typed error naming every column expected and absent.
+The error owns its message — the caller assembles no text. Name it for the condition.
+Call it before writing anything.
 
 - [ ] **Step 4: Write the seeding test**
 
 ```python
-def test_seeding_clones_templates_into_the_row_count_it_was_asked_for():
-    """Rows are counted from the tables, not from the seeder's own bookkeeping.
+@pytest.mark.django_db(transaction=True)
+def test_seeding_writes_the_rows_it_reports_including_finished_runs():
+    """Counted from the tables, not from the seeder's bookkeeping.
 
-    A seeder that returns its intended count rather than its written count
-    reports success for a clone that silently wrote nothing.
+    A seeder returning its intended count reports success for a clone that
+    silently wrote nothing. Runs are asserted separately because enqueueing
+    alone produces none, and a corpus with an empty runs table cannot answer
+    an admin question about the runs changelist.
     """
     summary = seed.seed_queue_tables(rows=200, queue="bench")
 
     assert {
-        "reported": summary["tasks"],
-        "actually_in_the_table": count_tasks_in_queue("bench"),
-    } == {"reported": 200, "actually_in_the_table": 200}
+        "tasks_reported": summary["tasks"],
+        "tasks_present": count_rows("t_bench"),
+        "runs_present_at_all": count_rows("r_bench") > 0,
+    } == {"tasks_reported": 200, "tasks_present": 200, "runs_present_at_all": True}
 ```
+
+`count_rows` is a new helper in `tests/benchmarks/utils.py`, beside the counting helpers
+already there.
 
 - [ ] **Step 5: Implement seeding**
 
 Write a small number of template rows through the real enqueue API so their shape is
-whatever the library actually writes. Clone them server-side with `generate_series`,
-giving each clone a fresh `uuidv7()` primary key so pk order stays chronological.
-`ANALYZE` both queue tables afterwards, because a bulk-loaded table with stale
-statistics gives the planner a row count that is orders out and every plan taken on it
-is a different plan.
-
-Call the guard before writing anything.
+whatever the library actually writes. Drain them with a worker so finished runs exist,
+and include at least one template that fails so retried and failed states appear. Then
+clone server-side with `generate_series`, giving each clone a fresh primary key from the
+schema's own portable uuidv7 function — not `pg_catalog.uuidv7()`, which the migration
+only uses when the server has it — so pk order stays chronological on any server the
+migration accepts. `ANALYZE` both queue tables afterwards: a bulk-loaded table with
+stale statistics gives the planner a row count orders out, and every plan taken on it is
+a different plan.
 
 - [ ] **Step 6: Run the tests**
 
@@ -479,8 +372,107 @@ Run: `PGPORT=5452 uv run pytest tests/benchmarks/test_seed.py -v` Expected: PASS
 
 ```bash
 /usr/bin/git add -A && uv run pre-commit run --all-files
-/usr/bin/git commit -m "test: seed the queue tables by cloning templates"
+/usr/bin/git commit -m "test: seed the queue tables by cloning drained templates"
 ```
+
+---
+
+### Task 5: One deterministic test for the suspension question
+
+**Files:**
+
+- Test: `tests/core/test_durable.py`
+
+**Interfaces:**
+
+- Consumes: the durable-sleep task and worker helpers `tests/core/test_durable.py`
+  already uses. Read that file and reuse its fixtures rather than adding new ones.
+
+**Why a test and not a stage.** A run's own state cannot witness the failure: the SDK's
+sleep sets `state = 'sleeping', claimed_by = null, claim_expires_at = null` before
+`SuspendTask` propagates (`django_absurd/migrations/0001_initial_0_5_0.sql:1160-1168`),
+so a parked thread leaves exactly the row a released one does. Counting sleeper runs by
+state would report a tautology as corroboration.
+
+`tests/core/test_durable.py` already drives a durable sleep through the real sync
+bridge, and `tests/core/test_worker_run_refill.py` covers a worker claiming while a slot
+is busy. The uncovered case is N sleepers against C slots with a quick task behind them.
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+@pytest.mark.django_db(transaction=True)
+def test_a_quick_task_runs_while_more_sleepers_than_slots_are_suspended():
+    """A suspended task occupies no worker slot, so a quick task queued behind
+    two of them still runs on a single-slot worker.
+
+    Asserted on the quick task reaching its completed state: if a durable
+    sleep parked its pool thread, one slot would be held by the first sleeper
+    and the quick task would never be claimed. Two sleepers against one slot
+    so the case is not merely "a slot happened to be free".
+    """
+    for _ in range(2):
+        tasks.sleep_for_a_while.enqueue(seconds=30.0)
+    quick = tasks.noop.enqueue()
+
+    with running_worker(concurrency=1):
+        wait_for_task(quick, "completed", timeout_s=30.0)
+
+    assert read_task_state(quick) == "completed"
+```
+
+Names for the sleeper task, `running_worker`, `wait_for_task` and `read_task_state` come
+from what `tests/core/test_durable.py` and `tests/utils.py` already provide. Read them
+and use the real names; do not add parallel helpers.
+
+- [ ] **Step 2: Run it**
+
+Run:
+`PGPORT=5452 uv run pytest tests/core/test_durable.py -k more_sleepers_than_slots -v`
+Expected: PASS — the behaviour is believed correct. This test documents and guards it.
+
+- [ ] **Step 3: Prove it can fail**
+
+Make the sleep block the thread instead of suspending — the crudest version is a
+`time.sleep` in the task body — and confirm the test fails by timeout. Revert. Record it
+in the commit body. Without this the test is decoration.
+
+- [ ] **Step 4: Commit**
+
+```bash
+/usr/bin/git add -A && uv run pre-commit run --all-files
+/usr/bin/git commit -m "test: a quick task runs past more sleepers than slots"
+```
+
+---
+
+### Task 6: Make `bench_harness` a required check
+
+**Files:**
+
+- Modify: GitHub ruleset `18038740` (no repo files)
+
+- [ ] **Step 1: Confirm the harness branch is merged**
+
+Requiring this check while Task 2 is in review would block the PR that fixes the flake.
+
+- [ ] **Step 2: Read the current required-check list**
+
+```bash
+gh api repos/lincolnloop/django-absurd/rulesets/18038740 \
+  -q '.rules[] | select(.type=="required_status_checks") | .parameters.required_status_checks[].context'
+```
+
+Fifteen contexts today, including `dev`.
+
+- [ ] **Step 3: PATCH with the existing list plus `bench_harness`**
+
+Read the response back and diff it against Step 2's output plus the one addition. A
+dropped entry here silently removes a merge gate.
+
+- [ ] **Step 4: Verify on a live PR**
+
+Confirm `bench_harness` shows as required before considering this done.
 
 ---
 
@@ -488,104 +480,102 @@ Run: `PGPORT=5452 uv run pytest tests/benchmarks/test_seed.py -v` Expected: PASS
 
 **Files:**
 
-- Create: `benchmarks/results/<dated dir>/` (git-ignored output)
+- Create: a dated results directory (git-ignored)
 
-**Interfaces:**
+Not a coding task. A procedure whose output is the evidence for Task 8.
 
-- Consumes: every stage, including `size_vs_depth` and `slot_occupancy`.
-- Produces: the JSON and report files Phase 3 rewrites the docs from.
+- [ ] **Step 1: Confirm the tree**
 
-Not a coding task. A procedure, run once, whose output is the evidence for every claim
-the docs then make.
+Tasks 1–5 merged. `tox -e dev,bench_harness` green.
 
-- [ ] **Step 1: Confirm the tree has no known defect**
-
-Tasks 1–6 merged. `tox -e dev,bench_harness` green. Any measurement defect still
-documented as unfixed in `benchmarks/CLAUDE.md` is either fixed now or this run cannot
-close it — check the list before spending 90 minutes.
-
-- [ ] **Step 2: Start the tuned server**
+- [ ] **Step 2: Start the tuned server and migrate it**
 
 ```bash
 PGPORT_BENCH=5460 docker compose --profile bench up -d --wait db_bench
 ```
 
+Then run the migration step `benchmarks/README.md` documents. `db_bench` is a RAM data
+directory, so it comes up empty every time and a run against an unmigrated server fails
+at the first enqueue.
+
 - [ ] **Step 3: Quiet the machine and hold it awake**
 
-On mains, not battery. Close everything else. Prefix the run with `caffeinate -is`. This
-machine has slept 25–284 s mid-run before; `perf_counter` does not count the nap, so a
-napped arm reads fast and entirely plausible.
+Mains, not battery. Prefix with `caffeinate -is`. This machine has slept 25–284 s
+mid-run before; `perf_counter` does not count the nap, so a napped arm reads fast and
+entirely plausible.
 
-- [ ] **Step 4: Run every stage**
+- [ ] **Step 4: Run every stage at the default durable duration**
 
-Run with `--durable-seconds 30` — a realistic agent tool call, not the 2 s CI default.
-Expect roughly 90 minutes. Do not touch the machine.
+Leave `--durable-seconds` at its 2 s default. The durable body is dominated by its
+sleep, so 30 s buys ~48 minutes of wall clock and no additional signal — its arms exist
+to exercise the connection budget, which the backend probe samples while bodies run.
 
-- [ ] **Step 5: Stamp the environment beside the results**
+Expect roughly 45 minutes. Do not touch the machine.
 
-Record the machine, core count, power source, Postgres version and settings, the
-`--durable-seconds` used, and the commit SHA. A number without its environment is not
-reproducible and cannot be compared with the next run.
+- [ ] **Step 5: Stamp what the harness does not stamp itself**
+
+`benchmarks/host.py` already records the git SHA, core count, `shared_buffers` and
+cluster name. Add beside the results the power source and anything else running —
+neither is recoverable later, and both change what the numbers mean.
 
 - [ ] **Step 6: Check the run before trusting it**
 
 Per arm: cv, whether every rep drained, whether any rep was invalidated for extra runs.
-An arm with wide cv is reported as wide, never averaged into confidence. If the
-commit-ceiling probe refused, the report says so and that arm's connection-bound verdict
-is unavailable rather than guessed.
-
-- [ ] **Step 7: Commit nothing**
-
-Results are git-ignored. The findings land in Task 8.
+An arm with wide cv is reported as wide. If the commit-ceiling probe refused, that arm's
+connection-bound verdict is unavailable rather than guessed.
 
 ---
 
-### Task 8: Restate every finding from that run
+### Task 8: Restate the findings from that run
 
 **Files:**
 
 - Modify: `benchmarks/CLAUDE.md`, `benchmarks/README.md`
 
-**Interfaces:**
-
-- Consumes: Task 7's results directory and environment stamp.
+Own branch, off `main` after the harness branch merges and the run is done.
 
 - [ ] **Step 1: Write the `checkpoint_cost` finding, which does not exist**
 
-The stage has run since it was built and `benchmarks/CLAUDE.md` carries no finding for
-it. It is the stage whose shape most resembles durable agent work — a `ctx.step` per
-tool call. State what the run measured and what it means for a workflow that checkpoints
-per step.
+`benchmarks/CLAUDE.md` says itself that this stage has no finding. It is the stage whose
+shape most resembles durable agent work — a `ctx.step` per tool call. State what the run
+measured and what it means for a workflow checkpointing per step.
 
-- [ ] **Step 2: Replace every multi-process figure**
+- [ ] **Step 2: Replace multi-process figures only**
 
-Every rate measured before the spawn fix is not comparable with one measured after.
-Replace rather than annotate. `README.md` is for a non-expert human and describes
-actions; `CLAUDE.md` carries the jargon, the schemas and the evidence.
+Every multi-process rate measured before the windowing and spawn fixes is not comparable
+with one measured after; replace those. **Keep the single-process ranges** — the spawn
+bias is absent at one process, so the overhead itemisation, the concurrency ladder and
+the statement-level costs remain valid, and the new run is ADDED to their range rather
+than replacing it. Trading four runs of evidence for one is a loss, not an update.
 
-- [ ] **Step 3: Answer the three open questions in prose**
+- [ ] **Step 3: Carry cv and the noise floor on every restated number**
 
-Whether processes-beat-threads survives a durable body; whether the 2.45x is table size
-or queue depth; whether a durable sleep releases its slot. Each with the number, the
-method, and what it does not support.
+`benchmarks/CLAUDE.md` establishes median between-run cv 4.7%, worst 12.5%, and tells
+the reader to treat a difference under ~12% as noise. A one-sample run supports a rank
+order or a ratio above that floor and not a point estimate. No restated figure may read
+as one.
 
-- [ ] **Step 4: Delete defect notes for defects that are gone**
+- [ ] **Step 4: Answer the remaining questions in prose**
 
-The spawn-bias note and its 7-15% estimate describe a fixed defect. Documentation states
-what IS. A fixed defect described as live is a false claim about the current tree.
+Whether the 2.45x is table size or queue depth; what the connection budget does when
+bodies hold their threads. Each with the number, the method, and what it does not
+support.
 
-Keep the `process_scaling` ladder confound — it is still real, still confounded, and the
-report still prints `CONFOUNDED:`.
+- [ ] **Step 5: Delete only the defect notes the run proves gone**
 
-- [ ] **Step 5: Name the run on every finding**
+The `commits_per_task` / `calls_per_task` note goes if and only if the windowed run
+shows the ratio holding above one process. The `process_scaling` ladder confound STAYS —
+it is still real and the report still prints `CONFOUNDED:`.
 
-Each figure carries its dated run. A number with no run is a defect a reader can catch.
+- [ ] **Step 6: Name the run on every finding**
 
-- [ ] **Step 6: Commit**
+A figure with no run is a defect a reader can catch by reading for it.
+
+- [ ] **Step 7: Commit**
 
 ```bash
 /usr/bin/git add -A && uv run pre-commit run --all-files
-/usr/bin/git commit -m "docs: restate the harness findings from a defect-free run"
+/usr/bin/git commit -m "docs: restate the harness findings from a windowed run"
 ```
 
 ---
@@ -594,80 +584,73 @@ Each figure carries its dated run. A number with no run is a defect a reader can
 
 **Files:**
 
-- Create: `benchmarks/admin_at_volume/{settings.py,urls.py,manage.py,README.md}`
-- Modify: `compose.yaml`
+- Create: `benchmarks/admin_at_volume/__init__.py`,
+  `benchmarks/admin_at_volume/README.md`
+- Modify: `benchmarks/settings.py`
 - Test: `tests/benchmarks/test_admin_at_volume.py`
 
-**Interfaces:**
+Own branch, off `main` after `fix__admin-changelist-order-by-pk` merges — the probe's
+arms read changelists ordered by pk, which is that branch's change.
 
-- Consumes: `benchmarks/seed.py` from Task 6.
-- Produces: a `db_admin` compose service on a real data directory behind an `admin`
-  profile; a Django project whose admin serves django-absurd's auto-registered queue
-  models.
+**No new Postgres service.** Only `db_bench` is tmpfs; the plain `db` service the suites
+already use is a real data directory. The corpus is its own DATABASE on that server.
 
-Its own branch, off `main` after Task 8 merges. New surface — a project, a service, a
-seeder consumer — and bundling would hold the harness fixes hostage.
-
-**Placement.** Dev-only under `benchmarks/`, not shipped in any wheel, not in the
-examples CI matrix. `examples/web` was considered and rejected: it is a tutorial whose
-README is a walkthrough and whose suite is a required check, and a volume seeder does
-not belong in a teaching example.
-
-**Persistence.** A real data directory, not tmpfs. A seeded corpus that evaporates on
-restart is worse than no corpus. Behind a profile so a bare `up -d` leaves it alone, the
-way `db_bench` already is.
+**No settings module of its own.** Mount the admin and its dependencies in the harness's
+existing `benchmarks/settings.py`, behind the same env-var switch that selects the
+corpus database. A separate settings module no test imports lands at 0% coverage under
+`[tool.coverage.run] source` and turns the patch status red — and a test that runs under
+`tests.benchmarks.settings` would prove that module, not this one.
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
-def test_the_admin_changelist_serves_a_seeded_corpus(admin_client):
-    """One row on the page proves the whole stack: settings, URLs, admin
-    registration, and the seeder's rows all have to be right for this to pass.
+@pytest.mark.django_db(transaction=True)
+def test_the_task_changelist_pages_a_seeded_corpus(admin_client):
+    """The changelist's own result count is what a person sees paging it.
 
-    Asserted on a row the seeder wrote, so a changelist that renders an empty
-    table cannot pass.
+    Asserted against the number seeded, so a changelist rendering an empty
+    table cannot pass, and so can a filtered queryset that silently drops
+    rows.
     """
     seed.seed_queue_tables(rows=200, queue="bench")
 
     response = admin_client.get(reverse("admin:django_absurd_task_changelist"))
 
-    assert response.status_code == 200
-    assert response.context_data["cl"].result_count == 200
+    assert (response.status_code, response.context_data["cl"].result_count) == (200, 200)
 ```
+
+The second element is the seeded count; the first is the status. Fix the tuple to
+`(200, 200)` only if the status code and the row count genuinely coincide — otherwise
+write them as a dict of two named keys, which reads better and cannot be confused.
 
 - [ ] **Step 2: Run it and watch it fail**
 
 Run: `PGPORT=5452 uv run pytest tests/benchmarks/test_admin_at_volume.py -v` Expected:
-FAIL — no settings module.
+FAIL — the admin is not installed in the harness settings.
 
-- [ ] **Step 3: Write the project**
+- [ ] **Step 3: Install the admin in the harness settings**
 
-Settings deriving from the harness's existing settings so the connection cannot drift,
-plus the admin app and its dependencies. A URLconf mounting the admin. A `manage.py`.
-Keep it one queue and no custom models — the point is django-absurd's own admin under
-volume.
+Add the admin app and its dependencies — sessions, messages, auth, staticfiles, a
+templates entry — to `benchmarks/settings.py`, and a URLconf mounting the admin. Follow
+`tests/settings.py`, which already does exactly this for the core suite; copy its shape
+rather than inventing one.
 
-- [ ] **Step 4: Add the compose service**
+- [ ] **Step 4: Run the test**
 
-`db_admin` on a named volume, behind an `admin` profile, on its own published port with
-an env-var default like the others.
+Expected: PASS at 200 rows, which is what CI runs.
 
-- [ ] **Step 5: Run the test**
+- [ ] **Step 5: Write the README**
 
-Expected: PASS at 200 rows, which is what CI will run.
+For a person: start `db`, create the corpus database, seed N rows, create a superuser,
+run the server, open the admin. Every command copy-pasteable. State that the corpus is
+synthetic — uniform ages, a synthetic `claimed_by` spread — so nobody quotes a number
+from it as a property of the library.
 
-- [ ] **Step 6: Write the README**
-
-For a person, not an agent: start the service, seed N rows, create a superuser, run the
-server, open the admin. Every command copy-pasteable. State that the corpus is synthetic
-— uniform ages, a synthetic `claimed_by` spread — so nobody quotes a number from it as a
-property of the library.
-
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 /usr/bin/git add -A && uv run pre-commit run --all-files
-/usr/bin/git commit -m "test: add a dev-only admin stack for browsing volume"
+/usr/bin/git commit -m "test: serve django-absurd's admin over a seeded corpus"
 ```
 
 ---
@@ -681,37 +664,42 @@ property of the library.
 
 **Interfaces:**
 
-- Consumes: the Task 9 stack and `benchmarks/seed.py`.
-- Produces: `probe_admin_arms(arms)` writing a JSON summary per arm — cold ms, warm ms,
-  query count — and an `EXPLAIN (ANALYZE, BUFFERS)` dump per arm to a file.
+- Produces: `probe_admin_arms(*, results_dir)` returning `{"arms": [...]}` where each
+  arm carries `name`, `cold_ms`, `warm_ms` and `queries`, and writes
+  `explain_<name>.txt` into `results_dir`.
 
-Arms cover the changelists that order by pk and at least one filtered view: a filter
-changes the plan, and ordering by pk does not help it.
+Arms: the tasks changelist first page; the runs changelist first page; and the tasks
+changelist filtered by state, because a filter changes the plan and ordering by pk does
+not help it.
+
+**What this does not re-measure.** The pk-ordering fix is already measured at 3M runs in
+the commit that makes it — ~520k pages and 84.7 s cold before, an `Index Scan Backward`
+at 33 buffers with the same latency cold or warm after. These arms exist to find the
+NEXT bottleneck.
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
-def test_the_probe_records_a_query_count_and_a_plan_for_every_arm(tmp_path):
+@pytest.mark.django_db(transaction=True)
+def test_every_arm_records_a_query_count_and_keeps_its_plan(tmp_path):
     """A timing alone cannot say why a page was slow, so an arm without a plan
     is not a finding.
 
-    Asserted on the artefacts rather than the durations: durations are this
-    machine's to decide, but every arm owing a plan file and a query count is
-    the probe's own contract.
+    Asserted on the artefacts rather than the durations, which are this
+    machine's to decide. The query count is asserted against the admin's own
+    floor of a count query plus a page query, so an arm that redirected to a
+    login page cannot pass with a single query.
     """
     seed.seed_queue_tables(rows=200, queue="bench")
 
     summary = probe.probe_admin_arms(results_dir=tmp_path)
 
-    assert [arm["name"] for arm in summary["arms"]] == [
-        "tasks_first_page",
-        "tasks_filtered",
-        "runs_first_page",
-    ]
-    assert all(
-        arm["queries"] > 0 and (tmp_path / f"explain_{arm['name']}.txt").exists()
-        for arm in summary["arms"]
-    )
+    arms = {arm["name"]: arm for arm in summary["arms"]}
+    assert set(arms) == {"tasks_first_page", "tasks_filtered_by_state", "runs_first_page"}
+    assert {
+        name: (arm["queries"] >= 2, (tmp_path / f"explain_{name}.txt").exists())
+        for name, arm in arms.items()
+    } == {name: (True, True) for name in arms}
 ```
 
 - [ ] **Step 2: Run it and watch it fail**
@@ -724,20 +712,14 @@ Per arm: issue the request twice, keeping the first as cold and the second as wa
 capture the queries the request ran; and dump the changelist query's plan with `ANALYZE`
 and `BUFFERS` to a per-arm file. Write one JSON summary beside them.
 
-Take timings from a real request through the stack rather than from the ORM alone —
-template rendering of 100 rows is part of what a person waits for.
+Time a real request through the stack rather than the ORM alone — rendering 100 rows is
+part of what a person waits for.
 
 - [ ] **Step 4: Run the test**
 
 Expected: PASS.
 
-- [ ] **Step 5: Assert the plan shape at volume**
-
-Add one test asserting the tasks changelist plan uses an index scan backward on the pkey
-with no sort node. This is the one thing about the merged ordering fix that has never
-been observed at volume, and it is a plan-shape claim, so it needs no timing.
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 /usr/bin/git add -A && uv run pre-commit run --all-files
@@ -748,27 +730,22 @@ been observed at volume, and it is a plan-shape claim, so it needs no timing.
 
 ## Self-review
 
-**Spec coverage.** Truthful-harness criteria → Tasks 1, 2, 7, 8. `checkpoint_cost`
-finding → Task 8 Step 1. Five questions → Tasks 5, 7, 8. Seeder + drift guard → Task 6.
-Suspension probe with async twin and state count → Tasks 4, 5. Admin clickable + README
-→ Task 9. Admin timings + `EXPLAIN` → Task 10. Rot control via `tests/benchmarks` →
-every task's test. Branch topology → Task 1 and Task 9's preamble. Required check →
-Task 3.
+**Spec coverage.** Multi-process figures replaced → Tasks 3, 7, 8. cv and noise floor →
+Task 8 Step 3. `checkpoint_cost` finding → Task 8 Step 1. Four questions → Tasks 3,
+7, 8. Seeder + drift guard + drain → Task 4. Suspension settled → Task 5. Admin
+clickable + README → Task 9. Admin timings + `EXPLAIN` → Task 10. Required check →
+Task 6. Branch topology → the preambles of Tasks 8 and 9.
 
-**Gap found and left deliberate:** the spec defers retry storms, cleanup keep-up, suite
-speed, the `worker_knobs` durable arm and multi-queue routing. No tasks, by design.
+**Deliberate absences.** Retry storms, cleanup keep-up, suite speed, the `worker_knobs`
+durable arm and multi-queue routing are deferred in the spec with reasons. No tasks.
 
-**Gap found and closed:** the spec's success criterion "no measurement defect documented
-as unfixed" needed a step that deletes the stale spawn-bias note while keeping the
-still-real `process_scaling` confound. Task 8 Step 4.
+**Type consistency.** `seed.seed_queue_tables` / `seed.check_queue_table_shape` /
+`seed.QueueTableShapeError` consistent across Tasks 4, 9, 10. `count_rows` defined once
+in Task 4 as a `tests/benchmarks/utils.py` helper.
+`probe.probe_admin_arms(*, results_dir)` matches its call in Task 10's test. Task 5
+names no new helper — it reuses what `tests/core` already has, and says to read for the
+real names.
 
-**Placeholders:** none. Every code step is either a test to write or prose describing
-the minimal implementation — production code is deliberately not pre-written, per the
-project's TDD rule.
-
-**Type consistency:** `seed.seed_queue_tables` / `seed.check_queue_table_shape` /
-`seed.QueueTableShapeError` / `seed.CLONED_TASK_COLUMNS` consistent across Tasks 6,
-9, 10. `tasks.sleep_durably` / `sleep_durably_async` consistent across Tasks 4, 5.
-`analysis.count_sleeper_runs_by_state` used only in Task 5. `running_max` /
-`sleeping_min` consistent between Task 5's test and its report step.
-`probe.probe_admin_arms` consistent within Task 10.
+**Where an implementer must stop rather than guess.** Task 3 Step 2, if the stagger
+cannot be observed at an affordable N. Task 2 Step 1, if either diagnosis is wrong. Task
+9 Step 1, on the assertion's shape.

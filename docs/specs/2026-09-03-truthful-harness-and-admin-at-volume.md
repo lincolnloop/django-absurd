@@ -14,12 +14,19 @@ Two things, one spec because they share a deadline and a machine.
 
 ## Success criteria
 
-- Every finding in `benchmarks/CLAUDE.md` and `benchmarks/README.md` names the dated run
-  that produced it. No figure survives that predates the spawn fix.
+- Every **multi-process** figure is replaced by one measured on a windowed, concurrently
+  spawned fleet, and names the run that produced it. Single-process figures are KEPT and
+  the new run is added to their range — the spawn bias is absent at one process
+  (`benchmarks/CLAUDE.md`), so discarding those ranges would trade four runs of evidence
+  for one.
+- Every restated figure carries its cv and the ~12% between-run noise floor
+  `benchmarks/CLAUDE.md` establishes. A one-sample run supports rank orders and ratios
+  above that floor. It does not support a point estimate, and the docs must not read as
+  though it does.
 - `benchmarks/CLAUDE.md` carries a `checkpoint_cost` finding. It has none today.
-- Five questions answered, each with a number and a method: corrected multi-process
-  rates; does processes-beat-threads survive a durable body; is the 2.45x table size or
-  queue depth; what a checkpoint costs; does a durable sleep release its worker slot.
+- Four questions answered, each with a number and a method: corrected multi-process
+  rates; is the 2.45x table size or queue depth; what a checkpoint costs; does the
+  connection budget hold when bodies hold their threads.
 - Someone with the repo can seed millions of rows and click through the admin at that
   volume, following a README, without reading harness source.
 - No measurement defect documented as unfixed. A defect is fixed or the number is gone.
@@ -31,6 +38,15 @@ Two things, one spec because they share a deadline and a machine.
 - Benchmarking the admin fix. Ordering by a `uuidv7()` pk is a plan-shape claim, settled
   by `EXPLAIN`, not a stopwatch. The admin project exists so a person can SEE volume,
   not to certify a latency.
+- **Asking whether processes beat threads for a durable body.** The durable workload's
+  body is dominated by a sleep, so both shapes complete the same rounds in the same wall
+  time whatever the shape and the ratio is ~1.0 before the run starts. That is a
+  property of the workload, not of the library. The durable arms earn their place by
+  exercising the CONNECTION BUDGET under real hold times; they are not a throughput
+  comparison, and they run at the 2 s default rather than 30 s because the sleep buys no
+  signal.
+- **A timed suspension stage.** Whether a durable sleep releases its worker slot is
+  settled deterministically by a test, not by a rate. See the component note below.
 - Shipping any of this. Nothing here reaches a wheel.
 
 ## What is untrue today
@@ -39,10 +55,15 @@ Two things, one spec because they share a deadline and a machine.
 one process the fleet started inside the measured drain. `benchmarks/CLAUDE.md` puts it
 at 7-15% on `split_8` and biases `commits_per_task` low. Fixed on a branch, unmeasured.
 
-The real mechanism is narrower than the note says, and the note is wrong about it: a
-saturation rep preloads BEFORE starting the fleet, so the first child drains alone for
-the whole of the others' start-up, and those completions land inside the trimmed p10-p90
-window throughput is taken over. Worse the more processes.
+Worse the more processes.
+
+**The window is still not taken on a database mark.** Concurrent spawn shrinks the
+stagger; it does not remove it, because children still reach readiness a few hundred
+milliseconds apart. `benchmarks/CLAUDE.md` documents `commits_per_task` and
+`calls_per_task` reading low above one process for exactly this reason and names
+windowing as the fix. Only `size_vs_depth` passes a mark today, and it captures one
+BEFORE the fleet starts, so it excludes ballast rather than stagger. Until a mark is
+taken after `start_workers` returns, that defect stays true and no run can close it.
 
 **`process_scaling` mixes two effects.** Ladder is `max(4000, 2000 * count)`, so rungs
 drain 4,000-20,000 tasks: scaling confounded with a depth penalty. Report prints
@@ -63,7 +84,9 @@ often suspended.
 **Phase 0 — land what exists.** Three commits on branches, one flake fix, one required
 check.
 
-**Phase 1 — build the two probes the run needs.** Suspension probe; clone seeder.
+**Phase 1 — make the run's own trust conditions true.** Window saturation reps on a
+database mark taken after the fleet is up; build the clone seeder. Settle the suspension
+question with a deterministic test rather than a stage.
 
 **Phase 2 — the run.** One pass, all stages, `db_bench`, on mains under `caffeinate`,
 env-stamped.
@@ -79,24 +102,27 @@ HTTP arms and `EXPLAIN` dumps.
 - **`load_barrier` port.** Bug it found is fixed and guarded by
   `tests/core/test_worker_run_refill.py`. Porting an instrument to re-find a closed bug
   is cost with no finding attached.
-- **CPU pinning (#14).** Measured cv 2.3% on a quiet box. Every claim is a ratio or an
-  order of magnitude. Pinning buys precision no finding rests on.
-- **"Truncated tables" (part of #41).** Stale note. `measurement.py` truncates before
-  every rep already.
+- **CPU pinning.** `benchmarks/CLAUDE.md` puts median between-run cv at 4.7% and worst
+  at 12.5%, and tells the reader to treat a difference under ~12% as noise. Every claim
+  the harness makes is a rank order or a ratio well above that floor. Pinning narrows a
+  band no finding rests on.
+- **"All measurements run on truncated tables".** Stale note. `measurement.py` truncates
+  before every rep already.
 - **Admin stages inside `stages.py`.** Different question, different consumer, different
   output. Coupling degrades both.
-- **A second permanent Postgres service.** `db_bench` is tmpfs and wrong for admin work;
-  the admin project gets its own service in the same compose file behind a profile, so a
-  bare `up -d` still starts nothing extra.
+- **Any new Postgres service for the admin.** Only `db_bench` is tmpfs; the plain `db`
+  service the test suites already use is a real data directory. The admin corpus is its
+  own DATABASE on that existing server, so there is no third service, no new port, and
+  no new volume.
 - **`benchmarks/` as an importable package.** Path manipulation works and nothing
   consumes it as a library.
 
 ### Deferred, named so they are not lost
 
-- Retry storms; cleanup keep-up (rest of #41). Design after the run — retention as a
-  throughput concern depends on what `size_vs_depth` says.
-- Suite speed (#42). `bench_harness` is 305 s on CI against 139 s locally. Real, not
-  blocking truthfulness.
+- Retry storms; cleanup keep-up. Design after the run — retention as a throughput
+  concern depends on what `size_vs_depth` says.
+- Suite speed. `bench_harness` is the matrix's longest job — 248 s of pytest on a runner
+  against 139 s locally. Real, not blocking truthfulness.
 - `worker_knobs` durable arm. Decide once durable `pooled_vs_split` is in hand. That
   ladder is where a concurrency recommendation would come from, so it is the one stage
   where a durable number could change user-facing advice.
@@ -112,48 +138,39 @@ not a contract violation — but the process is alive and holds the run in memor
 self-redelivery buys nothing and costs a duplicate side effect. It fails open and
 silently. A library change, not harness work.
 
-## The five questions the run settles
+## The four questions the run settles
 
-| Question                                           | Stage                                                                             | What makes the answer trustworthy                                                                                                                                                      |
-| -------------------------------------------------- | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Corrected multi-process rates                      | `process_scaling`, `pooled_vs_split` split arms, `latency_under_load` calibration | Fleet starts before the measured window; saturation reps windowed on the database clock                                                                                                |
-| Does processes-beat-threads survive a durable body | `pooled_vs_split` durable arms                                                    | Same rounds per slot in both shapes, so the arms are comparable                                                                                                                        |
-| Is the 2.45x table size or queue depth             | `size_vs_depth`                                                                   | Ballast drained before the measured tasks exist; every metric windowed on a mark taken after it; each rep records live tuples, dead tuples and bytes rather than trusting the arm name |
-| What a checkpoint costs                            | `checkpoint_cost`                                                                 | Already built; needs a written finding, not new code                                                                                                                                   |
-| Does a durable sleep release its worker slot       | new suspension probe                                                              | Timing ratio corroborated by a clock-independent count of sleeper run states                                                                                                           |
+| Question                                                       | Stage                                                                             | What makes the answer trustworthy                                                                                                                                                      |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Corrected multi-process rates                                  | `process_scaling`, `pooled_vs_split` split arms, `latency_under_load` calibration | Fleet starts before the measured window; saturation reps windowed on the database clock                                                                                                |
+| Is the 2.45x table size or queue depth                         | `size_vs_depth`                                                                   | Ballast drained before the measured tasks exist; every metric windowed on a mark taken after it; each rep records live tuples, dead tuples and bytes rather than trusting the arm name |
+| What a checkpoint costs                                        | `checkpoint_cost`                                                                 | Already built; needs a written finding, not new code                                                                                                                                   |
+| Does the connection budget hold when bodies hold their threads | `pooled_vs_split` durable arms + the shape backend probe                          | Backends sampled while bodies run, not only across fleet startup; mutation-checked against an ORM-free body                                                                            |
 
-## Component: suspension probe
+## Component: the suspension question, answered by a test
 
-**The question.** A sync task's `context.sleep_for` hops to the worker's event loop
-while the body sits in a thread of a pool sized to `--concurrency`. If that thread
-stayed parked, N sleepers would hold N of C slots and everything behind them starves.
-Docs say the task suspends durably and resumes later. That is the claim under test, not
-a premise.
+**The question.** A sync task's durable sleep hops to the worker's event loop while the
+body sits in a thread of a pool sized to `--concurrency`. If that thread stayed parked,
+N sleepers would hold N of C slots and everything behind them starves.
 
-**Shape.** Two arms per workload, run one at a time so they never measure each other.
+**Why this is NOT a timed stage.** A run's own state cannot witness the failure. The
+SDK's sleep sets `state = 'sleeping', claimed_by = null, claim_expires_at = null` before
+`SuspendTask` propagates (`django_absurd/migrations/0001_initial_0_5_0.sql:1160-1168`),
+so a parked thread leaves exactly the same row a released one does. Counting sleeper
+runs by state therefore proves nothing, and a stage built on that count would report a
+tautology as corroboration.
 
-- `control` — one worker, no sleepers, drain a fixed batch of quick tasks.
-- `sleepers` — same worker, same batch, with N tasks already suspended in a sleep far
-  longer than the measurement window.
+**What already covers most of it.** `tests/core/test_durable.py` drives a durable sleep
+through the real sync bridge and asserts `drain()` returns the sleeping state — and a
+parked thread would hang that drain at the bridge timeout, so the test passing IS
+evidence the thread returned. `tests/core/test_worker_run_refill.py` covers a worker
+continuing to claim while a slot is occupied.
 
-Both arms pay the same worker start-up and the same warm-up task before the clock
-starts. The ratio is the finding: near 1 means the sleep released its slot; far above 1
-means it did not. An arm that never drains fails the run rather than recording a number.
-
-**Async twin required.** Only the sync path crosses the thread pool, so the async
-sleeper is measured beside it. Without both, a finding cannot say whether the bridge or
-the loop is responsible.
-
-**Clock-independent corroboration.** While the quick batch drains, count the sleepers'
-own runs by state. A sleeper in `running` holds a claim and therefore a slot; one in
-`sleeping` holds neither. Record the worst moment and the least-asleep one. A timing
-ratio and a state count that disagree means the probe is wrong, which is the point of
-having both.
-
-**Why this is the highest-value probe here.** Three findings now describe what long work
-does to a worker: the connection budget (`C + 2` per process once a body touches the
-ORM), the claim lease (a body outrunning it is redelivered), and slot occupancy. The
-first two are measured. This is the third.
+**The uncovered case, and its whole cost.** Neither exercises N sleepers against C slots
+with a quick task queued behind them. That is one deterministic test: concurrency 1, two
+sleepers suspended in a long sleep, one quick task enqueued after, asserting the quick
+task reaches its completed state. The observable is positive and binary — the quick task
+ran, so the sleepers held no slot — and it needs no clock, no arms, and no rate.
 
 ## Component: clone seeder
 
@@ -190,9 +207,11 @@ seeder does not belong in a teaching example.
 exercises the seeder and the probe at a few hundred rows on every push. The project is
 free to be rough; it is not free to be broken.
 
-**Persistence.** Its Postgres is a real data directory, not tmpfs — a seeded corpus that
-evaporates on restart is worse than no corpus. Its own service in the existing compose
-file, behind a profile, so a bare `up -d` leaves it alone.
+**Persistence, with no new service.** Only `db_bench` is tmpfs; the plain `db` service
+the suites already use is a real data directory, and a seeded corpus that evaporates on
+restart is worse than no corpus. The corpus is its own DATABASE on that existing server
+— no third service, no new port, no new volume, and nothing extra started by a bare
+`up -d`.
 
 **What it measures.** Per admin arm: wall-clock cold and warm, query count, and
 `EXPLAIN (ANALYZE, BUFFERS)` dumped to a file. Arms cover the changelists that order by
@@ -203,26 +222,38 @@ does not help it.
 Useful for "the admin is usable at 3M rows" and for spotting the next bottleneck. Not a
 benchmark anyone should quote as a property of the library.
 
+**What it must not re-measure.** The pk-ordering fix is already measured at 3M runs, in
+the commit that makes it: ~520k pages and 84.7 s cold before, an `Index Scan Backward`
+at 33 buffers with the same latency cold or warm after. The probe's arms exist to find
+the NEXT bottleneck — filtered views, search, foreign-key lookups — not to re-establish
+that.
+
 ## Branch topology
 
-**One harness branch**, `benchmarks__truthful-harness`, off `main`. Carries this spec,
-the plan, three cherry-picked commits, the flake fix, both new probes, and the restated
-docs. All of it `benchmarks/`, `tests/benchmarks/`, `tests/core` and docs. Nothing
-reaches a wheel and `test:` is dropped from the changelog, so bundling costs no
-changelog fidelity.
+Four branches, because three tasks have a genuine "the previous thing is MERGED"
+precondition and a single branch cannot satisfy its own.
 
-Cherry-picks, not merges: `benchmarks__size-vs-depth` was cut off
-`benchmarks__durable-workload`, so merging both would drag one commit through twice.
+1. **`benchmarks__truthful-harness`** — this spec, the plan, three cherry-picked
+   commits, the flake fix, the windowing fix, the seeder, the suspension test. All
+   `benchmarks/`, `tests/benchmarks/`, `tests/core` and docs. Nothing reaches a wheel
+   and `test:` is dropped from the changelog, so bundling costs no changelog fidelity.
+   Cherry-picks, not merges: `benchmarks__size-vs-depth` was cut off
+   `benchmarks__durable-workload`, so merging both would drag one commit through twice.
+2. **The required-check change**, after (1) merges. Requiring `bench_harness` while the
+   flake fix is still in review would block the PR that fixes it. Not a code change — a
+   ruleset edit.
+3. **The restated docs**, after the run. The run needs a merged, defect-free tree, so
+   the docs written FROM it cannot share a branch with the code it measures.
+4. **The admin project**, after `fix__admin-changelist-order-by-pk` merges. Its probe
+   arms read changelists ordered by pk, which is that branch's change. New surface — a
+   Django project, a seeded database, a probe — and bundling would hold the harness
+   fixes hostage.
 
-**The admin ordering fix stays separate.** It is the only user-facing change in the pile
-— a `fix` that renders in the changelog, carrying a semantics note that `-task_id`
-orders by creation where `-first_started_at` orders by execution start, and those differ
-for deferred tasks. Folding it into a harness branch buries the one commit a user needs
-to read. Already green and independent.
-
-**The admin project gets its own branch**, after the run. New surface — a Django
-project, a compose service, a seeder — and bundling would hold the harness fixes hostage
-to it.
+**`fix__admin-changelist-order-by-pk` stays its own PR and can merge first.** It is the
+only user-facing change in the pile — a `fix` that renders in the changelog, carrying a
+semantics note that `-task_id` orders by creation where `-first_started_at` orders by
+execution start, and those differ for deferred tasks. Folding it into a harness branch
+buries the one commit a user needs to read.
 
 ## Testing
 
