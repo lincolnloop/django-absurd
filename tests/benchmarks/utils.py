@@ -276,6 +276,21 @@ def insert_hand_timed_task(
         )
 
 
+def count_rows(table: str) -> int:
+    """Rows in one of the Absurd schema's tables, counted rather than estimated.
+
+    `count(*)`, not `pg_stat`'s live-tuple figure, which is a statistic the planner
+    keeps and reads back stale on a table something has just bulk-loaded.
+    """
+    with connections[resolve_absurd_database()].cursor() as cursor:
+        cursor.execute(
+            psycopg.sql.SQL("select count(*) from {table}").format(
+                table=psycopg.sql.Identifier("absurd", table)
+            )
+        )
+        return int(cursor.fetchone()[0])
+
+
 def count_runs_completed_after(window_start: str, queue: str = "bench") -> int:
     """Completed runs the queue holds whose completion is later than ``window_start``.
 

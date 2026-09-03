@@ -183,14 +183,56 @@ and a probe fails when the fleet falls behind OR when the producer — on the sa
 never delivers the offer. Read the `Offer rate:` line and the ramp's `producer kept up`
 column first; two runs' rows only compare if their ramps agreed.
 
+## Browsing a corpus in the admin
+
+`seed.py` fills a queue's tables with millions of rows, so django-absurd's admin has
+something to page through. It enqueues a handful of template tasks through the real
+enqueue API, drains them with a real `absurd_worker`, and clones the drained rows
+server-side. Every command runs from inside `benchmarks/`, against the suites' plain
+`db` service — nothing here measures a rate, so the tuned `db_bench` would buy it
+nothing.
+
+```
+docker compose up -d --wait db
+docker compose exec db createdb -U postgres absurd_corpus
+
+export DJANGO_SETTINGS_MODULE=tests.benchmarks.settings
+export PGDATABASE=absurd_corpus
+uv run python manage.py migrate
+uv run python -m seed --rows 1000000
+uv run python manage.py createsuperuser
+uv run python manage.py runserver --insecure
+```
+
+Then open <http://localhost:8000/admin/>. `--rows` is what the queue holds afterwards,
+not what the run adds: the tables are emptied first, so seeding again replaces the
+corpus. `--queue` seeds a queue other than `bench`. One million tasks and the 1.2
+million runs behind them took 20 seconds and 1.1 GB on the reference machine.
+
+`PGPORT` is read here exactly as the test suites read it, so export it too if a system
+Postgres already owns 5432. `--insecure` is what serves the admin's CSS with `DEBUG`
+off, and `DEBUG` stays off deliberately: Django's debug query log grows without bound on
+a changelist over millions of rows.
+
+**The corpus is synthetic, and no number taken on it is a property of django-absurd.**
+Every task is a copy of one of six templates, so the ages are uniform, the payloads are
+identical, and `claimed_by` is spread over eight worker names that never claimed
+anything. It answers questions about VOLUME — whether a page loads, which plan the
+changelist gets, what an index is worth — and nothing else.
+
+Seeding refuses outright when the queue tables are not the shape it clones. Cloning
+writes those tables directly, so it encodes their columns, and an upstream change has to
+fail the seed rather than fill a table it half-understands with rows that look right.
+
 ## Files
 
 `stages.py`, `measurement.py`, `producer.py`, `runner.py`, `analysis.py` and `report.py`
-are the pipeline above. Beside them, `settings.py` (Django settings: `DATABASE_URL`,
-else `PGPORT_BENCH` against `absurd_bench`), `manage.py` (for `migrate` and the worker
-children), `tasks.py` (the six workloads: two no-ops, two sleeps, one 4-step workflow
-and one long body that reads and writes rows), `workload/` (the one-model Django app
-that long body works on), `host.py` (host context capture and the suspension guard), and
+are the pipeline above, and `seed.py` is the corpus seeder above that. Beside them,
+`settings.py` (Django settings: `DATABASE_URL`, else `PGPORT_BENCH` against
+`absurd_bench`), `manage.py` (for `migrate` and the worker children), `tasks.py` (the
+seven workloads: two no-ops, two sleeps, one 4-step workflow, one long body that reads
+and writes rows, and one that always fails), `workload/` (the one-model Django app that
+long body works on), `host.py` (host context capture and the suspension guard), and
 `pyproject.toml` plus `uv.lock` (the harness's own pinned uv project, django-absurd by
 path). [`CLAUDE.md`](CLAUDE.md) holds the reasoning: the measurement model, the
 results-file schema, and every number's evidence.

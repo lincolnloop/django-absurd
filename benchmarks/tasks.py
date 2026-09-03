@@ -1,9 +1,11 @@
 import asyncio
 import time
+import typing as t
 
+from absurd_sdk import RetryStrategy
 from django.tasks import task
 
-from django_absurd import get_absurd_context
+from django_absurd import absurd_params, get_absurd_context
 from workload import models
 
 # Big enough that the insert and the read back move a real row rather than an empty
@@ -19,6 +21,20 @@ def noop_sync() -> int:
 @task(queue_name="bench")
 async def noop_async() -> int:
     return 0
+
+
+@task(queue_name="bench")
+@absurd_params(
+    max_attempts=2, retry_strategy=RetryStrategy(kind="fixed", base_seconds=0)
+)
+def fail_on_every_attempt() -> t.Never:
+    """Exhausts its attempts, so the seeder's corpus carries failed and retried rows.
+
+    Two attempts with no backoff: one is a failure nothing ever retried, and the five
+    the library defaults to would hold the seed open for a redelivery per template.
+    """
+    msg = "benchmark seed template: this task always fails"
+    raise RuntimeError(msg)
 
 
 @task(queue_name="bench")
