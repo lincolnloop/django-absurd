@@ -121,23 +121,30 @@ and the vacuumed arm says how much of that was dead rows rather than live ones.
 
 ## What it found
 
-Measured on one 14-core laptop with the data directory in RAM, over four runs of one
-commit; every range below is across those runs. Read the directions, not the rates.
-[`CLAUDE.md`](CLAUDE.md) names the run behind each figure.
+Measured on one 14-core laptop with the data directory in RAM, across five runs; every
+range below is over the runs that measured it, and a single figure came from one run.
+Read the directions, not the rates. [`CLAUDE.md`](CLAUDE.md) names the run behind each
+figure, and no run has measured every stage.
 
 - **Scale with worker processes, keep `--concurrency` around 16, and batch the claims.**
   Neither axis had flattened at the top of the sweep: concurrency 1 -> 16 at one process
-  bought 3.0-3.7x, all of it at one queue depth. More processes always bought more, but
+  bought 3.0-4.0x, all of it at one queue depth. More processes always bought more, but
   `process_scaling` preloads 2,000 tasks per worker, so its rungs drained 4,000 to
-  20,000 tasks and no multiple can be read off that ladder.
+  28,000 tasks and no multiple can be read off that ladder.
 - **Processes beat threads at the same total.** 4 x 1 beat 1 x 4 by 1.95-2.28x and 8 x 1
-  beat 1 x 8 by 2.17-2.29x, both arms of each pair at the same depth. 40-47% of a task's
-  wall time is outside the server (2.82-3.14 ms per task = 1.57-1.77 server + 1.16-1.48
-  client); what serialises it — the GIL, or the one claim connection a worker process
-  owns — is not established.
+  beat 1 x 8 by 2.17-2.29x, both arms of each pair at the same depth, and both multiples
+  are lower bounds because the split arms read low. 40-47% of a task's wall time is
+  outside the server (2.82-3.55 ms per task = 1.57-2.09 server + 1.16-1.48 client); what
+  serialises it — the GIL, or the one claim connection a worker process owns — is not
+  established.
 - **All of the per-task database cost is acquiring work, not finishing it.** Claiming a
-  task costs 13-16x completing one (1.41-1.56 ms against 0.09-0.12 ms), and 18-19% of
+  task costs 13-20x completing one (1.41-1.92 ms against 0.09-0.12 ms), and 14-19% of
   every claim is a scan for cancellations.
+- **A `ctx.step` checkpoint costs about 0.6 ms and two commits.** A four-step workflow
+  drained at 4.25x the cost of an empty task (305 against 1,297 tasks/s, one run). That
+  multiple is what a task with nothing in its body pays; against an agent tool call that
+  runs for seconds a step is under a thousandth of the work it checkpoints, so choose
+  step boundaries for the restarts you want rather than for throughput.
 - **A queue that is deeper is slower.** Throughput rises as a backlog drains, a fitted
   median +15.7% within a rep over 150 reps, so a saturation number averages a curve and
   does not compare across `--tasks` values. Four times the `--tasks` also costs 40-58%

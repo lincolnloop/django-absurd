@@ -43,10 +43,10 @@ def start_workers(spec: WorkerSpec, count: int) -> list[Worker]:
     """Spawn ``count`` ``absurd_worker`` children at once, each already claiming.
 
     Every child is launched before any readiness line is waited for. A saturation rep's
-    backlog is preloaded before this is called, so the first child drains alone for as
-    long as the rest take to start — and its completions are inside the window the
-    throughput is taken over. Waiting between launches lengthened that by one child's
-    whole start-up per extra process, and read every multi-process rung low.
+    backlog is preloaded before this is called, so the first child drains short-handed
+    until the rest reach readiness — and its completions are inside the window the
+    throughput is taken over. Waiting between launches instead lengthens that by one
+    child's whole start-up per extra process, and reads every multi-process rung low.
     """
     environ = build_worker_env()
     # `launched` drains as each child becomes a `Worker`, so at any failure below it

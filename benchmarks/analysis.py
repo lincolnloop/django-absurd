@@ -529,8 +529,8 @@ def build_metrics(
         # expired claim lease. Both pollute a measurement; neither shows in wall time.
         "extra_runs": int(total_runs) - int(total_tasks),
         "degenerate_window": degenerate,
-        # 0.8 * n over the p10..p90 completion span: the trimmed window absorbs worker
-        # start stagger and the driver's last drain poll.
+        # 0.8 * n over the p10..p90 completion span: the trimmed window absorbs a
+        # multi-process fleet's short-handed opening and the driver's last drain poll.
         "throughput_per_s": 0.0 if degenerate else 0.8 * n_runs / span,
         "fairness": fairness,
         "fairness_ratio": (shares[0] / shares[-1]) if shares else 0.0,

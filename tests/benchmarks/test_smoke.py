@@ -33,15 +33,8 @@ UNABSORBABLE_RATE_PER_S = 800.0
 # A drain ceiling whose lowest ramp probe — a tenth of it — is already the rate above,
 # so a ramp anchored to it cannot absorb even its first offer.
 UNABSORBABLE_CEILING_PER_S = UNABSORBABLE_RATE_PER_S / stages.RATE_RAMP_START_FRACTION
-# Four times what the fleet drains, so its ramp climbs THROUGH the offer rate that same
-# fleet absorbs rather than up to it. Rungs run from a tenth of a ceiling to
-# three-quarters of it, which puts this ladder's bottom at two-fifths of the drain rate
-# and its top at three times it, while the ramps measured here refused between 0.9 and
-# 1.5 times it — the drain is trimmed over a window its own fleet started inside, so it
-# reads a little low. Derived from a drain the machine performs rather than fixed,
-# because absorbing a rung AND refusing one is what this test is about and no constant
-# puts both a fast workstation and a slow shared runner inside that window. A rung
-# refusing early only shortens the climb, which the assertions allow for.
+# Four times the measured drain, so the ramp climbs THROUGH the rate that fleet absorbs:
+# no fixed ceiling both absorbs a rung and refuses one on a fast box and a slow one.
 RAMP_CEILING_OVER_DRAIN = 4.0
 # Enough completions that the trimmed window the ceiling is read off is not a handful
 # of them, and few enough that the drain costs about a second.
