@@ -131,12 +131,14 @@ figure, and no run has measured every stage.
   bought 3.0-4.0x, all of it at one queue depth. More processes always bought more, but
   `process_scaling` preloads 2,000 tasks per worker, so its rungs drained 4,000 to
   28,000 tasks and no multiple can be read off that ladder.
-- **Processes beat threads at the same total.** 4 x 1 beat 1 x 4 by 1.95-2.28x and 8 x 1
-  beat 1 x 8 by 2.17-2.29x, both arms of each pair at the same depth, and both multiples
-  are lower bounds because the split arms read low. 40-47% of a task's wall time is
-  outside the server (2.82-3.55 ms per task = 1.57-2.09 server + 1.16-1.48 client); what
-  serialises it — the GIL, or the one claim connection a worker process owns — is not
-  established.
+- **Processes beat threads at the same total.** 8 x 1 beat 1 x 8 by 2.31x, both arms of
+  the pair at the same depth; 4 x 1 beat 1 x 4 by 2.35x, where the split arm is the one
+  measurement of the four the harness marked unstable, so quote the 8-way number. On the
+  long, database-touching workload the two shapes tie exactly, which the workload forces
+  — both run the same number of fixed-length rounds — so that tie says nothing about
+  either. 40-47% of a task's wall time is outside the server (2.82-3.55 ms per task =
+  1.57-2.09 server + 1.16-1.48 client); what serialises it — the GIL, or the one claim
+  connection a worker process owns — is not established.
 - **All of the per-task database cost is acquiring work, not finishing it.** Claiming a
   task costs 13-20x completing one (1.41-1.92 ms against 0.09-0.12 ms), and 14-19% of
   every claim is a scan for cancellations.

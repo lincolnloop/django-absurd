@@ -20,12 +20,13 @@ two later `latency_under_load` runs (`after1`, `after2`) and the depth figures f
 counts are windowed
 ([the multi-process arms](#where-a-ramp-is-in-the-window-the-multi-process-arms)), and
 the `process_scaling` ladder and the checkpoint finding below are both its. It covers
-four stages — `worker_knobs`, `process_scaling`, `checkpoint_cost`, and
-`pooled_vs_split` as far as its `pooled_4` arm, the run having been interrupted there.
-`poll_interval`, `sync_vs_async`, `producer_ceiling`, `latency_under_load` and
-`size_vs_depth` are untouched by it, so every figure under those names comes from the
-runs above. Its load average at capture was 6.46 on 14 cores, and its `workers_1` rung
-is where that shows: cv 18.4% against 0.4-9.3% on every rung above it.
+four stages — `worker_knobs`, `process_scaling`, `pooled_vs_split` and `checkpoint_cost`
+— across two invocations, so its files carry two git SHAs, `12e2245` and `b5181b3`,
+which differ only in comments and prose. `poll_interval`, `sync_vs_async`,
+`producer_ceiling`, `latency_under_load` and `size_vs_depth` are untouched by it, so
+every figure under those names comes from the runs above. Its load average at capture
+was 6.46 on 14 cores, and its `workers_1` rung is where that shows: cv 18.4% against
+0.4-9.3% on every rung above it.
 
 **Runs with different calibration points did not measure the same configuration.** `a`'s
 `worker_knobs` winner was `batch_32`, so every stage downstream of it ran
@@ -81,7 +82,7 @@ so a reader can see which of the two it is.
 Per `noop_sync` task (empty body), worker side, across the 204 `noop_sync` saturation
 reps of `warmup`, `a`, `b` and `c2` and every `noop_sync` rep of `windowed`:
 
-    commits per task     2.13 - 3.01   set by the claim batch and not by the fleet:
+    commits per task     2.13 - 3.02   set by the claim batch and not by the fleet:
                                        3.01 at concurrency 1-2, 2.13 at 16, and
                                        2.128-2.131 at every process count from 1 to 14
     row updates          ~4            ~2 on r_bench, ~2 on t_bench
@@ -143,21 +144,25 @@ compares with the rate above it.
 
     concurrency at 1 process, all 5,000 tasks:  1->16 gives 290-361 -> 1,096-1,231
                                                 tasks/s, 3.0-4.0x over five runs
-    diagonal at equal total, 5,000 both arms:   4x1 beats 1x4 by 1.95-2.28x
-                                                8x1 beats 1x8 by 2.17-2.29x
+    diagonal at equal total, 5,000 both arms:   8x1 beats 1x8 by 2.31x
+                                                4x1 beats 1x4 by 2.35x ~
 
 Those two comparisons hold one depth each, so both are measurements: in-process
 concurrency does not saturate around 3x, and processes beat threads at the same total.
-The diagonal is `warmup`, `a`, `b` and `c2` — `windowed` measured `pooled_4` and stopped
-— and its split arms were measured with the launches serialized, so both multiples are
-lower bounds
-([the multi-process arms](#where-a-ramp-is-in-the-window-the-multi-process-arms)). The
-process axis has no multiple either: its raw 1->10 quotients read 3.3-3.8x across
-`warmup`, `b` and `c2` and 3.35x in `windowed`, each dividing a 20,000-task rung by a
-4,000-task one, and the deeper rung is the slower-reading one, so 3.3x is a LOWER BOUND.
-`windowed`'s own quotient rests on the marked rung, so its endpoints alone put it
-between 3.2x and 4.6x. The report's `T(N)/(N x T(1))` block prints each rung's backlog
-and marks itself `CONFOUNDED` for the same reason.
+**The 8-way pair is the one to quote** — `split_8` 2,067.8 tasks/s at cv 4.2% against
+`pooled_8` 896.2 at cv 1.5%, reps 2.24-2.50x. The 4-way pair agrees at 2.35x and is the
+noisier companion rather than a second measurement: `split_4` is marked `~`, cv 14.8%
+over reps of 826.8-1,084 tasks/s, which puts its own reps at 1.70-2.37x. Both pairs are
+`windowed`'s, arms alternating across reps, and four earlier runs found the same
+direction at both totals. Each multiple is the claim path AND the connection count
+together: a split arm opens a set of backends per process where a pooled arm's slots
+share one process's, and nothing in the pair separates the two. The process axis has no
+multiple either: its raw 1->10 quotients read 3.3-3.8x across `warmup`, `b` and `c2` and
+3.35x in `windowed`, each dividing a 20,000-task rung by a 4,000-task one, and the
+deeper rung is the slower-reading one, so 3.3x is a LOWER BOUND. `windowed`'s own
+quotient rests on the marked rung, so its endpoints alone put it between 3.2x and 4.6x.
+The report's `T(N)/(N x T(1))` block prints each rung's backlog and marks itself
+`CONFOUNDED` for the same reason.
 
 Advice: scale with PROCESSES, concurrency around 16, batch the claims.
 
@@ -457,11 +462,10 @@ drain, while the pooled arm of the same pair (1x8, 5.5-6.1 s) sat at 0.95-1.05. 
 contamination tracked the PROCESS COUNT and not the window length, and the pooled arm is
 what rules out a warm-up explanation: one interpreter warms its claim path as much as
 eight do, and it showed no deficit. `split_8` published 1,920-2,055 tasks/s against its
-own median slices of 2,060-2,253, so it understated by 7-15% and `pooled_vs_split`'s
-split/pooled ratio with it — the direction of that ratio is not in doubt either way, and
-it would only grow. (All four runs, 12 reps.) A concurrent launch shortens what lands in
-the window; it does not empty it, so a short multi-process arm still reads low by
-whatever fraction of its drain ran short-handed.
+own median slices of 2,060-2,253, so it understated its own drain by 7-15%. (All four
+runs, 12 reps.) A concurrent launch shortens what lands in the window; it does not empty
+it, so a short multi-process arm still reads low by whatever fraction of its drain ran
+short-handed.
 
 **`commits_per_task` and `calls_per_task` are exact at every process count.** Both
 divide a phase-window delta — `xact_commit`, and `pg_stat_statements` — by `n_runs`, and
@@ -469,13 +473,16 @@ divide a phase-window delta — `xact_commit`, and `pg_stat_statements` — by `
 the rep captures beside its commit counter, so numerator and denominator cover one
 interval. `windowed`'s `process_scaling` is what shows it: 2.128-2.131 commits per task
 on every rep of every rung, one process to fourteen, a 0.14% spread across a
-fourteenfold change in fleet size. The counts a rep's sample is judged on — `n_tasks`,
-`extra_runs` — are read over the whole drain instead, on the ballast predicate
-(`t.enqueue_at`) alone: a failed run carries no completion time, so filtering those on
-completion would report every redelivery as zero. A saturation rep therefore captures
-the database clock the way a rate rep already does and counts its runs from there, on
-`r.completed_at` and never on `t.enqueue_at`, which a saturation rep has written every
-row of before its fleet exists.
+fourteenfold change in fleet size. `pooled_vs_split` says it a second way, across shapes
+rather than up a ladder: `split_4` (four processes, one slot each) reads 3.008-3.011 and
+`split_8` reads 3.012-3.017, against `worker_knobs`'s one-process `concurrency_1` at
+3.009-3.012. The count follows the claim batch, and the process count does not touch it.
+The counts a rep's sample is judged on — `n_tasks`, `extra_runs` — are read over the
+whole drain instead, on the ballast predicate (`t.enqueue_at`) alone: a failed run
+carries no completion time, so filtering those on completion would report every
+redelivery as zero. A saturation rep therefore captures the database clock the way a
+rate rep already does and counts its runs from there, on `r.completed_at` and never on
+`t.enqueue_at`, which a saturation rep has written every row of before its fleet exists.
 
 So the two halves of a multi-process row are read differently. Its counts are exact. Its
 RATE is taken over the whole drain, p10-p90 trimmed, and still carries whatever fraction
@@ -496,19 +503,20 @@ measurement.
 **A run's own probe is the figure to use, and the interleaved arms above are not it.**
 Those arms are one connection alternating media without the per-session warm-up a
 results file's probe does, and their tmpfs median is 56,659 c/s. The six saved runs'
-opening probes — warmed, on the session that then times — recorded 203,804-263,852
-durable commits/s (cv 3.7-19.9%) and 512,453-617,208 non-durable; `a`'s closing probe
+opening probes — warmed, on the session that then times — recorded 203,804-264,784
+durable commits/s (cv 3.7-19.9%) and 512,453-622,278 non-durable; `a`'s closing probe
 read 307,377. Every commit-budget verdict in a report is read against the in-run
 figures; the interleaved arms establish the ratio between the media and nothing else.
 
-`windowed` was interrupted and resumed, so only its `checkpoint_cost` file holds a
-closing probe — 219,619 durable c/s, cv 8.7%, against that file's own opening 263,852.
-Its other three stage files record that the run ended before theirs was taken, and every
-commit budget under them bands against an opening probe alone, which the report says row
-by row. Cite the `checkpoint_cost` probe or say which one you meant.
+`windowed` ran in two invocations, so two of its four stage files hold a closing probe —
+`checkpoint_cost` at 219,619 durable c/s (cv 8.7%, against that file's opening 263,852)
+and `pooled_vs_split` at 226,929 (cv 22.0%, against 264,784). `worker_knobs` and
+`process_scaling` record that the run ended before theirs was taken, and every commit
+budget under those two bands against an opening probe alone, which the report says row
+by row. Name the file whose probe you are citing.
 
-Either way the ceiling stops constraining: at 203,804 c/s and the 2.13-3.01 commits per
-task measured here the database could sustain 68,000-96,000 tasks/s against the
+Either way the ceiling stops constraining: at 203,804 c/s and the 2.13-3.02 commits per
+task measured here the database could sustain 67,000-96,000 tasks/s against the
 4,300-4,700 this rig reaches, so neither the ceiling nor its spread reaches the numbers
 below it. `synchronous_commit=on` and `fsync=on` are unchanged: the durability request
 is the same one, only the medium moved.
@@ -537,9 +545,9 @@ column records.
 sync task body lands on it through `asyncio.to_thread`. Django's connections are
 thread-local, so the first ORM statement in a body opens a THIRD backend on that thread,
 held until the body returns and `close_old_connections` closes it again. Measured by
-`pooled_vs_split`'s connection probe. These are counts, so no server's tuning changes
-them, and the suites' plain `db` server and `windowed`'s tuned one agree on the two
-shapes both measured:
+`pooled_vs_split`'s connection probe, at four shapes in `windowed`. These are counts, so
+no server's tuning changes them, and the suites' plain `db` server agrees with the tuned
+one on the two shapes it also measured:
 
     shape   idle backends   every slot working
     1x4     2               6
@@ -547,12 +555,13 @@ shapes both measured:
     1x8     2               10
     8x1     16              24
 
-One more per busy slot, exactly. So a worker process holds up to **`--concurrency` + 2**
-backends and a fleet holds `processes x (concurrency + 2)`: 18 per process at the
-concurrency 16 the nano-task ladder recommends, which is five processes against a stock
-`max_connections` of 100. A nano-task fleet never reaches that count — an empty body
-opens nothing — so an idle-fleet reading is the whole story there and is the wrong
-number to size a server against anywhere else.
+One more per busy slot, exactly, and `C + 2` per process across the whole grid: 4 and 8
+slots, pooled into one process and split across that many. So a worker process holds up
+to **`--concurrency` + 2** backends and a fleet holds `processes x (concurrency + 2)`:
+18 per process at the concurrency 16 the nano-task ladder recommends, which is five
+processes against a stock `max_connections` of 100. A nano-task fleet never reaches that
+count — an empty body opens nothing — so an idle-fleet reading is the whole story there
+and is the wrong number to size a server against anywhere else.
 
 **The probe samples while work is running, which is the only time that count exists.**
 It starts the fleet, reads the idle delta, offers two rounds of durable work per slot,
@@ -575,12 +584,24 @@ the second.
 **`pooled_vs_split` is the only stage with a durable arm.** Both totals are measured on
 both workloads — `pooled_4`/`split_4` against `pooled_durable_4`/`split_durable_4` — and
 the report ranks the shapes once per workload, because a body that holds a thread and
-one that does not are two different questions about the same topology. Everything else
-here — the concurrency ladder, the process ladder, the poll intervals, the checkpoint
-multiplier, the rate rungs, the size arms — is still nano-task only, so read each of
-them as a finding about that regime and nothing else. The durable arms are sized per
-SLOT (`DURABLE_ROUNDS_PER_SLOT` rounds each) rather than at a fixed task count: a fixed
-count runs for minutes at one shape and seconds at the other.
+one that does not are two different questions about the same topology.
+
+**The durable ranking is foregone, and `windowed` returned exactly the 1.00x that says
+so.** Both durable pairs read 1.00x (reps 1.00-1.01x): 1.8 tasks/s against 1.8 at total
+4, 3.5 against 3.5 at total 8, every arm inside 0.5% cv. The arithmetic forces it — the
+arms are sized per SLOT, so both shapes run the same eight rounds and every round is
+pinned to `--durable-seconds`, which makes 32 tasks over four slots ~17.8 s of wall
+clock whichever shape holds them. **That is a property of the workload, not of
+django-absurd, and it is not a finding about processes against threads.** What the
+durable arms are for is the backend count above; the nano-task arms are where the
+diagonal is a measurement
+([both axes were still buying](#throughput-both-axes-were-still-buying-at-the-top-of-the-sweep)).
+
+Everything else here — the concurrency ladder, the process ladder, the poll intervals,
+the checkpoint multiplier, the rate rungs, the size arms — is still nano-task only, so
+read each of them as a finding about that regime and nothing else. The durable arms are
+sized per SLOT (`DURABLE_ROUNDS_PER_SLOT` rounds each) rather than at a fixed task
+count: a fixed count runs for minutes at one shape and seconds at the other.
 
 **`--durable-seconds` defaults to 2, the FLOOR of the regime rather than the middle of
 it.** A durable rep costs its rounds times this value, so the flag is that stage's whole
@@ -908,8 +929,8 @@ mechanics matter:
   ratio rather than leaving it to be read as the claim path alone. The delta across
   starting the fleet is only half of it: the probe then runs durable work and takes the
   peak, so the report also carries what a body that holds a thread costs — 6 and 12 for
-  those same two shapes. The day a pooled worker opens a claim connection per slot the
-  same line will say the comparison is clean.
+  those same two shapes, 10 and 24 for `1x8` and `8x1`. The day a pooled worker opens a
+  claim connection per slot the same line will say the comparison is clean.
 
 ## The results files
 
@@ -959,7 +980,7 @@ a median with its dispersion and never as a scalar. Eight volume-era trials spre
 `synchronous_commit = off` held to 5%; two warmed opening probes, one per run, read
 1,984/s and 615/s. Nothing here selects between those two regimes. The two probes are
 also sized differently on purpose — `DURABLE_PROBE_COMMITS` 300 against
-`NONDURABLE_PROBE_COMMITS` 5,000 — because the non-durable rate reached 512,000-617,000
+`NONDURABLE_PROBE_COMMITS` 5,000 — because the non-durable rate reached 512,000-622,000
 commits/s across the six saved runs, where 300 commits would be timing under a
 millisecond. (On tmpfs the durable count is barely out of that regime either:
 [Storage](#storage-two-regimes-on-a-volume-and-none-on-ram).) A round read straight
