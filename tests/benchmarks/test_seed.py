@@ -28,26 +28,18 @@ SEEDED_ROWS = 200
             "alter table absurd.t_bench add column priority integer",
             (
                 "The queue tables are not the shape this seeder clones: "
-                "absurd.t_bench has unknown priority. Upstream Absurd has moved them, "
-                "so this refusal comes before the truncate rather than partway "
-                "through the clone: a column the seeder does not write stays at its "
-                "default on every cloned row, and one it writes that has gone fails "
-                "at the first insert with the corpus already emptied. Reconcile "
-                "TASK_CLONE_COLUMNS and RUN_CLONE_COLUMNS in benchmarks/seed.py "
-                "against django_absurd's migration, then seed again."
+                "absurd.t_bench has unknown priority. Reconcile TASK_CLONE_COLUMNS "
+                "and RUN_CLONE_COLUMNS in benchmarks/seed.py against django_absurd's "
+                "migration, then seed again."
             ),
         ),
         (
             "alter table absurd.t_bench drop column params cascade",
             (
                 "The queue tables are not the shape this seeder clones: "
-                "absurd.t_bench has no params. Upstream Absurd has moved them, "
-                "so this refusal comes before the truncate rather than partway "
-                "through the clone: a column the seeder does not write stays at its "
-                "default on every cloned row, and one it writes that has gone fails "
-                "at the first insert with the corpus already emptied. Reconcile "
-                "TASK_CLONE_COLUMNS and RUN_CLONE_COLUMNS in benchmarks/seed.py "
-                "against django_absurd's migration, then seed again."
+                "absurd.t_bench has no params. Reconcile TASK_CLONE_COLUMNS "
+                "and RUN_CLONE_COLUMNS in benchmarks/seed.py against django_absurd's "
+                "migration, then seed again."
             ),
         ),
     ],
@@ -56,14 +48,7 @@ SEEDED_ROWS = 200
 def test_seeding_refuses_a_queue_table_whose_shape_it_does_not_know(
     drift_ddl: str, refusal: str
 ) -> None:
-    """The guard fails the seed, not the read, and it fails in both directions.
-
-    A clone that writes a table it half-understands produces rows that look right and
-    are not, so the only safe failure is before any row is written. A column that has
-    gone takes the clone's own value with it; a column that has arrived is real on the
-    drained templates and left at its default on every row copied from them. Driven by
-    really altering the table rather than by patching what the seeder believes, and the
-    error names the column so the next reader learns which upstream change moved.
+    """Both directions, by really altering the table; the error names the column.
 
     ``cascade`` on the drop because ``params`` is in the tasks entity spec, so every
     database carries an admin view selecting it; ``_isolate_queues`` puts both back.

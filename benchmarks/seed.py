@@ -121,7 +121,6 @@ cloned_tasks as (
     left join cloned_runs cloned_run
         on cloned_run.task_id = cloned.task_id
         and cloned_run.from_run_id = template.last_attempt_run
-    returning 1
 )
 insert into {runs} ({run_columns})
 select {run_values}
@@ -146,11 +145,7 @@ class QueueTableShapeError(Exception):
                 clauses.append(f"{table} has unknown {', '.join(columns.unexpected)}")
         super().__init__(
             f"The queue tables are not the shape this seeder clones: "
-            f"{'; '.join(clauses)}. Upstream Absurd has moved them, so this refusal "
-            f"comes before the truncate rather than partway through the clone: a "
-            f"column the seeder does not write stays at its default on every cloned "
-            f"row, and one it writes that has gone fails at the first insert with the "
-            f"corpus already emptied. Reconcile TASK_CLONE_COLUMNS and "
+            f"{'; '.join(clauses)}. Reconcile TASK_CLONE_COLUMNS and "
             f"RUN_CLONE_COLUMNS in benchmarks/seed.py against django_absurd's "
             f"migration, then seed again."
         )
@@ -164,15 +159,11 @@ class SeedSummary:
 
 
 def seed_queue_tables(rows: int, *, queue: str = DEFAULT_QUEUE) -> SeedSummary:
-    """Leave ``queue``'s tables holding ``rows`` tasks and the runs behind them.
+    """Truncate, enqueue the templates, drain them with a real worker, clone.
 
-    The templates are enqueued through the real API and drained by a real worker, so a
-    clone carries whatever django-absurd stores rather than a shape written by hand.
-    Every count returned is read back off the tables: a seeder reporting what it meant
-    to write reports success for a clone that wrote nothing.
-
-    The queue is truncated first, so ``rows`` is what the corpus holds afterwards
-    rather than what this run added to it.
+    ``rows`` is what the corpus holds afterwards and never fewer than the templates
+    every clone is copied from. Every count is read back off the tables: a seeder
+    reporting what it meant to write reports success for a clone that wrote nothing.
     """
     check_queue_table_shape(queue)
     started = time.monotonic()
@@ -193,10 +184,8 @@ def seed_queue_tables(rows: int, *, queue: str = DEFAULT_QUEUE) -> SeedSummary:
 def check_queue_table_shape(queue: str = DEFAULT_QUEUE) -> None:
     """Refuse a queue whose tables are not the ones the clone knows how to write.
 
-    Both directions, because both write rows that look right and are not: a column the
-    clone names and the table no longer has, and a column the table has grown that the
-    clone never sets — the second one real on the templates a worker drained and left
-    at its default on every row copied from them.
+    Column NAMES in both directions, and nothing else: a column upstream retyped passes
+    this and fails at the first insert, with the corpus already emptied.
     """
     drift: dict[str, ColumnDrift] = {}
     for prefix, columns, tolerated in (
@@ -231,16 +220,14 @@ def drain_templates(queue: str) -> None:
     Enqueueing alone leaves the runs table empty, and a corpus with no runs cannot
     answer anything about the admin's runs changelist.
     """
-    spec = measurement.MeasurementSpec(
-        name="seed templates",
-        mode="saturation",
-        task_path=TEMPLATE_TASKS[0][0],
-        worker=runner.WorkerSpec(queue=queue),
-        timeout_s=TEMPLATE_DRAIN_TIMEOUT_S,
-    )
-    workers = runner.start_workers(spec.worker, spec.workers)
+    workers = runner.start_workers(runner.WorkerSpec(queue=queue), 1)
     try:
-        measurement.wait_until_drained(spec, workers)
+        measurement.wait_until_drained(
+            workers,
+            name="seed templates",
+            queue=queue,
+            timeout_s=TEMPLATE_DRAIN_TIMEOUT_S,
+        )
     finally:
         runner.stop_workers(workers)
 
@@ -326,6 +313,7 @@ def main(argv: list[str] | None = None) -> None:
         type=int,
         help=(
             f"Tasks the queue holds afterwards, the queue having been emptied first "
+            f"and the templates never taken below their own count "
             f"(default: {DEFAULT_ROWS})."
         ),
     )

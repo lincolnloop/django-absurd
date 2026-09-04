@@ -32,6 +32,5 @@ INSTALLED_APPS = [
 ]
 STATIC_URL = "static/"
 
-# What lets `runserver` start with DEBUG off. Named hosts rather than `DEBUG = True`,
-# which pytest-django silently undoes: a value the suite does not really run under.
+# `runserver` needs these with DEBUG off.
 ALLOWED_HOSTS = ["127.0.0.1", "localhost"]

@@ -216,13 +216,12 @@ uv run python manage.py runserver --insecure
 
 Then open <http://localhost:8000/admin/>. `--rows` is what the queue holds afterwards,
 not what the run adds: the tables are emptied first, so seeding again replaces the
-corpus. One million tasks and the 1.2 million runs behind them took 20 seconds and 1.1
-GB on the reference machine.
+corpus, and the six templates every clone is copied from are the floor. One million
+tasks and the 1.2 million runs behind them took 20 seconds and 1.1 GB on the reference
+machine.
 
-`PGPORT` is read here exactly as the test suites read it, so export it too if a system
-Postgres already owns 5432. `--insecure` is what serves the admin's CSS with `DEBUG`
-off; `DEBUG` stays off because the settings module above is one the whole benchmarks
-suite imports, and pytest-django would undo a `DEBUG = True` written into it anyway.
+Export `PGPORT` too if a system Postgres owns 5432. `--insecure` serves the admin's
+static files with `DEBUG` off.
 
 **The corpus is synthetic, and no number taken on it is a property of django-absurd.**
 Every task is a copy of one of six templates, so the ages are uniform, the payloads are
@@ -230,11 +229,9 @@ identical, and `claimed_by` is spread over eight worker names that never claimed
 anything. It answers questions about VOLUME — whether a page loads, which plan the
 changelist gets, what an index is worth — and nothing else.
 
-Seeding refuses outright when the queue tables are not the shape it clones — a column it
-writes that has gone, or a column the table has grown that it does not write. Cloning
-writes those tables directly, so it encodes their columns, and an upstream change has to
-fail the seed rather than fill a table it half-understands: a column nothing copies is
-real on the drained templates and left at its default on every row taken from them.
+Seeding refuses, before it empties anything, when the queue tables' columns are not the
+ones it clones — in either direction. Cloning writes those tables directly, so an
+upstream change has to fail the seed rather than fill a table it half-understands.
 
 ## Files
 

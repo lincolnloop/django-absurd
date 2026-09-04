@@ -117,7 +117,12 @@ def run_saturation_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
     window_start = analysis.capture_database_now()
     try:
         with host.measure_phase() as phase:
-            wait_until_drained(spec, procs)
+            wait_until_drained(
+                procs,
+                name=spec.name,
+                queue=spec.worker.queue,
+                timeout_s=spec.timeout_s,
+            )
     finally:
         runner.stop_workers(procs)
     # Read once the workers have exited, since a live backend flushes its transaction
@@ -168,7 +173,12 @@ def lay_ballast(spec: MeasurementSpec) -> dt.datetime:
         )
         procs = runner.start_workers(spec.worker, spec.workers)
         try:
-            wait_until_drained(spec, procs)
+            wait_until_drained(
+                procs,
+                name=spec.name,
+                queue=spec.worker.queue,
+                timeout_s=spec.timeout_s,
+            )
         finally:
             runner.stop_workers(procs)
     if spec.vacuum_ballast:
@@ -188,7 +198,12 @@ def run_rate_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
                 kwargs=spec.task_kwargs,
             )
             window_end = analysis.capture_database_now()
-            wait_until_drained(spec, procs)
+            wait_until_drained(
+                procs,
+                name=spec.name,
+                queue=spec.worker.queue,
+                timeout_s=spec.timeout_s,
+            )
     finally:
         runner.stop_workers(procs)
     # No commits per task and no statement stats: the completed-run count comes off the
@@ -200,7 +215,9 @@ def run_rate_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
     }
 
 
-def wait_until_drained(spec: MeasurementSpec, workers: list[runner.Worker]) -> None:
+def wait_until_drained(
+    workers: list[runner.Worker], *, name: str, queue: str, timeout_s: float
+) -> None:
     """Poll the queue until it is empty — and the fleet, which is the other way out.
 
     A queue polled alone cannot tell a slow drain from an absent one, so a rung whose
@@ -208,13 +225,13 @@ def wait_until_drained(spec: MeasurementSpec, workers: list[runner.Worker]) -> N
     failure. The children's own exit is what `stop_workers` raises over this on the
     way out, so the crash stays the cause.
     """
-    deadline = time.monotonic() + spec.timeout_s
-    while analysis.count_unfinished_tasks(spec.worker.queue) > 0:
+    deadline = time.monotonic() + timeout_s
+    while analysis.count_unfinished_tasks(queue) > 0:
         exited = runner.count_exited_workers(workers)
         if exited:
-            raise WorkerExitedError(spec.name, exited, len(workers))
+            raise WorkerExitedError(name, exited, len(workers))
         if time.monotonic() > deadline:
-            raise MeasurementTimeoutError(spec.name, spec.timeout_s)
+            raise MeasurementTimeoutError(name, timeout_s)
         time.sleep(DRAIN_POLL_INTERVAL_S)
 
 
