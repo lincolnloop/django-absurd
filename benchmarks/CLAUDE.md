@@ -256,11 +256,22 @@ its own 5,000 tasks and not the 15,000 in front of them.
     vacuumed_table   203.5           cv 1.1%
 
 1.87x between the fresh arm and the aged one at ONE pending depth, so of the 2.45x that
-four times the `--tasks` cost, table size carries most and queue depth the rest. The
-vacuum buys 1.2% of it — inside the floor, and the two ballasted arms record what makes
-it so: `r_bench` held 22,649 dead tuples in the aged arm against 0 in the vacuumed one
-and 6.9 MB in both, so the pages a claim reads are the same pages either way. What costs
-the throughput is the LIVE rows.
+four times the `--tasks` cost, table size carries most and queue depth the rest. Both
+rates are counted, off `r_bench`'s own completed runs over the trimmed window, and so is
+each arm's 5,000 drained; "four times the rows" is the spec's own arithmetic — 15,000
+ballast plus 5,000 measured — which this run's recorded live counts agree with exactly,
+as estimates: the run predates the count
+([the measurement model](#the-measurement-model)). Nothing the 1.87x rests on is a
+statistic.
+
+The vacuum buys 1.2% of it — inside the floor, and the two ballasted arms record what
+makes it so: `r_bench` held 22,649 dead tuples in the aged arm against 0 in the vacuumed
+one, and 6.9 MB in both. Take those two at the precision they have: a dead-row count has
+no exact source in Postgres, so both dead figures are the statistics collector's
+ESTIMATE, while the 6.9 MB is `pg_total_relation_size` and exact. What carries the
+finding is the counted half — two arms of the same length and the same bytes measuring
+within 1.2% of each other — so the pages a claim reads are the same pages either way,
+and what costs the throughput is the LIVE rows.
 
 So `cleanup_tasks`, retention policy and partitioned storage are throughput features
 rather than tidiness, and a durable workload — which accumulates history by design — is
@@ -307,13 +318,17 @@ but the fresh arm's LEVEL is not `concurrency_1`'s.
   because that step was costed on its own and moved no drain number outside the baseline
   bracket ([Three consistency knobs](#three-consistency-knobs-measured-and-refused)),
   which is also why the harness applies it nowhere else.
-- **Dead rows are measured, never assumed.** Draining 15,000 tasks leaves dead versions
+- **Dead rows are recorded, never assumed.** Draining 15,000 tasks leaves dead versions
   behind, and `r_bench`'s are not HOT-pruned
   ([Incidental](#incidental-worth-raising-upstream)). `vacuumed_table` is the arm that
-  separates them from live rows — and every rep records what its tables ACTUALLY held
-  when its drain opened, live tuples, dead tuples and total bytes for `t_bench` and
-  `r_bench` alike, because autovacuum may have reclaimed some of the unvacuumed arm's
-  first. The arm names the intent; the recorded rows are the evidence.
+  separates them from live rows — and every rep records what its tables held when its
+  drain opened, live tuples, dead tuples and total bytes for `t_bench` and `r_bench`
+  alike, because autovacuum may have reclaimed some of the unvacuumed arm's first. The
+  arm names the intent; the recorded rows are the evidence, each at its own precision:
+  the live rows are counted, the bytes are exact, and the dead rows are an estimate
+  ([the measurement model](#the-measurement-model)). `run-20260903T233428Z` and
+  `verify-20260904T013935Z` predate the counting, so their live figures are estimates
+  too — and read exactly the 5,000 and 20,000 their specs asked for.
 - **The vacuum is plain, not FULL.** It takes the dead versions out of the heap and the
   indexes a claim reads, which is the thing under test, and leaves the relation the size
   the drain grew it to. So an arm that stays slow after it still holds every page it
@@ -666,8 +681,8 @@ RAM rates like every other in this file — the ratio travels, the levels do not
 ## Incidental, worth raising upstream
 
 - `r_bench` bloats and `t_bench` does not: 10,000 dead tuples against 5,000 live, versus
-  77, on identical update volume. The tasks table's updates are HOT-pruned; the runs
-  table's are not.
+  77, on identical update volume — dead-row figures being estimates wherever they are
+  quoted here. The tasks table's updates are HOT-pruned; the runs table's are not.
 - The cancellation scan runs on every claim, costs 18% of it, and grows with the whole
   tasks table rather than with the claimable part of it — 3.8x on tables four times
   longer ([Size or depth](#size-or-depth-the-experiment-that-separates-them)).
@@ -1065,8 +1080,11 @@ fleet, with an ANALYZE in front of it so the dead rows and the plans a claim get
 off the same statistics. `live_tuples` is COUNTED rather than read off those statistics:
 an ANALYZE sets `pg_stat_get_live_tuples` to the truth and any backend still holding
 unflushed insert counters then adds its arrears on top, which read 285 live tuples on a
-table holding 240 rows. `null` on every measurement outside that experiment, whose
-`spec.ballast_tasks` is `null` too;
+table holding 240 rows. `total_bytes` is `pg_total_relation_size` and exact;
+`dead_tuples` is the one figure of the three with no exact source, so it stays an
+estimate. Every run in `results/` was taken before the count landed, so read its
+`live_tuples` as an estimate as well. `null` on every measurement outside that
+experiment, whose `spec.ballast_tasks` is `null` too;
 [Size or depth](#size-or-depth-the-experiment-that-separates-them) is what the block is
 for. `spec.vacuum_ballast` beside it says whether the arm reclaimed the ballast's dead
 rows before measuring, which is what makes the recorded `dead_tuples` readable.
