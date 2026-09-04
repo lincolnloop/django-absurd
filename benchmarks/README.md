@@ -202,7 +202,7 @@ docker compose up -d --wait db
 docker compose exec db createdb -U postgres absurd_sample
 
 export DATABASE_URL=postgres://postgres:postgres@localhost:5442/absurd_sample
-export DJANGO_DEBUG=1
+export DEBUG=1
 uv run python manage.py migrate
 uv run python -m seed --rows 1000000
 uv run python manage.py createsuperuser
@@ -215,9 +215,8 @@ and the six templates every clone is copied from are the floor. One million task
 the 1.2 million runs behind them took 23 seconds and 1.1 GB on the reference machine.
 
 `DATABASE_URL` points at a database of its own, because the default is `db_bench`'s and
-a real run empties that. `DJANGO_DEBUG=1` turns `DEBUG` on, which is what serves the
-admin's own CSS; leave it off for anything you intend to time, since `DEBUG` keeps every
-query it runs in memory.
+a real run empties that. `DEBUG=1` is what serves the admin's own CSS; leave it unset
+for anything you intend to time, since `DEBUG` keeps every query it runs in memory.
 
 **The data is synthetic, and no number taken on it is a property of django-absurd.**
 Every task is a copy of one of six templates, so the ages are uniform, the payloads are

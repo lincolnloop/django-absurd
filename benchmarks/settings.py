@@ -5,8 +5,8 @@ import dj_database_url
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "bench-only-not-secret")
 
 # Off for a measurement, because DEBUG appends every query to `connection.queries`
-# and never trims it; `DJANGO_DEBUG=1` is for browsing the seeded tables.
-DEBUG = os.environ.get("DJANGO_DEBUG", "") == "1"
+# and never trims it; `DEBUG=1` is for browsing the seeded tables.
+DEBUG = os.environ.get("DEBUG", "") == "1"
 
 # `workload` holds the model a durable task body reads and writes; a benchmark
 # database needs its table, which is what makes `migrate` cover it.
