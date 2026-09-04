@@ -195,28 +195,25 @@ column first; two runs' rows only compare if their ramps agreed.
 `seed.py` fills the `bench` queue's tables so django-absurd's admin has something to
 page through. It enqueues a handful of template tasks through the real enqueue API,
 drains them with a real `absurd_worker`, and clones the drained rows server-side. Every
-command runs from inside `benchmarks/`, on the harness's own settings.
+command runs on the harness's own settings.
 
 ```
-docker compose up -d --wait db
-docker compose exec db createdb -U postgres absurd_sample
-
-export DATABASE_URL=postgres://postgres:postgres@localhost:5442/absurd_sample
-export DEBUG=1
-uv run python manage.py migrate
-uv run python -m seed --rows 1000000
-uv run python manage.py createsuperuser
-uv run python manage.py runserver
+benchmarks/serve_admin.sh            # a million tasks
+benchmarks/serve_admin.sh 50000      # fewer, for a quicker loop
 ```
 
-Then open <http://localhost:8000/admin/>. `--rows` is what the queue holds afterwards,
-not what the run adds: the tables are emptied first, so seeding again replaces the data,
-and the six templates every clone is copied from are the floor. One million tasks and
-the 1.2 million runs behind them took 23 seconds and 1.1 GB on the reference machine.
+That starts the `db` service, makes itself a database, migrates, seeds, and serves
+<http://localhost:8000/admin/>. Log in as `admin`/`admin` — credentials that suit a
+throwaway database on your own machine and nothing else. Re-running is fine: the
+argument is what the queue holds afterwards, not what the run adds, since the tables are
+emptied first and the six templates every clone is copied from are the floor. One
+million tasks and the 1.2 million runs behind them took 23 seconds and 1.1 GB on the
+reference machine.
 
-`DATABASE_URL` points at a database of its own, because the default is `db_bench`'s and
-a real run empties that. `DEBUG=1` is what serves the admin's own CSS; leave it unset
-for anything you intend to time, since `DEBUG` keeps every query it runs in memory.
+`PGPORT` picks the server and `SAMPLE_DATABASE` the database on it. It is a database of
+its own because the harness's default is `db_bench`'s, which a real run empties. The
+script also sets `DEBUG=1`, which is what serves the admin's own CSS — leave `DEBUG`
+unset for anything you intend to time, since it keeps every query it runs in memory.
 
 **The data is synthetic, and no number taken on it is a property of django-absurd.**
 Every task is a copy of one of six templates, so the ages are uniform, the payloads are
