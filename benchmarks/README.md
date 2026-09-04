@@ -202,7 +202,8 @@ benchmarks/serve_admin.sh            # a million tasks
 benchmarks/serve_admin.sh 50000      # fewer, for a quicker loop
 ```
 
-That starts the `db` service, makes itself a database, migrates, seeds, and serves
+Start the `db` service first, from the repo root (`docker compose up -d db`), as the
+suites do. The script then makes itself a database on it, migrates, seeds, and serves
 <http://localhost:8000/admin/>. Log in as `admin`/`admin` — credentials that suit a
 throwaway database on your own machine and nothing else. Re-running is fine: the
 argument is what the queue holds afterwards, not what the run adds, since the tables are
