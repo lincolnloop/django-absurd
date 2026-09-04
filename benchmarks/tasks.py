@@ -28,7 +28,7 @@ async def noop_async() -> int:
     max_attempts=2, retry_strategy=RetryStrategy(kind="fixed", base_seconds=0)
 )
 def fail_on_every_attempt() -> t.Never:
-    """Exhausts its attempts, so the seeder's corpus carries failed and retried rows.
+    """Exhausts its attempts, so the seeded tables carry failed and retried rows.
 
     Two attempts with no backoff: one is a failure nothing ever retried, and the five
     the library defaults to would hold the seed open for a redelivery per template.

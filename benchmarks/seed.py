@@ -1,8 +1,8 @@
-"""Fill a queue's tables with a synthetic corpus, by cloning drained template rows.
+"""Fill a queue's tables with synthetic rows, by cloning drained template rows.
 
 Nothing here measures anything. It exists so a person can put millions of rows in
 front of django-absurd's admin and page through them; every number taken on the result
-is a number about this corpus, not about a workload.
+is a number about these rows, not about a workload.
 """
 
 import argparse
@@ -26,13 +26,13 @@ from django_absurd.queues import resolve_absurd_database
 DEFAULT_QUEUE = "bench"
 DEFAULT_ROWS = 1_000_000
 # The rows every clone is copied from: mostly the ordinary completed case, plus one
-# task that exhausts its attempts so failed and retried rows reach the corpus too.
+# task that exhausts its attempts so failed and retried rows are cloned too.
 TEMPLATE_TASKS: tuple[tuple[str, int], ...] = (
     ("tasks.noop_sync", 5),
     ("tasks.fail_on_every_attempt", 1),
 )
 TEMPLATE_DRAIN_TIMEOUT_S = 120.0
-# Worker identities the cloned runs are spread over. Synthetic, and the corpus says so:
+# Worker identities the cloned runs are spread over. Synthetic, and they say so:
 # one worker drains the templates, so every run would otherwise carry one claimed_by.
 CLAIMED_BY_SPREAD = 8
 # Clones per statement. One statement for millions would build every generated key and
@@ -161,7 +161,7 @@ class SeedSummary:
 def seed_queue_tables(rows: int, *, queue: str = DEFAULT_QUEUE) -> SeedSummary:
     """Truncate, enqueue the templates, drain them with a real worker, clone.
 
-    ``rows`` is what the corpus holds afterwards and never fewer than the templates
+    ``rows`` is what the queue holds afterwards and never fewer than the templates
     every clone is copied from. Every count is read back off the tables: a seeder
     reporting what it meant to write reports success for a clone that wrote nothing.
     """
@@ -185,7 +185,7 @@ def check_queue_table_shape(queue: str = DEFAULT_QUEUE) -> None:
     """Refuse a queue whose tables are not the ones the clone knows how to write.
 
     Column NAMES in both directions, and nothing else: a column upstream retyped passes
-    this and fails at the first insert, with the corpus already emptied.
+    this and fails at the first insert, with the tables already emptied.
     """
     drift: dict[str, ColumnDrift] = {}
     for prefix, columns, tolerated in (
@@ -215,9 +215,9 @@ def enqueue_templates(queue: str) -> None:
 
 
 def drain_templates(queue: str) -> None:
-    """Run the templates to completion, so the corpus has finished runs to clone.
+    """Run the templates to completion, so there are finished runs to clone.
 
-    Enqueueing alone leaves the runs table empty, and a corpus with no runs cannot
+    Enqueueing alone leaves the runs table empty, and tables with no runs cannot
     answer anything about the admin's runs changelist.
     """
     workers = runner.start_workers(runner.WorkerSpec(queue=queue), 1)
@@ -303,7 +303,7 @@ def count_table_rows(table: str) -> int:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description=(
-            f"Fill the '{DEFAULT_QUEUE}' queue's tables with a synthetic corpus, so "
+            f"Fill the '{DEFAULT_QUEUE}' queue's tables with synthetic rows, so "
             f"the admin has something to page through."
         )
     )

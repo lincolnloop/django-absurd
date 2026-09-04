@@ -190,37 +190,36 @@ and a probe fails when the fleet falls behind OR when the producer — on the sa
 never delivers the offer. Read the `Offer rate:` line and the ramp's `producer kept up`
 column first; two runs' rows only compare if their ramps agreed.
 
-## Browsing a corpus in the admin
+## Filling the admin with millions of rows
 
-`seed.py` fills the `bench` queue's tables with millions of rows, so django-absurd's
-admin has something to page through. It enqueues a handful of template tasks through the
-real enqueue API, drains them with a real `absurd_worker`, and clones the drained rows
-server-side. Every command runs from inside `benchmarks/`, against the suites' plain
-`db` service — nothing here measures a rate, so the tuned `db_bench` would buy it
-nothing.
+`seed.py` fills the `bench` queue's tables so django-absurd's admin has something to
+page through. It enqueues a handful of template tasks through the real enqueue API,
+drains them with a real `absurd_worker`, and clones the drained rows server-side. Every
+command runs from inside `benchmarks/`, on the harness's own settings.
 
 ```
 docker compose up -d --wait db
-docker compose exec db createdb -U postgres absurd_corpus
+docker compose exec db createdb -U postgres absurd_sample
 
-export DJANGO_SETTINGS_MODULE=tests.benchmarks.settings
-export PGDATABASE=absurd_corpus
+export DATABASE_URL=postgres://postgres:postgres@localhost:5442/absurd_sample
+export DJANGO_DEBUG=1
 uv run python manage.py migrate
 uv run python -m seed --rows 1000000
 uv run python manage.py createsuperuser
-uv run python manage.py runserver --insecure
+uv run python manage.py runserver
 ```
 
 Then open <http://localhost:8000/admin/>. `--rows` is what the queue holds afterwards,
-not what the run adds: the tables are emptied first, so seeding again replaces the
-corpus, and the six templates every clone is copied from are the floor. One million
-tasks and the 1.2 million runs behind them took 20 seconds and 1.1 GB on the reference
-machine.
+not what the run adds: the tables are emptied first, so seeding again replaces the data,
+and the six templates every clone is copied from are the floor. One million tasks and
+the 1.2 million runs behind them took 23 seconds and 1.1 GB on the reference machine.
 
-Export `PGPORT` too if a system Postgres owns 5432. `--insecure` serves the admin's
-static files with `DEBUG` off.
+`DATABASE_URL` points at a database of its own, because the default is `db_bench`'s and
+a real run empties that. `DJANGO_DEBUG=1` turns `DEBUG` on, which is what serves the
+admin's own CSS; leave it off for anything you intend to time, since `DEBUG` keeps every
+query it runs in memory.
 
-**The corpus is synthetic, and no number taken on it is a property of django-absurd.**
+**The data is synthetic, and no number taken on it is a property of django-absurd.**
 Every task is a copy of one of six templates, so the ages are uniform, the payloads are
 identical, and `claimed_by` is spread over eight worker names that never claimed
 anything. It answers questions about VOLUME — whether a page loads, which plan the
@@ -233,7 +232,7 @@ upstream change has to fail the seed rather than fill a table it half-understand
 ## Files
 
 `stages.py`, `measurement.py`, `producer.py`, `runner.py`, `analysis.py` and `report.py`
-are the pipeline above, and `seed.py` is the corpus seeder above that. Beside them,
+are the pipeline above, and `seed.py` fills the tables for the admin. Beside them,
 `settings.py` (Django settings: `DATABASE_URL`, else `PGPORT_BENCH` against
 `absurd_bench`), `manage.py` (for `migrate` and the worker children), `tasks.py` (the
 seven workloads: two no-ops, two sleeps, one 4-step workflow, one long body that reads

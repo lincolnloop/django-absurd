@@ -718,7 +718,7 @@ Changelists order by the entity's own primary key, not by the timestamp a reader
 name. The pk is a `uuidv7`, so its order IS chronological, and Postgres can walk the
 pkey index backwards to find a page. Ordering on `first_started_at`/`started_at` reads
 better and cannot use an index: nothing indexes those columns, and the union view offers
-no cross-queue index to build on. Measured on a seeded million-task corpus
+no cross-queue index to build on. Measured on a seeded million-task database
 (`benchmarks/seed.py`), ten thousand rows into the tasks changelist: the pk order plans
 an `Index Scan Backward` reading 380 buffers in 7.5 ms, and the timestamp order a
 `Parallel Seq Scan` over every row followed by an external merge sort that SPILLS — 54
