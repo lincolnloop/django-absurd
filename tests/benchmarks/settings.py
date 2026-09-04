@@ -38,10 +38,7 @@ TEMPLATES = [
 
 ROOT_URLCONF = "tests.urls"
 
-# The parent compose server, like every other suite. The tuned db_bench instance is
-# for real benchmark runs; nothing here measures a rate, so its configuration would
-# buy this suite nothing. Every field reads the same variable the other suites read,
-# which is what keeps a standalone copy from drifting off the published ports.
+# The plain `db`, not the tuned `db_bench`: nothing in this suite measures a rate.
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
@@ -54,11 +51,7 @@ DATABASES = {
     },
 }
 
-DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
-
 TIME_ZONE = "UTC"
-
-DATABASE_ROUTERS = ["django_absurd.routers.AbsurdRouter"]
 
 # The harness's own queue, declared here rather than reusing the main suite's: the
 # stage definitions name it, and a queue this suite provisions cannot collide with

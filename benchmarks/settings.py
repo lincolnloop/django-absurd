@@ -4,8 +4,6 @@ import dj_database_url
 
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "bench-only-not-secret")
 
-# Off for a measurement, because DEBUG appends every query to `connection.queries`
-# and never trims it; `DEBUG=1` is for browsing the seeded tables.
 DEBUG = os.environ.get("DEBUG", "") == "1"
 
 # `workload` holds the model a durable task body reads and writes; a benchmark
@@ -60,8 +58,6 @@ DATABASES = {
 # After the parse, not inside it: dj_database_url builds the alias dict from the URL
 # alone and would drop a TEST key handed to it.
 DATABASES["default"]["TEST"] = {"NAME": "test_absurd_bench"}
-
-DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 TIME_ZONE = "UTC"
 

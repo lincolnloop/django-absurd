@@ -32,8 +32,7 @@ TEMPLATE_TASKS: tuple[tuple[str, int], ...] = (
     ("tasks.fail_on_every_attempt", 1),
 )
 TEMPLATE_DRAIN_TIMEOUT_S = 120.0
-# Worker identities the cloned runs are spread over. Synthetic, and they say so:
-# one worker drains the templates, so every run would otherwise carry one claimed_by.
+# One worker drains the templates, so every cloned run would carry one `claimed_by`.
 CLAIMED_BY_SPREAD = 8
 # Clones per statement. One statement for millions would build every generated key and
 # every cloned run before writing any of them.

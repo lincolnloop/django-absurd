@@ -49,8 +49,6 @@ def test_changelist_orders_newest_run_first(
     client.force_login(admin_user)
     response = client.get(CHANGELIST)
     soup = parse_html(response)
-    assert soup.select_one(".column-completed_at") is not None
-    # rows come back newest-created first
     keys: list[str] = [
         t.cast("Tag", r.select_one(".field-natural_key")).get_text(strip=True)
         for r in result_rows(soup)

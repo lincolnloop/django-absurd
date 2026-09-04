@@ -9,16 +9,9 @@ import runner
 # database, so these need one.
 pytestmark = pytest.mark.django_db(transaction=True)
 
-MANAGE = "benchmarks/manage.py"
-
 
 def test_admin_mounts_on_the_benchmark_settings() -> None:
-    """The seeded tables are browsable on `benchmarks/settings.py` alone.
-
-    `reverse` resolving is the observable that covers the whole chain at once: the
-    admin app installed, `ROOT_URLCONF` set, and `urls.py` importable. A settings
-    module that merely holds the right keys would still fail it.
-    """
+    """`reverse` fails unless the admin app, `ROOT_URLCONF` and `urls.py` all hold."""
     completed = run_manage(
         "shell", "-c", "from django.urls import reverse; print(reverse('admin:index'))"
     )
@@ -28,11 +21,7 @@ def test_admin_mounts_on_the_benchmark_settings() -> None:
 
 
 def test_admin_checks_pass_against_the_benchmark_settings() -> None:
-    """Django's own admin checks validate every `ordering` field the specs name.
-
-    Worth a subprocess: the suites run the admin against the test settings, where a
-    spec naming a column the browse configuration lacks would go unnoticed.
-    """
+    """Covers `benchmarks/settings.py`'s own admin wiring, which no suite exercises."""
     completed = run_manage("check")
 
     assert completed.returncode == 0, completed.stdout
@@ -41,7 +30,7 @@ def test_admin_checks_pass_against_the_benchmark_settings() -> None:
 
 def run_manage(*argv: str) -> "subprocess.CompletedProcess[str]":
     return subprocess.run(
-        [sys.executable, MANAGE, *argv],
+        [sys.executable, runner.MANAGE_PY, *argv],
         capture_output=True,
         # The assertions read the exit code, so a failure has to reach them.
         check=False,

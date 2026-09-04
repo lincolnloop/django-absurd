@@ -119,7 +119,6 @@ def test_changelist_orders_newest_task_first(admin_user: User, client: Client) -
     resp = client.get(CHANGELIST)
     soup = parse_html(resp)
     rows = result_rows(soup)
-    # rows come back newest-created first (order matters, so keep a list)
     keys = [
         el.get_text(strip=True)
         for r in rows

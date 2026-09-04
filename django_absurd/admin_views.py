@@ -135,8 +135,7 @@ ADMIN_ENTITY_SPECS: tuple[EntitySpec, ...] = (
         model_name="Event",
         verbose="event",
         natural_key_sql=psycopg.sql.SQL("event_name::text"),
-        # The exception to ordering by pk: e_<queue>'s pk is event_name alone, so
-        # pk order is alphabetical anyway, and one row per name keeps the table small.
+        # e_<queue>'s pk is event_name, so pk order is alphabetical either way.
         ordering=("natural_key",),
         columns=(
             ("event_name", "text"),
