@@ -71,7 +71,6 @@ LATENCY_KEYS = (
 # disagree; the driver contributes no timestamps of its own.
 COMPLETED_RUNS_SQL = """
 select
-  count(distinct r.task_id),
   count(*),
   percentile_cont(0.10) within group (order by extract(epoch from r.completed_at)),
   percentile_cont(0.90) within group (order by extract(epoch from r.completed_at)),
@@ -106,10 +105,14 @@ where r.state = 'completed' and {window}
 group by r.claimed_by
 """
 
-# Deliberately UNFILTERED by state: `fail_run` inserts a NEW row for the retry, so a
-# completed-only count would report every redelivery as zero.
+# UNFILTERED by state, since `fail_run` inserts a NEW row for the retry and a
+# completed-only count would report every redelivery as zero — `n_tasks` excepted.
 RUN_TOTALS_SQL = """
-select count(*), count(distinct r.task_id), coalesce(max(r.attempt), 1)
+select
+  count(*),
+  count(distinct r.task_id),
+  coalesce(max(r.attempt), 1),
+  count(distinct r.task_id) filter (where r.state = 'completed')
 from {runs} r
 join {tasks} t on t.task_id = r.task_id
 where {window}
@@ -204,12 +207,50 @@ end $$;
 """
 
 
-def analyze_saturation(queue: str = "bench") -> dict[str, t.Any]:
-    """Every metric of one saturation rep, plus how it varied during the drain."""
-    window = psycopg.sql.SQL("true")
+# Live rows counted, dead rows as the statistics collector last estimated them, and a
+# size that is exact. Counted rather than read off `pg_stat_get_live_tuples`, which an
+# ANALYZE sets to the truth and any backend still holding unflushed insert counters
+# then adds its arrears to — measured at 285 live tuples on a table holding 240 rows,
+# one preload thread's 45 landing after the ANALYZE. Dead rows have no exact source.
+TABLE_STATE_SQL = """
+select
+  (select count(*) from {table}),
+  pg_stat_get_dead_tuples(oid),
+  pg_total_relation_size(oid)
+from pg_class
+where oid = %s::regclass
+"""
+
+
+def analyze_saturation(
+    queue: str, since: dt.datetime | None, completed_since: dt.datetime
+) -> dict[str, t.Any]:
+    """Every metric of one saturation rep, plus how it varied during the drain.
+
+    ``since`` is what keeps a rep that laid ballast from measuring it: the ballast is
+    enqueued and drained before that mark and the measured tasks after it.
+
+    ``completed_since`` is where the rep starts counting commits, and a run that
+    finished ahead of it was paid for by commits nobody counted — so the rates and the
+    percentiles are read over that interval and the totals over the whole drain.
+    Filtering it on ``enqueue_at`` would select nothing at all: a saturation rep
+    enqueues every task before its fleet exists. The profile keeps the whole drain —
+    its slices are equal-count and trimmed already, so a second window moves the
+    boundaries and nothing else.
+    """
+    drained = (
+        psycopg.sql.SQL("true")
+        if since is None
+        else psycopg.sql.SQL("t.enqueue_at > {since}").format(
+            since=psycopg.sql.Literal(since)
+        )
+    )
+    measured = psycopg.sql.SQL("{drained} and r.completed_at > {mark}").format(
+        drained=drained, mark=psycopg.sql.Literal(completed_since)
+    )
     return {
-        **read_completed_run_metrics(queue, window),
-        **read_throughput_profile(queue, window),
+        **read_completed_run_metrics(queue, measured, drained),
+        **read_throughput_profile(queue, drained),
     }
 
 
@@ -221,6 +262,9 @@ def analyze_rate(
     Trimmed on ``enqueue_at`` rather than on completion because arrival is what defines
     a rate experiment, and carrying no profile because an imposed offer rate has no
     shape to discover.
+
+    One window does for both the rates and the totals: the offer starts once the fleet
+    is already up, so there is no start-up interval for the totals to reach back over.
     """
     span = (window_end - window_start) / 10
     window = psycopg.sql.SQL("t.enqueue_at between {low} and {high}").format(
@@ -228,7 +272,7 @@ def analyze_rate(
         high=psycopg.sql.Literal(window_end - span),
     )
     return {
-        **read_completed_run_metrics(queue, window),
+        **read_completed_run_metrics(queue, window, window),
         **read_backlog_growth(queue, window_start, window_end),
     }
 
@@ -364,25 +408,33 @@ def summarize_commit_rates(rates: list[float]) -> dict[str, t.Any]:
 
 
 def read_completed_run_metrics(
-    queue: str, window: psycopg.sql.Composable
+    queue: str, measured: psycopg.sql.Composable, drained: psycopg.sql.Composable
 ) -> dict[str, t.Any]:
+    """Percentiles, throughput and fairness over ``measured``; totals over ``drained``.
+
+    Two windows because they answer different questions. A rate is only a rate over the
+    interval it was taken in, while a redelivery and a task nobody completed are facts
+    about the whole drain that have to stay countable outside that interval.
+    """
     runs = psycopg.sql.Identifier("absurd", f"r_{queue}")
     tasks = psycopg.sql.Identifier("absurd", f"t_{queue}")
     with connections[resolve_absurd_database()].cursor() as cursor:
         cursor.execute(
             psycopg.sql.SQL(COMPLETED_RUNS_SQL).format(
-                runs=runs, tasks=tasks, window=window
+                runs=runs, tasks=tasks, window=measured
             )
         )
         row = cursor.fetchone()
         cursor.execute(
             psycopg.sql.SQL(RUN_TOTALS_SQL).format(
-                runs=runs, tasks=tasks, window=window
+                runs=runs, tasks=tasks, window=drained
             )
         )
         totals = cursor.fetchone()
         cursor.execute(
-            psycopg.sql.SQL(FAIRNESS_SQL).format(runs=runs, tasks=tasks, window=window)
+            psycopg.sql.SQL(FAIRNESS_SQL).format(
+                runs=runs, tasks=tasks, window=measured
+            )
         )
         fairness = {name: int(count) for name, count in cursor.fetchall()}
     return build_metrics(row, totals, fairness)
@@ -460,14 +512,16 @@ def read_throughput_profile(
 def build_metrics(
     row: tuple[t.Any, ...], totals: tuple[t.Any, ...], fairness: dict[str, int]
 ) -> dict[str, t.Any]:
-    n_tasks, n_runs, completed_p10, completed_p90 = row[:4]
-    total_runs, total_tasks, max_attempt = totals
+    n_runs, completed_p10, completed_p90 = row[:3]
+    total_runs, total_tasks, max_attempt, n_tasks = totals
     span = (completed_p90 - completed_p10) if completed_p10 is not None else 0.0
     # Too short a trimmed window makes 0.8*n/span an arbitrarily large number rather
     # than a rate, so it is refused rather than published.
     degenerate = span < MIN_TRIMMED_SPAN_S or not n_runs
     shares = sorted(fairness.values())
     metrics: dict[str, t.Any] = {
+        # Tasks over the whole drain, runs over the measured window: a completion
+        # can land ahead of that window and the task is finished either way.
         "n_tasks": int(n_tasks),
         "n_runs": int(n_runs),
         "total_runs": int(total_runs),
@@ -477,14 +531,14 @@ def build_metrics(
         # expired claim lease. Both pollute a measurement; neither shows in wall time.
         "extra_runs": int(total_runs) - int(total_tasks),
         "degenerate_window": degenerate,
-        # 0.8 * n over the p10..p90 completion span: the trimmed window absorbs worker
-        # start stagger and the driver's last drain poll.
+        # 0.8 * n over the p10..p90 completion span: the trimmed window absorbs a
+        # multi-process fleet's short-handed opening and the driver's last drain poll.
         "throughput_per_s": 0.0 if degenerate else 0.8 * n_runs / span,
         "fairness": fairness,
         "fairness_ratio": (shares[0] / shares[-1]) if shares else 0.0,
     }
     metrics.update(
-        dict(zip(LATENCY_KEYS, [value or 0.0 for value in row[4:]], strict=True))
+        dict(zip(LATENCY_KEYS, [value or 0.0 for value in row[3:]], strict=True))
     )
     return metrics
 
@@ -501,6 +555,68 @@ def build_throughput_profile(rows: list[tuple[t.Any, ...]]) -> dict[str, t.Any]:
         "profile_slices": slices,
         "profile_median_per_s": statistics.median(slices),
         "profile_cv": statistics.stdev(slices) / statistics.fmean(slices),
+    }
+
+
+def vacuum_queue_tables(queue: str) -> None:
+    """Reclaim the dead rows a drain left in the queue tables.
+
+    Plain VACUUM, not FULL: it takes the dead versions out of the heap and the indexes
+    a claim reads, which is the thing under test, and leaves the relation the size the
+    drain grew it to — so an arm that stays slow after this still holds every page it
+    held before, and `read_table_state` records that beside the row counts.
+    """
+    with connections[resolve_absurd_database()].cursor() as cursor:
+        for table in (f"t_{queue}", f"r_{queue}"):
+            cursor.execute(
+                psycopg.sql.SQL("vacuum {table}").format(
+                    table=psycopg.sql.Identifier("absurd", table)
+                )
+            )
+
+
+def refresh_table_state(queue: str) -> dict[str, dict[str, int]]:
+    """ANALYZE the queue tables, then read back what each of them now holds.
+
+    ANALYZE first because the dead rows below and the plans a claim gets are read off
+    the same statistics, and a table just bulk-loaded and one that has churned carry
+    different staleness — which would otherwise be a second difference between two
+    arms meant to differ only in size. Costed separately and found to move no drain
+    number (`benchmarks/CLAUDE.md`), so equalising it is free.
+    """
+    with connections[resolve_absurd_database()].cursor() as cursor:
+        for table in (f"t_{queue}", f"r_{queue}"):
+            cursor.execute(
+                psycopg.sql.SQL("analyze {table}").format(
+                    table=psycopg.sql.Identifier("absurd", table)
+                )
+            )
+    return {
+        role: read_table_state("absurd", f"{prefix}_{queue}")
+        for role, prefix in (("tasks", "t"), ("runs", "r"))
+    }
+
+
+def read_table_state(schema: str, table: str) -> dict[str, int]:
+    """One table's live rows, dead rows and total bytes, indexes and TOAST included.
+
+    Dead rows through `pg_stat_get_dead_tuples` on the relation rather than
+    `pg_stat_user_tables`, which has no row for a table the statistics collector has
+    never seen and would leave the caller a missing key where the honest answer is
+    zero. The live rows are counted instead (see `TABLE_STATE_SQL`).
+    """
+    with connections[resolve_absurd_database()].cursor() as cursor:
+        cursor.execute(
+            psycopg.sql.SQL(TABLE_STATE_SQL).format(
+                table=psycopg.sql.Identifier(schema, table)
+            ),
+            [f"{schema}.{table}"],
+        )
+        live, dead, total_bytes = cursor.fetchone()
+    return {
+        "live_tuples": int(live),
+        "dead_tuples": int(dead),
+        "total_bytes": int(total_bytes),
     }
 
 

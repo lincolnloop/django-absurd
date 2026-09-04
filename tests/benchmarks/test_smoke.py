@@ -33,14 +33,22 @@ UNABSORBABLE_RATE_PER_S = 800.0
 # A drain ceiling whose lowest ramp probe — a tenth of it — is already the rate above,
 # so a ramp anchored to it cannot absorb even its first offer.
 UNABSORBABLE_CEILING_PER_S = UNABSORBABLE_RATE_PER_S / stages.RATE_RAMP_START_FRACTION
-# A drain ceiling a ramp of TWO workers climbs THROUGH rather than up to, with its
-# rungs at 90/s..683/s. Two workers rather than one because only the ends of the climb
-# are load-bearing and a lone worker holds neither reliably: 45/s each leaves the
-# bottom rung absorbed while one of them stalls, and the pair's knee was measured at
-# 456-683/s, under the top rung. A rung between them refusing early only shortens the
-# climb, which the assertions allow for.
-RAMP_CEILING_PER_S = 900.0
-RAMP_WORKERS = 2
+# Finished climbs as `measure_rate_probe` records them, at the two keys a working point
+# is chosen on: the rate offered, and whether the fleet absorbed it. Rungs 1.5x apart
+# like a real ramp's, so a bracket lands a rung above the working point.
+CLIMB_THAT_ABSORBED_EVERY_RUNG = [
+    {"rate_per_s": 50.0, "sustained": True},
+    {"rate_per_s": 75.0, "sustained": True},
+]
+CLIMB_THAT_REFUSED_ITS_FIRST_RUNG = [{"rate_per_s": 50.0, "sustained": False}]
+CLIMB_THAT_REFUSED_ITS_THIRD_RUNG = [
+    {"rate_per_s": 50.0, "sustained": True},
+    {"rate_per_s": 75.0, "sustained": True},
+    {"rate_per_s": 112.5, "sustained": False},
+]
+# The two figures a ramp carries through unchanged, so a swapped argument reads.
+RAMP_CEILING_PER_S = 500.0
+RAMP_OFFER_SECONDS = 20.0
 # Two offers for ONE producer thread, either side of what a round trip to Postgres
 # allows it: an enqueue takes milliseconds, so two a second leave it idling and three
 # thousand a second are beyond it however long it is given. The windows differ only in
@@ -295,51 +303,70 @@ def test_rate_ramp_that_absorbed_nothing_measures_at_the_lowest_rate_it_probed(
     }
 
 
-def test_rate_ramp_measures_at_the_highest_offer_it_absorbed(
-    tmp_path: pathlib.Path,
+@pytest.mark.parametrize(
+    ("climb", "measured"),
+    [
+        pytest.param(
+            CLIMB_THAT_ABSORBED_EVERY_RUNG,
+            {
+                "drain_ceiling_per_s": RAMP_CEILING_PER_S,
+                "offer_seconds": RAMP_OFFER_SECONDS,
+                "rate_per_s": 75.0,
+                "sustained": True,
+                "bracket_high_per_s": None,
+                "probes": CLIMB_THAT_ABSORBED_EVERY_RUNG,
+            },
+            id="absorbed_every_rung",
+        ),
+        pytest.param(
+            CLIMB_THAT_REFUSED_ITS_FIRST_RUNG,
+            {
+                "drain_ceiling_per_s": RAMP_CEILING_PER_S,
+                "offer_seconds": RAMP_OFFER_SECONDS,
+                "rate_per_s": 50.0,
+                "sustained": False,
+                "bracket_high_per_s": 50.0,
+                "probes": CLIMB_THAT_REFUSED_ITS_FIRST_RUNG,
+            },
+            id="refused_its_first_rung",
+        ),
+        pytest.param(
+            CLIMB_THAT_REFUSED_ITS_THIRD_RUNG,
+            {
+                "drain_ceiling_per_s": RAMP_CEILING_PER_S,
+                "offer_seconds": RAMP_OFFER_SECONDS,
+                "rate_per_s": 75.0,
+                "sustained": True,
+                "bracket_high_per_s": 112.5,
+                "probes": CLIMB_THAT_REFUSED_ITS_THIRD_RUNG,
+            },
+            id="refused_its_third_rung",
+        ),
+    ],
+)
+def test_a_ramp_measures_at_the_highest_rung_its_climb_absorbed(
+    climb: list[dict[str, t.Any]], measured: dict[str, t.Any]
 ) -> None:
     """The working point is the last rate that came off cleanly, not the one that
     stopped the climb.
 
-    The ramp stops at the first refusal, so the refused rate is the one nearest to
-    hand and measuring there offers the rungs below a rate this fleet has just been
-    shown not to absorb. It is kept as the bracket instead: the knee is between the
-    two, which is only a bracket at all because the two are different numbers.
+    The ramp stops at the first refusal, so the refused rate is the one nearest to hand
+    and measuring there offers the rungs below a rate this fleet has just been shown not
+    to absorb. It is kept as the bracket instead: the knee is between the two, which is
+    only a bracket at all because the two are different numbers. A climb that absorbed
+    nothing has no such pair, so it measures at the lowest rung it probed and records
+    that the rate is unproven; one that absorbed everything ran out of ceiling with the
+    knee above the top of the ramp, so it brackets nothing.
 
-    Called directly, and at a ceiling of its own: a stage reads that number off
-    `stage_process_scaling.json`, where it is whatever the machine measured, and a
-    ramp that absorbs or refuses everything it probes cannot show which end it
-    measured at.
+    Over climbs written down here rather than climbed on this machine: which offers a
+    fleet absorbs is the machine's to decide, so a test needing it to absorb one asserts
+    the machine. That the ramp really climbs, and stops at the first refusal, is what
+    the ramp test beside this one and `tests/benchmarks/test_cli.py`'s rung ladder
+    drive for real.
     """
-    ramp = stages.measure_sustainable_rate(
-        runner.WorkerSpec(concurrency=1, poll_interval=0.05),
-        RAMP_WORKERS,
-        RAMP_CEILING_PER_S,
-        stages.StageOptions(results_dir=tmp_path, duration_s=2.0),
-    )
+    ramp = stages.summarize_rate_ramp(climb, RAMP_CEILING_PER_S, RAMP_OFFER_SECONDS)
 
-    absorbed = [probe["rate_per_s"] for probe in ramp["probes"] if probe["sustained"]]
-    refused = [
-        probe["rate_per_s"] for probe in ramp["probes"] if not probe["sustained"]
-    ]
-    assert {
-        "climbed_before_it_refused": len(absorbed) >= 1,
-        "stopped_at_the_first_refusal": [probe["sustained"] for probe in ramp["probes"]]
-        == [True] * len(absorbed) + [False],
-    } == {"climbed_before_it_refused": True, "stopped_at_the_first_refusal": True}
-    assert {
-        "rate_per_s": ramp["rate_per_s"],
-        "bracket_high_per_s": ramp["bracket_high_per_s"],
-        "sustained": ramp["sustained"],
-        "measured_below_the_offer_it_refused": (
-            ramp["rate_per_s"] < ramp["bracket_high_per_s"]
-        ),
-    } == {
-        "rate_per_s": max(absorbed),
-        "bracket_high_per_s": min(refused),
-        "sustained": True,
-        "measured_below_the_offer_it_refused": True,
-    }
+    assert ramp == measured
 
 
 def test_backlog_growth_is_read_as_a_share_of_the_offer_it_grew_under() -> None:
@@ -651,7 +678,9 @@ def test_saturation_rep_records_what_its_tasks_cost_in_commits() -> None:
     client or by the disk's fsync.
 
     Asserted as measured, and as at least the one commit each completion has to make;
-    never at a number, which is the finding.
+    never at a number, which is the finding. The sample is pinned at `n_tasks`, which
+    is the divisor `n_runs` only where nothing is redelivered and no completion beats
+    the window mark — true at the one worker this rung asks for, and not above it.
     """
     spec = measurement.MeasurementSpec(
         name="smoke-commits",
@@ -667,9 +696,9 @@ def test_saturation_rep_records_what_its_tasks_cost_in_commits() -> None:
     rep = measurement.run_measurement(spec)["reps"][0]
 
     assert {
-        "n_runs": rep["n_runs"],
+        "n_tasks": rep["n_tasks"],
         "cost_at_least_a_commit_a_task": rep["commits_per_task"] >= 1.0,
-    } == {"n_runs": int(MEASURABLE_TASKS), "cost_at_least_a_commit_a_task": True}
+    } == {"n_tasks": int(MEASURABLE_TASKS), "cost_at_least_a_commit_a_task": True}
 
 
 def test_saturation_measurement_samples_the_load_on_each_side_of_every_rep() -> None:
@@ -728,7 +757,7 @@ def test_saturation_rep_profiles_its_throughput_across_the_drain() -> None:
     rep = measurement.run_measurement(spec)["reps"][0]
 
     assert {
-        "n_runs": rep["n_runs"],
+        "n_tasks": rep["n_tasks"],
         "full_slices": len(rep["profile_slices"]),
         "every_slice_measured_a_rate": all(rate > 0 for rate in rep["profile_slices"]),
         "median_is_the_middle_slice": (
@@ -736,7 +765,7 @@ def test_saturation_rep_profiles_its_throughput_across_the_drain() -> None:
         ),
         "measured_a_cv": rep["profile_cv"] > 0,
     } == {
-        "n_runs": PROFILED_TASKS,
+        "n_tasks": PROFILED_TASKS,
         "full_slices": 3,
         "every_slice_measured_a_rate": True,
         "median_is_the_middle_slice": True,
@@ -764,12 +793,12 @@ def test_saturation_rep_too_small_to_slice_records_no_profile() -> None:
     rep = measurement.run_measurement(spec)["reps"][0]
 
     assert {
-        "n_runs": rep["n_runs"],
+        "n_tasks": rep["n_tasks"],
         "profile_slices": rep["profile_slices"],
         "profile_median_per_s": rep["profile_median_per_s"],
         "profile_cv": rep["profile_cv"],
     } == {
-        "n_runs": int(MEASURABLE_TASKS),
+        "n_tasks": int(MEASURABLE_TASKS),
         "profile_slices": None,
         "profile_median_per_s": None,
         "profile_cv": None,
@@ -788,9 +817,9 @@ def test_commit_ceiling_probe_times_a_warmed_session_not_a_cold_one() -> None:
     thrown away, and the rounds after it are what the recorded median comes from.
 
     Asserted as a shape — every round's commits made, only the kept rounds' time
-    divided — never at a rate, which is this machine's to decide. The timed rounds are
-    a bit over half the probe's commits, so a probe that summarized its warm-up too
-    would divide close to the whole call rather than the 0.75 of it allowed here.
+    divided — never at a rate, which is this machine's to decide. Five timed rounds out
+    of nine put the honest ratio at 0.52-0.54, and a probe keeping no warm-up budget at
+    0.95-1.32, so the 0.90 allowed here is the loosest bound that still refuses one.
     """
     timed_commits = analysis.PROBE_TIMED_ROUNDS * analysis.DURABLE_PROBE_COMMITS
     committed_before = analysis.read_xact_commit()
@@ -811,7 +840,7 @@ def test_commit_ceiling_probe_times_a_warmed_session_not_a_cold_one() -> None:
         "committed_its_warm_up_rounds_too": (
             committed >= analysis.PROBE_WARM_UP_COMMITS + timed_commits
         ),
-        "timed_only_the_rounds_it_kept": timed_s < 0.75 * elapsed_s,
+        "timed_only_the_rounds_it_kept": timed_s < 0.90 * elapsed_s,
     } == {
         "measured": True,
         "committed_its_warm_up_rounds_too": True,
@@ -832,6 +861,9 @@ def test_an_interrupted_commit_probe_leaves_the_session_usable() -> None:
     The alarm is the real mechanism rather than a simulation of it: `pytest-timeout`
     raises from a SIGALRM handler exactly like this, and a BaseException that is not a
     KeyboardInterrupt is what psycopg declines to cancel the query for.
+
+    What the interruption DOES leave behind is the probe's own table, which
+    `tests/benchmarks/conftest.py` takes away after every test.
     """
     with pytest.raises(utils.ProbeInterrupted), utils.interrupt_after(0.2):
         analysis.measure_commit_ceiling(durable=True)
@@ -839,9 +871,6 @@ def test_an_interrupted_commit_probe_leaves_the_session_usable() -> None:
     with connections[resolve_absurd_database()].cursor() as cursor:
         cursor.execute("select 1")
         answered = cursor.fetchone()
-        # The probe's own table outlives the interruption, and a later probe on this
-        # database would read a name it does not own as a refusal.
-        cursor.execute(f"drop table if exists {analysis.COMMIT_PROBE_TABLE}")
 
     assert answered == (1,)
 
@@ -913,12 +942,12 @@ def test_saturation_rep_records_no_statement_stats_where_nothing_counted_them() 
         while_the_name_is_taken = analysis.read_statement_stats()
 
     assert {
-        "n_runs": rep["n_runs"],
+        "n_tasks": rep["n_tasks"],
         "statement_stats": rep["statement_stats"],
         "unreadable_view": analysis.read_statement_stats(),
         "occupied_name": while_the_name_is_taken,
     } == {
-        "n_runs": int(MEASURABLE_TASKS),
+        "n_tasks": int(MEASURABLE_TASKS),
         "statement_stats": None,
         "unreadable_view": None,
         "occupied_name": None,

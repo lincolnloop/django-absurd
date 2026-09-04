@@ -30,6 +30,13 @@ SATURATION_ROWS = (
 # The one task that was redelivered, which puts a second run row in the table without
 # putting a second completion in it.
 REDELIVERED_COMPLETION_SECOND = 3
+# How far ahead of the first completion a drain's run window opens here, so every row
+# above is inside it and the percentiles are the whole hand-timed distribution.
+COMPLETION_MARK = dt.timedelta(seconds=1)
+# The same window opened part-way through instead: late enough to leave the redelivered
+# task behind it and to split the two workers' shares unevenly, so a window that failed
+# to apply and one applied to the wrong query read differently from a window that held.
+MID_DRAIN_MARK = dt.timedelta(seconds=4)
 
 # Arrival second, queue wait, execution, and the worker that claimed it, offered over
 # a hundred-second window. The two rows claimed by `bench-2` arrive outside the
@@ -58,20 +65,9 @@ def test_saturation_metrics_are_the_columns_the_rows_were_timed_on() -> None:
     distribution; throughput is 0.8 tasks over the p10..p90 COMPLETION span, so a
     dropped trim factor or a span taken off the wrong column reads a different rate.
     """
-    truncate_queue_tables("bench")
-    for completed_second, queue_wait, execution, claimed_by in SATURATION_ROWS:
-        completed_at = EPOCH + dt.timedelta(seconds=completed_second)
-        started_at = completed_at - dt.timedelta(seconds=execution)
-        utils.insert_hand_timed_task(
-            "bench",
-            started_at - dt.timedelta(seconds=queue_wait),
-            started_at,
-            completed_at,
-            claimed_by,
-            redelivered=completed_second == REDELIVERED_COMPLETION_SECOND,
-        )
+    insert_saturation_rows()
 
-    assert analysis.analyze_saturation("bench") == {
+    assert analysis.analyze_saturation("bench", None, EPOCH - COMPLETION_MARK) == {
         "n_tasks": 11,
         "n_runs": 11,
         # The failed first attempt of the redelivered task, which no state filters out.
@@ -99,6 +95,60 @@ def test_saturation_metrics_are_the_columns_the_rows_were_timed_on() -> None:
         "profile_median_per_s": None,
         "profile_cv": None,
     }
+
+
+def test_a_drain_reads_its_rates_and_its_totals_over_different_windows() -> None:
+    """A fleet is already claiming when a rep's window opens, so runs finish outside it.
+
+    The rates and the percentiles are read over the interval the rep counted commits
+    in, or a per-task cost divides one window by another. The totals are read over the
+    whole drain, because a redelivery and a task nobody completed are properties of the
+    sample the spec asked for: the redelivered task here completes at 3 s, outside the
+    window, and its failed run carries no completion time at all — so a totals query
+    windowed on completion would report this drain as clean.
+
+    The rows above at their own timestamps; only the mark moves, so the window is the
+    one thing separating the two sets of counts.
+    """
+    insert_saturation_rows()
+
+    metrics = analysis.analyze_saturation("bench", None, EPOCH + MID_DRAIN_MARK)
+    assert {
+        "n_runs": metrics["n_runs"],
+        "fairness": metrics["fairness"],
+        "n_tasks": metrics["n_tasks"],
+        "total_runs": metrics["total_runs"],
+        "total_tasks": metrics["total_tasks"],
+        "extra_runs": metrics["extra_runs"],
+        "max_attempt": metrics["max_attempt"],
+    } == {
+        # The six rows completing after 4 s, claimed two by `bench-0` and four by
+        # `bench-1`.
+        "n_runs": 6,
+        "fairness": {"bench-0": 2, "bench-1": 4},
+        # Every row, the failed first attempt of the 3 s task included.
+        "n_tasks": 11,
+        "total_runs": 12,
+        "total_tasks": 11,
+        "extra_runs": 1,
+        "max_attempt": 2,
+    }
+
+
+def insert_saturation_rows() -> None:
+    """Leave the queue holding `SATURATION_ROWS` at exactly the timestamps it names."""
+    truncate_queue_tables("bench")
+    for completed_second, queue_wait, execution, claimed_by in SATURATION_ROWS:
+        completed_at = EPOCH + dt.timedelta(seconds=completed_second)
+        started_at = completed_at - dt.timedelta(seconds=execution)
+        utils.insert_hand_timed_task(
+            "bench",
+            started_at - dt.timedelta(seconds=queue_wait),
+            started_at,
+            completed_at,
+            claimed_by,
+            redelivered=completed_second == REDELIVERED_COMPLETION_SECOND,
+        )
 
 
 def test_rate_metrics_trim_the_offer_window_on_when_a_task_arrived() -> None:

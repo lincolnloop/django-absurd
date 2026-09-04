@@ -16,6 +16,13 @@ PRODUCER_TABLE_HEADER = (
 )
 PRODUCER_TABLE_RULE = "| " + " | ".join(["---"] * 9) + " |"
 
+# What a stage measuring one shape on two workloads calls each of them. Any other task
+# path reads back as itself: a label nobody wrote is worse than the import path.
+WORKLOAD_LABELS = {
+    "tasks.noop_sync": "nano-task",
+    "tasks.run_durable_work": "durable",
+}
+
 # Printed once for the whole document rather than under each table: it is how to read
 # every row here, and nothing in it varies by stage.
 MARK_LEGEND = (
@@ -70,6 +77,7 @@ TMPFS_CLUSTER_NAME = "bench-tmpfs"
 # Named by the flag that sets each one, so the header reads back as the command that
 # produced it. Alphabetical: no ordering of these means anything to a reader.
 OPTION_FLAGS = (
+    ("--durable-seconds", "durable_seconds"),
     ("--duration", "duration_s"),
     ("--io-seconds", "io_seconds"),
     ("--max-workers", "max_workers"),
@@ -320,6 +328,7 @@ def render_stage(stage: dict[str, t.Any]) -> list[str]:
     lines += render_skipped_pairs(stage)
     lines += render_shape_connections(stage)
     lines += render_run_order(stage)
+    lines += render_table_state(stage)
     lines += build_commit_budget_lines(stage)
     lines += build_statement_cost_lines(stage)
     lines += build_derived_lines(stage["stage"], measurements)
@@ -570,23 +579,29 @@ def render_shape_connections(stage: dict[str, t.Any]) -> list[str]:
         return []
     return [
         "",
-        "Postgres backends each shape opened (measured across starting its fleet):",
+        (
+            "Postgres backends each shape opened, idle and with a durable body in "
+            "every slot:"
+        ),
         "",
-        "| measurement | processes | concurrency | connections |",
-        "| --- | --- | --- | --- |",
+        "| shape | processes | concurrency | idle | working |",
+        "| --- | --- | --- | --- | --- |",
         *[
             render_row(
                 [
-                    shape["measurement"],
+                    shape["shape"],
                     str(shape["processes"]),
                     str(shape["concurrency"]),
-                    str(shape["connections"]),
+                    str(shape["connections_idle"]),
+                    str(shape["connections_busy"]),
                 ]
             )
             for shape in shapes
         ],
         "",
         describe_connection_confound(shapes),
+        "",
+        describe_working_backends(shapes),
     ]
 
 
@@ -599,7 +614,7 @@ def describe_connection_confound(shapes: list[dict[str, t.Any]]) -> str:
     opened_by_total: dict[int, set[int]] = {}
     for shape in shapes:
         total = shape["processes"] * shape["concurrency"]
-        opened_by_total.setdefault(total, set()).add(shape["connections"])
+        opened_by_total.setdefault(total, set()).add(shape["connections_idle"])
     unequal = sorted(
         total for total, opened in opened_by_total.items() if len(opened) > 1
     )
@@ -614,6 +629,35 @@ def describe_connection_confound(shapes: list[dict[str, t.Any]]) -> str:
         "the one process holding them, a split arm gets a set per process. Every ratio "
         "below is the claim path AND the connection count, and nothing here separates "
         "the two."
+    )
+
+
+def describe_working_backends(shapes: list[dict[str, t.Any]]) -> str:
+    """What a body that holds a worker thread adds to a shape's connection count.
+
+    An operator sizing `max_connections` off an idle fleet reads the idle column, which
+    is the wrong one for a durable workload: a sync body runs on the worker's own thread
+    pool, and Django's connections are thread-local.
+    """
+    measured = ", ".join(
+        f"{shape['shape']} {shape['connections_idle']} -> {shape['connections_busy']}"
+        for shape in shapes
+    )
+    per_slot = {
+        (shape["connections_busy"] - shape["connections_idle"])
+        / (shape["processes"] * shape["concurrency"])
+        for shape in shapes
+    }
+    verdict = (
+        "one more backend per busy slot, so a worker process holds its concurrency "
+        "plus two while every slot is working"
+        if per_slot == {1.0}
+        else "a different number per busy slot on each shape, so read the column and "
+        "not a rule"
+    )
+    return (
+        f"A durable body raised that count ({measured}): {verdict}. Size a server's "
+        "`max_connections` off the working column, never the idle one."
     )
 
 
@@ -632,6 +676,49 @@ def render_run_order(stage: dict[str, t.Any]) -> list[str]:
         + ", ".join(run_order)
         + ".",
     ]
+
+
+def render_table_state(stage: dict[str, t.Any]) -> list[str]:
+    """What each measurement's queue tables held when its drain started.
+
+    The rows a rate is read against, for the stage that varies them: two arms draining
+    the same pending work differ in the table under it, and nothing else in the table
+    above says so. Live and dead separately, because a drain leaves both.
+    """
+    measured = [
+        entry for entry in stage["measurements"] if entry["median"].get("table")
+    ]
+    if not measured:
+        return []
+    return [
+        "",
+        "Rows the queue tables held when each drain started:",
+        "",
+        (
+            "| measurement | task rows | dead task rows | tasks MB | run rows "
+            "| dead run rows | runs MB |"
+        ),
+        "| " + " | ".join(["---"] * 7) + " |",
+        *[
+            render_row(
+                [
+                    entry["spec"]["name"],
+                    str(entry["median"]["table"]["tasks"]["live_tuples"]),
+                    str(entry["median"]["table"]["tasks"]["dead_tuples"]),
+                    format_megabytes(entry["median"]["table"]["tasks"]["total_bytes"]),
+                    str(entry["median"]["table"]["runs"]["live_tuples"]),
+                    str(entry["median"]["table"]["runs"]["dead_tuples"]),
+                    format_megabytes(entry["median"]["table"]["runs"]["total_bytes"]),
+                ]
+            )
+            for entry in measured
+        ],
+    ]
+
+
+def format_megabytes(total_bytes: int) -> str:
+    """Bytes as MB, because a relation size is read for its order of magnitude."""
+    return f"{total_bytes / 1e6:.1f}"
 
 
 def build_commit_budget_lines(stage: dict[str, t.Any]) -> list[str]:
@@ -810,15 +897,20 @@ def build_derived_lines(stage: str, measurements: list[dict[str, t.Any]]) -> lis
         return build_scaling_efficiency_lines(measurements)
     if stage == "pooled_vs_split":
         return build_pooled_vs_split_lines(measurements)
+    if stage == "size_vs_depth":
+        return build_size_vs_depth_lines(measurements)
     if stage == "sync_vs_async":
         return build_async_ratio_lines(measurements)
     if stage == "checkpoint_cost":
         return build_checkpoint_multiplier_lines(measurements)
-    if all(entry["spec"]["mode"] == "rate" for entry in measurements):
-        # In rate mode throughput is set by the OFFER, so a throughput ratio there
-        # only restates the configured rate; latency is what those vary.
-        return build_ratio_lines(measurements, "end_to_end_p50_s", "End-to-end p50")
-    return build_ratio_lines(measurements, THROUGHPUT_KEY, "Throughput")
+    # In rate mode throughput is set by the OFFER, so a throughput ratio there only
+    # restates the configured rate; latency is what those vary.
+    metric, label = (
+        ("end_to_end_p50_s", "End-to-end p50")
+        if all(entry["spec"]["mode"] == "rate" for entry in measurements)
+        else (THROUGHPUT_KEY, "Throughput")
+    )
+    return build_ratio_lines(measurements, metric, label)
 
 
 def build_scaling_efficiency_lines(measurements: list[dict[str, t.Any]]) -> list[str]:
@@ -862,21 +954,68 @@ def describe_depth_confound(
     ]
 
 
+def build_size_vs_depth_lines(measurements: list[dict[str, t.Any]]) -> list[str]:
+    """What a bigger table cost at one fixed depth of pending work.
+
+    Referenced against the arm that drained the same tasks on an empty table, found by
+    the ballast it laid rather than by its name, so the pairing cannot come apart from
+    what was actually run.
+    """
+    fresh = next(
+        (entry for entry in measurements if not entry["spec"]["ballast_tasks"]), None
+    )
+    if fresh is None or not fresh["median"].get(THROUGHPUT_KEY, 0.0):
+        return build_ratio_lines(measurements, THROUGHPUT_KEY, "Throughput")
+    return [
+        "",
+        (
+            f"Throughput against `{fresh['spec']['name']}`, which drained the same "
+            f"{fresh['spec']['tasks']} pending tasks on a table holding nothing else:"
+        ),
+        "",
+        *[
+            f"- `{entry['spec']['name']}`: "
+            f"{describe_quotient(entry, fresh, THROUGHPUT_KEY, 1, 'x')}, "
+            f"{describe_ballast(entry['spec'])}"
+            for entry in measurements
+        ],
+        "",
+        (
+            "A ratio below 1 is table SIZE, every arm having drained the same pending "
+            "work; what the vacuumed arm gives back of it is the share that was dead "
+            "rows rather than live ones."
+        ),
+    ]
+
+
+def describe_ballast(spec: dict[str, t.Any]) -> str:
+    """What an arm laid in the tables before the drain its own bullet reports."""
+    if not spec["ballast_tasks"]:
+        return "no ballast"
+    if spec["vacuum_ballast"]:
+        return f"{spec['ballast_tasks']} tasks of ballast, vacuumed"
+    return f"{spec['ballast_tasks']} tasks of ballast"
+
+
 def build_pooled_vs_split_lines(measurements: list[dict[str, t.Any]]) -> list[str]:
-    """`split / pooled` at every total both shapes of the pair were measured at.
+    """`split / pooled` at every total and workload both shapes were measured at.
 
     Paired on the shapes themselves rather than on the measurement names, so the
-    pairing cannot come apart from what was actually run.
+    pairing cannot come apart from what was actually run — and on the workload as well
+    as the total, because the same total is measured on a nano-task body and on a
+    durable one and one ratio cannot stand for both.
     """
-    paired: dict[int, dict[str, dict[str, t.Any]]] = {}
+    paired: dict[tuple[int, str], dict[str, dict[str, t.Any]]] = {}
     for entry in measurements:
         spec = entry["spec"]
         shape = "pooled" if spec["workers"] == 1 else "split"
         total = spec["workers"] * spec["worker"]["concurrency"]
-        paired.setdefault(total, {})[shape] = entry
+        paired.setdefault((total, describe_workload(spec["task_path"])), {})[shape] = (
+            entry
+        )
     complete = [
-        (total, pair)
-        for total, pair in sorted(paired.items())
+        (key, pair)
+        for key, pair in sorted(paired.items())
         if {"pooled", "split"} <= pair.keys()
         and pair["pooled"]["median"].get(THROUGHPUT_KEY, 0.0)
     ]
@@ -889,11 +1028,20 @@ def build_pooled_vs_split_lines(measurements: list[dict[str, t.Any]]) -> list[st
         "Split / pooled throughput at the same total concurrency:",
         "",
         *[
-            f"- total {total}: "
+            f"- total {total}, {workload} bodies: "
             + describe_quotient(pair["split"], pair["pooled"], THROUGHPUT_KEY, 1, "x")
-            for total, pair in complete
+            for (total, workload), pair in complete
         ],
     ]
+
+
+def describe_workload(task_path: str) -> str:
+    """What a measurement's task path is a workload OF, for a line that pairs on it.
+
+    The path itself would do, and reads as noise in a bullet whose subject is the
+    regime rather than the import.
+    """
+    return WORKLOAD_LABELS.get(task_path, task_path)
 
 
 def build_async_ratio_lines(measurements: list[dict[str, t.Any]]) -> list[str]:

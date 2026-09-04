@@ -24,23 +24,27 @@ RAM, so a restart hands you back an empty server, and a run against one dies par
 through its first measurement with `schema "absurd" does not exist`. It takes a second
 and it is idempotent, so just run it every time.
 
-All eight stages took about 40 minutes on the reference machine (14 cores, at
-`--max-workers 10 --reps 3`), `latency_under_load` about 15 of them. Name stages to run
-only those; `--tasks`, `--duration`, `--reps` and `--max-workers` size them down to a
-dry run, and `--io-seconds` sets how long `sync_vs_async` pretends to do IO for. Results
-land in `benchmarks/results/`, which is git-ignored — the numbers belong to the machine
-that produced them.
+The nine stages take about an hour together on the reference machine (14 cores, at
+`--max-workers 14 --reps 3`). Seven of them were timed at 50 minutes in one run, of
+which `latency_under_load` was 15 and `size_vs_depth` 11 — that one drains four tasks
+for every one it measures. Name stages to run only those; `--tasks`, `--duration`,
+`--reps` and `--max-workers` size them down to a dry run, `--io-seconds` sets how long
+`sync_vs_async` pretends to do IO for, and `--durable-seconds` sets how long
+`pooled_vs_split`'s durable arms hold a worker thread (default 2 s; 30 s is an agent
+tool call's duration and ~15x that stage's cost). Results land in `benchmarks/results/`,
+which is git-ignored — the numbers belong to the machine that produced them.
 
-| stage                | what it answers                                             |
-| -------------------- | ----------------------------------------------------------- |
-| `worker_knobs`       | what `--concurrency`, `--batch-size` and async dispatch buy |
-| `process_scaling`    | how throughput scales with worker processes                 |
-| `pooled_vs_split`    | one total concurrency, reached two ways                     |
-| `poll_interval`      | what `--poll-interval` costs and buys                       |
-| `sync_vs_async`      | whether async task bodies beat sync ones                    |
-| `checkpoint_cost`    | what a `ctx.step` checkpoint costs                          |
-| `producer_ceiling`   | how fast the enqueue side can go                            |
-| `latency_under_load` | end-to-end latency at fractions of a sustainable offer rate |
+| stage                | what it answers                                                  |
+| -------------------- | ---------------------------------------------------------------- |
+| `worker_knobs`       | what `--concurrency`, `--batch-size` and async dispatch buy      |
+| `process_scaling`    | how throughput scales with worker processes                      |
+| `pooled_vs_split`    | one total concurrency, reached two ways, on short and long tasks |
+| `size_vs_depth`      | whether a big table or a deep queue is what costs throughput     |
+| `poll_interval`      | what `--poll-interval` costs and buys                            |
+| `sync_vs_async`      | whether async task bodies beat sync ones                         |
+| `checkpoint_cost`    | what a `ctx.step` checkpoint costs                               |
+| `producer_ceiling`   | how fast the enqueue side can go                                 |
+| `latency_under_load` | end-to-end latency at fractions of a sustainable offer rate      |
 
 Stages run in dependency order whatever order you type them in, but nothing runs a
 prerequisite you did not name: `process_scaling`, `poll_interval` and `checkpoint_cost`
@@ -65,20 +69,13 @@ The defaults need about 5 GB free in the Docker VM (1 GB of shared buffers plus 
 tmpfs). Set any of these in the shell that starts `db_bench`, then restart it and re-run
 `migrate`:
 
-| variable                | default | change it when                                          |
-| ----------------------- | ------- | ------------------------------------------------------- |
-| `BENCH_SHARED_BUFFERS`  | `1GB`   | the Docker VM has under ~4 GB free — try `256MB`        |
-| `BENCH_MAX_CONNECTIONS` | `100`   | you run over ~40 worker processes (2 backends each)     |
-| `BENCH_TMPFS_SIZE`      | `4g`    | the VM is small — `512m` covers a single stage          |
-| `BENCH_CPUS`            | unset   | you want the server pinned to N cores; unset = no limit |
-| `BENCH_MEMORY`          | unset   | you want the server's memory capped; unset = no limit   |
-
-**Two backends per worker process is the count for task bodies like the ones here, which
-touch no ORM.** Django's connections are thread-local and a worker runs sync bodies on a
-thread pool sized to `--concurrency`, so a body that queries the ORM opens one more per
-busy thread and holds it while the body runs: budget `--concurrency + 2` per process for
-that workload — 126 connections at 7 processes running the concurrency 16 recommended
-below.
+| variable                | default | change it when                                                                    |
+| ----------------------- | ------- | --------------------------------------------------------------------------------- |
+| `BENCH_SHARED_BUFFERS`  | `1GB`   | the Docker VM has under ~4 GB free — try `256MB`                                  |
+| `BENCH_MAX_CONNECTIONS` | `100`   | you run many worker processes — `--concurrency + 2` backends each while they work |
+| `BENCH_TMPFS_SIZE`      | `4g`    | the VM is small — `512m` covers a single stage                                    |
+| `BENCH_CPUS`            | unset   | you want the server pinned to N cores; unset = no limit                           |
+| `BENCH_MEMORY`          | unset   | you want the server's memory capped; unset = no limit                             |
 
 Too small a tmpfs does not fail at startup: the run dies partway through on a Postgres
 write error, so raise it if a long run aborts. Every value above is recorded in the
@@ -111,28 +108,54 @@ Under each saturation table is a commit-budget line saying what limited that row
 `client-bound` is our Python, `connection-bound` is Postgres, `unresolved` means the
 calibration could not tell.
 
+`pooled_vs_split` adds a backend table with two columns: `idle` is what its fleet opened
+with nothing to do, `working` is what it held with a long task running in every slot.
+Size a server's `max_connections` off the second one.
+
+`size_vs_depth` adds a table of what its queue tables held when each drain started —
+live rows, dead rows and megabytes. Every one of its arms drained the same amount of
+pending work, so the ratios under that table are what a bigger table cost on its own,
+and the vacuumed arm says how much of that was dead rows rather than live ones.
+
 ## What it found
 
-Measured on one 14-core laptop with the data directory in RAM, over four runs of one
-commit; every range below is across those runs. Read the directions, not the rates.
-[`CLAUDE.md`](CLAUDE.md) names the run behind each figure.
+Measured on one 14-core laptop with the data directory in RAM; every range below is over
+the runs that measured it, and a single figure came from one run. Read the directions,
+not the rates. [`CLAUDE.md`](CLAUDE.md) names the run behind each figure, and no run has
+measured every stage.
 
 - **Scale with worker processes, keep `--concurrency` around 16, and batch the claims.**
-  Neither axis had flattened at the top of the sweep: concurrency 1 -> 16 at one process
-  bought 3.0-3.7x, all of it at one queue depth. More processes always bought more, but
-  `process_scaling` preloads 2,000 tasks per worker, so its rungs drained 4,000 to
-  20,000 tasks and no multiple can be read off that ladder.
-- **Processes beat threads at the same total.** 4 x 1 beat 1 x 4 by 1.95-2.28x and 8 x 1
-  beat 1 x 8 by 2.17-2.29x, both arms of each pair at the same depth. 40-47% of a task's
-  wall time is outside the server (2.82-3.14 ms per task = 1.57-1.77 server + 1.16-1.48
-  client); what serialises it — the GIL, or the one claim connection a worker process
-  owns — is not established.
+  Concurrency 1 -> 16 at one process bought 3.0-4.0x and had not flattened, all of it at
+  one queue depth. More processes bought more up to 10; the 14-process rung read below
+  it at a deeper backlog, and `process_scaling` preloads 2,000 tasks per worker — 4,000
+  to 28,000 tasks across the ladder — so it cannot separate a knee from depth.
+- **Processes beat threads at the same total.** 8 x 1 beat 1 x 8 by 2.31x, both arms of
+  the pair at the same depth; 4 x 1 beat 1 x 4 by 2.35x, where the split arm is the one
+  measurement of the four the harness marked unstable, so quote the 8-way number. On the
+  long, database-touching workload the two shapes tie by construction, so that pair says
+  nothing about either. 40-47% of a task's wall time is outside the server (2.82-3.55 ms
+  per task = 1.57-2.09 server + 1.16-1.48 client); what serialises it — the GIL, or the
+  one claim connection a worker process owns — is not established.
 - **All of the per-task database cost is acquiring work, not finishing it.** Claiming a
-  task costs 13-16x completing one (1.41-1.56 ms against 0.09-0.12 ms), and 18-19% of
+  task costs 13-20x completing one (1.41-1.92 ms against 0.09-0.12 ms), and 14-19% of
   every claim is a scan for cancellations.
-- **A queue that is deeper is slower.** Throughput rises as a backlog drains, a fitted
-  median +15.7% within a rep over 150 reps, so a saturation number averages a curve and
-  does not compare across `--tasks` values.
+- **A `ctx.step` checkpoint costs about 0.6 ms and two commits.** A four-step workflow
+  drained at 4.25x the cost of an empty task (305 against 1,297 tasks/s, one run). That
+  multiple is what a task with nothing in its body pays; against an agent tool call that
+  runs for seconds a step is under a thousandth of the work it checkpoints, so choose
+  step boundaries for the restarts you want rather than for throughput.
+- **A bigger table is slower, and that is most of why a deeper queue is.** Throughput
+  rises as a backlog drains, a fitted median +15.7% within a rep over 150 reps, so a
+  saturation number averages a curve and does not compare across `--tasks` values. Four
+  times the `--tasks` costs 40-58% of the rate outright, and `size_vs_depth` — which
+  holds the pending depth still and moves only the rows behind it — puts 1.87x of that
+  on table size alone. Vacuuming the extra rows' dead versions bought 1.2%, so what
+  costs the throughput is the live rows: retention is a throughput feature here, not
+  housekeeping.
+- **A long task holds a Postgres connection of its own the whole time it runs**, so a
+  worker process holds up to `--concurrency + 2` backends — 18 at the concurrency above,
+  which is five processes against a default `max_connections` of 100. A count, not a
+  rate, so it holds on any machine.
 
 ## Caveats that change what you can do with a number
 
@@ -151,12 +174,11 @@ the same commit, 25 shared measurements: median CV 4.7%, mean 5.1%, worst 12.5%,
 systematically below the other two. Under about 12% is not evidence of anything, and a
 whole run reading low is usually the working point it inherited, not the machine.
 
-**Every workload here is a nano-task.** The five bodies are two no-ops, two sleeps and a
-4-step workflow, driven at the highest rate a fleet will take. django-absurd is mostly
-used for durable agent tool calls and long-running work — seconds to minutes per task,
-checkpointed, often suspended — where a 1.5 ms claim amortises into nothing. These
-tables rank configurations for THIS regime; they do not characterise that one.
-[`CLAUDE.md`](CLAUDE.md) says which findings carry over.
+**Most of what is above was measured on tasks that finish in microseconds.** Only
+`pooled_vs_split` also runs the long, database-touching workload django-absurd is
+primarily for; every other stage uses an empty task body, and its advice is advice about
+that regime. `--durable-seconds` is how you take the long arms to a realistic duration,
+and [`CLAUDE.md`](CLAUDE.md) says which findings carry over.
 
 **Measure on a quiet machine on AC power.** The macOS indexer alone was worth 1-1.4
 cores sustained. It spoils the saturation stages, which drive the box to its limit, and
@@ -168,16 +190,58 @@ and a probe fails when the fleet falls behind OR when the producer — on the sa
 never delivers the offer. Read the `Offer rate:` line and the ramp's `producer kept up`
 column first; two runs' rows only compare if their ramps agreed.
 
+## Browsing a corpus in the admin
+
+`seed.py` fills the `bench` queue's tables with millions of rows, so django-absurd's
+admin has something to page through. It enqueues a handful of template tasks through the
+real enqueue API, drains them with a real `absurd_worker`, and clones the drained rows
+server-side. Every command runs from inside `benchmarks/`, against the suites' plain
+`db` service — nothing here measures a rate, so the tuned `db_bench` would buy it
+nothing.
+
+```
+docker compose up -d --wait db
+docker compose exec db createdb -U postgres absurd_corpus
+
+export DJANGO_SETTINGS_MODULE=tests.benchmarks.settings
+export PGDATABASE=absurd_corpus
+uv run python manage.py migrate
+uv run python -m seed --rows 1000000
+uv run python manage.py createsuperuser
+uv run python manage.py runserver --insecure
+```
+
+Then open <http://localhost:8000/admin/>. `--rows` is what the queue holds afterwards,
+not what the run adds: the tables are emptied first, so seeding again replaces the
+corpus, and the six templates every clone is copied from are the floor. One million
+tasks and the 1.2 million runs behind them took 20 seconds and 1.1 GB on the reference
+machine.
+
+Export `PGPORT` too if a system Postgres owns 5432. `--insecure` serves the admin's
+static files with `DEBUG` off.
+
+**The corpus is synthetic, and no number taken on it is a property of django-absurd.**
+Every task is a copy of one of six templates, so the ages are uniform, the payloads are
+identical, and `claimed_by` is spread over eight worker names that never claimed
+anything. It answers questions about VOLUME — whether a page loads, which plan the
+changelist gets, what an index is worth — and nothing else.
+
+Seeding refuses, before it empties anything, when the queue tables' columns are not the
+ones it clones — in either direction. Cloning writes those tables directly, so an
+upstream change has to fail the seed rather than fill a table it half-understands.
+
 ## Files
 
 `stages.py`, `measurement.py`, `producer.py`, `runner.py`, `analysis.py` and `report.py`
-are the pipeline above. Beside them, `settings.py` (Django settings: `DATABASE_URL`,
-else `PGPORT_BENCH` against `absurd_bench`), `manage.py` (for `migrate` and the worker
-children), `tasks.py` (the five workloads: two no-ops, two sleeps, one 4-step workflow),
-`host.py` (host context capture and the suspension guard), and `pyproject.toml` plus
-`uv.lock` (the harness's own pinned uv project, django-absurd by path).
-[`CLAUDE.md`](CLAUDE.md) holds the reasoning: the measurement model, the results-file
-schema, and every number's evidence.
+are the pipeline above, and `seed.py` is the corpus seeder above that. Beside them,
+`settings.py` (Django settings: `DATABASE_URL`, else `PGPORT_BENCH` against
+`absurd_bench`), `manage.py` (for `migrate` and the worker children), `tasks.py` (the
+seven workloads: two no-ops, two sleeps, one 4-step workflow, one long body that reads
+and writes rows, and one that always fails), `workload/` (the one-model Django app that
+long body works on), `host.py` (host context capture and the suspension guard), and
+`pyproject.toml` plus `uv.lock` (the harness's own pinned uv project, django-absurd by
+path). [`CLAUDE.md`](CLAUDE.md) holds the reasoning: the measurement model, the
+results-file schema, and every number's evidence.
 
 ## Running the tests
 

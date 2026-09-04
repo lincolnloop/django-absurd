@@ -27,6 +27,7 @@ HOST = {
 }
 
 OPTIONS = {
+    "durable_seconds": 2.0,
     "duration_s": None,
     "io_seconds": 0.05,
     "max_workers": 8,
@@ -138,8 +139,8 @@ HEADER = (
     "\n"
     "- git sha: `deadbeef`\n"
     "- captured at: 2026-08-27T12:00:00+00:00\n"
-    "- options: --duration stage default, --io-seconds 0.05, --max-workers 8, "
-    "--reps 3, --tasks stage default\n"
+    "- options: --durable-seconds 2, --duration stage default, --io-seconds 0.05, "
+    "--max-workers 8, --reps 3, --tasks stage default\n"
     "- host cpu count: 8, load average (1m): 0.50\n"
     "- server: shared_buffers 128MB, max_connections 100, requested container "
     "limits: cpus unknown, memory unknown\n"
@@ -267,6 +268,74 @@ def render(
     write_stage(tmp_path, stage, entries, **extra)
     report.main(["--results-dir", str(tmp_path)])
     return capsys.readouterr().out
+
+
+def build_size_vs_depth_entries() -> list[dict[str, t.Any]]:
+    """One size_vs_depth run's three arms: one pending depth, three tables under it.
+
+    The ballasted arms hold four times the rows at the same pending work, and the
+    vacuumed one carries the same live rows with the drain's dead ones reclaimed —
+    which is what a reader divides the three throughputs against.
+    """
+    return [
+        build_measurement(
+            "fresh_table",
+            {"ballast_tasks": 0, "vacuum_ballast": False},
+            {
+                "throughput_per_s": 360.6,
+                "table": {
+                    "tasks": {
+                        "live_tuples": 5000,
+                        "dead_tuples": 0,
+                        "total_bytes": 1540096,
+                    },
+                    "runs": {
+                        "live_tuples": 5000,
+                        "dead_tuples": 0,
+                        "total_bytes": 1310720,
+                    },
+                },
+            },
+        ),
+        build_measurement(
+            "aged_table",
+            {"ballast_tasks": 15000, "vacuum_ballast": False},
+            {
+                "throughput_per_s": 147.0,
+                "table": {
+                    "tasks": {
+                        "live_tuples": 20000,
+                        "dead_tuples": 120,
+                        "total_bytes": 6144000,
+                    },
+                    "runs": {
+                        "live_tuples": 20000,
+                        "dead_tuples": 30000,
+                        "total_bytes": 9437184,
+                    },
+                },
+            },
+        ),
+        build_measurement(
+            "vacuumed_table",
+            {"ballast_tasks": 15000, "vacuum_ballast": True},
+            {
+                "throughput_per_s": 300.0,
+                "table": {
+                    "tasks": {
+                        "live_tuples": 20000,
+                        "dead_tuples": 0,
+                        "total_bytes": 6144000,
+                    },
+                    "runs": {
+                        "live_tuples": 20000,
+                        "dead_tuples": 0,
+                        "total_bytes": 9437184,
+                    },
+                },
+            },
+        ),
+    ]
 
 
 def build_rate_ramp(**overrides: t.Any) -> dict[str, t.Any]:
@@ -735,8 +804,9 @@ def test_reports_mixed_options_when_stages_were_run_at_different_sizes(
     rendered = render(capsys, tmp_path, "worker_knobs", entries)
 
     assert (
-        "- options: --duration stage default, --io-seconds 0.05, --max-workers 8, "
-        "--reps mixed (3, 10), --tasks mixed (60, stage default)\n"
+        "- options: --durable-seconds 2, --duration stage default, "
+        "--io-seconds 0.05, --max-workers 8, --reps mixed (3, 10), "
+        "--tasks mixed (60, stage default)\n"
     ) in rendered
 
 
@@ -881,6 +951,65 @@ def test_falls_back_to_ratios_when_checkpoint_cost_lost_half_its_pair(
 
     assert ("Throughput relative to `flat`:\n\n- `flat`: 1.00x\n") in render(
         capsys, tmp_path, "checkpoint_cost", entries
+    )
+
+
+def test_renders_what_a_bigger_table_cost_for_size_vs_depth(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The one comparison the stage exists for, and the tables it was made on.
+
+    Every arm drained the same pending depth, so a ratio below 1 is the table under it
+    and nothing else. The vacuumed arm is what splits that between live rows and the
+    dead ones a drain leaves behind, and the row counts print beside the ratios
+    because that split is only readable against them.
+    """
+    rendered = render(capsys, tmp_path, "size_vs_depth", build_size_vs_depth_entries())
+
+    assert (
+        "Rows the queue tables held when each drain started:\n"
+        "\n"
+        "| measurement | task rows | dead task rows | tasks MB | run rows "
+        "| dead run rows | runs MB |\n"
+        "| --- | --- | --- | --- | --- | --- | --- |\n"
+        "| fresh_table | 5000 | 0 | 1.5 | 5000 | 0 | 1.3 |\n"
+        "| aged_table | 20000 | 120 | 6.1 | 20000 | 30000 | 9.4 |\n"
+        "| vacuumed_table | 20000 | 0 | 6.1 | 20000 | 0 | 9.4 |\n"
+    ) in rendered
+    assert (
+        "Throughput against `fresh_table`, which drained the same 5000 pending tasks "
+        "on a table holding nothing else:\n"
+        "\n"
+        "- `fresh_table`: 1.00x, no ballast\n"
+        "- `aged_table`: 0.41x, 15000 tasks of ballast\n"
+        "- `vacuumed_table`: 0.83x, 15000 tasks of ballast, vacuumed\n"
+        "\n"
+        "A ratio below 1 is table SIZE, every arm having drained the same pending "
+        "work; what the vacuumed arm gives back of it is the share that was dead rows "
+        "rather than live ones.\n"
+    ) in rendered
+
+
+def test_says_nothing_derives_when_the_fresh_size_vs_depth_arm_measured_no_rate(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Every ratio in this stage divides by the arm that drained an empty table, so a
+    run whose reps of that arm all came out degenerate has nothing to divide by."""
+    entries = [
+        build_measurement(
+            "fresh_table",
+            {"ballast_tasks": 0, "vacuum_ballast": False},
+            {"throughput_per_s": 0.0},
+        ),
+        build_measurement(
+            "aged_table",
+            {"ballast_tasks": 15000, "vacuum_ballast": False},
+            {"throughput_per_s": 147.0},
+        ),
+    ]
+
+    assert ("Reference measurement measured nothing; nothing derived.\n") in render(
+        capsys, tmp_path, "size_vs_depth", entries
     )
 
 
@@ -1508,7 +1637,7 @@ def test_renders_split_over_pooled_throughput_for_pooled_vs_split(
     assert (
         "Split / pooled throughput at the same total concurrency:\n"
         "\n"
-        "- total 4: 1.50x (reps 1.23-1.83x)\n"
+        "- total 4, nano-task bodies: 1.50x (reps 1.23-1.83x)\n"
     ) in rendered
     assert (
         "Arms ran in this order, reversed each rep so neither always went first: "
@@ -1516,42 +1645,97 @@ def test_renders_split_over_pooled_throughput_for_pooled_vs_split(
     ) in rendered
 
 
+def test_ranks_the_two_shapes_once_per_workload_they_were_measured_on(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """One total, two workloads, two rankings — never one standing for both.
+
+    A nano-task body is over before its thread means anything and a durable one holds
+    that thread for seconds, so which shape wins is a separate question per workload.
+    Pairing on the total alone let whichever arm was recorded last silently replace the
+    other and print one ratio under a heading that covers two experiments.
+    """
+    rendered = render(
+        capsys,
+        tmp_path,
+        "pooled_vs_split",
+        [
+            *build_pooled_vs_split_entries(),
+            build_measurement(
+                "pooled_durable_4",
+                {
+                    "workers": 1,
+                    "worker": POOLED_WORKER,
+                    "task_path": "tasks.run_durable_work",
+                },
+                {"throughput_per_s": 2.0},
+            ),
+            build_measurement(
+                "split_durable_4",
+                {
+                    "workers": 4,
+                    "worker": SPLIT_WORKER,
+                    "task_path": "tasks.run_durable_work",
+                },
+                {"throughput_per_s": 2.2},
+            ),
+        ],
+    )
+
+    assert (
+        "Split / pooled throughput at the same total concurrency:\n"
+        "\n"
+        "- total 4, durable bodies: 1.10x\n"
+        "- total 4, nano-task bodies: 1.50x (reps 1.23-1.83x)\n"
+    ) in rendered
+
+
 def test_says_the_two_shapes_of_a_pair_opened_different_numbers_of_backends(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    """A worker process opens two backends whatever its concurrency, so the two ways
-    of reaching one total concurrency do not reach it on the same connections.
+    """An idle worker process opens two backends whatever its concurrency, so the two
+    ways of reaching one total concurrency do not reach it on the same connections.
 
     That is a confound in the stage's own comparison and the report says so rather
-    than leaving a ratio to be read as the claim path alone.
+    than leaving a ratio to be read as the claim path alone. Beside it, what a body
+    that holds a thread adds: one backend per busy slot, which is the number an
+    operator has to size `max_connections` against.
     """
     shapes = [
         {
-            "measurement": "pooled_4",
+            "shape": "1x4",
             "processes": 1,
             "concurrency": 4,
-            "connections": 2,
+            "connections_idle": 2,
+            "connections_busy": 6,
         },
         {
-            "measurement": "split_4",
+            "shape": "4x1",
             "processes": 4,
             "concurrency": 1,
-            "connections": 8,
+            "connections_idle": 8,
+            "connections_busy": 12,
         },
     ]
 
     assert (
-        "Postgres backends each shape opened (measured across starting its fleet):\n"
+        "Postgres backends each shape opened, idle and with a durable body in every "
+        "slot:\n"
         "\n"
-        "| measurement | processes | concurrency | connections |\n"
-        "| --- | --- | --- | --- |\n"
-        "| pooled_4 | 1 | 4 | 2 |\n"
-        "| split_4 | 4 | 1 | 8 |\n"
+        "| shape | processes | concurrency | idle | working |\n"
+        "| --- | --- | --- | --- | --- |\n"
+        "| 1x4 | 1 | 4 | 2 | 6 |\n"
+        "| 4x1 | 4 | 1 | 8 | 12 |\n"
         "\n"
         "At total 4 the two shapes opened different numbers of backends — a pooled "
         "arm's slots share the connections of the one process holding them, a split "
         "arm gets a set per process. Every ratio below is the claim path AND the "
         "connection count, and nothing here separates the two.\n"
+        "\n"
+        "A durable body raised that count (1x4 2 -> 6, 4x1 8 -> 12): one more backend "
+        "per busy slot, so a worker process holds its concurrency plus two while every "
+        "slot is working. Size a server's `max_connections` off the working column, "
+        "never the idle one.\n"
     ) in render(
         capsys,
         tmp_path,
@@ -1567,26 +1751,34 @@ def test_says_a_pair_whose_shapes_opened_the_same_backends_is_clean(
     """The other reading of the same measurement, which is why it is measured.
 
     If a pooled arm ever opens a connection per slot the ratio becomes the claim path
-    and nothing else, and the report has to be able to say that too.
+    and nothing else, and the report has to be able to say that too. The same goes for
+    the working column: a fleet that did not open one backend per busy slot is read off
+    the column rather than off a rule that no longer holds.
     """
     shapes = [
         {
-            "measurement": "pooled_4",
+            "shape": "1x4",
             "processes": 1,
             "concurrency": 4,
-            "connections": 8,
+            "connections_idle": 8,
+            "connections_busy": 8,
         },
         {
-            "measurement": "split_4",
+            "shape": "4x1",
             "processes": 4,
             "concurrency": 1,
-            "connections": 8,
+            "connections_idle": 8,
+            "connections_busy": 12,
         },
     ]
 
     assert (
         "Both shapes of every pair opened the same number of backends, so a ratio "
         "below is the claim path and nothing else.\n"
+        "\n"
+        "A durable body raised that count (1x4 8 -> 8, 4x1 8 -> 12): a different "
+        "number per busy slot on each shape, so read the column and not a rule. Size a "
+        "server's `max_connections` off the working column, never the idle one.\n"
     ) in render(
         capsys,
         tmp_path,
