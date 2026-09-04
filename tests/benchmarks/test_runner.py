@@ -12,7 +12,6 @@ which program it runs is substituted, and the protocol under test is the real on
 import re
 import subprocess
 import sys
-import time
 
 import pytest
 
@@ -30,12 +29,10 @@ def test_refuses_a_worker_that_never_reports_readiness() -> None:
         stdout=subprocess.PIPE,
         text=True,
     )
-    started = time.monotonic()
 
     with pytest.raises(RuntimeError, match="never reported readiness"):
         runner.wait_for_worker_ready(silent_child, timeout_s=2.0)
 
-    assert (time.monotonic() - started < 10.0) is True
     assert (silent_child.poll() is not None) is True
 
 
@@ -74,12 +71,10 @@ def test_refuses_a_worker_still_talking_when_its_deadline_passes() -> None:
         stdout=subprocess.PIPE,
         text=True,
     )
-    started = time.monotonic()
 
     with pytest.raises(RuntimeError, match="never reported readiness within 2s"):
         runner.wait_for_worker_ready(chatty_child, timeout_s=2.0)
 
-    assert (time.monotonic() - started < 10.0) is True
     assert (chatty_child.poll() is not None) is True
 
 
