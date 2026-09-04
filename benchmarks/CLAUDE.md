@@ -30,6 +30,16 @@ measurement sorts first, `checkpoint_cost`'s `flat` — where `process_scaling`'
 carry their own `load_before`/`load_after` climbing 2.65 to 8.43, which is the harness's
 own fleet growing under it.
 
+A third windowed run, `replicate`, is `results/pass-20260904T160340Z`: `worker_knobs`,
+`process_scaling`, `pooled_vs_split`, `size_vs_depth` and `checkpoint_cost` in ONE
+invocation, at the same commit as the other two, the same versions and the same
+`--max-workers 14 --reps 3`. It differs from them in one condition and it is not the
+calibration point: `windowed` and `windowed2` ran on a server up 34-37 hours, and
+`replicate` on one up 70 seconds to 24 minutes, because the recipe under
+[server uptime](#server-uptime-is-an-uncontrolled-variable) was followed before it. So
+it is a cold-server repeat of a warm-server pair, and what it settles is
+[repeatability](#repeatability-rank-things-do-not-confirm-small-changes).
+
 **Runs with different calibration points did not measure the same configuration.** `a`'s
 `worker_knobs` winner was `batch_32`, so every stage downstream of it ran
 `--concurrency 16 --batch-size 32` where `warmup`, `b` and `c2` ran concurrency 16 with
@@ -77,6 +87,24 @@ the macOS indexer suppressed.
 **A single run is read for rank orders and for ratios clearing the 12% floor, never for
 point estimates.** Every figure quoted from one below carries its cross-rep cv, so a
 reader can see which of the two it is.
+
+**What `replicate` settles.** It calibrated to `concurrency_16` with no unstable rung,
+so it measured the configuration `windowed` and `windowed2` measured, and every ratio
+those two rest on came back:
+
+    commits per task, 1 to 14 processes    2.128-2.131  ->  2.128-2.134
+    a 4-step workflow against a flat task        4.25x  ->  4.70x   (rep ranges overlap)
+    aged table against fresh, one depth          1.87x  ->  1.93x
+    durable pooled against durable split         1.00x  ->  1.00x   (reps 0.99-1.01)
+    peak process count                              10  ->  10
+
+Levels moved and did not move together: `checkpoint_cost`'s `flat` read 1,546.1 against
+1,297.2 (+19%), `worker_knobs`'s `concurrency_16` 1,333.2 against 1,264.6 (+5%),
+`process_scaling`'s `workers_10` 4,509.7 against 4,661.5 (-3%) and `size_vs_depth`'s
+`fresh_table` 355.6 against 375.2 (-5%). Mixed signs, three of the four inside the 12%
+floor. **A ratio between two arms of one run is what survives a change of run; an
+absolute rate is not** — which is the same lesson a mis-calibrated run teaches, arrived
+at from the other side.
 
 ## Overhead, itemised
 
@@ -304,6 +332,12 @@ at all when it was tested as a knob
 It does not touch the comparison the stage makes, since all three arms carry that step —
 but the fresh arm's LEVEL is not `concurrency_1`'s.
 
+`replicate` reproduced the pair at 355.6 against 324.8, 9.5% apart, so the 33% is not a
+fixed property of the stage and the ANALYZE cannot be worth a third of the rate. What is
+left is scatter on two 1x1 arms, which read cv 7.2% and 3.8% there. Still unexplained,
+now bounded: read the fresh arm as an arm of its own stage and do not carry its level
+into `worker_knobs`.
+
 ### The confounds, and what the stage does about each
 
 - **Index depth is part of "size" and is not separated from it.** A 20,000-row B-tree is
@@ -518,7 +552,9 @@ denominator cover one interval. `windowed`'s `process_scaling` is what shows it:
 second way, across shapes rather than up a ladder: `split_4` (four processes, one slot
 each) reads 3.008-3.011 and `split_8` reads 3.012-3.017, against `worker_knobs`'s
 one-process `concurrency_1` at 3.009-3.012. The count follows the claim batch, and the
-process count does not touch it.
+process count does not touch it. `replicate` says it a third way, on a cold server:
+2.128-2.134 up the same ladder, a 0.28% spread. The tightness is the finding, not the
+fourth decimal.
 
 ## Storage: two regimes on a volume, and none on RAM
 
@@ -968,6 +1004,19 @@ read as django-absurd's official figures. A rendered `report-<UTC stamp>.md` lan
 beside the JSON so a run and its reading stay together, stamped because a second run
 would otherwise overwrite the first reading while its own JSON sat right there.
 
+**Render the report and read that, not the JSON.** Every question a finished run gets —
+did it calibrate, what did an arm read, does it still agree with this file — is answered
+by `python -m report --results-dir results/<label>`. The report already derives what the
+question wants and carries the dispersion attached to it: an arm's rep endpoints, spread
+and cv beside its median, each derived ratio with its own rep range
+(`4.70x (reps 4.19-4.89x)`), the commit budget against the in-run ceiling, and the
+per-statement ms/task. A median lifted out of the JSON arrives with none of that, and a
+median quoted as though it were the finding is the mistake this whole file is arranged
+to prevent. The shape is not guessable either — a measurement's rate is
+`measurements[i].median.throughput_per_s`, and the arm's name is `spec.name`. Reach into
+the JSON only for a field the report does not print, `host.postgres_uptime_s` being the
+one that comes up, and say that is why.
+
 **Each file says which configuration produced it.** Beside `measurements` sits an
 `options` block holding `--tasks`, `--duration`, `--io-seconds`, `--durable-seconds`,
 `--max-workers` and `--reps` RESOLVED — an unset flag records what the run actually
@@ -1165,7 +1214,8 @@ order:
    process count
    ([the fleet start-up](#the-fleet-start-up-and-which-numbers-it-reaches)), so a
    difference between two rungs of `process_scaling` is shape and reads as one:
-   `windowed`'s ladder holds 2.128-2.131 commits per task from one process to fourteen.
+   `windowed`'s ladder holds 2.128-2.131 commits per task from one process to fourteen,
+   and `replicate`'s 2.128-2.134, so expect a third decimal of movement and no more.
    Read the reps, not the median — the counter is database-wide.
 3. **the `options` and `calibration` blocks.** Same flags, or the runs measured
    different experiments — a deeper queue is slower, so a saturation rate does not
@@ -1211,6 +1261,15 @@ when they over-offered, so nothing here supports a magnitude for it — only the
 observations under
 [Three consistency knobs, measured and refused](#three-consistency-knobs-measured-and-refused),
 which point opposite ways.
+
+`replicate` against `windowed`/`windowed2` is the closest thing to a controlled pair on
+it: one commit, one calibration point, the same knobs, a server up 70s-24min against one
+up 34-37 hours. Its rates moved by +19%, +5%, -3% and -5% on the four arms the runs
+share ([repeatability](#repeatability-rank-things-do-not-confirm-small-changes)). Mixed
+signs, three of the four inside the 12% floor, so a cold server did not buy a uniform
+lift. That is not a magnitude either — it is one pair, and between-run bias is already
+known to reach 18% on a rung — but it makes a large one-directional uptime effect the
+less likely reading. Keep recording `postgres_uptime_s`; keep not controlling for it.
 
 ## The five variables
 
