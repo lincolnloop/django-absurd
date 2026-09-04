@@ -4,6 +4,11 @@ Internal tooling that measures how much work a fleet of `absurd_worker` processe
 through, what latency looks like under a steady offered rate, and what the worker flags
 buy. Nothing here ships in the `django_absurd` wheel.
 
+> **This directory is mostly unreviewed AI-generated code.** It is measurement tooling
+> that ships to nobody, and it has not been through the review the packaged code gets.
+> Weigh its numbers accordingly. The disclaimer covers `benchmarks/` only — not the
+> `django_absurd` package, and not Absurd itself.
+
 The pipeline is `stages.py` (what to measure) -> `measurement.py` (one configuration,
 repeated) -> `producer.py` (enqueues) and `runner.py` (spawns real workers) -> Postgres
 -> `analysis.py` (SQL that turns Absurd's own timestamp columns into metrics) ->
@@ -204,8 +209,7 @@ benchmarks/serve_admin.sh 50000      # fewer, for a quicker loop
 
 Start the `db` service first, from the repo root (`docker compose up -d db`), as the
 suites do. The script then makes itself a database on it, migrates, seeds, and serves
-<http://localhost:8000/admin/>. Log in as `admin`/`admin` — credentials that suit a
-throwaway database on your own machine and nothing else. Re-running is fine: the
+<http://localhost:8000/admin/>. Log in as `admin`/`admin`. Re-running is fine: the
 argument is what the queue holds afterwards, not what the run adds, since the tables are
 emptied first and the six templates every clone is copied from are the floor. One
 million tasks and the 1.2 million runs behind them took 23 seconds and 1.1 GB on the
@@ -214,7 +218,7 @@ reference machine.
 `PGPORT` picks the server and `SAMPLE_DATABASE` the database on it. It is a database of
 its own because the harness's default is `db_bench`'s, which a real run empties. The
 script also sets `DEBUG=1`, which is what serves the admin's own CSS — leave `DEBUG`
-unset for anything you intend to time, since it keeps every query it runs in memory.
+unset for anything you intend to time.
 
 **The data is synthetic, and no number taken on it is a property of django-absurd.**
 Every task is a copy of one of six templates, so the ages are uniform, the payloads are
@@ -229,15 +233,16 @@ upstream change has to fail the seed rather than fill a table it half-understand
 ## Files
 
 `stages.py`, `measurement.py`, `producer.py`, `runner.py`, `analysis.py` and `report.py`
-are the pipeline above, and `seed.py` fills the tables for the admin. Beside them,
-`settings.py` (Django settings: `DATABASE_URL`, else `PGPORT_BENCH` against
-`absurd_bench`), `manage.py` (for `migrate` and the worker children), `tasks.py` (the
-seven workloads: two no-ops, two sleeps, one 4-step workflow, one long body that reads
-and writes rows, and one that always fails), `workload/` (the one-model Django app that
-long body works on), `host.py` (host context capture and the suspension guard), and
-`pyproject.toml` plus `uv.lock` (the harness's own pinned uv project, django-absurd by
-path). [`CLAUDE.md`](CLAUDE.md) holds the reasoning: the measurement model, the
-results-file schema, and every number's evidence.
+are the pipeline above, `seed.py` fills the tables for the admin and `serve_admin.sh`
+serves it on them. Beside them, `settings.py` (Django settings: `DATABASE_URL`, else
+`PGPORT_BENCH` against `absurd_bench`, plus `DEBUG` and the admin stack), `urls.py`
+(which mounts the admin), `manage.py` (for `migrate` and the worker children),
+`tasks.py` (the seven workloads: two no-ops, two sleeps, one 4-step workflow, one long
+body that reads and writes rows, and one that always fails), `workload/` (the one-model
+Django app that long body works on), `host.py` (host context capture and the suspension
+guard), and `pyproject.toml` plus `uv.lock` (the harness's own pinned uv project,
+django-absurd by path). [`CLAUDE.md`](CLAUDE.md) holds the reasoning: the measurement
+model, the results-file schema, and every number's evidence.
 
 ## Running the tests
 
