@@ -279,7 +279,7 @@ against aged, per task:
     client remainder      1.16 -> 1.33
 
 Every millisecond of the difference is in the claim path, and the steepest multiple is
-on the arm of it that scans `t_bench` for cancellations — the one statement whose cost
+on the part of it that scans `t_bench` for cancellations — the one statement whose cost
 follows what the table HOLDS rather than what is claimable. That is the mechanism the
 magnitude needed, and it is what makes the pair worth raising upstream.
 
@@ -298,7 +298,8 @@ but the fresh arm's LEVEL is not `concurrency_1`'s.
 - **Index depth is part of "size" and is not separated from it.** A 20,000-row B-tree is
   deeper than a 5,000-row one and its pages are likelier to miss shared buffers. Nothing
   here tells a deeper index apart from a longer heap; both are what "a bigger table"
-  means for this experiment, and a result names the pair rather than either alone.
+  means for this experiment, and the result below names the pair rather than either
+  alone.
 - **Planner statistics are equalised, not left to chance.** A freshly bulk-loaded table
   and one that has churned carry different staleness, so `refresh_table_state` ANALYZEs
   both queue tables in EVERY arm, after the measured preload and before the fleet starts
