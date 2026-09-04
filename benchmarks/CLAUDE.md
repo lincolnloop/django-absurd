@@ -175,7 +175,9 @@ quotient rests on the marked rung, so its endpoints alone put it between 3.2x an
 The report's `T(N)/(N x T(1))` block prints each rung's backlog and marks itself
 `CONFOUNDED` for the same reason.
 
-Advice: scale with PROCESSES, concurrency around 16, batch the claims.
+Advice: scale with PROCESSES, concurrency around 16, batch the claims. The process half
+rests on the diagonal above — 2.31x at eight slots and 2.35x at four, at a fixed total
+concurrency — and not on the ladder, which cannot say how far it goes.
 
 **Future work: run the ladder at one depth.** A fixed preload across every rung, sized
 for the fastest one, is what makes the process axis a measurement.

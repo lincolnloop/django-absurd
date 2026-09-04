@@ -24,8 +24,7 @@ DATABASES = {
 }
 
 # The worker children run on `benchmarks/settings.py` against THIS suite's database, so
-# the workload app's table has to be migrated into this one; `staticfiles` is what
-# `runserver --insecure` serves the admin's CSS from over a seeded corpus.
+# the workload table migrates here; `staticfiles` is for `runserver --insecure`.
 INSTALLED_APPS = [
     *tests.settings.INSTALLED_APPS,
     "django.contrib.staticfiles",
