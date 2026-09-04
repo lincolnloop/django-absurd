@@ -1061,8 +1061,11 @@ nothing having run.
 **A rep that varied the table it drained on records what that table held.** `table` sits
 on the rep beside `preload_s`, holding `live_tuples`, `dead_tuples` and `total_bytes`
 for the tasks table and the runs table — read after the measured preload and before the
-fleet, with an ANALYZE in front of it so the counts and the plans a claim gets come off
-the same statistics. `null` on every measurement outside that experiment, whose
+fleet, with an ANALYZE in front of it so the dead rows and the plans a claim gets come
+off the same statistics. `live_tuples` is COUNTED rather than read off those statistics:
+an ANALYZE sets `pg_stat_get_live_tuples` to the truth and any backend still holding
+unflushed insert counters then adds its arrears on top, which read 285 live tuples on a
+table holding 240 rows. `null` on every measurement outside that experiment, whose
 `spec.ballast_tasks` is `null` too;
 [Size or depth](#size-or-depth-the-experiment-that-separates-them) is what the block is
 for. `spec.vacuum_ballast` beside it says whether the arm reclaimed the ballast's dead

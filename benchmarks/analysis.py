@@ -207,12 +207,14 @@ end $$;
 """
 
 
-# Live and dead rows as the statistics collector last estimated them, beside a size
-# that is exact. Keyed on the relation's own oid, so the row exists whatever the
-# collector has seen.
+# Live rows counted, dead rows as the statistics collector last estimated them, and a
+# size that is exact. Counted rather than read off `pg_stat_get_live_tuples`, which an
+# ANALYZE sets to the truth and any backend still holding unflushed insert counters
+# then adds its arrears to — measured at 285 live tuples on a table holding 240 rows,
+# one preload thread's 45 landing after the ANALYZE. Dead rows have no exact source.
 TABLE_STATE_SQL = """
 select
-  pg_stat_get_live_tuples(oid),
+  (select count(*) from {table}),
   pg_stat_get_dead_tuples(oid),
   pg_total_relation_size(oid)
 from pg_class
@@ -576,7 +578,7 @@ def vacuum_queue_tables(queue: str) -> None:
 def refresh_table_state(queue: str) -> dict[str, dict[str, int]]:
     """ANALYZE the queue tables, then read back what each of them now holds.
 
-    ANALYZE first because the row counts below and the plans a claim gets are read off
+    ANALYZE first because the dead rows below and the plans a claim gets are read off
     the same statistics, and a table just bulk-loaded and one that has churned carry
     different staleness — which would otherwise be a second difference between two
     arms meant to differ only in size. Costed separately and found to move no drain
@@ -590,20 +592,26 @@ def refresh_table_state(queue: str) -> dict[str, dict[str, int]]:
                 )
             )
     return {
-        role: read_table_state(f"absurd.{prefix}_{queue}")
+        role: read_table_state("absurd", f"{prefix}_{queue}")
         for role, prefix in (("tasks", "t"), ("runs", "r"))
     }
 
 
-def read_table_state(table: str) -> dict[str, int]:
+def read_table_state(schema: str, table: str) -> dict[str, int]:
     """One table's live rows, dead rows and total bytes, indexes and TOAST included.
 
-    Through `pg_stat_get_*` on the relation rather than `pg_stat_user_tables`, which
-    has no row for a table the statistics collector has never seen and would leave the
-    caller a missing key where the honest answer is zero.
+    Dead rows through `pg_stat_get_dead_tuples` on the relation rather than
+    `pg_stat_user_tables`, which has no row for a table the statistics collector has
+    never seen and would leave the caller a missing key where the honest answer is
+    zero. The live rows are counted instead (see `TABLE_STATE_SQL`).
     """
     with connections[resolve_absurd_database()].cursor() as cursor:
-        cursor.execute(TABLE_STATE_SQL, [table])
+        cursor.execute(
+            psycopg.sql.SQL(TABLE_STATE_SQL).format(
+                table=psycopg.sql.Identifier(schema, table)
+            ),
+            [f"{schema}.{table}"],
+        )
         live, dead, total_bytes = cursor.fetchone()
     return {
         "live_tuples": int(live),
