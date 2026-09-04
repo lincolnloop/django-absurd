@@ -1,3 +1,4 @@
+import datetime as dt
 import json
 import pathlib
 import typing as t
@@ -1251,22 +1252,12 @@ def test_measures_one_pending_depth_on_three_sizes_of_table(
 ) -> None:
     """The stage's whole design, in the two things a results file has to show.
 
-    Every arm drains exactly `--tasks` tasks: the ballast is enqueued and drained
-    BEFORE the measured tasks exist, and the window every metric is read over starts
-    after it, so a ballast that leaked into the measurement would show up here as a
-    task count that is not the one that was asked for. The ballast keeps its ratio to
-    that depth, so `--tasks` shrinks the whole experiment rather than leaving a smoke
-    run to drain the production ballast.
-
-    And the tables the three arms drained on, read after the measured preload and
-    before the fleet: the ballasted arms carry four times the rows at the same pending
-    depth, which is the independent variable — four times in BOTH tables, an enqueue
-    writing a run row as well as a task row — and the vacuumed one starts on a runs
-    table holding no dead rows, which is what separates a table with more LIVE rows
-    from one carrying the dead ones a drain leaves behind. Whether the unvacuumed arm
-    still has its dead rows by then is a property of the run — autovacuum may have
-    reclaimed them already — which is why every rep records the count rather than the
-    stage asserting it.
+    Every arm drains exactly `--tasks`: the ballast is laid and drained before the
+    measured tasks exist and the metrics' window opens after it, so a ballast that
+    leaked in reads here as a task count nobody asked for. And the tables each arm
+    drained on: four times the rows at the same pending depth, in BOTH tables, an
+    enqueue writing a run row as well as a task row. Only the vacuumed arm's dead rows
+    are asserted — autovacuum may already have taken the other's.
     """
     stages.main(
         [
@@ -1409,19 +1400,11 @@ def test_a_saturation_rep_counts_runs_over_the_window_its_commits_came_from(
 ) -> None:
     """The commit counter starts once the fleet is up, so the run counter must too.
 
-    Asserted against a count taken independently from the mark the rep recorded rather
-    than against a ratio: a ratio would encode this machine's speed, while the two
-    counts have to agree on any machine or `commits_per_task` divides one window by
-    another. What it pins end to end is the wiring — that a rep records the mark it
-    divided by, and that the mark it records is the one the run count was taken from.
-    How many runs land the wrong side of it is the machine's to decide, and
+    Two machine-independent things about the mark a rep recorded: it sits past that
+    rep's whole preload, which is what starts before the fleet does, and the run count
+    beside it is the one taken over it. Every rep truncates the queue in front of
+    itself, so the rows read below are the last rung's own, and
     `tests/benchmarks/test_metrics.py` pins the windowing itself at chosen timestamps.
-
-    Two workers, because that interval can only hold completions while part of a fleet
-    is claiming and the rest is still starting; the children here come up a fraction of
-    a millisecond apart and it usually holds none. The two-worker rung is the last of a
-    ladder bounded there, and every rep truncates the queue tables in front of it, so
-    the rows the count below reads are that rung's own.
     """
     (tmp_path / "stage_worker_knobs.json").write_text(
         json.dumps({"measurements": [build_recorded_rung("clean_c1", 500.0, 1)]})
@@ -1446,6 +1429,13 @@ def test_a_saturation_rep_counts_runs_over_the_window_its_commits_came_from(
         for entry in utils.read_stage(tmp_path, "process_scaling")["measurements"]
         if entry["spec"]["workers"] == 2
     )
-    assert fleet["median"]["n_runs"] == utils.count_runs_completed_after(
-        fleet["median"]["window_start"]
-    )
+    window_start = fleet["median"]["window_start"]
+    assert {
+        "runs_counted_over_the_mark": fleet["median"]["n_runs"],
+        "mark_is_past_the_preload": (
+            dt.datetime.fromisoformat(window_start) > utils.read_latest_enqueue_at()
+        ),
+    } == {
+        "runs_counted_over_the_mark": utils.count_runs_completed_after(window_start),
+        "mark_is_past_the_preload": True,
+    }

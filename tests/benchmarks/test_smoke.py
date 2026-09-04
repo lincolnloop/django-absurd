@@ -667,7 +667,9 @@ def test_saturation_rep_records_what_its_tasks_cost_in_commits() -> None:
     client or by the disk's fsync.
 
     Asserted as measured, and as at least the one commit each completion has to make;
-    never at a number, which is the finding.
+    never at a number, which is the finding. The sample is pinned at `n_tasks`, which
+    is the divisor `n_runs` only where nothing is redelivered and no completion beats
+    the window mark — true at the one worker this rung asks for, and not above it.
     """
     spec = measurement.MeasurementSpec(
         name="smoke-commits",

@@ -10,7 +10,6 @@ from django.urls import reverse
 import seed
 from django_absurd.exceptions import QueueNotProvisionedError
 from django_absurd.queues import resolve_absurd_database
-from tests.benchmarks import utils
 
 # Seeding drains its template rows with a real `absurd_worker` child: a separate
 # process on its own connection, which cannot see rows the test has not committed.
@@ -19,6 +18,10 @@ pytestmark = pytest.mark.django_db(transaction=True)
 # Small enough to seed in a couple of seconds, and well past the handful of templates
 # every clone is copied from, so the clone path does the bulk of the work.
 SEEDED_ROWS = 200
+# The clone copies the templates round-robin in uuidv7 order, so the one that fails is
+# every sixth: 33 of the 200 tasks end failed, and a failed task carries a run per
+# attempt where a completed one carries a single run.
+SEEDED_RUNS = SEEDED_ROWS + 33
 
 
 @pytest.mark.parametrize(
@@ -83,52 +86,49 @@ def test_seeding_sends_an_unprovisioned_queue_to_the_command_that_provisions_it(
 
 
 def test_seeding_writes_the_rows_it_reports_and_the_admin_can_page_them(
-    admin_client: Client,
+    admin_client: Client, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Counted through the admin's own changelist, which is what a person pages.
+    """Counted through the admin's own changelists, which is what a person pages.
 
-    A seeder returning its intended count reports success for a clone that wrote
-    nothing, and a changelist count proves the rows are reachable through the queryset
-    the admin actually builds. The runs are asserted twice over: which states reached
-    the corpus, which is what the failing template is in the set for, and that there
-    are more runs than tasks, which holds only if a template was retried before
-    anything was cloned.
+    Driven through the command line, so the line a person reads after seeding is
+    asserted against the same corpus — with only the elapsed time blanked, the one
+    figure that belongs to the machine rather than to the corpus.
+
+    The runs changelist is what the template drain exists for, and its count is
+    arithmetic rather than the table read back at itself: a failed task carries a run
+    per attempt, so the corpus holds one run per task plus one for each failed one.
+    `last_attempt_run` is checked against the runs table too — a clone pointing at the
+    template's run instead of its own is a dangling link the admin renders as real.
     """
-    summary = seed.seed_queue_tables(rows=SEEDED_ROWS, queue="bench")
+    seed.main(["--rows", str(SEEDED_ROWS)])
+    reported = re.sub(r"[\d.]+s$", "Ns", capsys.readouterr().out.strip())
 
-    response = admin_client.get(reverse("admin:django_absurd_task_changelist"))
-    changelist = t.cast("dict[str, t.Any]", response.context_data)["cl"]
+    tasks_page = admin_client.get(reverse("admin:django_absurd_task_changelist"))
+    runs_page = admin_client.get(reverse("admin:django_absurd_run_changelist"))
+    tasks_changelist = t.cast("dict[str, t.Any]", tasks_page.context_data)["cl"]
+    runs_changelist = t.cast("dict[str, t.Any]", runs_page.context_data)["cl"]
     with connections[resolve_absurd_database()].cursor() as cursor:
         cursor.execute("select distinct state from absurd.r_bench")
         run_states = {row[0] for row in cursor.fetchall()}
+        cursor.execute(
+            "select count(*) from absurd.t_bench t join absurd.r_bench r "
+            "on r.run_id = t.last_attempt_run and r.task_id = t.task_id"
+        )
+        tasks_whose_last_run_is_their_own = cursor.fetchone()[0]
     assert {
-        "status": response.status_code,
-        "rows_the_changelist_found": changelist.result_count,
-        "tasks_the_seeder_counted": summary.tasks,
-        "runs_the_seeder_counted": summary.runs,
+        "reported": reported,
+        "pages": (tasks_page.status_code, runs_page.status_code),
+        "tasks_the_changelist_found": tasks_changelist.result_count,
+        "runs_the_changelist_found": runs_changelist.result_count,
         "run_states": run_states,
-        "more_runs_than_tasks": summary.runs > summary.tasks,
+        "tasks_whose_last_run_is_their_own": tasks_whose_last_run_is_their_own,
     } == {
-        "status": 200,
-        "rows_the_changelist_found": SEEDED_ROWS,
-        "tasks_the_seeder_counted": SEEDED_ROWS,
-        "runs_the_seeder_counted": utils.count_rows("r_bench"),
+        "reported": (
+            f"seeded absurd.t_bench: {SEEDED_ROWS} tasks, {SEEDED_RUNS} runs in Ns"
+        ),
+        "pages": (200, 200),
+        "tasks_the_changelist_found": SEEDED_ROWS,
+        "runs_the_changelist_found": SEEDED_RUNS,
         "run_states": {"completed", "failed"},
-        "more_runs_than_tasks": True,
+        "tasks_whose_last_run_is_their_own": SEEDED_ROWS,
     }
-
-
-def test_the_command_line_reports_what_the_tables_hold(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """The line a person reads after seeding says what the tables now hold.
-
-    Only the elapsed time is blanked: it is the one figure that belongs to the machine
-    rather than to the corpus.
-    """
-    seed.main(["--rows", str(SEEDED_ROWS)])
-
-    assert re.sub(r"[\d.]+s$", "Ns", capsys.readouterr().out.strip()) == (
-        f"seeded absurd.t_bench: {SEEDED_ROWS} tasks, "
-        f"{utils.count_rows('r_bench')} runs in Ns"
-    )

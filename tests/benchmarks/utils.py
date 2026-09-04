@@ -276,19 +276,19 @@ def insert_hand_timed_task(
         )
 
 
-def count_rows(table: str) -> int:
-    """Rows in one of the Absurd schema's tables, counted rather than estimated.
+def read_latest_enqueue_at(queue: str = "bench") -> dt.datetime:
+    """The newest `enqueue_at` the queue's tasks table holds.
 
-    `count(*)`, not `pg_stat`'s live-tuple figure, which is a statistic the planner
-    keeps and reads back stale on a table something has just bulk-loaded.
+    A saturation rep preloads its whole backlog before it starts its fleet, so this is
+    where that preload finished — the instant a window mark has to be later than.
     """
     with connections[resolve_absurd_database()].cursor() as cursor:
         cursor.execute(
-            psycopg.sql.SQL("select count(*) from {table}").format(
-                table=psycopg.sql.Identifier("absurd", table)
+            psycopg.sql.SQL("select max(enqueue_at) from {tasks}").format(
+                tasks=psycopg.sql.Identifier("absurd", f"t_{queue}")
             )
         )
-        return int(cursor.fetchone()[0])
+        return t.cast("dt.datetime", cursor.fetchone()[0])
 
 
 def count_runs_completed_after(window_start: str, queue: str = "bench") -> int:
