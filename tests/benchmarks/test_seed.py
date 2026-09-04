@@ -29,11 +29,12 @@ SEEDED_ROWS = 200
             (
                 "The queue tables are not the shape this seeder clones: "
                 "absurd.t_bench has unknown priority. Upstream Absurd has moved them, "
-                "so the clone would write rows that look right and are not — a column "
-                "it has never heard of stays at its default on every cloned row. "
-                "Reconcile TASK_CLONE_COLUMNS and RUN_CLONE_COLUMNS in "
-                "benchmarks/seed.py against django_absurd's migration, then seed "
-                "again."
+                "so this refusal comes before the truncate rather than partway "
+                "through the clone: a column the seeder does not write stays at its "
+                "default on every cloned row, and one it writes that has gone fails "
+                "at the first insert with the corpus already emptied. Reconcile "
+                "TASK_CLONE_COLUMNS and RUN_CLONE_COLUMNS in benchmarks/seed.py "
+                "against django_absurd's migration, then seed again."
             ),
         ),
         (
@@ -41,11 +42,12 @@ SEEDED_ROWS = 200
             (
                 "The queue tables are not the shape this seeder clones: "
                 "absurd.t_bench has no params. Upstream Absurd has moved them, "
-                "so the clone would write rows that look right and are not — a column "
-                "it has never heard of stays at its default on every cloned row. "
-                "Reconcile TASK_CLONE_COLUMNS and RUN_CLONE_COLUMNS in "
-                "benchmarks/seed.py against django_absurd's migration, then seed "
-                "again."
+                "so this refusal comes before the truncate rather than partway "
+                "through the clone: a column the seeder does not write stays at its "
+                "default on every cloned row, and one it writes that has gone fails "
+                "at the first insert with the corpus already emptied. Reconcile "
+                "TASK_CLONE_COLUMNS and RUN_CLONE_COLUMNS in benchmarks/seed.py "
+                "against django_absurd's migration, then seed again."
             ),
         ),
     ],

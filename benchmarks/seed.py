@@ -146,10 +146,12 @@ class QueueTableShapeError(Exception):
                 clauses.append(f"{table} has unknown {', '.join(columns.unexpected)}")
         super().__init__(
             f"The queue tables are not the shape this seeder clones: "
-            f"{'; '.join(clauses)}. Upstream Absurd has moved them, so the clone would "
-            f"write rows that look right and are not — a column it has never heard of "
-            f"stays at its default on every cloned row. Reconcile TASK_CLONE_COLUMNS "
-            f"and RUN_CLONE_COLUMNS in benchmarks/seed.py against django_absurd's "
+            f"{'; '.join(clauses)}. Upstream Absurd has moved them, so this refusal "
+            f"comes before the truncate rather than partway through the clone: a "
+            f"column the seeder does not write stays at its default on every cloned "
+            f"row, and one it writes that has gone fails at the first insert with the "
+            f"corpus already emptied. Reconcile TASK_CLONE_COLUMNS and "
+            f"RUN_CLONE_COLUMNS in benchmarks/seed.py against django_absurd's "
             f"migration, then seed again."
         )
 

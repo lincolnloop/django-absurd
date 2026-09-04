@@ -121,16 +121,16 @@ and the vacuumed arm says how much of that was dead rows rather than live ones.
 
 ## What it found
 
-Measured on one 14-core laptop with the data directory in RAM, across five runs; every
+Measured on one 14-core laptop with the data directory in RAM, across six runs; every
 range below is over the runs that measured it, and a single figure came from one run.
 Read the directions, not the rates. [`CLAUDE.md`](CLAUDE.md) names the run behind each
 figure, and no run has measured every stage.
 
 - **Scale with worker processes, keep `--concurrency` around 16, and batch the claims.**
-  Neither axis had flattened at the top of the sweep: concurrency 1 -> 16 at one process
-  bought 3.0-4.0x, all of it at one queue depth. More processes always bought more, but
-  `process_scaling` preloads 2,000 tasks per worker, so its rungs drained 4,000 to
-  28,000 tasks and no multiple can be read off that ladder.
+  Concurrency 1 -> 16 at one process bought 3.0-4.0x and had not flattened, all of it at
+  one queue depth. More processes bought more up to 10; the 14-process rung read below
+  it at a deeper backlog, and `process_scaling` preloads 2,000 tasks per worker — 4,000
+  to 28,000 tasks across the ladder — so it cannot separate a knee from depth.
 - **Processes beat threads at the same total.** 8 x 1 beat 1 x 8 by 2.31x, both arms of
   the pair at the same depth; 4 x 1 beat 1 x 4 by 2.35x, where the split arm is the one
   measurement of the four the harness marked unstable, so quote the 8-way number. On the

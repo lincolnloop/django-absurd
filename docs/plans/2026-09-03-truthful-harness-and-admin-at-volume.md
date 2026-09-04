@@ -8,7 +8,7 @@
 finding, and a seeder that puts millions of rows in front of the admin.
 
 **Architecture:** One branch. Land what exists, fix the counting window, add the seeder,
-take one ~20-minute run over three stages, restate the docs from it.
+take one ~30-minute run over four stages, restate the docs from it.
 
 **Spec:** `docs/specs/2026-09-03-truthful-harness-and-admin-at-volume.md`
 
@@ -315,12 +315,16 @@ Mains, not battery. Prefix with `caffeinate -is`. This machine has slept 25-284 
 mid-run before; `perf_counter` does not count the nap, so a napped arm reads fast and
 entirely plausible.
 
-- [ ] **Step 3: Run three stages, not eight**
+- [ ] **Step 3: Run four stages, not eight**
 
 ```bash
-caffeinate -is uv run python -m stages process_scaling pooled_vs_split checkpoint_cost \
-  --results-dir results/<dated>
+caffeinate -is uv run python -m stages worker_knobs process_scaling pooled_vs_split \
+  checkpoint_cost --results-dir results/<dated>
 ```
+
+`worker_knobs` is in the list because `process_scaling` and `checkpoint_cost` calibrate
+from `stage_worker_knobs.json`, and a fresh results directory has none — without it the
+run exits 0 having measured nothing.
 
 Roughly 20 minutes. `latency_under_load` is excluded because its reps are already
 windowed on the database clock, so the spawn bias never touched them. `worker_knobs`,

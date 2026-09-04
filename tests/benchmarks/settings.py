@@ -23,12 +23,9 @@ DATABASES = {
     | {"TEST": {"NAME": f"test_{os.environ.get('PGDATABASE', 'postgres')}_benchmarks"}},
 }
 
-# The harness's own workload app, holding the model a durable task body reads and
-# writes. The `absurd_worker` children run on `benchmarks/settings.py` against THIS
-# suite's database, so its table has to be migrated into this one. Named through the
-# module rather than off the star import, which flake8 cannot see a name through.
-# `staticfiles` is what `runserver --insecure` hands the admin its CSS from, when this
-# module is browsing a seeded corpus (`benchmarks/README.md`).
+# The worker children run on `benchmarks/settings.py` against THIS suite's database, so
+# the workload app's table has to be migrated into this one; `staticfiles` is what
+# `runserver --insecure` serves the admin's CSS from over a seeded corpus.
 INSTALLED_APPS = [
     *tests.settings.INSTALLED_APPS,
     "django.contrib.staticfiles",

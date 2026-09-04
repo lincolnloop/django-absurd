@@ -157,5 +157,5 @@ def test_starts_a_fleet_in_the_time_of_one_child_not_one_child_each() -> None:
     together_s = time.monotonic() - together_started
     runner.stop_workers(at_once)
 
-    assert (len(at_once) == FLEET_SIZE) is True
-    assert (together_s < serial_s * 0.75) is True
+    assert len(at_once) == FLEET_SIZE
+    assert together_s < serial_s * 0.75
