@@ -29,36 +29,31 @@ uv run python - <<'PY'
 import os
 
 import psycopg
-from psycopg import sql
+from psycopg import errors, sql
 
 target = psycopg.conninfo.conninfo_to_dict(os.environ["DATABASE_URL"])
 database = target.pop("dbname")
 with psycopg.connect(**target, dbname="postgres", autocommit=True) as connection:
-    held = connection.execute(
-        "select 1 from pg_database where datname = %s", (database,)
-    ).fetchone()
-    if held is None:
+    try:
         connection.execute(
             sql.SQL("create database {}").format(sql.Identifier(database))
         )
-        print(f"created database {database}")
+    except errors.DuplicateDatabase:
+        pass
 PY
 
 uv run python manage.py migrate
 uv run python -m seed --rows "$rows"
 
-# Same story for the superuser, except that only ONE failure means "already there";
-# anything else has to reach the terminal rather than be swallowed as that.
-if ! superuser_output=$(DJANGO_SUPERUSER_PASSWORD=admin uv run python manage.py \
-    createsuperuser --noinput --username admin --email admin@example.com 2>&1); then
-    case "$superuser_output" in
-    *"That username is already taken."*) ;;
-    *)
-        printf '%s\n' "$superuser_output" >&2
-        exit 1
-        ;;
-    esac
-fi
+# Not `createsuperuser --noinput`: it raises on an existing username, so a re-run needs
+# its error text matched to tell "already there" from a real failure.
+uv run python manage.py shell --no-imports <<'PY'
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
+if not User.objects.filter(username="admin").exists():
+    User.objects.create_superuser("admin", password="admin")
+PY
 
 printf '\nlog in as admin/admin at http://localhost:%s/admin/\n\n' "$addrport"
 uv run python manage.py runserver "$addrport"
