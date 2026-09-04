@@ -635,10 +635,9 @@ def describe_connection_confound(shapes: list[dict[str, t.Any]]) -> str:
 def describe_working_backends(shapes: list[dict[str, t.Any]]) -> str:
     """What a body that holds a worker thread adds to a shape's connection count.
 
-    The idle column is what an operator sizing `max_connections` off an idle fleet
-    would see, and it is the wrong number for a durable workload: a sync body runs on
-    the worker's own thread pool, Django's connections are thread-local, and ORM work
-    inside one opens a backend that lives exactly as long as the body.
+    An operator sizing `max_connections` off an idle fleet reads the idle column, which
+    is the wrong one for a durable workload: a sync body runs on the worker's own thread
+    pool, and Django's connections are thread-local.
     """
     measured = ", ".join(
         f"{shape['shape']} {shape['connections_idle']} -> {shape['connections_busy']}"

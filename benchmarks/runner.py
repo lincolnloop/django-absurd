@@ -40,14 +40,7 @@ class WorkerSpec:
 
 
 def start_workers(spec: WorkerSpec, count: int) -> list[Worker]:
-    """Spawn ``count`` ``absurd_worker`` children at once, each already claiming.
-
-    Every child is launched before any readiness line is waited for. A saturation rep's
-    backlog is preloaded before this is called, so the first child drains short-handed
-    until the rest reach readiness — completions the rep's mark then leaves out of its
-    rate and its per-task counts alike. Waiting between launches instead costs one
-    child's whole start-up per extra process.
-    """
+    """Spawn ``count`` ``absurd_worker`` children at once, each already claiming."""
     environ = build_worker_env()
     # `launched` drains as each child becomes a `Worker`, so at any failure below it
     # holds exactly the children nothing is reading yet — the ones that would leak.

@@ -30,10 +30,9 @@ which `latency_under_load` was 15 and `size_vs_depth` 11 — that one drains fou
 for every one it measures. Name stages to run only those; `--tasks`, `--duration`,
 `--reps` and `--max-workers` size them down to a dry run, `--io-seconds` sets how long
 `sync_vs_async` pretends to do IO for, and `--durable-seconds` sets how long
-`pooled_vs_split`'s durable arms hold a worker thread (2 s by default — raise it to 30
-to measure at an agent tool call's real duration, and expect that stage to cost roughly
-fifteen times as much). Results land in `benchmarks/results/`, which is git-ignored —
-the numbers belong to the machine that produced them.
+`pooled_vs_split`'s durable arms hold a worker thread (default 2 s; 30 s is an agent
+tool call's duration and ~15x that stage's cost). Results land in `benchmarks/results/`,
+which is git-ignored — the numbers belong to the machine that produced them.
 
 | stage                | what it answers                                                  |
 | -------------------- | ---------------------------------------------------------------- |
@@ -70,13 +69,13 @@ The defaults need about 5 GB free in the Docker VM (1 GB of shared buffers plus 
 tmpfs). Set any of these in the shell that starts `db_bench`, then restart it and re-run
 `migrate`:
 
-| variable                | default | change it when                                                                          |
-| ----------------------- | ------- | --------------------------------------------------------------------------------------- |
-| `BENCH_SHARED_BUFFERS`  | `1GB`   | the Docker VM has under ~4 GB free — try `256MB`                                        |
-| `BENCH_MAX_CONNECTIONS` | `100`   | you run many worker processes — each holds 2 backends idle, `--concurrency + 2` working |
-| `BENCH_TMPFS_SIZE`      | `4g`    | the VM is small — `512m` covers a single stage                                          |
-| `BENCH_CPUS`            | unset   | you want the server pinned to N cores; unset = no limit                                 |
-| `BENCH_MEMORY`          | unset   | you want the server's memory capped; unset = no limit                                   |
+| variable                | default | change it when                                                                    |
+| ----------------------- | ------- | --------------------------------------------------------------------------------- |
+| `BENCH_SHARED_BUFFERS`  | `1GB`   | the Docker VM has under ~4 GB free — try `256MB`                                  |
+| `BENCH_MAX_CONNECTIONS` | `100`   | you run many worker processes — `--concurrency + 2` backends each while they work |
+| `BENCH_TMPFS_SIZE`      | `4g`    | the VM is small — `512m` covers a single stage                                    |
+| `BENCH_CPUS`            | unset   | you want the server pinned to N cores; unset = no limit                           |
+| `BENCH_MEMORY`          | unset   | you want the server's memory capped; unset = no limit                             |
 
 Too small a tmpfs does not fail at startup: the run dies partway through on a Postgres
 write error, so raise it if a long run aborts. Every value above is recorded in the
@@ -133,11 +132,10 @@ measured every stage.
 - **Processes beat threads at the same total.** 8 x 1 beat 1 x 8 by 2.31x, both arms of
   the pair at the same depth; 4 x 1 beat 1 x 4 by 2.35x, where the split arm is the one
   measurement of the four the harness marked unstable, so quote the 8-way number. On the
-  long, database-touching workload the two shapes tie exactly, which the workload forces
-  — both run the same number of fixed-length rounds — so that tie says nothing about
-  either. 40-47% of a task's wall time is outside the server (2.82-3.55 ms per task =
-  1.57-2.09 server + 1.16-1.48 client); what serialises it — the GIL, or the one claim
-  connection a worker process owns — is not established.
+  long, database-touching workload the two shapes tie by construction, so that pair says
+  nothing about either. 40-47% of a task's wall time is outside the server (2.82-3.55 ms
+  per task = 1.57-2.09 server + 1.16-1.48 client); what serialises it — the GIL, or the
+  one claim connection a worker process owns — is not established.
 - **All of the per-task database cost is acquiring work, not finishing it.** Claiming a
   task costs 13-20x completing one (1.41-1.92 ms against 0.09-0.12 ms), and 14-19% of
   every claim is a scan for cancellations.
@@ -154,11 +152,10 @@ measured every stage.
   on table size alone. Vacuuming the extra rows' dead versions bought 1.2%, so what
   costs the throughput is the live rows: retention is a throughput feature here, not
   housekeeping.
-- **A long task holds a Postgres connection of its own the whole time it runs.** A
-  worker process opens 2 backends while its slots are idle and one more for every slot
-  running a task that touches the database, so it holds up to `--concurrency + 2` — 18
-  at the concurrency 16 above, which is five worker processes against a default
-  `max_connections` of 100. This is a count, not a rate, so it holds on any machine.
+- **A long task holds a Postgres connection of its own the whole time it runs**, so a
+  worker process holds up to `--concurrency + 2` backends — 18 at the concurrency above,
+  which is five processes against a default `max_connections` of 100. A count, not a
+  rate, so it holds on any machine.
 
 ## Caveats that change what you can do with a number
 

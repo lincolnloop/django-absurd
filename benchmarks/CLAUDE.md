@@ -74,10 +74,9 @@ of scatter. Treat a difference under ~12% as noise.
 Two conditions produced these figures and both matter: the data directory on tmpfs, and
 the macOS indexer suppressed.
 
-**`windowed` is one run, so nothing quoted from it is a point estimate.** What one run
-supports is a rank order, or a ratio that clears the 12% floor by enough to be a ratio
-rather than a coincidence; every figure taken from it below carries its own cross-rep cv
-so a reader can see which of the two it is.
+**A single run is read for rank orders and for ratios clearing the 12% floor, never for
+point estimates.** Every figure quoted from one below carries its cross-rep cv, so a
+reader can see which of the two it is.
 
 ## Overhead, itemised
 
@@ -92,11 +91,7 @@ reps of `warmup`, `a`, `b` and `c2` and every `noop_sync` rep of `windowed`:
                                        touches no ORM itself
 
 That last row is a property of an EMPTY body, not of a worker: a body that touches the
-ORM opens one more backend per busy slot and holds it while it runs, so a process holds
-up to `--concurrency` + 2 — 18 at the concurrency 16 this file recommends, against a
-`BENCH_MAX_CONNECTIONS` and a stock `max_connections` of 100.
-`measure_shape_connections` measures both counts, sampling `pg_stat_activity` while
-durable work runs for the second
+ORM opens one more backend per busy slot, which is the `C + 2` budget
 ([the durable workload](#the-durable-workload-and-the-backends-it-holds)).
 
 From `pg_stat_statements` with `track=all`, at `worker_knobs` `concurrency_1` — the only
@@ -163,18 +158,15 @@ concurrency does not saturate around 3x, and processes beat threads at the same 
 **The 8-way pair is the one to quote** — `split_8` 2,067.8 tasks/s at cv 4.2% against
 `pooled_8` 896.2 at cv 1.5%, reps 2.24-2.50x. The 4-way pair agrees at 2.35x and is the
 noisier companion rather than a second measurement: `split_4` is marked `~`, cv 14.8%
-over reps of 826.8-1,084 tasks/s, which puts its own reps at 1.70-2.37x. One rep is what
-does it, and the file says why — that rep's load ran 2.41 to 4.16 where the arm's other
-two ended at 2.49 and 2.61, so something outside the harness took the box for a rep.
-Both pairs are `windowed`'s, arms alternating across reps, and four earlier runs found
-the same direction at both totals. Each multiple is the claim path AND the connection
-count together: a split arm opens a set of backends per process where a pooled arm's
-slots share one process's, and nothing in the pair separates the two. The process axis
-has no multiple either: its raw 1->10 quotients read 3.3-3.8x across `warmup`, `b` and
-`c2`, 3.35x in `windowed` and 3.63x in `windowed2`, each dividing a 20,000-task rung by
-a 4,000-task one, and the deeper rung is the slower-reading one, so 3.3x is a LOWER
-BOUND. The report's `T(N)/(N x T(1))` block prints each rung's backlog and marks itself
-`CONFOUNDED` for the same reason.
+over reps of 826.8-1,084 tasks/s and its own reps at 1.70-2.37x, one of them under a
+load spike (2.41 -> 4.16 against the other two's 2.5-2.6). Both pairs are `windowed`'s,
+arms alternating across reps, and four earlier runs found the same direction at both
+totals. Each multiple is the claim path AND the connection count together: a split arm
+opens a set of backends per process where a pooled arm's slots share one process's, and
+nothing in the pair separates the two. The process axis has no multiple either: its raw
+1->10 quotients read 3.3-3.8x across `warmup`, `b` and `c2`, 3.35x in `windowed` and
+3.63x in `windowed2`, each dividing a 20,000-task rung by a 4,000-task one, and the
+deeper rung is the slower-reading one, so 3.3x is a LOWER BOUND.
 
 Advice: scale with PROCESSES, concurrency around 16, batch the claims. The process half
 rests on the diagonal above — 2.31x at eight slots and 2.35x at four, at a fixed total
@@ -492,17 +484,13 @@ on — `n_tasks` and `extra_runs`, read on the ballast predicate (`t.enqueue_at`
 because a failed run carries no completion time and filtering those on completion would
 report every redelivery as zero.
 
-**How wide the opening is.** Instrumented by hand on the suites' plain `db` server
-rather than read off any saved run: at `--tasks 400` and concurrency 8 the spread from
-the first child's readiness line to the last reads 0.11 ms at two processes, 3.2 ms at
-four and 8.3 ms at ten, inside a 4-16 ms interval from that first readiness line to the
-mark, most of which is the harness's own three queries. A worker's first completion
-lands 8 ms or more behind its own readiness line, so 0 to 6 runs of 400 landed ahead of
-the mark across five exploratory runs. **The concurrent launch is what leaves the mark
-defensive rather than corrective here** — launching the children one at a time costs a
-whole child's start-up per extra process, 1.5 s inside an eight-process arm. Raising the
-task count buys nothing either way: the excluded interval is a fixed few milliseconds,
-so a deeper backlog puts no more completions inside it.
+**How wide the opening is.** Instrumented by hand on the suites' plain `db` server:
+first readiness line to mark is 4-16 ms at 2-10 processes, and 0 to 6 of 400 completions
+landed inside it. The mark is defensive; the concurrent launch already keeps the opening
+to milliseconds, where launching the children one at a time would cost a whole child's
+start-up per extra process — 1.5 s inside an eight-process arm. Raising the task count
+buys nothing either way: a fixed few milliseconds of exclusion holds no more completions
+on a deeper backlog.
 
 **`commits_per_task` and `calls_per_task` are exact at every process count, as exact as
 a database-wide counter allows** ([the measurement model](#the-measurement-model) has
@@ -619,21 +607,17 @@ one that does not are two different experiments on the same topology — though 
 of them has an outcome to discover.
 
 **The durable ranking is foregone, and `windowed` returned exactly the 1.00x that says
-so.** Both durable pairs read 1.00x (reps 1.00-1.01x): 1.8 tasks/s against 1.8 at total
-4, 3.5 against 3.5 at total 8, every arm inside 0.5% cv. The arithmetic forces it — the
-arms are sized per SLOT, so both shapes run the same eight rounds and every round is
-pinned to `--durable-seconds`, which makes 32 tasks over four slots ~17.8 s of wall
-clock whichever shape holds them. **That is a property of the workload, not of
-django-absurd, and it is not a finding about processes against threads.** What the
-durable arms are for is the backend count above; the nano-task arms are where the
-diagonal is a measurement
+so.** Both durable pairs read 1.00x (reps 1.00-1.01x; 1.8 against 1.8 tasks/s at total
+4, 3.5 against 3.5 at 8, cv under 0.5%) — by arithmetic: the arms are sized per SLOT
+(`DURABLE_ROUNDS_PER_SLOT` rounds each, since a fixed task count runs for minutes at one
+shape and seconds at the other), so every slot runs the same rounds of the same
+`--durable-seconds` length. The durable arms exist for the backend count above; the
+diagonal is decided on the nano-task arms
 ([Throughput](#throughput-one-axis-measures-the-other-is-confounded)).
 
 Everything else here — the concurrency ladder, the process ladder, the poll intervals,
 the checkpoint multiplier, the rate rungs, the size arms — is still nano-task only, so
-read each of them as a finding about that regime and nothing else. The durable arms are
-sized per SLOT (`DURABLE_ROUNDS_PER_SLOT` rounds each) rather than at a fixed task
-count: a fixed count runs for minutes at one shape and seconds at the other.
+read each of them as a finding about that regime and nothing else.
 
 **`--durable-seconds` defaults to 2, the FLOOR of the regime rather than the middle of
 it.** A durable rep costs its rounds times this value, so the flag is that stage's whole
@@ -653,10 +637,9 @@ concurrency 16, 2,000 tasks an arm, three reps each. From `windowed`:
     flat      1,297.2  1,240-1,450  8.2%   2.13          1.01 = 0.30 server + 0.72 client
     workflow    305.0    289-309    3.5%  10.14          3.28 = 1.03 server + 2.25 client
 
-**A four-step workflow costs 4.25x a flat no-op task** (reps 4.01-5.02x). The RATIO is
-the finding and neither rate is: one run cannot settle a difference under the rig's ~12%
-floor ([Repeatability](#repeatability-rank-things-do-not-confirm-small-changes)), and a
-4.25x gap is more than twenty times that floor.
+**A four-step workflow costs 4.25x a flat no-op task** (reps 4.01-5.02x). The ratio is
+the finding; neither rate is
+([Repeatability](#repeatability-rank-things-do-not-confirm-small-changes)).
 
 Per step, off the same median reps: 0.57 ms of wall (2.27 ms over the four), 0.18 ms of
 it server side, and two commits (10.14 against 2.13 — `flat`'s first rep reads 18.5 and
@@ -667,12 +650,9 @@ across those four calls rather than one call's: `set_task_checkpoint_state` 0.64
 `get_task_checkpoint_state` 0.091 ms, and a nested `update r_bench set claim_expires_at`
 0.086 ms. A step writes its state, reads it back, and extends the claim lease.
 
-**What it says about step granularity.** 0.6 ms and two commits is the whole price of a
-`ctx.step`, so against a tool call that runs for seconds it is under a thousandth of the
-work it checkpoints — pick step boundaries for the restart semantics you want, not for
-throughput. The 4.25x is what the nano-task regime pays, where the body is empty and the
-checkpoint IS the task
-([the durable workload](#the-durable-workload-and-the-backends-it-holds)). So the
+**What it says about step granularity.** The 4.25x is what the nano-task regime pays,
+where the body is empty and the checkpoint IS the task
+([the durable workload](#the-durable-workload-and-the-backends-it-holds)) — so the
 multiple bounds the regime in which a step per call is expensive, and that regime is not
 the one django-absurd is mostly used for.
 
@@ -827,16 +807,10 @@ wait, a clean one included: a worker that returned 0 has stopped claiming as tho
 as one that died. `stop_workers` then raises the children's own crash over that refusal
 on the way out, so what a reader sees first is the failure and not its symptom.
 
-**A fleet starts all at once, because the queue is already full when it does.**
-`start_workers` launches every child before waiting for any child's readiness line. A
-saturation rep preloads its backlog BEFORE starting the fleet, so the first child begins
-draining while the rest are still starting — and the rate, the percentiles and the
-per-task counts are all read from the rep's mark, which is captured after the launch, so
-those early completions reach none of them
-([the fleet start-up](#the-fleet-start-up-and-which-numbers-it-reaches)). Waiting for
-each child in turn instead costs one child's whole start-up per extra process. The waits
-are still written one after another; the children are already running by then, so each
-one that reported readiness during an earlier wait returns at once.
+**A fleet starts all at once, because the queue is already full when it does**
+([the fleet start-up](#the-fleet-start-up-and-which-numbers-it-reaches)). The waits in
+`start_workers` are still written one after another; the children are already running by
+then, so each one that reported readiness during an earlier wait returns at once.
 
 **The summary rep is the unluckier middle, and which one that is depends on the
 metric.** `pick_median_rep` sorts the valid reps by the ranking key and, at an even rep
@@ -1132,8 +1106,9 @@ Carries over:
   checkpoint per tool call IS the durable shape, and the multiple is what the nano-task
   regime pays for one.
 - **The connection budget, `C + 2` backends per process once a body touches the ORM**
-  ([Overhead](#overhead-itemised)). Not a throughput fact, and it binds precisely when
-  holds are long: a durable body holds its thread, and its connection, for minutes.
+  ([the durable workload](#the-durable-workload-and-the-backends-it-holds)). Not a
+  throughput fact, and it binds precisely when holds are long: a durable body holds its
+  thread, and its connection, for minutes.
 - **`r_bench` bloats and `t_bench` does not** (10,000 dead tuples against 5,000 live).
   Retries and suspensions make run rows, so a durable workload compounds this.
 - **Table size costing throughput**, 1.87x for four times the rows at one pending depth,
