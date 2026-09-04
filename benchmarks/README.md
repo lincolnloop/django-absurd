@@ -24,17 +24,16 @@ RAM, so a restart hands you back an empty server, and a run against one dies par
 through its first measurement with `schema "absurd" does not exist`. It takes a second
 and it is idempotent, so just run it every time.
 
-Eight of the nine stages took about 40 minutes together on the reference machine (14
-cores, at `--max-workers 10 --reps 3`), `latency_under_load` about 15 of them.
-`size_vs_depth` is the ninth and nothing has timed it there: it drains four tasks for
-every one it measures, so budget another quarter of an hour. Name stages to run only
-those; `--tasks`, `--duration`, `--reps` and `--max-workers` size them down to a dry
-run, `--io-seconds` sets how long `sync_vs_async` pretends to do IO for, and
-`--durable-seconds` sets how long `pooled_vs_split`'s durable arms hold a worker thread
-(2 s by default — raise it to 30 to measure at an agent tool call's real duration, and
-expect that stage to cost roughly fifteen times as much). Results land in
-`benchmarks/results/`, which is git-ignored — the numbers belong to the machine that
-produced them.
+The nine stages take about an hour together on the reference machine (14 cores, at
+`--max-workers 14 --reps 3`). Seven of them were timed at 50 minutes in one run, of
+which `latency_under_load` was 15 and `size_vs_depth` 11 — that one drains four tasks
+for every one it measures. Name stages to run only those; `--tasks`, `--duration`,
+`--reps` and `--max-workers` size them down to a dry run, `--io-seconds` sets how long
+`sync_vs_async` pretends to do IO for, and `--durable-seconds` sets how long
+`pooled_vs_split`'s durable arms hold a worker thread (2 s by default — raise it to 30
+to measure at an agent tool call's real duration, and expect that stage to cost roughly
+fifteen times as much). Results land in `benchmarks/results/`, which is git-ignored —
+the numbers belong to the machine that produced them.
 
 | stage                | what it answers                                                  |
 | -------------------- | ---------------------------------------------------------------- |
@@ -121,10 +120,10 @@ and the vacuumed arm says how much of that was dead rows rather than live ones.
 
 ## What it found
 
-Measured on one 14-core laptop with the data directory in RAM, across six runs; every
-range below is over the runs that measured it, and a single figure came from one run.
-Read the directions, not the rates. [`CLAUDE.md`](CLAUDE.md) names the run behind each
-figure, and no run has measured every stage.
+Measured on one 14-core laptop with the data directory in RAM; every range below is over
+the runs that measured it, and a single figure came from one run. Read the directions,
+not the rates. [`CLAUDE.md`](CLAUDE.md) names the run behind each figure, and no run has
+measured every stage.
 
 - **Scale with worker processes, keep `--concurrency` around 16, and batch the claims.**
   Concurrency 1 -> 16 at one process bought 3.0-4.0x and had not flattened, all of it at
@@ -147,12 +146,14 @@ figure, and no run has measured every stage.
   multiple is what a task with nothing in its body pays; against an agent tool call that
   runs for seconds a step is under a thousandth of the work it checkpoints, so choose
   step boundaries for the restarts you want rather than for throughput.
-- **A queue that is deeper is slower.** Throughput rises as a backlog drains, a fitted
-  median +15.7% within a rep over 150 reps, so a saturation number averages a curve and
-  does not compare across `--tasks` values. Four times the `--tasks` also costs 40-58%
-  of the rate outright — but that moves the table's size and the queue's depth together,
-  because a rep preloads what it drains. `size_vs_depth` is the stage that holds depth
-  still and moves only size; no figure here comes from a run that included it.
+- **A bigger table is slower, and that is most of why a deeper queue is.** Throughput
+  rises as a backlog drains, a fitted median +15.7% within a rep over 150 reps, so a
+  saturation number averages a curve and does not compare across `--tasks` values. Four
+  times the `--tasks` costs 40-58% of the rate outright, and `size_vs_depth` — which
+  holds the pending depth still and moves only the rows behind it — puts 1.87x of that
+  on table size alone. Vacuuming the extra rows' dead versions bought 1.2%, so what
+  costs the throughput is the live rows: retention is a throughput feature here, not
+  housekeeping.
 - **A long task holds a Postgres connection of its own the whole time it runs.** A
   worker process opens 2 backends while its slots are idle and one more for every slot
   running a task that touches the database, so it holds up to `--concurrency + 2` — 18
