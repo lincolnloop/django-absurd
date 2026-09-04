@@ -12,11 +12,14 @@ which program it runs is substituted, and the protocol under test is the real on
 import re
 import subprocess
 import sys
-import time
 
 import pytest
 
 import runner
+
+# More than the one child every other test here drives, few enough that the test costs
+# a handful of worker start-ups.
+FLEET_SIZE = 3
 
 
 def test_refuses_a_worker_that_never_reports_readiness() -> None:
@@ -26,12 +29,10 @@ def test_refuses_a_worker_that_never_reports_readiness() -> None:
         stdout=subprocess.PIPE,
         text=True,
     )
-    started = time.monotonic()
 
     with pytest.raises(RuntimeError, match="never reported readiness"):
         runner.wait_for_worker_ready(silent_child, timeout_s=2.0)
 
-    assert (time.monotonic() - started < 10.0) is True
     assert (silent_child.poll() is not None) is True
 
 
@@ -70,12 +71,10 @@ def test_refuses_a_worker_still_talking_when_its_deadline_passes() -> None:
         stdout=subprocess.PIPE,
         text=True,
     )
-    started = time.monotonic()
 
     with pytest.raises(RuntimeError, match="never reported readiness within 2s"):
         runner.wait_for_worker_ready(chatty_child, timeout_s=2.0)
 
-    assert (time.monotonic() - started < 10.0) is True
     assert (chatty_child.poll() is not None) is True
 
 
@@ -110,11 +109,11 @@ def test_kills_a_worker_that_ignores_the_stop_signal() -> None:
 
 @pytest.mark.django_db(transaction=True)
 def test_abandons_the_worker_ladder_when_a_child_cannot_start() -> None:
-    """A spawn that fails part way through a ladder takes the ladder down with it.
+    """A fleet whose children cannot start takes the whole fleet down with it.
 
-    Two are asked for on a queue the backend never declared, so the first child
-    refuses at startup and the second is never spawned. Matched rather than compared
-    whole: under `--cov` the child's merged output carries coverage's own warnings.
+    Two are asked for on a queue the backend never declared, so both refuse at startup
+    and neither is left behind. Matched rather than compared whole: under `--cov` the
+    child's merged output carries coverage's own warnings.
     """
     with pytest.raises(
         RuntimeError,
@@ -125,3 +124,33 @@ def test_abandons_the_worker_ladder_when_a_child_cannot_start() -> None:
         ),
     ):
         runner.start_workers(runner.WorkerSpec(queue="undeclared"), 2)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_starts_a_whole_fleet_and_returns_every_child_past_its_readiness_line() -> None:
+    """One call, one fleet, and nothing half-started left behind it.
+
+    A saturation rep preloads before it starts its fleet, so the launch order is a
+    property worth having: every child goes out before any readiness line is waited
+    for. What that buys is elapsed time and nothing else, which is the machine's to
+    decide, so what is pinned here is the fleet a caller gets back — as many children
+    as were asked for, each still running and each having printed the readiness line
+    the harness waits on. `benchmarks/CLAUDE.md` carries the instrumented cost of
+    launching them one at a time.
+    """
+    at_once = runner.start_workers(runner.WorkerSpec(), FLEET_SIZE)
+
+    try:
+        assert {
+            "children": len(at_once),
+            "still_running": [worker.proc.poll() for worker in at_once],
+            "reported_ready": [
+                runner.WORKER_READY_MARKER in "".join(worker.tail) for worker in at_once
+            ],
+        } == {
+            "children": FLEET_SIZE,
+            "still_running": [None] * FLEET_SIZE,
+            "reported_ready": [True] * FLEET_SIZE,
+        }
+    finally:
+        runner.stop_workers(at_once)

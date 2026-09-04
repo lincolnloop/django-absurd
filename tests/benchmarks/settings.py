@@ -1,6 +1,7 @@
 import os
 import typing as t
 
+import tests.settings
 from tests.settings import *  # noqa: F403
 
 # The harness's own queue, declared here rather than reusing the main suite's: the
@@ -21,3 +22,15 @@ DATABASES = {
     "default": DATABASES["default"]  # noqa: F405
     | {"TEST": {"NAME": f"test_{os.environ.get('PGDATABASE', 'postgres')}_benchmarks"}},
 }
+
+# The worker children run on `benchmarks/settings.py` against THIS suite's database, so
+# the workload table migrates here; `staticfiles` is for `runserver --insecure`.
+INSTALLED_APPS = [
+    *tests.settings.INSTALLED_APPS,
+    "django.contrib.staticfiles",
+    "workload",
+]
+STATIC_URL = "static/"
+
+# `runserver` needs these with DEBUG off.
+ALLOWED_HOSTS = ["127.0.0.1", "localhost"]

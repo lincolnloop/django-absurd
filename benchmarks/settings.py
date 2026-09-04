@@ -4,7 +4,9 @@ import dj_database_url
 
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "bench-only-not-secret")
 
-INSTALLED_APPS = ["django_absurd"]
+# `workload` holds the model a durable task body reads and writes; a benchmark
+# database needs its table, which is what makes `migrate` cover it.
+INSTALLED_APPS = ["django_absurd", "workload"]
 
 # `PGPORT_BENCH` is read by both sides, as `PGPORT` does for the suites, and the
 # database name is db_bench's own: a suite's server would print untuned numbers.

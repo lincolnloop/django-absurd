@@ -1,4 +1,5 @@
 import dataclasses
+import datetime as dt
 import statistics
 import time
 import typing as t
@@ -43,6 +44,15 @@ class MeasurementSpec:
     worker: runner.WorkerSpec
     workers: int = 1
     tasks: int = 0
+    # Tasks enqueued and drained BEFORE the measured ones, so a rep can hold pending
+    # depth fixed while the table it drains on grows underneath it. `None` is every
+    # measurement outside that experiment, and takes none of the preparation its arms
+    # share; `0` is the arm that measures the same depth on an empty table.
+    ballast_tasks: int | None = None
+    # Whether the ballast's dead rows are reclaimed before the measured drain, which
+    # is what tells a table holding more LIVE rows from one carrying the dead ones a
+    # drain leaves behind.
+    vacuum_ballast: bool = False
     rate_per_s: float = 0.0
     duration_s: float = 0.0
     task_kwargs: dict[str, t.Any] | None = None
@@ -88,24 +98,38 @@ def run_one_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
 
 
 def run_saturation_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
+    # Every arm of the ballast experiment, including the one that lays none: both the
+    # window the metrics are read over and the statistics the plans are chosen on have
+    # to be produced the same way in each, or the preparation is what separates them.
+    ballasted = spec.ballast_tasks is not None
+    since = lay_ballast(spec) if ballasted else None
     preload_s = producer.preload_tasks(
         spec.task_path, spec.tasks, kwargs=spec.task_kwargs
     )
+    table = analysis.refresh_table_state(spec.worker.queue) if ballasted else None
     procs = runner.start_workers(spec.worker, spec.workers)
     # Ahead of the commit snapshot, because reading the statement view is itself a
     # statement and a commit: the other order bills that read to the tasks.
     statements_before = analysis.read_statement_stats()
     commits_before = analysis.read_xact_commit()
+    # Where the run counter starts, taken one statement after the commit counter's own
+    # start so the two windows differ by a round trip and not by a fleet's start-up.
+    window_start = analysis.capture_database_now()
     try:
         with host.measure_phase() as phase:
-            wait_until_drained(spec, procs)
+            wait_until_drained(
+                procs,
+                name=spec.name,
+                queue=spec.worker.queue,
+                timeout_s=spec.timeout_s,
+            )
     finally:
         runner.stop_workers(procs)
     # Read once the workers have exited, since a live backend flushes its transaction
     # counters at most once a second. Before the analysis queries, which commit too.
     commits = analysis.read_xact_commit() - commits_before
     statements_after = analysis.read_statement_stats()
-    metrics = analysis.analyze_saturation(spec.worker.queue)
+    metrics = analysis.analyze_saturation(spec.worker.queue, since, window_start)
     # A terminally failed task still satisfies the drain predicate, so without this
     # the measurement silently covers a smaller sample than it was asked to.
     metrics["missing_tasks"] = spec.tasks - metrics["n_tasks"]
@@ -114,6 +138,12 @@ def run_saturation_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
     return {
         "preload_s": preload_s,
         "phase_s": phase.elapsed_s,
+        # What the tables held when the drain started, `None` outside the experiment
+        # that varies it: the rows a rate is read against, live and dead.
+        "table": table,
+        # The instant both counters below start from, so a reader can retake any
+        # per-task figure over the interval the harness divided by.
+        "window_start": window_start.isoformat(),
         # The execution side alone — the preload sits outside the phase — so throughput
         # times this is the commit rate the drain asked of the disk.
         "commits_per_task": commits / metrics["n_runs"] if metrics["n_runs"] else None,
@@ -124,6 +154,36 @@ def run_saturation_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
         ),
         **metrics,
     }
+
+
+def lay_ballast(spec: MeasurementSpec) -> dt.datetime:
+    """Leave the queue tables holding ``ballast_tasks`` finished tasks, and mark the
+    clock the measured tasks are enqueued after.
+
+    Drained by the very fleet whose drain is then measured, so the rows left behind
+    are the rows that configuration makes: another shape would leave a different
+    spread of ``claimed_by`` and a different update pattern under the same row count.
+    All of it — the preload, the drain, the vacuum — is over before the measured tasks
+    exist, so the mark returned here is what keeps every one of them out of the
+    window, the preload this rep times included.
+    """
+    if spec.ballast_tasks:
+        producer.preload_tasks(
+            spec.task_path, spec.ballast_tasks, kwargs=spec.task_kwargs
+        )
+        procs = runner.start_workers(spec.worker, spec.workers)
+        try:
+            wait_until_drained(
+                procs,
+                name=spec.name,
+                queue=spec.worker.queue,
+                timeout_s=spec.timeout_s,
+            )
+        finally:
+            runner.stop_workers(procs)
+    if spec.vacuum_ballast:
+        analysis.vacuum_queue_tables(spec.worker.queue)
+    return analysis.capture_database_now()
 
 
 def run_rate_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
@@ -138,7 +198,12 @@ def run_rate_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
                 kwargs=spec.task_kwargs,
             )
             window_end = analysis.capture_database_now()
-            wait_until_drained(spec, procs)
+            wait_until_drained(
+                procs,
+                name=spec.name,
+                queue=spec.worker.queue,
+                timeout_s=spec.timeout_s,
+            )
     finally:
         runner.stop_workers(procs)
     # No commits per task and no statement stats: the completed-run count comes off the
@@ -150,7 +215,9 @@ def run_rate_rep(spec: MeasurementSpec) -> dict[str, t.Any]:
     }
 
 
-def wait_until_drained(spec: MeasurementSpec, workers: list[runner.Worker]) -> None:
+def wait_until_drained(
+    workers: list[runner.Worker], *, name: str, queue: str, timeout_s: float
+) -> None:
     """Poll the queue until it is empty — and the fleet, which is the other way out.
 
     A queue polled alone cannot tell a slow drain from an absent one, so a rung whose
@@ -158,13 +225,13 @@ def wait_until_drained(spec: MeasurementSpec, workers: list[runner.Worker]) -> N
     failure. The children's own exit is what `stop_workers` raises over this on the
     way out, so the crash stays the cause.
     """
-    deadline = time.monotonic() + spec.timeout_s
-    while analysis.count_unfinished_tasks(spec.worker.queue) > 0:
+    deadline = time.monotonic() + timeout_s
+    while analysis.count_unfinished_tasks(queue) > 0:
         exited = runner.count_exited_workers(workers)
         if exited:
-            raise WorkerExitedError(spec.name, exited, len(workers))
+            raise WorkerExitedError(name, exited, len(workers))
         if time.monotonic() > deadline:
-            raise MeasurementTimeoutError(spec.name, spec.timeout_s)
+            raise MeasurementTimeoutError(name, timeout_s)
         time.sleep(DRAIN_POLL_INTERVAL_S)
 
 

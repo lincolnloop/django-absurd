@@ -238,3 +238,22 @@ commit where it last lived — recoverable from git any time.
   declaration door and delete the handling rather than carry it, and the reasoning that
   no cheap correct fix existed for the lapsed-window wedge) →
   [view @6c1b4f2](https://github.com/lincolnloop/django-absurd/blob/6c1b4f29233f5ab40e023d6cd279dd3b2586cde8/docs/plans/2026-08-18-refuse-partitioned-queues.md)
+
+## Archived branches
+
+Unlike everything above, this one never reached `origin/main`, so nothing in main's
+history reaches its commits and no `blob/<main sha>` link can be written for it. The tag
+is what keeps it: delete the branch without it and the commits become unreachable.
+
+- 2026-08-02 — `loadtest/`, the first load harness, superseded by
+  [`benchmarks/`](../benchmarks/README.md) but not replaced in full. Archived at
+  [`3b4ac82`](https://github.com/lincolnloop/django-absurd/tree/3b4ac82bad087a3a24d40be81aebfd350f65646f/loadtest)
+  on branch `worktree-load-test-harness`. It measured four things `benchmarks/` cannot:
+  the **admin changelist at volume** (`load_admin`, with `EXPLAIN (ANALYZE, BUFFERS)`
+  and per-request query counts — the instrument behind
+  [#142](https://github.com/lincolnloop/django-absurd/issues/142)); a **million-row
+  seeded corpus** (`load_seed`, against a persistent volume, where `benchmarks/`
+  truncates before every rep on a RAM disk); **mixed-duration backlogs with slot
+  occupancy** (`load_barrier`, whose uniform-duration control is what identified the
+  batch boundary recorded in [`UPSTREAM.md`](UPSTREAM.md)); and a **multi-queue
+  topology** with failure/retry and event/wait workloads.
