@@ -480,11 +480,23 @@ def measure_sustainable_rate(
         probes.append(measure_rate_probe(worker, workers, rate, options))
         absorbed = probes[-1]["sustained"]
         rate *= RATE_RAMP_STEP
+    return summarize_rate_ramp(probes, ceiling, resolve_rate_ramp_seconds(options))
+
+
+def summarize_rate_ramp(
+    probes: list[dict[str, t.Any]], ceiling: float, offer_seconds: float
+) -> dict[str, t.Any]:
+    """Which rung of a finished climb the stage measures at, and what brackets it.
+
+    Separate from the climbing above so the choice can be read — and asserted — over
+    probes nobody had to make a machine produce: which rates a fleet absorbs is the
+    machine's to decide, where which rung a set of verdicts selects is not.
+    """
     sustained = [probe["rate_per_s"] for probe in probes if probe["sustained"]]
     refused = [probe["rate_per_s"] for probe in probes if not probe["sustained"]]
     return {
         "drain_ceiling_per_s": ceiling,
-        "offer_seconds": resolve_rate_ramp_seconds(options),
+        "offer_seconds": offer_seconds,
         # Defaulting to the lowest rate probed, when even that one diverged: the stage
         # measures at a rate it can name rather than refusing, and says it is unproven.
         "rate_per_s": max(sustained, default=probes[0]["rate_per_s"]),
