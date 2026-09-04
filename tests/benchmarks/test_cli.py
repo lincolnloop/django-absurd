@@ -4,6 +4,7 @@ import pathlib
 import typing as t
 
 import pytest
+from django.core.management import call_command
 from django.db import connections
 
 import analysis
@@ -1247,6 +1248,7 @@ def test_measures_no_pooled_vs_split_pair_the_worker_bound_cannot_spawn(
     )
 
 
+@pytest.mark.usefixtures("_isolate_queues")
 def test_measures_one_pending_depth_on_three_sizes_of_table(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -1258,7 +1260,12 @@ def test_measures_one_pending_depth_on_three_sizes_of_table(
     drained on: four times the rows at the same pending depth, in BOTH tables, an
     enqueue writing a run row as well as a task row. Only the vacuumed arm's dead rows
     are asserted — autovacuum may already have taken the other's.
+
+    The one test here that reads absolute row counts, so it is the one that takes the
+    queue topology away on both sides and provisions its own.
     """
+    call_command("absurd_sync_queues")  # _isolate_queues dropped the queue on setup
+
     stages.main(
         [
             "size_vs_depth",
