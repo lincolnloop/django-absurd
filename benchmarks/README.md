@@ -4,10 +4,10 @@ Internal tooling that measures how much work a fleet of `absurd_worker` processe
 through, what latency looks like under a steady offered rate, and what the worker flags
 buy. Nothing here ships in the `django_absurd` wheel.
 
-> **This directory is mostly unreviewed AI-generated code.** It is measurement tooling
-> that ships to nobody, and it has not been through the review the packaged code gets.
-> Weigh its numbers accordingly. The disclaimer covers `benchmarks/` only — not the
-> `django_absurd` package, and not Absurd itself.
+> **Internal tooling, and mostly written autonomously.** An AI agent was let loose on
+> this directory and built the majority of it, much of it never reviewed line by line.
+> Weigh its numbers accordingly. This applies to `benchmarks/` alone — not to the
+> `django_absurd` package, and not to Absurd itself.
 
 The pipeline is `stages.py` (what to measure) -> `measurement.py` (one configuration,
 repeated) -> `producer.py` (enqueues) and `runner.py` (spawns real workers) -> Postgres
