@@ -1,6 +1,6 @@
 import os
 
-SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "test-only-not-secret")
+SECRET_KEY = "nonsense-not-a-secret"  # noqa: S105
 
 # `workload` because the worker children run on `benchmarks/settings.py` against THIS
 # suite's database, so its table has to migrate here too.

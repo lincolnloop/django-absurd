@@ -2,7 +2,7 @@ import os
 
 import dj_database_url
 
-SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "bench-only-not-secret")
+SECRET_KEY = "nonsense-not-a-secret"  # noqa: S105
 
 DEBUG = os.environ.get("DEBUG", "") == "1"
 
