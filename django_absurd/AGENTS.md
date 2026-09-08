@@ -64,7 +64,8 @@ def add(a: int, b: int) -> int:
     return a + b
 
 
-result = add.enqueue(2, 3)  # a worker runs it; read it back with add.get_result(result.id)
+# a worker runs it; read it back with add.get_result(result.id)
+result = add.enqueue(2, 3)
 ```
 
 The whole loop. `"default"` is declared for you; see [Configuration](#configuration) to
@@ -372,8 +373,11 @@ from django_absurd import emit_event
 
 
 def warehouse_webhook(request, order):
-    emit_event(f"warehouse.packed:{order}", {"tracking": request.POST["tracking"]},
-               queue="default")
+    emit_event(
+        f"warehouse.packed:{order}",
+        {"tracking": request.POST["tracking"]},
+        queue="default",
+    )
     return HttpResponse(status=204)
 ```
 

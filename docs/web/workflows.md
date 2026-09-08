@@ -181,8 +181,11 @@ from django_absurd import emit_event
 
 
 def warehouse_webhook(request, order):
-    emit_event(f"warehouse.packed:{order}", {"tracking": request.POST["tracking"]},
-               queue="default")
+    emit_event(
+        f"warehouse.packed:{order}",
+        {"tracking": request.POST["tracking"]},
+        queue="default",
+    )
     return HttpResponse(status=204)
 ```
 
