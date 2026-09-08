@@ -12,6 +12,8 @@ filterable by queue and state. Runs, Checkpoints, Events, Waits, and the Queues 
 get their own alongside it.
 
 - Read-only. There is no retry or cancel — the admin reports, it does not drive.
+- Tasks and Runs list newest-created first. A [deferred](tasks.md#run-it-later) task is
+  created well before it runs, so that is not the order it started in.
 - A queue created outside django-absurd — `absurdctl`, a direct SDK call — is not in the
   views, so its tasks do not appear. The changelist says so and names the queues;
   `manage.py absurd_sync_queues` indexes them.

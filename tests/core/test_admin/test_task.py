@@ -9,6 +9,7 @@ from django.test import Client
 from django.urls import reverse, reverse_lazy
 from pytest_django import DjangoDbBlocker
 
+from django_absurd import worker
 from django_absurd.admin_views import ADMIN_ENTITY_SPECS, build_admin_model
 from django_absurd.queues import get_absurd_client
 from django_absurd.test import AbsurdTestRuntime
@@ -108,18 +109,16 @@ def test_changelist_search_narrows_by_task_name(
     assert names == {"tests.tasks.boom"}
 
 
-def test_changelist_shows_dates_ordered_by_recent_activity(
-    admin_user: User, client: Client
-) -> None:
-    older = tasks.add.enqueue(1, 1)
-    newer = tasks.add.enqueue(2, 2)  # enqueued later → more recent activity
+def test_changelist_orders_newest_task_first(admin_user: User, client: Client) -> None:
+    # The older task lands on a queue nothing drains, so it never starts: creation
+    # order and start order disagree, and only creation order puts `newer` on top.
+    older = tasks.add.using(queue_name="other").enqueue(1, 1)
+    newer = tasks.add.enqueue(2, 2)
+    worker.drain_queue("default")
     client.force_login(admin_user)
     resp = client.get(CHANGELIST)
     soup = parse_html(resp)
     rows = result_rows(soup)
-    # primary sort is the first_started_at datetime column, descending
-    assert soup.select_one("th.column-first_started_at.sorted.descending") is not None
-    # rows actually come back most-recent first (order matters, so keep a list)
     keys = [
         el.get_text(strip=True)
         for r in rows

@@ -105,7 +105,6 @@ class ReadOnlyAbsurdAdmin(ReadOnlyAdminBase):
     spec: EntitySpec | None  # None on the Queue admin (the catalog, not an entity view)
     using: str
 
-    ordering = ("natural_key",)
     show_full_result_count = False
 
     def get_queryset(self, request: "HttpRequest") -> "QuerySet[t.Any]":
@@ -265,16 +264,9 @@ def build_entity_admin(
             build_wait_inline(wait_model),
         ]
         extra["fieldsets"] = TASK_FIELDSETS
-        # Most recently active first: by run start, then enqueue time (both real
-        # datetime columns, so the changelist shows the sort indicator and sorts on
-        # click). enqueue_at is effectively unique, keeping pagination stable.
-        extra["ordering"] = ("-first_started_at", "-enqueue_at")
 
     if spec.name == "runs":
         extra["fieldsets"] = RUN_FIELDSETS
-        # Most recently active run first: by start, then creation (created_at is
-        # effectively unique, keeping pagination stable).
-        extra["ordering"] = ("-started_at", "-created_at")
 
     return type(
         f"{spec.model_name}Admin",
@@ -282,6 +274,7 @@ def build_entity_admin(
         {
             "spec": spec,
             "using": using,
+            "ordering": spec.ordering,
             "list_display": list_display,
             "list_filter": list_filter,
             "search_fields": search_fields,

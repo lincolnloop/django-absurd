@@ -37,10 +37,6 @@
   buffers with the same latency cold or warm after. A person with a seeded corpus runs
   `EXPLAIN` by hand; a probe that seeds and measures in one process has warm buffers and
   times nothing anyone waits for.
-- **A new Django project for the admin.** `tests/settings.py` installs
-  `django.contrib.admin` and `tests/urls.py` mounts it, and both read `PGDATABASE` and
-  `PGPORT` from the environment. The corpus is a database on the existing `db` service,
-  reached by those variables. No new module, no new service, no new port.
 - **A timed suspension stage.** `tests/core/test_durable.py` drives a durable sleep
   through the real sync bridge and asserts `drain()` returns the sleeping state — a
   parked bridge thread would hang that drain, so the test passing is the evidence.

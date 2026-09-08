@@ -43,6 +43,30 @@ def test_changelist(admin_user: AbstractBaseUser, client: Client) -> None:
     assert "cp1" in names
 
 
+def test_changelist_orders_newest_task_and_name_first(
+    admin_user: AbstractBaseUser, client: Client
+) -> None:
+    # sorted() puts the pair in the order Postgres does, so `newer` stands in for
+    # the later of two uuidv7 task ids.
+    older, newer = sorted((uuid.uuid4(), uuid.uuid4()))
+    insert_checkpoint(older, "cp")
+    insert_checkpoint(newer, "aaa")
+    insert_checkpoint(newer, "zzz")
+    client.force_login(t.cast("User", admin_user))
+    response = client.get(CHANGELIST)
+    soup = parse_html(response)
+    assert soup.select_one("th.column-checkpoint_name.sorted.descending") is not None
+    keys = [
+        t.cast("Tag", r.select_one(".field-natural_key")).get_text(strip=True)
+        for r in result_rows(soup)
+    ]
+    assert (
+        keys.index(f"default:{newer}:zzz")
+        < keys.index(f"default:{newer}:aaa")
+        < keys.index(f"default:{older}:cp")
+    )
+
+
 def test_detail_with_nasty_name(admin_user: AbstractBaseUser, client: Client) -> None:
     tid = uuid.uuid4()
     with connections["default"].cursor() as cur:

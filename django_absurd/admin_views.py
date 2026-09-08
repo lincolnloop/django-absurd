@@ -24,6 +24,9 @@ class EntitySpec:
     model_name: str
     verbose: str
     natural_key_sql: psycopg.sql.Composable
+    # Changelist order. Ordering on the entity's own pk lets Postgres walk the pkey
+    # index instead of sorting the whole table; uuidv7 keys make that newest-first.
+    ordering: tuple[str, ...]
     columns: tuple[tuple[str, str], ...]
     has_state: bool
     list_display: tuple[str, ...]
@@ -38,6 +41,7 @@ ADMIN_ENTITY_SPECS: tuple[EntitySpec, ...] = (
         model_name="Task",
         verbose="task",
         natural_key_sql=psycopg.sql.SQL("task_id::text"),
+        ordering=("-task_id",),
         columns=(
             ("task_id", "uuid"),
             ("task_name", "text"),
@@ -74,6 +78,7 @@ ADMIN_ENTITY_SPECS: tuple[EntitySpec, ...] = (
         model_name="Run",
         verbose="run",
         natural_key_sql=psycopg.sql.SQL("run_id::text"),
+        ordering=("-run_id",),
         columns=(
             ("run_id", "uuid"),
             ("task_id", "uuid"),
@@ -110,6 +115,7 @@ ADMIN_ENTITY_SPECS: tuple[EntitySpec, ...] = (
         model_name="Checkpoint",
         verbose="checkpoint",
         natural_key_sql=psycopg.sql.SQL("task_id::text || ':' || checkpoint_name"),
+        ordering=("-task_id", "-checkpoint_name"),
         columns=(
             ("task_id", "uuid"),
             ("checkpoint_name", "text"),
@@ -129,6 +135,8 @@ ADMIN_ENTITY_SPECS: tuple[EntitySpec, ...] = (
         model_name="Event",
         verbose="event",
         natural_key_sql=psycopg.sql.SQL("event_name::text"),
+        # e_<queue>'s pk is event_name, so pk order is alphabetical either way.
+        ordering=("natural_key",),
         columns=(
             ("event_name", "text"),
             ("payload", "jsonb"),
@@ -145,6 +153,7 @@ ADMIN_ENTITY_SPECS: tuple[EntitySpec, ...] = (
         model_name="Wait",
         verbose="wait",
         natural_key_sql=psycopg.sql.SQL("run_id::text || ':' || step_name"),
+        ordering=("-run_id", "-step_name"),
         columns=(
             ("task_id", "uuid"),
             ("run_id", "uuid"),

@@ -714,6 +714,25 @@ because a bare `TextChoices` member title-cases it, and these pages show the str
 Postgres stores. The checkpoint `status` column gets no filter at all — one value is
 ever written, so the dropdown could only ever be a no-op.
 
+Changelists order by the entity's own id column (`-task_id`, `-run_id`), not by the
+timestamp a reader would name. That column is a `uuidv7`, so its order IS chronological,
+and Postgres can walk the queue table's pkey index backwards to find a page. It is
+nullable on the admin's models, so `ChangeList` appends `-pk`, the synthesized
+`natural_key`: the statement is `ORDER BY task_id DESC, natural_key DESC`, planned as an
+`Incremental Sort` presorted on the id column above that backward index scan. Ordering
+on `first_started_at`/`started_at` reads better and cannot use an index: nothing indexes
+those columns, and the union view offers no cross-queue index to build on. Measured on a
+seeded million-task database (`benchmarks/seed.py`), ten thousand rows into the tasks
+changelist: the id order reads 380 buffers in 7.5 ms, and the timestamp order a
+`Parallel Seq Scan` over every row followed by an external merge sort that SPILLS — 54
+MB of temp files, 33,009 buffers read, 192 ms. The spill is the part that matters,
+because it grows with the table rather than with the page, so the cost lands on every
+admin page view and gets worse as history accumulates. What it costs the reader is
+stated in the admin docs: a deferred task is created well before it runs, so
+newest-created is not newest-started. Indexing the timestamps instead would be the other
+trade — an index per queue per column, written on every state change, to order pages
+nobody has asked to sort that way.
+
 ## Routing & multiple databases
 
 The router claims only this app's models; it never dictates routing for the rest of a
