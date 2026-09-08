@@ -109,6 +109,15 @@ something was wrong with it, marked in place:
   about the system, not a broken measurement.
 - `?` — fewer than two valid reps, so the spread was never measured at all.
 
+Four stages run at a configuration an earlier stage picked — `process_scaling`,
+`poll_interval` and `checkpoint_cost` inherit `worker_knobs`' winning row, and
+`latency_under_load` inherits `process_scaling`'s. Each prints a `Calibrated from` line
+naming the row it took and ending in that row's standing. **Read it before the numbers
+under it, and discard the whole run unless it says `valid and stable`.** Anything else —
+`unstable`, `invalid`, `dispersion unmeasured` — means those stages measured a
+configuration that did not repeat, and nothing else in the report says so: the run still
+exits cleanly and its tables still agree with each other.
+
 Under each saturation table is a commit-budget line saying what limited that row:
 `client-bound` is our Python, `connection-bound` is Postgres, `unresolved` means the
 calibration could not tell.
@@ -217,8 +226,9 @@ reference machine.
 
 `PGPORT` picks the server and `SAMPLE_DATABASE` the database on it. It is a database of
 its own because the harness's default is `db_bench`'s, which a real run empties. The
-script also sets `DEBUG=1`, which is what serves the admin's own CSS — leave `DEBUG`
-unset for anything you intend to time.
+script also sets `DEBUG=1`, which is what serves the admin's own CSS. `python -m stages`
+refuses to run while it is on: the children inherit the whole environment, so a shell
+that exported it once would measure every rate through the debug cursor.
 
 **The data is synthetic, and no number taken on it is a property of django-absurd.**
 Every task is a copy of one of six templates, so the ages are uniform, the payloads are

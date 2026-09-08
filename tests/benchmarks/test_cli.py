@@ -6,6 +6,7 @@ import typing as t
 import pytest
 from django.core.management import call_command
 from django.db import connections
+from pytest_django import Settings
 
 import analysis
 import stages
@@ -630,6 +631,33 @@ def test_refuses_a_size_that_leaves_a_stage_nothing_to_measure(
             f"{flag} {value} is below {floor}, which leaves a stage nothing to "
             "measure — no worker to spawn, no task to drain, or no window to divide "
             "by. Every number it recorded would describe work that never happened.\n"
+        ),
+    )
+
+
+def test_refuses_to_measure_while_debug_is_on(
+    capsys: pytest.CaptureFixture[str],
+    settings: Settings,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Refused before anything runs, because no results file would record it.
+
+    `benchmarks/settings.py` reads `DEBUG` from the environment so the seeded admin can
+    be browsed, and `build_worker_env` hands the children the whole environment — so a
+    shell that exported it once measures every rate through the debug cursor, and the
+    host block has no field that says which cursor a run got.
+    """
+    settings.DEBUG = True
+
+    with pytest.raises(SystemExit) as exit_info:
+        stages.main(["process_scaling", "--results-dir", str(tmp_path)])
+
+    assert (exit_info.value.code, capsys.readouterr().err) == (
+        1,
+        (
+            "DEBUG is on, so every query would run through Django's debug cursor and "
+            "no rate measured under it compares with one measured without it. Unset "
+            "DEBUG — it is there to serve the seeded admin, not to measure.\n"
         ),
     )
 

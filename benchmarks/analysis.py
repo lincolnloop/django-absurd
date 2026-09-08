@@ -303,8 +303,10 @@ def count_client_backends() -> int:
 
 
 def capture_database_now() -> dt.datetime:
+    # `clock_timestamp()`, not `now()`: the rows this mark is compared against carry
+    # `absurd.current_time()`, and `now()` is the calling transaction's START.
     with connections[resolve_absurd_database()].cursor() as cursor:
-        cursor.execute("select now()")
+        cursor.execute("select clock_timestamp()")
         return t.cast("dt.datetime", cursor.fetchone()[0])
 
 
