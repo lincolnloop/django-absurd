@@ -109,6 +109,15 @@ something was wrong with it, marked in place:
   about the system, not a broken measurement.
 - `?` — fewer than two valid reps, so the spread was never measured at all.
 
+Four stages run at a configuration an earlier stage picked — `process_scaling`,
+`poll_interval` and `checkpoint_cost` inherit `worker_knobs`' winning row, and
+`latency_under_load` inherits `process_scaling`'s. Each prints a `Calibrated from` line
+naming the row it took and ending in that row's standing. **Read it before the numbers
+under it, and discard the whole run unless it says `valid and stable`.** Anything else —
+`unstable`, `invalid`, `dispersion unmeasured` — means those stages measured a
+configuration that did not repeat, and nothing else in the report says so: the run still
+exits cleanly and its tables still agree with each other.
+
 Under each saturation table is a commit-budget line saying what limited that row:
 `client-bound` is our Python, `connection-bound` is Postgres, `unresolved` means the
 calibration could not tell.

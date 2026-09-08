@@ -48,6 +48,22 @@ the default batch; and its `latency_under_load` calibrated from `workers_5` rath
 went to seven. An `a` row beside a `b` row is two experiments, not one measurement
 repeated. Read the `Calibrated from` line first, always.
 
+**A noisy ladder picks a slow winner, and four stages then measure it.**
+`clean-20260904T151738Z` is the case: `concurrency_8` cv 15.5% and `concurrency_16` cv
+11.9%, both unstable, so the pick settled on `concurrency=4 batch_size=8` where
+neighbouring runs picked 16/32. Measured faithfully at that configuration downstream —
+`workers_10` 1,944.0 against 4,593.1/4,661.5, `async_dispatch` 527.8 against
+1,098.1/1,179.0, `checkpoint_cost`'s `flat` 829.1 against 1,297.2. The box was not 2.4x
+slower; the harness mis-calibrated and then measured that correctly. Nothing flagged the
+run: it exited 0 and every number inside it was self-consistent, which is why a marked
+calibration row is grounds to DISCARD the run rather than to note a caveat beside it.
+`pick_best_measurement` prefers a valid, stable rung and falls back to the whole set
+instead of refusing, deliberately — aborting a forty-minute run on a mark would cost
+more than it saves, so the reading is what has to catch this. A ratio between two arms
+of one run survives a bad calibration where an absolute rate does not: `size_vs_depth`
+read 345.0/187.5/192.8 under that calibration against 375.2/201.0/203.5 under a good
+one.
+
 Load is sampled on each side of every rep. Median of every `load_before`/`load_after`
 sample: `warmup` 2.68, `c2` 3.39, `b` 3.40, `a` 5.11. It does not account for a whole
 run reading low — `c2` and `b` sat at 3.39 and 3.40 and still disagreed by up to 18% on
