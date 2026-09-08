@@ -226,8 +226,9 @@ reference machine.
 
 `PGPORT` picks the server and `SAMPLE_DATABASE` the database on it. It is a database of
 its own because the harness's default is `db_bench`'s, which a real run empties. The
-script also sets `DEBUG=1`, which is what serves the admin's own CSS — leave `DEBUG`
-unset for anything you intend to time.
+script also sets `DEBUG=1`, which is what serves the admin's own CSS. `python -m stages`
+refuses to run while it is on: the children inherit the whole environment, so a shell
+that exported it once would measure every rate through the debug cursor.
 
 **The data is synthetic, and no number taken on it is a property of django-absurd.**
 Every task is a copy of one of six templates, so the ages are uniform, the payloads are

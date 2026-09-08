@@ -8,6 +8,7 @@ import typing as t
 from pathlib import Path
 
 import django
+from django.conf import settings
 from django.utils.module_loading import import_string
 
 import analysis
@@ -174,6 +175,15 @@ class InvalidSizeError(Exception):
             f"{flag} {value:g} is below {floor:g}, which leaves a stage nothing to "
             f"measure — no worker to spawn, no task to drain, or no window to divide "
             f"by. Every number it recorded would describe work that never happened."
+        )
+
+
+class MeasuringUnderDebugError(Exception):
+    def __init__(self) -> None:
+        super().__init__(
+            "DEBUG is on, so every query would run through Django's debug cursor and "
+            "no rate measured under it compares with one measured without it. Unset "
+            "DEBUG — it is there to serve the seeded admin, not to measure."
         )
 
 
@@ -1222,9 +1232,11 @@ def main(argv: list[str] | None = None) -> None:
     django.setup()
     # All three are the caller's to fix, so they print as errors rather than crashing.
     try:
+        refuse_measuring_under_debug()
         run_stages(stages, build_stage_options(args))
     except (
         InvalidSizeError,
+        MeasuringUnderDebugError,
         MissingStageError,
         UncalibratableStageError,
     ) as exc:
@@ -1256,6 +1268,17 @@ def build_stage_options(args: argparse.Namespace) -> StageOptions:
         durable_seconds=args.durable_seconds,
         max_workers=args.max_workers,
     )
+
+
+def refuse_measuring_under_debug() -> None:
+    """Refuse rather than record it: the host block reads config off the SERVER.
+
+    A debug cursor is the harness's own process, so nothing in a results file could
+    speak for it, and every rate in the run would be incomparable rather than merely
+    annotated.
+    """
+    if settings.DEBUG:
+        raise MeasuringUnderDebugError
 
 
 if __name__ == "__main__":
