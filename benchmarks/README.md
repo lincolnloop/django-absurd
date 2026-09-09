@@ -29,32 +29,36 @@ RAM, so a restart hands you back an empty server, and a run against one dies par
 through its first measurement with `schema "absurd" does not exist`. It takes a second
 and it is idempotent, so just run it every time.
 
-The nine stages take about an hour together on the reference machine (14 cores, at
-`--max-workers 14 --reps 3`). Seven of them were timed at 50 minutes in one run, of
+The ten stages take about seventy minutes together on the reference machine (14 cores,
+at `--max-workers 14 --reps 3`). Seven of them were timed at 50 minutes in one run, of
 which `latency_under_load` was 15 and `size_vs_depth` 11 — that one drains four tasks
 for every one it measures. Name stages to run only those; `--tasks`, `--duration`,
 `--reps` and `--max-workers` size them down to a dry run, `--io-seconds` sets how long
-`sync_vs_async` pretends to do IO for, and `--durable-seconds` sets how long
-`pooled_vs_split`'s durable arms hold a worker thread (default 2 s; 30 s is an agent
-tool call's duration and ~15x that stage's cost). Results land in `benchmarks/results/`,
-which is git-ignored — the numbers belong to the machine that produced them.
+`sync_vs_async` pretends to do IO for, and `--durable-seconds` sets how long a durable
+body holds a worker thread — in `pooled_vs_split`'s durable arms and in
+`durable_checkpoints`, whose long-body arms run at 15x it (default 2 s; 30 s is an agent
+tool call's duration and ~15x `pooled_vs_split`'s cost). `durable_checkpoints` is about
+ten minutes of the run at that default, nearly all of it its three long-body arms.
+Results land in `benchmarks/results/`, which is git-ignored — the numbers belong to the
+machine that produced them.
 
-| stage                | what it answers                                                  |
-| -------------------- | ---------------------------------------------------------------- |
-| `worker_knobs`       | what `--concurrency`, `--batch-size` and async dispatch buy      |
-| `process_scaling`    | how throughput scales with worker processes                      |
-| `pooled_vs_split`    | one total concurrency, reached two ways, on short and long tasks |
-| `size_vs_depth`      | whether a big table or a deep queue is what costs throughput     |
-| `poll_interval`      | what `--poll-interval` costs and buys                            |
-| `sync_vs_async`      | whether async task bodies beat sync ones                         |
-| `checkpoint_cost`    | what a `ctx.step` checkpoint costs                               |
-| `producer_ceiling`   | how fast the enqueue side can go                                 |
-| `latency_under_load` | end-to-end latency at fractions of a sustainable offer rate      |
+| stage                 | what it answers                                                       |
+| --------------------- | --------------------------------------------------------------------- |
+| `worker_knobs`        | what `--concurrency`, `--batch-size` and async dispatch buy           |
+| `process_scaling`     | how throughput scales with worker processes                           |
+| `pooled_vs_split`     | one total concurrency, reached two ways, on short and long tasks      |
+| `size_vs_depth`       | whether a big table or a deep queue is what costs throughput          |
+| `poll_interval`       | what `--poll-interval` costs and buys                                 |
+| `sync_vs_async`       | whether async task bodies beat sync ones                              |
+| `checkpoint_cost`     | what a `ctx.step` checkpoint costs                                    |
+| `durable_checkpoints` | what a checkpoint costs at depth, inside a body that runs for seconds |
+| `producer_ceiling`    | how fast the enqueue side can go                                      |
+| `latency_under_load`  | end-to-end latency at fractions of a sustainable offer rate           |
 
 Stages run in dependency order whatever order you type them in, but nothing runs a
-prerequisite you did not name: `process_scaling`, `poll_interval` and `checkpoint_cost`
-read back `stage_worker_knobs.json`, and `latency_under_load` reads
-`stage_process_scaling.json`. Missing one is an error that says so.
+prerequisite you did not name: `process_scaling`, `poll_interval`, `checkpoint_cost` and
+`durable_checkpoints` read back `stage_worker_knobs.json`, and `latency_under_load`
+reads `stage_process_scaling.json`. Missing one is an error that says so.
 
 Starting over is `docker compose restart db_bench` and then `migrate` again. Nothing
 about the database survives, so nothing about it can go stale.
@@ -109,14 +113,14 @@ something was wrong with it, marked in place:
   about the system, not a broken measurement.
 - `?` — fewer than two valid reps, so the spread was never measured at all.
 
-Four stages run at a configuration an earlier stage picked — `process_scaling`,
-`poll_interval` and `checkpoint_cost` inherit `worker_knobs`' winning row, and
-`latency_under_load` inherits `process_scaling`'s. Each prints a `Calibrated from` line
-naming the row it took and ending in that row's standing. **Read it before the numbers
-under it, and discard the whole run unless it says `valid and stable`.** Anything else —
-`unstable`, `invalid`, `dispersion unmeasured` — means those stages measured a
-configuration that did not repeat, and nothing else in the report says so: the run still
-exits cleanly and its tables still agree with each other.
+Five stages run at a configuration an earlier stage picked — `process_scaling`,
+`poll_interval`, `checkpoint_cost` and `durable_checkpoints` inherit `worker_knobs`'
+winning row, and `latency_under_load` inherits `process_scaling`'s. Each prints a
+`Calibrated from` line naming the row it took and ending in that row's standing. **Read
+it before the numbers under it, and discard the whole run unless it says
+`valid and stable`.** Anything else — `unstable`, `invalid`, `dispersion unmeasured` —
+means those stages measured a configuration that did not repeat, and nothing else in the
+report says so: the run still exits cleanly and its tables still agree with each other.
 
 Under each saturation table is a commit-budget line saying what limited that row:
 `client-bound` is our Python, `connection-bound` is Postgres, `unresolved` means the

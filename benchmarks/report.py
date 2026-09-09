@@ -893,16 +893,16 @@ def build_derived_lines(stage: str, measurements: list[dict[str, t.Any]]) -> lis
     deleted. A mark changes the SHAPE of what derives instead — see `describe_quotient`,
     which carries the reps' endpoints through the division.
     """
-    if stage == "process_scaling":
-        return build_scaling_efficiency_lines(measurements)
-    if stage == "pooled_vs_split":
-        return build_pooled_vs_split_lines(measurements)
-    if stage == "size_vs_depth":
-        return build_size_vs_depth_lines(measurements)
-    if stage == "sync_vs_async":
-        return build_async_ratio_lines(measurements)
-    if stage == "checkpoint_cost":
-        return build_checkpoint_multiplier_lines(measurements)
+    builders = {
+        "process_scaling": build_scaling_efficiency_lines,
+        "pooled_vs_split": build_pooled_vs_split_lines,
+        "size_vs_depth": build_size_vs_depth_lines,
+        "sync_vs_async": build_async_ratio_lines,
+        "checkpoint_cost": build_checkpoint_multiplier_lines,
+        "durable_checkpoints": build_durable_checkpoint_lines,
+    }
+    if stage in builders:
+        return builders[stage](measurements)
     # In rate mode throughput is set by the OFFER, so a throughput ratio there only
     # restates the configured rate; latency is what those vary.
     metric, label = (
@@ -1086,6 +1086,101 @@ def build_checkpoint_multiplier_lines(
             f"a flat no-op task"
         ),
     ]
+
+
+def build_durable_checkpoint_lines(
+    measurements: list[dict[str, t.Any]],
+) -> list[str]:
+    """What one `ctx.step` costs inside a durable body, and whether it stays flat.
+
+    Subtracted from the 0-step arm of the same body, never divided by it: every depth
+    runs the identical body, so what a step costs is what it ADDS — and a ratio
+    between two arms that spend nearly all their time sleeping would report the sleep.
+    """
+    by_body: dict[float, list[dict[str, t.Any]]] = {}
+    for entry in measurements:
+        seconds = read_body_seconds(entry)
+        if seconds is not None:
+            by_body.setdefault(seconds, []).append(entry)
+    lines = [line for arms in by_body.values() for line in describe_step_cost(arms)]
+    if not lines:
+        return build_ratio_lines(measurements, THROUGHPUT_KEY, "Throughput")
+    return [
+        "",
+        "Per-step cost over the 0-step arm of the same body (median rep):",
+        "",
+        *lines,
+    ]
+
+
+def describe_step_cost(arms: list[dict[str, t.Any]]) -> list[str]:
+    """One body length's depths, then whether the adder held across them."""
+    control = next((arm for arm in arms if read_step_count(arm) == 0), None)
+    ladder = sorted((arm for arm in arms if read_step_count(arm)), key=read_step_count)
+    if control is None or not ladder:
+        return []
+    costs = [(arm, measure_one_step(control, arm)) for arm in ladder]
+    lines = [
+        f"- `{arm['spec']['name']}`: {format_step_cost(server, commits)}"
+        for arm, (server, commits) in costs
+    ]
+    (shallowest, (shallow_server, _)), (deepest, (deep_server, _)) = costs[0], costs[-1]
+    if deepest is shallowest or not shallow_server or deep_server is None:
+        return lines
+    return [
+        *lines,
+        (
+            f"- {read_body_seconds(control):g} s body: a step at "
+            f"{read_step_count(deepest)} costs {deep_server / shallow_server:.2f}x "
+            f"what it costs at {read_step_count(shallowest)}"
+        ),
+    ]
+
+
+def measure_one_step(
+    control: dict[str, t.Any], arm: dict[str, t.Any]
+) -> tuple[float | None, float]:
+    """What one step of ``arm``'s depth added to the control, in server ms and commits.
+
+    Server time is `None` rather than zero where either arm has no statement stats:
+    `pg_stat_statements` is an extension, and a step that cost something reading as
+    0.00 ms would be the counters' absence printed as a measurement.
+    """
+    depth = read_step_count(arm)
+    arm_ms, control_ms = (
+        read_server_ms_per_task(arm),
+        read_server_ms_per_task(control),
+    )
+    return (
+        None if arm_ms is None or control_ms is None else (arm_ms - control_ms) / depth,
+        (
+            arm["median"].get("commits_per_task", 0.0)
+            - control["median"].get("commits_per_task", 0.0)
+        )
+        / depth,
+    )
+
+
+def format_step_cost(server: float | None, commits: float) -> str:
+    if server is None:
+        return f"{commits:.2f} commits per step, server time not itemised"
+    return f"{server:.2f} ms server, {commits:.2f} commits per step"
+
+
+def read_body_seconds(entry: dict[str, t.Any]) -> float | None:
+    """How long the arm's body held its thread, or ``None`` where it holds nothing —
+    which is every measurement of every other stage."""
+    seconds = (entry["spec"].get("task_kwargs") or {}).get("seconds")
+    return None if seconds is None else float(seconds)
+
+
+def read_step_count(entry: dict[str, t.Any]) -> int:
+    return int((entry["spec"].get("task_kwargs") or {}).get("step_count", 0))
+
+
+def read_server_ms_per_task(entry: dict[str, t.Any]) -> float | None:
+    stats = entry["median"].get("statement_stats")
+    return None if stats is None else float(stats["server_exec_ms_per_task"])
 
 
 def build_ratio_lines(

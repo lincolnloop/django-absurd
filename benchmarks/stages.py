@@ -19,6 +19,7 @@ import runner
 from django_absurd.flush import truncate_queue_tables
 from report import DEFAULT_RESULTS_DIR, describe_marks, format_dispersion
 
+DURABLE_STEPS = "tasks.run_durable_steps"
 DURABLE_WORK = "tasks.run_durable_work"
 NOOP_ASYNC = "tasks.noop_async"
 NOOP_SYNC = "tasks.noop_sync"
@@ -36,6 +37,7 @@ STAGE_NAMES = (
     "poll_interval",
     "sync_vs_async",
     "checkpoint_cost",
+    "durable_checkpoints",
     "producer_ceiling",
     "latency_under_load",
 )
@@ -58,6 +60,10 @@ STAGE_DESCRIPTIONS = {
     "poll_interval": ("latency under a paced offer, plus idle claim-rate probes"),
     "sync_vs_async": "async vs sync task bodies at the same 50 ms of simulated IO",
     "checkpoint_cost": "checkpoint cost: a 4-step workflow against a flat task",
+    "durable_checkpoints": (
+        "what a checkpoint costs inside a durable body: three step depths, each on a "
+        "body held for --durable-seconds and again on one held fifteen times as long"
+    ),
     "producer_ceiling": (
         "the producer's own ceiling: one connection, eight threads, batched commits"
     ),
@@ -125,6 +131,20 @@ DURABLE_SECONDS = 2.0
 # Rounds of durable work each slot runs in a rep, which is what sizes those arms: a
 # fixed task count would run for minutes at one shape and seconds at another.
 DURABLE_ROUNDS_PER_SLOT = 8
+# What durable_checkpoints multiplies `--durable-seconds` by for its long-body arms,
+# so one flag sets both lengths and the pair always spans the same ratio: at the
+# default it is the documented 2 s floor against an agent tool call's 30 s.
+LONG_DURABLE_MULTIPLE = 15
+# Checkpoints per durable body, in the order the arms run. 0 is the control every
+# per-step cost is subtracted from, and each depth is a multiple of the touches
+# `tasks.run_durable_steps` spreads them over.
+DURABLE_STEP_DEPTHS = (0, 4, 40)
+# Rounds of durable work per slot in a durable_checkpoints rep. Six arms and a body
+# fifteen times the floor put this stage's wall clock at rounds x 6 x 16 x
+# `--durable-seconds`, so it buys its depth ladder by measuring fewer rounds than
+# pooled_vs_split, which has a throughput ranking to settle rather than a per-task
+# cost to read off statement counters.
+DURABLE_CHECKPOINT_ROUNDS_PER_SLOT = 2
 # How often the connection probe reads `pg_stat_activity` while a fleet works. Each
 # read is a query on the harness's own connection, so this is a sampling rate rather
 # than a cost the fleet pays.
@@ -297,6 +317,14 @@ def run_stage(name: str, options: StageOptions) -> None:
             options,
             {"calibration": calibration},
         )
+    elif name == "durable_checkpoints":
+        worker, calibration = read_winning_worker(options)
+        record_interleaved_measurements(
+            "durable_checkpoints",
+            build_durable_checkpoint_measurements(worker, options),
+            options,
+            {"calibration": calibration},
+        )
     elif name == "producer_ceiling":
         run_producer_ceiling(options)
     else:
@@ -362,28 +390,17 @@ def run_pooled_vs_split(options: StageOptions) -> None:
             f"cannot spawn its {pair['total']}-process split arm"
         )
     specs = build_pooled_vs_split_measurements(runnable, options)
-    reps: dict[str, list[dict[str, t.Any]]] = {spec.name: [] for spec in specs}
-    # The list the loop below appends to, so every rewrite of the file records the
-    # order the arms have run in so far rather than the order they were meant to.
-    run_order: list[str] = []
-    extra = {
-        "shape_connections": measure_shape_connections(
-            specs, resolve_durable_seconds(options)
-        ),
-        "run_order": run_order,
-        "skipped_pairs": skipped,
-    }
-    # Written before the first rep, so a bound that leaves nothing to compare still
-    # leaves a file naming the pairs it refused and the bound that refused them.
-    write_stage_file("pooled_vs_split", [], options, extra)
-    for arm in build_pooled_vs_split_schedule(specs):
-        reps[arm.name].append(measurement.run_clean_rep(arm))
-        run_order.append(arm.name)
-        write_stage_file(
-            "pooled_vs_split", summarize_pooled_vs_split(specs, reps), options, extra
-        )
-    for entry in summarize_pooled_vs_split(specs, reps):
-        print(summarize_measurement(entry))
+    record_interleaved_measurements(
+        "pooled_vs_split",
+        specs,
+        options,
+        {
+            "shape_connections": measure_shape_connections(
+                specs, resolve_durable_seconds(options)
+            ),
+            "skipped_pairs": skipped,
+        },
+    )
 
 
 def run_poll_interval(options: StageOptions) -> None:
@@ -712,7 +729,7 @@ def build_pooled_vs_split_measurements(
     ]
 
 
-def build_pooled_vs_split_schedule(
+def build_interleaved_schedule(
     specs: list[measurement.MeasurementSpec],
 ) -> list[measurement.MeasurementSpec]:
     """Every rep of every arm, in the order they run.
@@ -728,7 +745,7 @@ def build_pooled_vs_split_schedule(
     ]
 
 
-def summarize_pooled_vs_split(
+def summarize_interleaved_arms(
     specs: list[measurement.MeasurementSpec],
     reps: dict[str, list[dict[str, t.Any]]],
 ) -> list[dict[str, t.Any]]:
@@ -824,6 +841,38 @@ def build_checkpoint_cost_measurements(
             timeout_s=SATURATION_TIMEOUT_S,
         )
         for name, task_path in (("flat", NOOP_SYNC), ("workflow", RUN_STEPS))
+    ]
+
+
+def build_durable_checkpoint_measurements(
+    winner: runner.WorkerSpec, options: StageOptions
+) -> list[measurement.MeasurementSpec]:
+    """Three step depths on a brief durable body, then the same three on a long one.
+
+    Sized per SLOT like pooled_vs_split's durable arms: a fixed task count runs for
+    minutes at one concurrency and seconds at another, and the winning one is the
+    machine's to choose. The depths run inner so a pair a per-step cost divides is
+    measured back to back rather than a body length apart.
+    """
+    brief_seconds = resolve_durable_seconds(options)
+    return [
+        apply_size_overrides(
+            measurement.MeasurementSpec(
+                name=f"steps{depth}_{length}",
+                mode="saturation",
+                task_path=DURABLE_STEPS,
+                task_kwargs={"seconds": seconds, "step_count": depth},
+                worker=winner,
+                tasks=DURABLE_CHECKPOINT_ROUNDS_PER_SLOT * winner.concurrency,
+                timeout_s=SATURATION_TIMEOUT_S,
+            ),
+            options,
+        )
+        for length, seconds in (
+            ("brief", brief_seconds),
+            ("long", brief_seconds * LONG_DURABLE_MULTIPLE),
+        )
+        for depth in DURABLE_STEP_DEPTHS
     ]
 
 
@@ -952,6 +1001,36 @@ def record_measurements(
         print(summarize_measurement(recorded[-1]))
 
 
+def record_interleaved_measurements(
+    stage: str,
+    specs: list[measurement.MeasurementSpec],
+    options: StageOptions,
+    extra: dict[str, t.Any] | None = None,
+) -> None:
+    """Every arm's reps interleaved rather than each arm's run back to back.
+
+    For a stage whose finding divides one arm by another: cumulative database state
+    only grows, so an arm that always went first would carry an advantage no column
+    records. `run_order` is the list the loop appends to, so every rewrite of the file
+    records the order the arms have run in SO FAR rather than the order they were
+    meant to.
+    """
+    run_order: list[str] = []
+    recorded = {**(extra or {}), "run_order": run_order}
+    reps: dict[str, list[dict[str, t.Any]]] = {spec.name: [] for spec in specs}
+    # Written before the first rep, so a stage left with nothing to compare still
+    # leaves a file naming what it refused and what refused it.
+    write_stage_file(stage, [], options, recorded)
+    for arm in build_interleaved_schedule(specs):
+        reps[arm.name].append(measurement.run_clean_rep(arm))
+        run_order.append(arm.name)
+        write_stage_file(
+            stage, summarize_interleaved_arms(specs, reps), options, recorded
+        )
+    for entry in summarize_interleaved_arms(specs, reps):
+        print(summarize_measurement(entry))
+
+
 def apply_size_overrides(
     spec: measurement.MeasurementSpec, options: StageOptions
 ) -> measurement.MeasurementSpec:
@@ -1038,8 +1117,12 @@ def resolve_io_seconds(options: StageOptions) -> float:
 
 
 def resolve_durable_seconds(options: StageOptions) -> float:
-    """How long a durable body holds its thread, read by the stage that runs one, by
-    the connection probe that samples under it, and by the record of both."""
+    """How long a durable body holds its thread, read by the stages that run one, by
+    the connection probe that samples under it, and by the record of all of them.
+
+    `durable_checkpoints` measures this length AND `LONG_DURABLE_MULTIPLE` times it,
+    so one flag sets both and the pair always spans the same ratio.
+    """
     return (
         DURABLE_SECONDS if options.durable_seconds is None else options.durable_seconds
     )
@@ -1221,9 +1304,11 @@ def main(argv: list[str] | None = None) -> None:
         type=float,
         help=(
             "Seconds a durable task body holds its worker thread for, in "
-            f"pooled_vs_split's durable arms and in its connection probe (default: "
-            f"{DURABLE_SECONDS:g}). A durable rep costs this times its rounds, so "
-            "raising it to an agent tool call's real duration raises the bill with it."
+            f"pooled_vs_split's durable arms and its connection probe, and in "
+            f"durable_checkpoints, whose long-body arms run at "
+            f"{LONG_DURABLE_MULTIPLE} times this (default: {DURABLE_SECONDS:g}). A "
+            "durable rep costs this times its rounds, so raising it to an agent tool "
+            "call's real duration raises the bill with it."
         ),
     )
     args = parser.parse_args(argv)

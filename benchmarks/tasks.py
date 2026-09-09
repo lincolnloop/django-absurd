@@ -61,8 +61,31 @@ def run_steps(step_count: int = 4) -> int:
     return step_count
 
 
-def report_step_done() -> int:
-    return 1
+@task(queue_name="bench")
+def run_durable_steps(
+    seconds: float = 2.0, touches: int = 4, step_count: int = 4
+) -> int:
+    """``run_durable_work`` with ``step_count`` checkpoints and nothing else changed.
+
+    The sleep, the row and the touches are identical whatever the depth, so what
+    separates two arms of the stage is the checkpoints alone — which is what makes a
+    per-step cost subtractable. Spread over the touches rather than taken up front,
+    the way a tool call checkpoints as it goes, so `step_count` is a multiple of
+    `touches` in every depth the stage measures.
+    """
+    context = get_absurd_context()
+    item = models.WorkItem.objects.create(payload=DURABLE_PAYLOAD)
+    steps_per_touch = step_count // touches
+    for touch in range(1, touches + 1):
+        time.sleep(seconds / touches)
+        item.touches = touch
+        item.payload = f"{item}: {DURABLE_PAYLOAD}"
+        item.save(update_fields=["payload", "touches", "updated_at"])
+        item.refresh_from_db()
+        for index in range(steps_per_touch):
+            context.step(f"t{touch}s{index}", report_step_done)
+    item.delete()
+    return step_count
 
 
 @task(queue_name="bench")
@@ -88,3 +111,7 @@ def run_durable_work(seconds: float = 2.0, touches: int = 4) -> int:
         item.refresh_from_db()
     item.delete()
     return item.touches
+
+
+def report_step_done() -> int:
+    return 1

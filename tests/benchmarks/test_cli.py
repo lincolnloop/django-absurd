@@ -369,6 +369,104 @@ def test_calibrates_from_the_fastest_rung_no_mark_disqualified(
     }
 
 
+def test_runs_the_checkpoint_depth_ladder_at_both_body_durations(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Three depths on two body lengths, and the long one derived from the flag.
+
+    The stage exists to divide one arm by another, so the six arms have to arrive in
+    one file: a depth compared against a depth measured in another run is compared
+    against another machine. The long body is `--durable-seconds` times
+    `LONG_DURABLE_MULTIPLE` rather than a second flag, so a run cannot record two
+    durations that relate to nothing.
+    """
+    (tmp_path / "stage_worker_knobs.json").write_text(
+        json.dumps({"measurements": [build_recorded_rung("clean_c2", 500.0, 2)]})
+    )
+
+    stages.main(
+        [
+            "durable_checkpoints",
+            "--reps",
+            "1",
+            "--tasks",
+            "8",
+            "--durable-seconds",
+            BRIEF_DURABLE_SECONDS,
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
+
+    brief = float(BRIEF_DURABLE_SECONDS)
+    assert [
+        {
+            "name": entry["spec"]["name"],
+            "task_path": entry["spec"]["task_path"],
+            "task_kwargs": entry["spec"]["task_kwargs"],
+        }
+        for entry in utils.read_stage(tmp_path, "durable_checkpoints")["measurements"]
+    ] == [
+        {
+            "name": f"steps{depth}_{length}",
+            "task_path": "tasks.run_durable_steps",
+            "task_kwargs": {
+                "seconds": pytest.approx(seconds),
+                "step_count": depth,
+            },
+        }
+        for length, seconds in (
+            ("brief", brief),
+            ("long", brief * stages.LONG_DURABLE_MULTIPLE),
+        )
+        for depth in stages.DURABLE_STEP_DEPTHS
+    ]
+
+
+def test_interleaves_the_durable_checkpoint_arms_rep_by_rep(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A per-step cost is a subtraction between arms, so no arm may always go first.
+
+    Cumulative database state only grows across a stage, and this one's whole finding
+    is one arm's per-task cost minus another's — so the reps interleave and reverse,
+    the way pooled_vs_split's do, rather than running each arm's reps back to back.
+    """
+    (tmp_path / "stage_worker_knobs.json").write_text(
+        json.dumps({"measurements": [build_recorded_rung("clean_c2", 500.0, 2)]})
+    )
+
+    stages.main(
+        [
+            "durable_checkpoints",
+            "--reps",
+            "2",
+            "--tasks",
+            "2",
+            "--durable-seconds",
+            BRIEF_DURABLE_SECONDS,
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
+
+    result = utils.read_stage(tmp_path, "durable_checkpoints")
+    arms = [
+        f"steps{depth}_{length}"
+        for length in ("brief", "long")
+        for depth in stages.DURABLE_STEP_DEPTHS
+    ]
+    assert {
+        "measurements": [entry["spec"]["name"] for entry in result["measurements"]],
+        "reps": [len(entry["reps"]) for entry in result["measurements"]],
+        "run_order": result["run_order"],
+    } == {
+        "measurements": arms,
+        "reps": [2] * len(arms),
+        "run_order": [*arms, *reversed(arms)],
+    }
+
+
 def build_recorded_rung(
     name: str,
     throughput_per_s: float,

@@ -954,6 +954,102 @@ def test_falls_back_to_ratios_when_checkpoint_cost_lost_half_its_pair(
     )
 
 
+def test_renders_the_per_step_cost_for_durable_checkpoints(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The stage's whole finding: what one step costs, and whether it stays flat.
+
+    A step's cost is what a depth costs OVER the 0-step arm of the same body, so the
+    control is subtracted rather than divided — and the ratio between the deepest and
+    the shallowest depth is what says the adder is flat, which is the claim
+    `benchmarks/CLAUDE.md` records as unproven past four steps.
+    """
+    entries = build_durable_checkpoint_entries()
+
+    assert (
+        "Per-step cost over the 0-step arm of the same body (median rep):\n"
+        "\n"
+        "- `steps4_brief`: 0.60 ms server, 2.00 commits per step\n"
+        "- `steps40_brief`: 0.90 ms server, 2.00 commits per step\n"
+        "- 0.05 s body: a step at 40 costs 1.50x what it costs at 4\n"
+        "- `steps4_long`: 0.70 ms server, 2.00 commits per step\n"
+        "- `steps40_long`: 0.70 ms server, 2.00 commits per step\n"
+        "- 0.75 s body: a step at 40 costs 1.00x what it costs at 4\n"
+    ) in render(capsys, tmp_path, "durable_checkpoints", entries)
+
+
+def test_says_a_per_step_cost_has_no_server_split_without_statement_stats(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """`pg_stat_statements` is not on a stock server, and the commits still are.
+
+    Printing 0.00 ms server for a step that cost something is the one outcome worth
+    refusing: the counters the split comes from are an extension the harness creates
+    where it can and does without where it cannot.
+    """
+    entries = [
+        {**entry, "median": {**entry["median"], "statement_stats": None}}
+        for entry in build_durable_checkpoint_entries()
+    ]
+
+    assert (
+        "Per-step cost over the 0-step arm of the same body (median rep):\n"
+        "\n"
+        "- `steps4_brief`: 2.00 commits per step, server time not itemised\n"
+        "- `steps40_brief`: 2.00 commits per step, server time not itemised\n"
+        "- `steps4_long`: 2.00 commits per step, server time not itemised\n"
+        "- `steps40_long`: 2.00 commits per step, server time not itemised\n"
+    ) in render(capsys, tmp_path, "durable_checkpoints", entries)
+
+
+def test_falls_back_to_ratios_when_durable_checkpoints_lost_its_control_arm(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Every per-step cost is measured over the 0-step arm, and the results file is
+    rewritten after every rep — so a run killed before that arm has one leaves a file
+    with nothing to subtract, and a stage with rows still deserves a number."""
+    entries = [
+        entry
+        for entry in build_durable_checkpoint_entries()
+        if entry["spec"]["task_kwargs"]["step_count"]
+    ]
+
+    assert ("Throughput relative to `steps4_brief`:\n\n- `steps4_brief`: 1.00x\n") in (
+        render(capsys, tmp_path, "durable_checkpoints", entries)
+    )
+
+
+def build_durable_checkpoint_entries() -> list[dict[str, t.Any]]:
+    """One durable_checkpoints run: three depths on a brief body, then on a long one.
+
+    Server time and commits are chosen so the brief body's adder GROWS with depth and
+    the long body's holds — the two answers the stage exists to tell apart.
+    """
+    return [
+        build_measurement(
+            f"steps{depth}_{length}",
+            {
+                "task_path": "tasks.run_durable_steps",
+                "task_kwargs": {"seconds": seconds, "step_count": depth},
+            },
+            {
+                "commits_per_task": commits,
+                "statement_stats": {
+                    "statements": [],
+                    "wall_ms_per_task": server * 2,
+                    "server_exec_ms_per_task": server,
+                    "client_ms_per_task": server,
+                },
+            },
+        )
+        for length, seconds, arms in (
+            ("brief", 0.05, ((0, 1.00, 2.00), (4, 3.40, 10.00), (40, 37.00, 82.00))),
+            ("long", 0.75, ((0, 2.00, 2.00), (4, 4.80, 10.00), (40, 30.00, 82.00))),
+        )
+        for depth, server, commits in arms
+    ]
+
+
 def test_renders_what_a_bigger_table_cost_for_size_vs_depth(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:

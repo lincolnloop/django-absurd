@@ -668,11 +668,11 @@ answer is the idle count repeated: the threaded preloader read `1x4 2 -> 3` and
 `4x1 8 -> 9` on the first probe of each shape and the honest `2 -> 2` and `8 -> 8` on
 the second.
 
-**`pooled_vs_split` is the only stage with a durable arm.** Both totals are measured on
-both workloads — `pooled_4`/`split_4` against `pooled_durable_4`/`split_durable_4` — and
-the report ranks the shapes once per workload, because a body that holds a thread and
-one that does not are two different experiments on the same topology — though only one
-of them has an outcome to discover.
+**`pooled_vs_split` and `durable_checkpoints` are the durable stages.** In
+`pooled_vs_split`, both totals are measured on both workloads — `pooled_4`/`split_4`
+against `pooled_durable_4`/`split_durable_4` — and the report ranks the shapes once per
+workload, because a body that holds a thread and one that does not are two different
+experiments on the same topology — though only one of them has an outcome to discover.
 
 **The durable ranking is foregone, and `windowed` returned exactly the 1.00x that says
 so.** Both durable pairs read 1.00x (reps 1.00-1.01x; 1.8 against 1.8 tasks/s at total
@@ -726,9 +726,41 @@ the one django-absurd is mostly used for.
 
 **What it does not support.** Nothing here bounds a task that suspends and resumes, one
 that retries, or one whose checkpoint state is large: `run_steps` checkpoints four small
-states inside one attempt of a body that does nothing else. The per-step cost is a flat
-adder measured at four steps and nothing here says it stays flat at forty. And these are
-RAM rates like every other in this file — the ratio travels, the levels do not.
+states inside one attempt of a body that does nothing else. Whether the per-step cost
+stays flat at forty steps is what `durable_checkpoints` measures, below; this stage's
+4.25x says nothing about it. And these are RAM rates like every other in this file — the
+ratio travels, the levels do not.
+
+## What a `ctx.step` costs at depth, in a body that runs for seconds
+
+`durable_checkpoints` is the same question as the stage above asked where the answer
+matters: `tasks.run_durable_steps` is `run_durable_work` — a row inserted, touched four
+times over `--durable-seconds`, cleared — with `step_count` checkpoints spread over
+those touches and nothing else changed. Three depths (0, 4, 40) on a body held for
+`--durable-seconds`, then the same three on one held `LONG_DURABLE_MULTIPLE` times as
+long, so the default pair is the documented 2 s floor against an agent tool call's 30 s
+and one flag moves both.
+
+**The 0-step arm is a control to SUBTRACT, not a denominator.** Every depth runs the
+identical body, so what a step costs is what it adds: per-step server ms and per-step
+commits are `(arm - control) / depth`. A throughput ratio between two arms that spend
+nearly all their wall clock sleeping would report the sleep, which is why this stage
+derives nothing from `throughput_per_s` — the metric is `statement_stats`'
+`server_exec_ms_per_task` and `commits_per_task`, both of which count per task rather
+than per second. Server time is left unreported rather than printed as 0.00 where
+`pg_stat_statements` counted nothing.
+
+**What the depths are for.** 40 against 4 is the flatness test: a flat adder makes the
+per-step figures equal and their ratio 1.00x, and anything else is the number that claim
+was missing. The report prints the ratio per body length, so a long body changing it is
+visible in the same block.
+
+**Sized per slot, and the long arms are the bill.** `DURABLE_CHECKPOINT_ROUNDS_PER_SLOT`
+rounds per slot rather than a fixed task count, which would run for minutes at one
+winning concurrency and seconds at another. Two rounds where `pooled_vs_split` runs
+eight: this stage reads per-task counters rather than settling a throughput ranking, and
+its long arms cost fifteen times its brief ones — about ten minutes of a default run,
+nearly all of it those three arms.
 
 ## Incidental, worth raising upstream
 
@@ -1002,6 +1034,8 @@ mechanics matter:
   database state only grows across a stage; a fixed order would hand one arm of every
   pair the emptier tables, which is exactly how an earlier control in this repo came to
   be invalidated. The order they ran in is recorded and printed.
+  `record_interleaved_measurements` is that schedule, and `durable_checkpoints` runs on
+  it for the same reason: a per-step cost is a subtraction between arms.
 - **Connection count is measured, because it is a confound.** Idle, `1x4` reaches
   four-way concurrency on two backends and `4x1` reaches it on eight, so the shapes
   differ in connection count as well as in claim path, and the report says so above the
@@ -1159,9 +1193,10 @@ rows before measuring, which is what makes the recorded `dead_tuples` readable.
 `{shape, processes, concurrency, connections_idle, connections_busy}`, the last two
 being the delta across starting that fleet and the peak while a durable body holds every
 slot — plus `run_order` (the arms as they actually ran, which is what says no arm always
-went first) and `skipped_pairs` (the pairs the worker bound refused, and the bound).
-Empty `measurements` with non-empty `skipped_pairs` is a stage asked for more processes
-than it was allowed to spawn, not a crashed run.
+went first, and which `stage_durable_checkpoints.json` carries too) and `skipped_pairs`
+(the pairs the worker bound refused, and the bound). Empty `measurements` with non-empty
+`skipped_pairs` is a stage asked for more processes than it was allowed to spawn, not a
+crashed run.
 
 **A stage that measured its own working point records the measurement, not just the
 number.** `stage_latency_under_load.json` carries `sustainable_rate`: the drain ceiling
@@ -1207,8 +1242,11 @@ Carries over:
 Does not carry over: peak tasks/s, the process x concurrency sweep, `--batch-size`, the
 producer ceiling. Those answer how fast a flood of trivial tasks drains.
 
-Not measured at all: a task that sleeps for minutes, checkpoints repeatedly, and
-suspends. No stage exercises that shape, so nothing here bounds it.
+Checkpointing repeatedly inside a durable body is now its own stage
+([at depth](#what-a-ctxstep-costs-at-depth-in-a-body-that-runs-for-seconds)). Still not
+measured at all: a task that SUSPENDS — a durable sleep or an `await_event` waiter that
+parks its run and is redelivered later. No stage exercises that shape, so nothing here
+bounds it.
 
 ## Comparing two runs: refactors, version bumps, bisection
 
