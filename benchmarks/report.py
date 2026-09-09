@@ -1099,49 +1099,69 @@ def build_durable_checkpoint_lines(
     """
     by_body: dict[float, list[dict[str, t.Any]]] = {}
     for entry in measurements:
-        seconds = read_body_seconds(entry)
-        if seconds is not None:
-            by_body.setdefault(seconds, []).append(entry)
-    per_step = [line for arms in by_body.values() for line in describe_step_cost(arms)]
-    if not per_step:
+        by_body.setdefault(read_body_seconds(entry), []).append(entry)
+    # The pairs both blocks derive from, resolved once: a body with no 0-step arm has
+    # nothing to subtract from, and neither block has anything to say about it.
+    ladders = [
+        (read_control_arm(arms), read_depth_ladder(arms)) for arms in by_body.values()
+    ]
+    derivable = [(control, ladder) for control, ladder in ladders if control and ladder]
+    if not derivable:
         return build_ratio_lines(measurements, THROUGHPUT_KEY, "Throughput")
     return [
         "",
         "Per-step cost over the 0-step arm of the same body (median rep):",
         "",
-        *per_step,
+        *[line for pair in derivable for line in describe_step_cost(*pair)],
         "",
         "What the checkpoints cost the body, against that same control:",
         "",
-        *[line for arms in by_body.values() for line in describe_body_cost(arms)],
+        *[line for pair in derivable for line in describe_body_cost(*pair)],
     ]
 
 
-def describe_step_cost(arms: list[dict[str, t.Any]]) -> list[str]:
+def read_control_arm(arms: list[dict[str, t.Any]]) -> dict[str, t.Any] | None:
+    return next((arm for arm in arms if read_step_count(arm) == 0), None)
+
+
+def read_depth_ladder(arms: list[dict[str, t.Any]]) -> list[dict[str, t.Any]]:
+    return sorted((arm for arm in arms if read_step_count(arm)), key=read_step_count)
+
+
+def describe_step_cost(
+    control: dict[str, t.Any], ladder: list[dict[str, t.Any]]
+) -> list[str]:
     """One body length's depths, then whether the adder held across them."""
-    control = next((arm for arm in arms if read_step_count(arm) == 0), None)
-    ladder = sorted((arm for arm in arms if read_step_count(arm)), key=read_step_count)
-    if control is None or not ladder:
-        return []
-    costs = [(arm, measure_one_step(control, arm)) for arm in ladder]
-    lines = [
-        f"- `{arm['spec']['name']}`: {format_step_cost(server, commits)}"
-        for arm, (server, commits) in costs
+    if not control["median"]:
+        return [describe_refused_control(control)]
+    costs = [
+        (arm, measure_one_step(control, arm) if arm["median"] else None)
+        for arm in ladder
     ]
-    (shallowest, (shallow_server, _)), (deepest, (deep_server, _)) = costs[0], costs[-1]
-    if deepest is shallowest or not shallow_server or deep_server is None:
+    lines = [
+        f"- `{arm['spec']['name']}`: "
+        + ("measured nothing" if cost is None else format_step_cost(*cost))
+        for arm, cost in costs
+    ]
+    measured = [(arm, cost) for arm, cost in costs if cost is not None]
+    if len(measured) < 2:
+        return lines
+    (shallowest, shallow), (deepest, deep) = measured[0], measured[-1]
+    if not shallow[0] or deep[0] is None:
         return lines
     return [
         *lines,
         (
             f"- {read_body_seconds(control):g} s body: a step at "
-            f"{read_step_count(deepest)} costs {deep_server / shallow_server:.2f}x "
+            f"{read_step_count(deepest)} costs {deep[0] / shallow[0]:.2f}x "
             f"what it costs at {read_step_count(shallowest)}"
         ),
     ]
 
 
-def describe_body_cost(arms: list[dict[str, t.Any]]) -> list[str]:
+def describe_body_cost(
+    control: dict[str, t.Any], ladder: list[dict[str, t.Any]]
+) -> list[str]:
     """What a depth cost the body it ran in, as a share of the control's throughput.
 
     The one honest use of a throughput ratio here: both arms sleep for the same
@@ -1149,21 +1169,30 @@ def describe_body_cost(arms: list[dict[str, t.Any]]) -> list[str]:
     number a reader wants — an absolute per-step cost lands differently on a 2 s body
     than on a 30 s one, and this says how differently.
     """
-    control = next((arm for arm in arms if read_step_count(arm) == 0), None)
-    reference = control["median"].get(THROUGHPUT_KEY, 0.0) if control else 0.0
+    reference = control["median"].get(THROUGHPUT_KEY, 0.0)
     if not reference:
-        return []
-    return [
-        (
-            f"- `{arm['spec']['name']}`: {read_step_count(arm)} steps cost "
-            f"{100 * (1 - arm['median'][THROUGHPUT_KEY] / reference):.1f}% of "
-            f"throughput ({arm['median'][THROUGHPUT_KEY]:.3g} against "
-            f"{reference:.3g} tasks/s)"
-        )
-        for arm in sorted(
-            (arm for arm in arms if read_step_count(arm)), key=read_step_count
-        )
-    ]
+        return [describe_refused_control(control)]
+    return [describe_one_body_cost(arm, reference) for arm in ladder]
+
+
+def describe_one_body_cost(arm: dict[str, t.Any], reference: float) -> str:
+    name = arm["spec"]["name"]
+    rate = arm["median"].get(THROUGHPUT_KEY)
+    if not rate:
+        return f"- `{name}`: measured nothing"
+    return (
+        f"- `{name}`: {read_step_count(arm)} steps cost "
+        f"{100 * (1 - rate / reference):.1f}% of throughput "
+        f"({rate:.3g} against {reference:.3g} tasks/s)"
+    )
+
+
+def describe_refused_control(control: dict[str, t.Any]) -> str:
+    """Both blocks are taken against the 0-step arm, so neither derives without it."""
+    return (
+        f"- {read_body_seconds(control):g} s body: its 0-step control measured "
+        "nothing, so no cost derives"
+    )
 
 
 def measure_one_step(
@@ -1196,11 +1225,11 @@ def format_step_cost(server: float | None, commits: float) -> str:
     return f"{server:.2f} ms server, {commits:.2f} commits per step"
 
 
-def read_body_seconds(entry: dict[str, t.Any]) -> float | None:
-    """How long the arm's body held its thread, or ``None`` where it holds nothing —
-    which is every measurement of every other stage."""
-    seconds = (entry["spec"].get("task_kwargs") or {}).get("seconds")
-    return None if seconds is None else float(seconds)
+def read_body_seconds(entry: dict[str, t.Any]) -> float:
+    """How long the arm's body held its thread. Every arm of this stage carries one,
+    and this block is reached by stage name, so a file without it is a broken file
+    rather than an arm to skip quietly."""
+    return float(entry["spec"]["task_kwargs"]["seconds"])
 
 
 def read_step_count(entry: dict[str, t.Any]) -> int:

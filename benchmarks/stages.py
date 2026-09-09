@@ -132,18 +132,14 @@ DURABLE_SECONDS = 2.0
 # fixed task count would run for minutes at one shape and seconds at another.
 DURABLE_ROUNDS_PER_SLOT = 8
 # What durable_checkpoints multiplies `--durable-seconds` by for its long-body arms,
-# so one flag sets both lengths and the pair always spans the same ratio: at the
-# default it is the documented 2 s floor against an agent tool call's 30 s.
+# so one flag sets both lengths and the pair always spans the same ratio.
 LONG_DURABLE_MULTIPLE = 15
-# Checkpoints per durable body, in the order the arms run. 0 is the control every
-# per-step cost is subtracted from, and each depth is a multiple of the touches
-# `tasks.run_durable_steps` spreads them over.
+# Checkpoints per durable body, in the order the arms run; 0 is the control every
+# per-step cost is subtracted from.
 DURABLE_STEP_DEPTHS = (0, 4, 40)
-# Rounds of durable work per slot in a durable_checkpoints rep. Six arms and a body
-# fifteen times the floor put this stage's wall clock at rounds x 6 x 16 x
-# `--durable-seconds`, so it buys its depth ladder by measuring fewer rounds than
-# pooled_vs_split, which has a throughput ranking to settle rather than a per-task
-# cost to read off statement counters.
+# Rounds of durable work per slot in a durable_checkpoints rep. Fewer than
+# `DURABLE_ROUNDS_PER_SLOT` because six arms at fifteen times the floor is this
+# stage's whole wall clock; see `benchmarks/CLAUDE.md`.
 DURABLE_CHECKPOINT_ROUNDS_PER_SLOT = 2
 # How often the connection probe reads `pg_stat_activity` while a fleet works. Each
 # read is a query on the harness's own connection, so this is a sampling rate rather
@@ -729,34 +725,6 @@ def build_pooled_vs_split_measurements(
     ]
 
 
-def build_interleaved_schedule(
-    specs: list[measurement.MeasurementSpec],
-) -> list[measurement.MeasurementSpec]:
-    """Every rep of every arm, in the order they run.
-
-    Reversed on the odd reps, arms staying back to back: cumulative database state only
-    grows, so a fixed order hands one arm of every pair the emptier tables.
-    """
-    rounds = specs[0].reps if specs else 0
-    return [
-        spec
-        for index in range(rounds)
-        for spec in (specs if index % 2 == 0 else specs[::-1])
-    ]
-
-
-def summarize_interleaved_arms(
-    specs: list[measurement.MeasurementSpec],
-    reps: dict[str, list[dict[str, t.Any]]],
-) -> list[dict[str, t.Any]]:
-    """The arms that have a rep, in their canonical order however they were run."""
-    return [
-        measurement.summarize_reps(spec, reps[spec.name])
-        for spec in specs
-        if reps[spec.name]
-    ]
-
-
 def build_size_vs_depth_measurements() -> list[measurement.MeasurementSpec]:
     """One pending depth on three tables: empty, ballasted, and ballasted then vacuumed.
 
@@ -1029,6 +997,34 @@ def record_interleaved_measurements(
         )
     for entry in summarize_interleaved_arms(specs, reps):
         print(summarize_measurement(entry))
+
+
+def build_interleaved_schedule(
+    specs: list[measurement.MeasurementSpec],
+) -> list[measurement.MeasurementSpec]:
+    """Every rep of every arm, in the order they run.
+
+    Reversed on the odd reps, arms staying back to back: cumulative database state only
+    grows, so a fixed order hands one arm of every pair the emptier tables.
+    """
+    rounds = specs[0].reps if specs else 0
+    return [
+        spec
+        for index in range(rounds)
+        for spec in (specs if index % 2 == 0 else specs[::-1])
+    ]
+
+
+def summarize_interleaved_arms(
+    specs: list[measurement.MeasurementSpec],
+    reps: dict[str, list[dict[str, t.Any]]],
+) -> list[dict[str, t.Any]]:
+    """The arms that have a rep, in their canonical order however they were run."""
+    return [
+        measurement.summarize_reps(spec, reps[spec.name])
+        for spec in specs
+        if reps[spec.name]
+    ]
 
 
 def apply_size_overrides(

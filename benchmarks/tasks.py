@@ -70,20 +70,22 @@ def run_durable_steps(
     The sleep, the row and the touches are identical whatever the depth, so what
     separates two arms of the stage is the checkpoints alone — which is what makes a
     per-step cost subtractable. Spread over the touches rather than taken up front,
-    the way a tool call checkpoints as it goes, so `step_count` is a multiple of
-    `touches` in every depth the stage measures.
+    the way a tool call checkpoints as it goes.
     """
     context = get_absurd_context()
     item = models.WorkItem.objects.create(payload=DURABLE_PAYLOAD)
-    steps_per_touch = step_count // touches
     for touch in range(1, touches + 1):
         time.sleep(seconds / touches)
         item.touches = touch
         item.payload = f"{item}: {DURABLE_PAYLOAD}"
         item.save(update_fields=["payload", "touches", "updated_at"])
         item.refresh_from_db()
-        for index in range(steps_per_touch):
-            context.step(f"t{touch}s{index}", report_step_done)
+        # By integer share of the touches so far, so every depth lands exactly: a
+        # floor division per touch would silently drop the remainder, and a per-step
+        # cost divided by a step count nobody took is not a cost.
+        taken = step_count * (touch - 1) // touches
+        for index in range(taken, step_count * touch // touches):
+            context.step(f"s{index}", report_step_done)
     item.delete()
     return step_count
 

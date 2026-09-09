@@ -743,12 +743,12 @@ and one flag moves both.
 
 **The 0-step arm is a control to SUBTRACT, not a denominator.** Every depth runs the
 identical body, so what a step costs is what it adds: per-step server ms and per-step
-commits are `(arm - control) / depth`. A throughput ratio between two arms that spend
-nearly all their wall clock sleeping would report the sleep, which is why this stage
-derives nothing from `throughput_per_s` — the metric is `statement_stats`'
-`server_exec_ms_per_task` and `commits_per_task`, both of which count per task rather
-than per second. Server time is left unreported rather than printed as 0.00 where
-`pg_stat_statements` counted nothing.
+commits are `(arm - control) / depth`. A throughput ratio ACROSS body lengths would
+report the sleep, so the per-step figures come off `statement_stats`'
+`server_exec_ms_per_task` and `commits_per_task`, which count per task rather than per
+second. The one throughput ratio printed is a depth arm against the 0-step arm of the
+SAME body, where the sleep cancels. Server time is left unreported rather than printed
+as 0.00 where `pg_stat_statements` counted nothing.
 
 **What the depths are for.** 40 against 4 is the flatness test: a flat adder makes the
 per-step figures equal and their ratio 1.00x, and anything else is the number that claim
@@ -765,21 +765,35 @@ nearly all of it those three arms.
 ### What it measured
 
 `results/durable-20260909T122137Z`, concurrency 16, every arm unmarked. **A step costs
-about 0.19 ms of server time and two commits, plus about 1.8 ms once for the first
-checkpoint in a task** — so the adder [the stage above](#what-a-ctxstep-costs) could not
-bound past four steps is not flat but sublinear, per-step cost falling 0.28-0.34x from
-four steps to forty on both body lengths (two depths FIT that shape; they do not test
-it). Against the 0-step arm of the same body, forty checkpoints cost 1.6% of a 30 s body
-and 16.4% of a 2 s one — one absolute cost over a body fifteen times longer. **Read
-those shares as an upper bound**: `report_step_done` returns an integer, and every
-millisecond a real step spends on its own work shrinks the checkpoint's share.
+about 0.2 ms of server time and two commits, on top of about 2.5 ms a task pays for
+checkpointing at all** — so the adder [the stage above](#what-a-ctxstep-costs) could not
+bound past four steps is not flat but sublinear. Two caveats on that sentence, both
+load-bearing: the fixed part is a two-point fit, and with four touch-bursts at BOTH
+depths nothing here can tell a cost paid once per task from one paid once per burst
+(`set_task_checkpoint_state` alone fits 1.8 ms + 0.19 ms a step, the rest being
+`get_task_checkpoint_state`'s own fixed share). And the falling ratio — 0.28x and 0.34x
+off the median reps — is 0.23-0.49x across every rep pairing, so read the direction and
+not the value.
 
-Unremarkable IS the finding, so one thing is recorded only to stop it being chased
-again: added WALL time per step at depth 40 is ~12.4 ms against 0.26 ms of server time,
-and nothing at depth 4 — either SDK bookkeeping superlinear in step count or contention
-between sixteen slots in one process. That is ~0.5 s on a task running for seconds to
-minutes, and a step's own work has to fall under ~100 ms before checkpointing is worth
-counting at all. A concurrency-1 depth ladder is the probe if it ever is.
+Against the 0-step arm of the same body, forty checkpoints cost 1.6% of throughput on
+the 30 s body and 16.4% on the 2 s one. **Almost none of that is Postgres**: the server
+delta at depth 40 is ~10 ms a task, 0.5% of a 2 s body. The rest is the wall gap below.
+
+**The wall gap is ours, and it is a property of the fleet SHAPE.** Added
+`wall_ms_per_task` per step at depth 40 is 0.78 ms, which is a per-SLOT figure: times
+the sixteen slots sharing the process it is 12.5 ms (brief) and 12.3 ms (long), against
+0.26 ms of server time, and nothing measurable at depth 4. A sync body's `context.step`
+runs `run_on_loop` (`django_absurd/context.py`) onto the worker's single event loop, and
+that worker holds ONE dedicated async connection (`aworker_client` in
+`django_absurd/worker.py`), so sixteen slots' checkpoint bursts serialize through both.
+So the 16.4% is not what a checkpoint costs — it is what sixteen slots checkpointing
+through one connection costs, and a split fleet at the same total concurrency would
+report a different share for the identical step.
+
+Which is why it is recorded rather than chased: ~0.5 s on a task that runs for seconds
+to minutes. Two things set that share — slots per process, and how much work a step's
+own body does (`report_step_done` returns an integer, so every share here is an upper
+bound). A concurrency-1 or split-fleet depth ladder is the probe if either ever matters.
 
 ## Incidental, worth raising upstream
 

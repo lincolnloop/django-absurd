@@ -1016,12 +1016,64 @@ def test_says_a_per_step_cost_has_no_server_split_without_statement_stats(
     ) in render(capsys, tmp_path, "durable_checkpoints", entries)
 
 
+def test_says_a_durable_checkpoint_arm_measured_nothing_rather_than_dividing_by_it(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """A refused arm summarizes to an EMPTY median, which every other block reads
+    through `.get` — dividing one here would report the depth's cost as the whole
+    control's, and one host nap during a 30 s arm is enough to produce it."""
+    entries = [
+        {**entry, "median": {}} if entry["spec"]["name"] == "steps40_brief" else entry
+        for entry in build_durable_checkpoint_entries()
+    ]
+
+    rendered = render(capsys, tmp_path, "durable_checkpoints", entries)
+
+    assert (
+        "- `steps4_brief`: 0.60 ms server, 2.00 commits per step\n"
+        "- `steps40_brief`: measured nothing\n"
+    ) in rendered
+    assert (
+        "- `steps4_brief`: 4 steps cost 1.0% of throughput "
+        "(99 against 100 tasks/s)\n"
+        "- `steps40_brief`: measured nothing\n"
+    ) in rendered
+
+
+def test_says_a_durable_checkpoint_control_measured_nothing(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Every figure in both blocks is taken against the 0-step arm, so a refused
+    control leaves the depths with nothing to subtract from. Reading a missing commit
+    count as zero would print the arm's whole per-task total as its per-step cost."""
+    entries = [
+        {**entry, "median": {}} if entry["spec"]["name"] == "steps0_brief" else entry
+        for entry in build_durable_checkpoint_entries()
+    ]
+
+    rendered = render(capsys, tmp_path, "durable_checkpoints", entries)
+
+    assert (
+        "- 0.05 s body: its 0-step control measured nothing, so no cost derives\n"
+        "- `steps4_long`: 0.70 ms server, 2.00 commits per step\n"
+    ) in rendered
+    assert (
+        "- 0.05 s body: its 0-step control measured nothing, so no cost derives\n"
+        "- `steps4_long`: 4 steps cost 0.1% of throughput "
+        "(9.99 against 10 tasks/s)\n"
+    ) in rendered
+
+
 def test_falls_back_to_ratios_when_durable_checkpoints_lost_its_control_arm(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    """Every per-step cost is measured over the 0-step arm, and the results file is
-    rewritten after every rep — so a run killed before that arm has one leaves a file
-    with nothing to subtract, and a stage with rows still deserves a number."""
+    """A file with no 0-step arm at all leaves both blocks nothing to subtract from.
+
+    No harness run writes one — the 0-step arm is first in each body's schedule, so it
+    always has a rep before any depth does. This is the shape a hand-trimmed or
+    foreign results file has, and a stage with rows in it still deserves a number.
+    A refused control is the reachable case and reads differently; see the test above.
+    """
     entries = [
         entry
         for entry in build_durable_checkpoint_entries()
