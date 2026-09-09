@@ -1444,6 +1444,33 @@ suspending ([parked runs](#whether-a-parked-run-holds-a-worker-slot)). Still unm
 an `await_event` waiter, which parks on an event rather than a deadline and can wait at
 Postgres's `'infinity'`. Nothing here bounds that shape.
 
+## What `loadtest/` measured, and where it lives now
+
+`loadtest/` was the first load harness, archived on `worktree-load-test-harness` (see
+[`docs/HISTORY.md`](../docs/HISTORY.md)). Every detector it had is here, written
+differently:
+
+| `loadtest/`     | here                                                                                                                             |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `load_seed`     | `seed.py` — templates, server-side clone, `information_schema` drift check; a million tasks in 15 s                              |
+| `load_drain`    | `worker_knobs`, `process_scaling`, `pooled_vs_split`, `poll_interval`, `sync_vs_async`, `producer_ceiling`, `latency_under_load` |
+| `load_barrier`  | `batch_barrier` — uniform against mixed at equal service time, `idle_slot_s` off the run columns rather than an `OccupancyLog`   |
+| `load_sleepers` | `parked_runs` — `running_max`/`sleeping_min` sampled on the drain's own poll                                                     |
+| `load_admin`    | `admin_at_volume` — timings, query counts and both plans, for tasks and runs                                                     |
+
+**Two things did NOT come over, and both are deliberate.**
+
+- **No event/wait workload.** `loadtest`'s `burn_workflow` emitted an event and then
+  awaited one nothing ever emits. Nothing here does, so `await_event` is unmeasured
+  ([which findings survive](#which-findings-survive-the-durable-regime)) and the seeded
+  corpus carries no checkpoint, event or wait rows — which is why `admin_at_volume`
+  covers tasks and runs and not the three small entities, rather than merely
+  deprioritising them.
+- **One queue, not four.** `loadtest` declared `bulk`, `alpha`, `beta` and `gamma` but
+  ran every task on `bulk`, so no measurement of its own ever compared queues.
+  Multi-queue throughput was its named next cut and was never built there either;
+  nothing measurable is lost by declaring one queue here.
+
 ## Comparing two runs: refactors, version bumps, bisection
 
 This is what the rig is FOR — deciding whether a change cost throughput, not producing a

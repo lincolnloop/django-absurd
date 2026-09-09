@@ -245,15 +245,17 @@ Unlike everything above, this one never reached `origin/main`, so nothing in mai
 history reaches its commits and no `blob/<main sha>` link can be written for it. The tag
 is what keeps it: delete the branch without it and the commits become unreachable.
 
-- 2026-08-02 — `loadtest/`, the first load harness, superseded by
-  [`benchmarks/`](../benchmarks/README.md) but not replaced in full. Archived at
+- 2026-08-02 — `loadtest/`, the first load harness, now superseded by
+  [`benchmarks/`](../benchmarks/README.md). Archived at
   [`3b4ac82`](https://github.com/lincolnloop/django-absurd/tree/3b4ac82bad087a3a24d40be81aebfd350f65646f/loadtest)
-  on branch `worktree-load-test-harness`. It measured four things `benchmarks/` cannot:
-  the **admin changelist at volume** (`load_admin`, with `EXPLAIN (ANALYZE, BUFFERS)`
-  and per-request query counts — the instrument behind
-  [#142](https://github.com/lincolnloop/django-absurd/issues/142)); a **million-row
-  seeded corpus** (`load_seed`, against a persistent volume, where `benchmarks/`
-  truncates before every rep on a RAM disk); **mixed-duration backlogs with slot
-  occupancy** (`load_barrier`, whose uniform-duration control is what identified the
-  batch boundary recorded in [`UPSTREAM.md`](UPSTREAM.md)); and a **multi-queue
-  topology** with failure/retry and event/wait workloads.
+  on branch `worktree-load-test-harness`. Every detector it had is now a stage — the
+  **admin changelist at volume** with plans and query counts (`admin_at_volume`, the
+  instrument behind [#142](https://github.com/lincolnloop/django-absurd/issues/142)), a
+  **million-row seeded corpus** (`seed.py`, driven by `admin_at_volume` and
+  `cleanup_vs_size`), **mixed-duration backlogs with slot occupancy** (`batch_barrier`,
+  whose uniform-duration control is what identified the batch boundary recorded in
+  [`UPSTREAM.md`](UPSTREAM.md)), and **parked durable sleeps** (`parked_runs`) — so the
+  tag now keeps history rather than capability. Two things did not come over: no
+  **event/wait workload** (its `burn_workflow` awaited an event nothing emits, so
+  `await_event` is unmeasured and the seeded corpus carries no workflow rows), and the
+  **four declared queues**, which it never actually ran a task on beyond `bulk`.
