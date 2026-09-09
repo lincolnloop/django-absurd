@@ -1,5 +1,7 @@
 import argparse
+import contextlib
 import dataclasses
+import datetime as dt
 import json
 import os
 import sys
@@ -9,6 +11,8 @@ from pathlib import Path
 
 import django
 from django.conf import settings
+from django.db import connections
+from django.utils import timezone
 from django.utils.module_loading import import_string
 
 import analysis
@@ -16,7 +20,10 @@ import host
 import measurement
 import producer
 import runner
+import seed
+from django_absurd import cleanup
 from django_absurd.flush import truncate_queue_tables
+from django_absurd.queues import resolve_absurd_database
 from report import DEFAULT_RESULTS_DIR, describe_marks, format_dispersion
 
 DURABLE_STEPS = "tasks.run_durable_steps"
@@ -38,6 +45,7 @@ STAGE_NAMES = (
     "sync_vs_async",
     "checkpoint_cost",
     "durable_checkpoints",
+    "cleanup_vs_size",
     "producer_ceiling",
     "latency_under_load",
 )
@@ -63,6 +71,10 @@ STAGE_DESCRIPTIONS = {
     "durable_checkpoints": (
         "what a checkpoint costs inside a durable body: three step depths, each on a "
         "body held for --durable-seconds and again on one held fifteen times as long"
+    ),
+    "cleanup_vs_size": (
+        "what one shipped cleanup call costs, at the default batch size on a table "
+        "and on one four times longer"
     ),
     "producer_ceiling": (
         "the producer's own ceiling: one connection, eight threads, batched commits"
@@ -158,6 +170,33 @@ MARK_WORDS = {"!": "INVALID", "~": "UNSTABLE", "?": "DISPERSION UNMEASURED"}
 # A 4-checkpoint task runs ~4.5x slower than a flat one, so SATURATION_TASKS would push
 # a rep past two minutes; this keeps checkpoint_cost on the same per-rep budget.
 WORKFLOW_TASKS = 2000
+# What cleanup_vs_size seeds, and the arms it then measures: a name, the multiple of
+# that seed the arm's table holds, and the `cleanup_limit` its queue is set to. The 4x
+# ratio is `SIZE_BALLAST_MULTIPLE`'s, so the two stages' size findings compare.
+#
+# 250,000 and not a million, because the server's data directory is a 4 GB tmpfs and a
+# million tasks is already 1.09 GB of tables — 4x of that fills it and the seed dies
+# mid-clone. The finding is the RATIO across the step, which travels where the
+# milliseconds do not.
+#
+# One batch size only. A larger `cleanup_limit` cannot be measured honestly here: six
+# calls at 100,000 delete 60% of a million-row table, so the arm's own per-call figure
+# would average a table shrinking underneath it, where 1,000 erodes 0.6% and holds the
+# size still. Measuring it needs a table this rig has no room for.
+CLEANUP_SEED_ROWS = 250_000
+CLEANUP_ARMS = (
+    ("limit1k_1x", 1, 1000),
+    ("limit1k_4x", 4, 1000),
+)
+# Timed calls per rep, after one warm-up call that is recorded but kept out of the
+# rates: the first call of a session pays for plans and cache misses the rest do not,
+# and this stage's finding is what a call costs in the steady state. Recorded rather
+# than discarded so that a rep whose table was small enough for the warm-up to empty
+# still shows the deletions that prove the clock shift reached the rows.
+CLEANUP_TIMED_CALLS = 5
+# How far past the queue's own `cleanup_ttl` the clock moves, which is what makes a
+# freshly seeded row eligible at all.
+CLEANUP_CLOCK_MARGIN = dt.timedelta(days=1)
 # The three probe blocks every stage file this invocation writes records beside its
 # options; only the closing one says whether the ceiling still held at the end.
 COMMIT_CEILING_KEYS = (
@@ -285,46 +324,60 @@ def order_by_dependency(stage_names: list[str]) -> list[str]:
 
 def run_stage(name: str, options: StageOptions) -> None:
     print(f"stage {name.upper()}: {STAGE_DESCRIPTIONS[name]}")
-    if name == "worker_knobs":
-        run_worker_knobs(options)
-    elif name == "process_scaling":
-        run_process_scaling(options)
-    elif name == "pooled_vs_split":
-        run_pooled_vs_split(options)
-    elif name == "size_vs_depth":
-        record_measurements(
-            "size_vs_depth", build_size_vs_depth_measurements(), [], options
-        )
-    elif name == "poll_interval":
-        run_poll_interval(options)
-    elif name == "sync_vs_async":
-        record_measurements(
-            "sync_vs_async",
-            build_sync_vs_async_measurements(resolve_io_seconds(options)),
-            [],
-            options,
-        )
-    elif name == "checkpoint_cost":
-        worker, calibration = read_winning_worker(options)
-        record_measurements(
-            "checkpoint_cost",
-            build_checkpoint_cost_measurements(worker),
-            [],
-            options,
-            {"calibration": calibration},
-        )
-    elif name == "durable_checkpoints":
-        worker, calibration = read_winning_worker(options)
-        record_interleaved_measurements(
-            "durable_checkpoints",
-            build_durable_checkpoint_measurements(worker, options),
-            options,
-            {"calibration": calibration},
-        )
-    elif name == "producer_ceiling":
-        run_producer_ceiling(options)
-    else:
-        run_latency_under_load(options)
+    runners: dict[str, t.Callable[[StageOptions], None]] = {
+        "worker_knobs": run_worker_knobs,
+        "process_scaling": run_process_scaling,
+        "pooled_vs_split": run_pooled_vs_split,
+        "size_vs_depth": run_size_vs_depth,
+        "poll_interval": run_poll_interval,
+        "sync_vs_async": run_sync_vs_async,
+        "checkpoint_cost": run_checkpoint_cost,
+        "durable_checkpoints": run_durable_checkpoints,
+        "cleanup_vs_size": run_cleanup_vs_size,
+        "producer_ceiling": run_producer_ceiling,
+        "latency_under_load": run_latency_under_load,
+    }
+    runners[name](options)
+
+
+def run_size_vs_depth(options: StageOptions) -> None:
+    """One pending depth drained on three sizes of table."""
+    record_measurements(
+        "size_vs_depth", build_size_vs_depth_measurements(), [], options
+    )
+
+
+def run_sync_vs_async(options: StageOptions) -> None:
+    """Async against sync bodies at the same simulated IO."""
+    record_measurements(
+        "sync_vs_async",
+        build_sync_vs_async_measurements(resolve_io_seconds(options)),
+        [],
+        options,
+    )
+
+
+def run_checkpoint_cost(options: StageOptions) -> None:
+    """A 4-step workflow against a flat task, at the winning worker config."""
+    worker, calibration = read_winning_worker(options)
+    record_measurements(
+        "checkpoint_cost",
+        build_checkpoint_cost_measurements(worker),
+        [],
+        options,
+        {"calibration": calibration},
+    )
+
+
+def run_durable_checkpoints(options: StageOptions) -> None:
+    """Three step depths on two body lengths, every arm's reps interleaved."""
+    worker, calibration = read_winning_worker(options)
+    record_interleaved_measurements(
+        "durable_checkpoints",
+        build_durable_checkpoint_measurements(worker, options),
+        options,
+        {"calibration": calibration},
+    )
 
 
 def run_worker_knobs(options: StageOptions) -> None:
@@ -420,6 +473,176 @@ def run_poll_interval(options: StageOptions) -> None:
         recorded,
         options,
         {"calibration": calibration, "idle_probes": probes},
+    )
+
+
+def run_cleanup_vs_size(options: StageOptions) -> None:
+    """What one shipped cleanup call costs, and whether the table it scans sets it.
+
+    No fleet: `absurd.cleanup_tasks` scans the whole tasks table for terminal rows
+    older than the cutoff, so what it costs is a property of the table rather than of
+    anything a worker is doing. Whether it also costs a live fleet is a different
+    experiment and not this one.
+    """
+    recorded: list[dict[str, t.Any]] = []
+    base_rows = CLEANUP_SEED_ROWS if options.tasks is None else options.tasks
+    rep_count = DEFAULT_REP_COUNT if options.reps is None else options.reps
+    for name, multiple, limit in CLEANUP_ARMS:
+        rows = base_rows * multiple
+        reps = []
+        for _ in range(rep_count):
+            # Reseeded per REP, not per arm: a cleanup rep deletes what it measures,
+            # so the second rep of an arm would read a table the first one shrank.
+            seed.seed_queue_tables(rows, queue=seed.DEFAULT_QUEUE)
+            set_cleanup_limit(seed.DEFAULT_QUEUE, limit)
+            load_before = host.read_load_average()
+            reps.append(
+                {
+                    **measure_cleanup_rep(seed.DEFAULT_QUEUE),
+                    "load_before": load_before,
+                    "load_after": host.read_load_average(),
+                }
+            )
+        recorded.append(summarize_cleanup_reps(name, rows, limit, reps))
+        write_stage_file("cleanup_vs_size", recorded, options)
+        print(summarize_cleanup_arm(recorded[-1]))
+
+
+def measure_cleanup_rep(queue: str) -> dict[str, t.Any]:
+    """One rep: a recorded warm-up call, then `CLEANUP_TIMED_CALLS` timed ones.
+
+    Bracketed like every other measured phase, so a rep the host slept through is
+    refused rather than recorded as a fast one.
+    """
+    table = analysis.refresh_table_state(queue)
+    try:
+        with host.measure_phase(), shift_clock_past_cleanup_ttl(queue):
+            warm_up = measure_one_cleanup_call(queue)
+            calls = [
+                measure_one_cleanup_call(queue) for _ in range(CLEANUP_TIMED_CALLS)
+            ]
+    except host.SuspendedPhaseError as exc:
+        return {"valid": False, "error": str(exc)}
+    else:
+        return {
+            "valid": True,
+            "table": table,
+            "warm_up": warm_up,
+            "calls": calls,
+            **read_call_rates(calls),
+        }
+
+
+def measure_one_cleanup_call(queue: str) -> dict[str, t.Any]:
+    """One `cleanup_queues` call — the shipped path the command and the cron job take
+    — and what it deleted."""
+    started = time.perf_counter()
+    rows = cleanup.cleanup_queues([queue])
+    elapsed_ms = 1000.0 * (time.perf_counter() - started)
+    return {
+        "ms": elapsed_ms,
+        "tasks_deleted": rows[0]["tasks_deleted"],
+        "events_deleted": rows[0]["events_deleted"],
+    }
+
+
+def read_call_rates(calls: list[dict[str, t.Any]]) -> dict[str, t.Any]:
+    """The timed calls as rates. `deletes_per_s` ranks the reps because it is the one
+    figure here that is better high, which is what `pick_median_rep` assumes."""
+    durations = [call["ms"] for call in calls]
+    tasks_deleted = sum(call["tasks_deleted"] for call in calls)
+    elapsed_s = sum(durations) / 1000.0
+    return {
+        "tasks_deleted": tasks_deleted,
+        "events_deleted": sum(call["events_deleted"] for call in calls),
+        "elapsed_s": elapsed_s,
+        "deletes_per_s": tasks_deleted / elapsed_s if elapsed_s else 0.0,
+        "ms_per_call_p50": producer.read_percentile(durations, 0.50),
+        "ms_per_call_p99": producer.read_percentile(durations, 0.99),
+    }
+
+
+@contextlib.contextmanager
+def shift_clock_past_cleanup_ttl(queue: str) -> t.Iterator[None]:
+    """Move THIS session's `absurd.current_time()` past the queue's `cleanup_ttl`.
+
+    A seeded row is seconds old against a TTL of thirty days, so nothing is eligible
+    until the clock moves — and moving it costs nothing, where backdating a million
+    rows would rewrite the table the arm is sized on. Session-scoped and reset on the
+    way out: `alter database ... set absurd.fake_now` would outlive the stage and
+    leave every later claim in the run unreachable.
+    """
+    ttl = read_cleanup_ttl(queue)
+    write_fake_now((timezone.now() + ttl + CLEANUP_CLOCK_MARGIN).isoformat())
+    try:
+        yield
+    finally:
+        write_fake_now("")
+
+
+def write_fake_now(instant: str) -> None:
+    with connections[resolve_absurd_database()].cursor() as cursor:
+        cursor.execute("select set_config('absurd.fake_now', %s, false)", [instant])
+
+
+def read_cleanup_ttl(queue: str) -> dt.timedelta:
+    with connections[resolve_absurd_database()].cursor() as cursor:
+        cursor.execute(
+            "select cleanup_ttl from absurd.queues where queue_name = %s", [queue]
+        )
+        return t.cast("dt.timedelta", cursor.fetchone()[0])
+
+
+def set_cleanup_limit(queue: str, limit: int) -> None:
+    """The arm's batch size, written where `absurd.cleanup_all_queues` reads it from.
+
+    The queue policy rather than a direct `cleanup_tasks(queue, ttl, limit)` call, so
+    every arm goes through the path the shipped command and the cron job take. Raw SQL
+    rather than the `Queue` model: importing `django_absurd.models` here would ask for
+    the app registry at import time, and this module is imported before `django.setup`.
+    """
+    with connections[resolve_absurd_database()].cursor() as cursor:
+        cursor.execute(
+            "update absurd.queues set cleanup_limit = %s where queue_name = %s",
+            [limit, queue],
+        )
+
+
+def summarize_cleanup_reps(
+    name: str, rows: int, limit: int, reps: list[dict[str, t.Any]]
+) -> dict[str, t.Any]:
+    valid = sorted(
+        (rep for rep in reps if rep["valid"]), key=lambda rep: rep["deletes_per_s"]
+    )
+    median = measurement.pick_median_rep(valid, "deletes_per_s")
+    cv = measurement.measure_cv(valid, "deletes_per_s")
+    low, high = measurement.measure_rep_range(valid, "deletes_per_s")
+    return {
+        "spec": {
+            "name": name,
+            "mode": "cleanup",
+            "rows": rows,
+            "cleanup_limit": limit,
+        },
+        "reps": reps,
+        "ranking_key": "deletes_per_s",
+        "median": median,
+        "spread": measurement.measure_spread(valid, median, "deletes_per_s"),
+        "cv": cv,
+        "range_low": low,
+        "range_high": high,
+        "invalid": measurement.is_measurement_invalid(reps, valid),
+        "unstable": cv is not None and cv > measurement.MeasurementSpec.cv_limit,
+        "host": host.collect_host_context(),
+    }
+
+
+def summarize_cleanup_arm(entry: dict[str, t.Any]) -> str:
+    median = entry["median"]
+    return (
+        f"{entry['spec']['name']}: {median.get('ms_per_call_p50', 0.0):.1f} ms/call, "
+        f"{median.get('deletes_per_s', 0.0):.0f} deletes/s, "
+        f"{entry['spec']['rows']} rows"
     )
 
 

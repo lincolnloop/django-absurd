@@ -125,6 +125,27 @@ Ask: public properties for all three.
 
 Retires: `read_sdk_claimed_task`, and the `enqueued_at=None` compromise.
 
+## Index the timestamp cleanup selects on
+
+`absurd.cleanup_tasks` chooses its batch with `order by terminal_at limit $2`, where
+`terminal_at` is a `case` over three columns (`completed_at`, `failed_at`,
+`cancelled_at`) reached through a left join to the runs table. No index covers it, so
+every call scans and sorts the whole terminal population to take the oldest N.
+
+Measured on a million tasks (`benchmarks/`, `cleanup_vs_size`): one default-batch call
+costs 608 ms against 119 ms at a quarter of the rows — 5.11x for 4x the table — and
+`explain (analyze, buffers)` shows a parallel seq scan, a parallel hash left join over
+the whole runs table that spills ~107 MB to temp, and a top-N heapsort, to select 1,000
+ids. So cleanup slows down as the backlog it exists to clear grows, and deletions per
+second fall with it.
+
+An index the selection can walk — on a stored terminal timestamp, or a partial index on
+the terminal states — would make a call proportional to the batch rather than to the
+table.
+
+Retires: no workaround, because there is none to retire. The cost is simply paid, by
+every deployment that lets terminal rows accumulate.
+
 ## Cap the async worker's claims by free capacity, not by batch
 
 `AsyncAbsurd.start_worker` rebuilds its in-flight set from scratch each iteration —

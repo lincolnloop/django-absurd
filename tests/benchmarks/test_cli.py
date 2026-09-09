@@ -33,6 +33,9 @@ BRIEF_DURABLE_SECONDS = "0.05"
 # Long enough that the connection probe's sampler, which reads `pg_stat_activity`
 # every 50 ms, cannot miss the window in which every slot is working.
 SAMPLEABLE_DURABLE_SECONDS = "0.5"
+# Rows enough that a cleanup call scans for milliseconds rather than microseconds, so
+# a phase of six of them spans the 20 ms at which `nap_the_wall_clock` jumps.
+NAPPABLE_CLEANUP_ROWS = "20000"
 
 
 def test_runs_the_producer_stage_at_the_size_it_was_asked_for(
@@ -465,6 +468,58 @@ def test_interleaves_the_durable_checkpoint_arms_rep_by_rep(
         "reps": [2] * len(arms),
         "run_order": [*arms, *reversed(arms)],
     }
+
+
+def test_measures_a_cleanup_call_at_two_table_sizes(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Three arms that each DELETED something, and a clock left where it was found.
+
+    Deleting is the whole mechanism under test: a seeded row is seconds old against a
+    `cleanup_ttl` of thirty days, so nothing is eligible until the stage moves its own
+    session's `absurd.current_time()` past the TTL. Zero rows deleted is what a broken
+    shift looks like, and a shift left behind would make every later stage's claims
+    unreachable — so the clock is asserted back to real time afterwards.
+    """
+    stages.main(
+        [
+            "cleanup_vs_size",
+            "--reps",
+            "1",
+            "--tasks",
+            "8",
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
+
+    recorded = utils.read_stage(tmp_path, "cleanup_vs_size")["measurements"]
+    assert [
+        {
+            "name": entry["spec"]["name"],
+            "cleanup_limit": entry["spec"]["cleanup_limit"],
+            "rows": entry["spec"]["rows"],
+            "deleted_something": (
+                entry["median"]["warm_up"]["tasks_deleted"]
+                + entry["median"]["tasks_deleted"]
+                > 0
+            ),
+            "timed_calls": len(entry["median"]["calls"]),
+        }
+        for entry in recorded
+    ] == [
+        {
+            "name": name,
+            "cleanup_limit": cleanup_limit,
+            "rows": 8 * multiple,
+            "deleted_something": True,
+            "timed_calls": stages.CLEANUP_TIMED_CALLS,
+        }
+        for name, multiple, cleanup_limit in stages.CLEANUP_ARMS
+    ]
+    with connections[resolve_absurd_database()].cursor() as cursor:
+        cursor.execute("select absurd.current_time() - now() < interval '1 minute'")
+        assert cursor.fetchone()[0] is True
 
 
 def build_recorded_rung(
@@ -1115,6 +1170,63 @@ def test_refuses_every_producer_rep_the_host_slept_through(
             "unstable": False,
         }
         for name in ("single", "threaded", "atomic")
+    ]
+
+
+def test_refuses_a_cleanup_rep_the_host_slept_through(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A cleanup call timed across a suspension reports a duration it never took.
+
+    `perf_counter` stops with the host, so a napped rep's ms/call looks ordinary and
+    fast — and this stage's whole finding is what one call costs.
+
+    Sized so a phase is long enough to CONTAIN a jump: the nap thread shifts the wall
+    clock every 20 ms, and six calls over a few thousand rows take longer than that
+    where six over eight rows do not.
+    """
+    with utils.nap_the_wall_clock():
+        stages.main(
+            [
+                "cleanup_vs_size",
+                "--reps",
+                "1",
+                "--tasks",
+                NAPPABLE_CLEANUP_ROWS,
+                "--results-dir",
+                str(tmp_path),
+            ]
+        )
+
+    recorded = utils.read_stage(tmp_path, "cleanup_vs_size")["measurements"]
+    assert [
+        {
+            "name": entry["spec"]["name"],
+            "reps": [utils.normalize_measured_durations(rep) for rep in entry["reps"]],
+            "median": entry["median"],
+            "invalid": entry["invalid"],
+        }
+        for entry in recorded
+    ] == [
+        {
+            "name": name,
+            "reps": [
+                {
+                    "valid": False,
+                    "error": (
+                        "Wall clock advanced Ns over a phase the monotonic clock "
+                        "measured at Ns: the host suspended or stalled mid-phase, so "
+                        "every number this phase produced is fiction. Re-run the "
+                        "measurement on a machine that stays awake."
+                    ),
+                    "load_before": True,
+                    "load_after": True,
+                }
+            ],
+            "median": {},
+            "invalid": True,
+        }
+        for name, _, _ in stages.CLEANUP_ARMS
     ]
 
 

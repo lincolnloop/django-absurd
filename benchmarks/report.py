@@ -16,6 +16,12 @@ PRODUCER_TABLE_HEADER = (
 )
 PRODUCER_TABLE_RULE = "| " + " | ".join(["---"] * 9) + " |"
 
+CLEANUP_TABLE_HEADER = (
+    "| measurement | rows | limit | ms/call | deletes/s | deleted "
+    "| rep range | spread | cv | notes |"
+)
+CLEANUP_TABLE_RULE = "| " + " | ".join(["---"] * 10) + " |"
+
 # What a stage measuring one shape on two workloads calls each of them. Any other task
 # path reads back as itself: a label nobody wrote is worse than the import path.
 WORKLOAD_LABELS = {
@@ -313,6 +319,8 @@ def describe_capture_window(stamps: list[str]) -> str:
 def render_stage(stage: dict[str, t.Any]) -> list[str]:
     if stage["stage"] == "producer_ceiling":
         return render_producer_stage(stage)
+    if stage["stage"] == "cleanup_vs_size":
+        return render_cleanup_stage(stage)
     measurements = stage["measurements"]
     lines = [
         "",
@@ -373,6 +381,80 @@ def describe_calibration_standing(calibration: dict[str, t.Any]) -> str:
 def render_heading(stage: str) -> str:
     """A stage name is already words, so it reads as a heading rather than shouting."""
     return stage.replace("_", " ").capitalize()
+
+
+def render_cleanup_stage(stage: dict[str, t.Any]) -> list[str]:
+    """Cleanup deletes in batches, so it gets columns in its own units rather than an
+    execution-throughput table it would have to fake."""
+    measurements = stage["measurements"]
+    return [
+        "",
+        f"## {render_heading(stage['stage'])}",
+        "",
+        CLEANUP_TABLE_HEADER,
+        CLEANUP_TABLE_RULE,
+        *[render_cleanup_row(entry) for entry in measurements],
+        *build_cleanup_size_lines(measurements),
+    ]
+
+
+def render_cleanup_row(entry: dict[str, t.Any]) -> str:
+    median = entry["median"]
+    return render_row(
+        [
+            entry["spec"]["name"],
+            str(entry["spec"]["rows"]),
+            str(entry["spec"]["cleanup_limit"]),
+            f"{median.get('ms_per_call_p50', 0.0):.1f}",
+            f"{median.get('deletes_per_s', 0.0):.0f}",
+            str(median.get("tasks_deleted", 0)),
+            format_rep_range(entry),
+            format_dispersion(entry["spread"]),
+            format_dispersion(entry["cv"]),
+            describe_marks(entry),
+        ]
+    )
+
+
+def build_cleanup_size_lines(measurements: list[dict[str, t.Any]]) -> list[str]:
+    """What a call costs on a longer table, at one batch size.
+
+    Grouped by `cleanup_limit` because a batch size and a table size are two different
+    experiments: comparing a 1,000-row call against a 100,000-row one would report the
+    batch, and `eligible_tasks` scans the whole table whichever it is.
+    """
+    by_limit: dict[int, list[dict[str, t.Any]]] = {}
+    for entry in measurements:
+        by_limit.setdefault(entry["spec"]["cleanup_limit"], []).append(entry)
+    lines = [
+        line for arms in by_limit.values() for line in describe_cleanup_size_cost(arms)
+    ]
+    if not lines:
+        return []
+    return [
+        "",
+        "Cost of one call against the table it scans, at one batch size:",
+        "",
+        *lines,
+    ]
+
+
+def describe_cleanup_size_cost(arms: list[dict[str, t.Any]]) -> list[str]:
+    """One batch size's arms against the shortest table it was measured on."""
+    ladder = sorted(arms, key=lambda entry: entry["spec"]["rows"])
+    reference = ladder[0]
+    baseline_ms = reference["median"].get("ms_per_call_p50", 0.0)
+    if not baseline_ms:
+        return []
+    return [
+        (
+            f"- `{entry['spec']['name']}`: "
+            f"{entry['median'].get('ms_per_call_p50', 0.0) / baseline_ms:.2f}x "
+            f"`{reference['spec']['name']}`'s ms/call for "
+            f"{entry['spec']['rows'] / reference['spec']['rows']:.1f}x the rows"
+        )
+        for entry in ladder[1:]
+    ]
 
 
 def render_producer_stage(stage: dict[str, t.Any]) -> list[str]:

@@ -795,6 +795,41 @@ to minutes. Two things set that share — slots per process, and how much work a
 own body does (`report_step_done` returns an integer, so every share here is an upper
 bound). A concurrency-1 or split-fleet depth ladder is the probe if either ever matters.
 
+## What one cleanup call costs
+
+`cleanup_vs_size` runs no fleet: `absurd.cleanup_tasks` selects terminal rows older than
+a cutoff, so what a call costs is a property of the TABLE rather than of anything a
+worker is doing. Whether it also costs a live fleet is a different experiment and not
+this one — and on the evidence below the interesting cost is not contention anyway.
+
+Two arms, `cleanup_limit` 1000 (the shipped default) on 250,000 tasks and on a million.
+The arms are seeded by `seed.py` and reseeded per REP, because a cleanup rep deletes
+what it measures; eligibility comes from moving the harness session's
+`absurd.current_time()` past the queue's `cleanup_ttl`, which costs nothing where
+backdating a million rows would rewrite the table the arm is sized on.
+
+**A call gets dearer FASTER than the table grows.** `results/cleanup-20260909T144726Z`,
+three reps an arm, cv 7%, unmarked: 119.0 ms a call at 250,000 tasks and 608.2 ms at a
+million — **5.11x for 4x the rows** — so deletions per second FALL from 8,335 to 1,655.
+Cleanup is slowest exactly when there is most to clean.
+
+**The plan says why, and it is not the delete.** `explain (analyze, buffers)` on the
+selection query at a million tasks: a parallel seq scan of every terminal row, a
+parallel hash left join against the whole runs table which SPILLS (~107 MB of temp read
+and written), and a top-N heapsort over the computed terminal timestamps — 117,000
+buffer hits and ~490 ms to choose 1,000 task ids. Nothing indexes the terminal
+timestamp, and `order by terminal_at limit 1000` cannot walk an index that does not
+exist. The hash build and its spill are what grow with the table, which is the
+superlinearity. See [UPSTREAM.md](../docs/UPSTREAM.md).
+
+**What the numbers imply, and what they do not.** At a million finished tasks, clearing
+the backlog at the default batch is ~1,000 calls of ~0.6 s, so about ten minutes of
+continuous cleanup — and longer per row the further behind it falls. Levels are RAM
+rates like every other here; the 5.11x is the part that travels. A larger
+`cleanup_limit` is deliberately unmeasured: six calls at 100,000 delete 60% of a
+million-row table, so that arm would average a table shrinking underneath it. It needs a
+bigger rig than a 4 GB tmpfs, not a different stage.
+
 ## Incidental, worth raising upstream
 
 - `r_bench` bloats and `t_bench` does not: 10,000 dead tuples against 5,000 live, versus

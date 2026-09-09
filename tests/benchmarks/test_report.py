@@ -1220,6 +1220,76 @@ def test_renders_producer_columns_for_producer_ceiling(
     )
 
 
+def test_renders_cleanup_columns_and_the_size_ratio_for_cleanup_vs_size(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Cleanup measures deletions per call, so it gets its own columns rather than an
+    execution-throughput table it would have to fake — and the finding is one ratio:
+    what a call costs on a table four times longer, at the same batch size."""
+    entries = [
+        build_cleanup_measurement("limit1k_1x", 1_000_000, 1000, 12.0, 81_300.0),
+        build_cleanup_measurement("limit1k_4x", 4_000_000, 1000, 48.0, 20_800.0),
+        build_cleanup_measurement("limit100k_4x", 4_000_000, 100_000, 900.0, 111_000.0),
+    ]
+
+    rendered = render(capsys, tmp_path, "cleanup_vs_size", entries)
+
+    assert (
+        "| measurement | rows | limit | ms/call | deletes/s | deleted "
+        "| rep range | spread | cv | notes |\n"
+    ) in rendered
+    assert (
+        "| limit1k_1x | 1000000 | 1000 | 12.0 | 81300 | 5000 | "
+        "8.13e+04-8.13e+04 | 4.0% | 2.0% |  |\n"
+    ) in rendered
+    assert (
+        "Cost of one call against the table it scans, at one batch size:\n"
+        "\n"
+        "- `limit1k_4x`: 4.00x `limit1k_1x`'s ms/call for 4.0x the rows\n"
+    ) in rendered
+
+
+def test_derives_no_cleanup_size_ratio_until_a_second_table_size_has_run(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The ratio needs two sizes at one batch size, and the results file is rewritten
+    after every arm — so mid-run there is one arm on disk and a table is all it earns.
+
+    Asserted by where the report ENDS: a derived block would be appended after the
+    row, so the row being the last line is what says none was.
+    """
+    entries = [build_cleanup_measurement("limit1k_1x", 1_000_000, 1000, 12.0, 81_300.0)]
+
+    assert render(capsys, tmp_path, "cleanup_vs_size", entries).endswith(
+        "| limit1k_1x | 1000000 | 1000 | 12.0 | 81300 | 5000 | "
+        "8.13e+04-8.13e+04 | 4.0% | 2.0% |  |\n"
+    )
+
+
+def build_cleanup_measurement(
+    name: str, rows: int, limit: int, ms_per_call: float, deletes_per_s: float
+) -> dict[str, t.Any]:
+    """One cleanup arm, the way `stages.summarize_cleanup_reps` writes it."""
+    return {
+        "spec": {"name": name, "mode": "cleanup", "rows": rows, "cleanup_limit": limit},
+        "ranking_key": "deletes_per_s",
+        "median": {
+            "ms_per_call_p50": ms_per_call,
+            "ms_per_call_p99": ms_per_call * 2,
+            "deletes_per_s": deletes_per_s,
+            "tasks_deleted": 5000,
+            "events_deleted": 0,
+        },
+        "spread": 0.04,
+        "cv": 0.02,
+        "range_low": deletes_per_s,
+        "range_high": deletes_per_s,
+        "invalid": False,
+        "unstable": False,
+        "host": HOST,
+    }
+
+
 def test_renders_idle_polling_tax_and_latency_ratios_for_poll_interval(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
