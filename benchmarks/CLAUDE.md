@@ -795,6 +795,54 @@ to minutes. Two things set that share — slots per process, and how much work a
 own body does (`report_step_done` returns an integer, so every share here is an upper
 bound). A concurrency-1 or split-fleet depth ladder is the probe if either ever matters.
 
+## What the batch claim's barrier costs
+
+`batch_barrier` drains 420 tasks of uneven length on ONE worker at concurrency 4, and
+the same 420 carrying the same 24 s of total service time at one uniform length. The
+async loop claims `batch_size` tasks — defaulting to concurrency — and if it gathered
+the batch before claiming again, C slots would wait on the slowest of C. A uniform
+backlog hides that completely, which is why the control exists.
+
+The deliverable is `idle_slot_s` from
+[idle slot-seconds](#idle-slot-seconds-is-the-metric-a-clock-cannot-give), never a
+throughput ratio: a mixed backlog drains slower both because its tasks are longer and
+because its batches might stall, and only idle slots measured against WAITING work
+separate the two. The 20 slow tasks are spread every 21st by
+`producer.preload_spread_tasks` — clustered at either end they stall nothing, or stall
+with nothing left behind them.
+
+**There is no barrier, and the control is the worse arm.**
+`results/barrier-20260909T183402Z`, three reps interleaved, cv 0.4% and 0.7%, unmarked,
+420 of 420 tasks in both, zero redeliveries: `mixed` left **0.72** idle slot-seconds
+against `uniform`'s **1.34** — 0.54x — and drained faster (60.4 against 56.8 tasks/s). A
+live barrier would show 20 slow tasks x ~1 s x 3 stalled slots, tens of slot-seconds;
+0.72 is not that. PR #156's refill-by-free-capacity fix holds.
+
+**Why uniform wastes more.** Same-length tasks finish in lockstep, so the pool empties
+all at once and claim latency idles every slot together; staggered completions let a
+refill overlap with work still running. Which reproduces, by a different route and a
+different metric, the last clean `loadtest` run's finding that uniform is consistently
+worse than mixed and the ceiling is claim throughput rather than batching.
+
+**What it does not support.** One shape (pooled, 4 slots) and one mixture. A `split` arm
+was cut on the grounds that `idle_slot_s` already excludes "slow tasks are slow"; if a
+future run reads ambiguous, that arm is the thing to add. Levels are RAM rates as always
+— 1.34 slot-seconds out of ~30 available is the shape of the answer, not a budget.
+
+### Idle slot-seconds is the metric a clock cannot give
+
+`analysis.read_idle_slot_seconds` folds run intervals into the slot-seconds that were
+free WHILE the backlog still held work. Both halves come off Absurd's own columns and
+nothing is written by a task body: `started_at`/`completed_at` bound each interval, and
+a run's own `started_at` is what says its task was waiting earlier — a task claimed at
+second five was in the backlog at second one, so an idle slot then was a slot the fleet
+could have used. Nothing counts past the last claim, where an idle slot has nothing left
+to take, and that qualifier IS the metric: without it the drain's tail reads as waste.
+
+`loadtest` wrote an `OccupancyLog` from inside its task bodies for the same figure.
+Deriving it from the columns instead means no table, no migration, and no bookkeeping in
+the workload under measurement.
+
 ## What one cleanup call costs
 
 `cleanup_vs_size` runs no fleet: `absurd.cleanup_tasks` selects terminal rows older than

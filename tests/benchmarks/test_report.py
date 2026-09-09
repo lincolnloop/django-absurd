@@ -1266,6 +1266,78 @@ def test_derives_no_cleanup_size_ratio_until_a_second_table_size_has_run(
     )
 
 
+def test_renders_idle_slots_and_the_barrier_ratio_for_batch_barrier(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The finding is idle slot-seconds, and what the mixed backlog cost over the
+    uniform control carrying the same total service time."""
+    entries = [
+        build_barrier_measurement("uniform", 0, 0.4, 17.5),
+        build_barrier_measurement("mixed", 20, 12.0, 14.0),
+    ]
+
+    rendered = render(capsys, tmp_path, "batch_barrier", entries)
+
+    assert (
+        "| measurement | tasks | slow | idle slot s | tasks/s "
+        "| rep range | spread | cv | notes |\n"
+    ) in rendered
+    assert (
+        "Idle slot-seconds against a backlog that still held work:\n"
+        "\n"
+        "- `uniform`: 0.40 idle slot-s at 17.5 tasks/s\n"
+        "- `mixed`: 12.00 idle slot-s at 14.0 tasks/s — 30.00x the uniform control\n"
+    ) in rendered
+
+
+def build_barrier_measurement(
+    name: str, slow_tasks: int, idle_slot_s: float, throughput: float
+) -> dict[str, t.Any]:
+    """One barrier arm, the way `stages.summarize_one_barrier_arm` writes it."""
+    return {
+        "spec": {
+            "name": name,
+            "mode": "barrier",
+            "tasks": 420,
+            "slow_tasks": slow_tasks,
+            "service_seconds": 24.0,
+            "concurrency": 4,
+        },
+        "ranking_key": "throughput_per_s",
+        "median": {"idle_slot_s": idle_slot_s, "throughput_per_s": throughput},
+        "spread": 0.04,
+        "cv": 0.02,
+        "range_low": throughput,
+        "range_high": throughput,
+        "invalid": False,
+        "unstable": False,
+        "host": HOST,
+    }
+
+
+def test_derives_no_cleanup_size_ratio_from_a_refused_smaller_arm(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The ratio divides by the shorter table's ms/call, and a refused arm summarizes
+    to an empty median — so there is no baseline to divide by, and a run that napped
+    through the 250,000-row arm must not report the million-row one as its own ratio.
+
+    Asserted by where the report ends: a derived block would follow the last row.
+    """
+    entries = [
+        {
+            **build_cleanup_measurement("limit1k_1x", 250_000, 1000, 119.0, 8335.0),
+            "median": {},
+        },
+        build_cleanup_measurement("limit1k_4x", 1_000_000, 1000, 608.0, 1655.0),
+    ]
+
+    assert render(capsys, tmp_path, "cleanup_vs_size", entries).endswith(
+        "| limit1k_4x | 1000000 | 1000 | 608.0 | 1655 | 5000 | "
+        "1655-1655 | 4.0% | 2.0% |  |\n"
+    )
+
+
 def build_cleanup_measurement(
     name: str, rows: int, limit: int, ms_per_call: float, deletes_per_s: float
 ) -> dict[str, t.Any]:

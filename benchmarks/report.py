@@ -22,6 +22,12 @@ CLEANUP_TABLE_HEADER = (
 )
 CLEANUP_TABLE_RULE = "| " + " | ".join(["---"] * 10) + " |"
 
+BARRIER_TABLE_HEADER = (
+    "| measurement | tasks | slow | idle slot s | tasks/s "
+    "| rep range | spread | cv | notes |"
+)
+BARRIER_TABLE_RULE = "| " + " | ".join(["---"] * 9) + " |"
+
 # What a stage measuring one shape on two workloads calls each of them. Any other task
 # path reads back as itself: a label nobody wrote is worse than the import path.
 WORKLOAD_LABELS = {
@@ -321,6 +327,8 @@ def render_stage(stage: dict[str, t.Any]) -> list[str]:
         return render_producer_stage(stage)
     if stage["stage"] == "cleanup_vs_size":
         return render_cleanup_stage(stage)
+    if stage["stage"] == "batch_barrier":
+        return render_barrier_stage(stage)
     measurements = stage["measurements"]
     lines = [
         "",
@@ -381,6 +389,73 @@ def describe_calibration_standing(calibration: dict[str, t.Any]) -> str:
 def render_heading(stage: str) -> str:
     """A stage name is already words, so it reads as a heading rather than shouting."""
     return stage.replace("_", " ").capitalize()
+
+
+def render_barrier_stage(stage: dict[str, t.Any]) -> list[str]:
+    """Idle slot-seconds in their own column, because the barrier is not a rate.
+
+    A mixed backlog drains slower than a uniform one for two reasons at once — its
+    tasks are longer AND its batches wait on their slowest member — so a throughput
+    column alone cannot carry the finding.
+    """
+    measurements = stage["measurements"]
+    return [
+        "",
+        f"## {render_heading(stage['stage'])}",
+        "",
+        BARRIER_TABLE_HEADER,
+        BARRIER_TABLE_RULE,
+        *[render_barrier_row(entry) for entry in measurements],
+        *build_barrier_lines(measurements),
+        *render_run_order(stage),
+    ]
+
+
+def render_barrier_row(entry: dict[str, t.Any]) -> str:
+    median = entry["median"]
+    return render_row(
+        [
+            entry["spec"]["name"],
+            str(entry["spec"]["tasks"]),
+            str(entry["spec"]["slow_tasks"]),
+            f"{median.get('idle_slot_s', 0.0):.2f}",
+            f"{median.get(THROUGHPUT_KEY, 0.0):.1f}",
+            format_rep_range(entry),
+            format_dispersion(entry["spread"]),
+            format_dispersion(entry["cv"]),
+            describe_marks(entry),
+        ]
+    )
+
+
+def build_barrier_lines(measurements: list[dict[str, t.Any]]) -> list[str]:
+    """Every arm's idle slot-seconds, and the mixed backlog over its control."""
+    control = next(
+        (entry for entry in measurements if not entry["spec"]["slow_tasks"]), None
+    )
+    baseline = control["median"].get("idle_slot_s", 0.0) if control else 0.0
+    return [
+        "",
+        "Idle slot-seconds against a backlog that still held work:",
+        "",
+        *[describe_barrier_arm(entry, control, baseline) for entry in measurements],
+    ]
+
+
+def describe_barrier_arm(
+    entry: dict[str, t.Any], control: dict[str, t.Any] | None, baseline: float
+) -> str:
+    median = entry["median"]
+    line = (
+        f"- `{entry['spec']['name']}`: {median.get('idle_slot_s', 0.0):.2f} idle "
+        f"slot-s at {median.get(THROUGHPUT_KEY, 0.0):.1f} tasks/s"
+    )
+    if entry is control or not baseline:
+        return line
+    return (
+        f"{line} — {median.get('idle_slot_s', 0.0) / baseline:.2f}x "
+        f"the {control['spec']['name'] if control else 'control'} control"
+    )
 
 
 def render_cleanup_stage(stage: dict[str, t.Any]) -> list[str]:

@@ -1,3 +1,4 @@
+import operator
 import queue
 import time
 import typing as t
@@ -45,6 +46,47 @@ def preload_tasks(
         for future in futures:
             future.result()
     return time.monotonic() - started
+
+
+def preload_spread_tasks(
+    groups: list[tuple[str, dict[str, t.Any], int]],
+) -> float:
+    """Enqueue several groups as one sequence, each group evenly spaced through it.
+
+    Sequential and ordered on purpose, where `preload_tasks` threads: claim order
+    follows enqueue order, and a batch barrier only shows up when a slow task lands
+    in a batch that still has a backlog behind it. Threads would leave that ordering
+    to their own timing, and enqueueing one group after another would cluster the rare
+    one at one end of the drain, where it stalls nothing.
+    """
+    started = time.monotonic()
+    try:
+        for task_object, kwargs in interleave_by_share(groups):
+            task_object.enqueue(**kwargs)
+    finally:
+        connections.close_all()
+    return time.monotonic() - started
+
+
+def interleave_by_share(
+    groups: list[tuple[str, dict[str, t.Any], int]],
+) -> list[tuple[t.Any, dict[str, t.Any]]]:
+    """One sequence holding every group, each spaced by its share of the total.
+
+    A group of 20 in a total of 420 lands every 21st, which is the spread the barrier
+    needs. Deterministic rather than shuffled: a random spread is a different backlog
+    in every rep, and these arms are compared across reps.
+    """
+    total = sum(count for _, _, count in groups)
+    placed = [
+        ((index + 1) * total / count, import_string(task_path), kwargs)
+        for task_path, kwargs, count in groups
+        for index in range(count)
+    ]
+    return [
+        (task_object, kwargs)
+        for _, task_object, kwargs in sorted(placed, key=operator.itemgetter(0))
+    ]
 
 
 def run_rate_producer(

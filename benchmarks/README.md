@@ -29,10 +29,10 @@ RAM, so a restart hands you back an empty server, and a run against one dies par
 through its first measurement with `schema "absurd" does not exist`. It takes a second
 and it is idempotent, so just run it every time.
 
-The eleven stages take about seventy-five minutes together on the reference machine (14
-cores, at `--max-workers 14 --reps 3`). Seven of them were timed at 50 minutes in one
-run, of which `latency_under_load` was 15 and `size_vs_depth` 11 — that one drains four
-tasks for every one it measures. Name stages to run only those; `--tasks`, `--duration`,
+The twelve stages take about eighty minutes together on the reference machine (14 cores,
+at `--max-workers 14 --reps 3`). Seven of them were timed at 50 minutes in one run, of
+which `latency_under_load` was 15 and `size_vs_depth` 11 — that one drains four tasks
+for every one it measures. Name stages to run only those; `--tasks`, `--duration`,
 `--reps` and `--max-workers` size them down to a dry run, `--io-seconds` sets how long
 `sync_vs_async` pretends to do IO for, and `--durable-seconds` sets how long a durable
 body holds a worker thread — in `pooled_vs_split`'s durable arms and in
@@ -53,6 +53,7 @@ machine that produced them.
 | `checkpoint_cost`     | what a `ctx.step` checkpoint costs                                    |
 | `durable_checkpoints` | what a checkpoint costs at depth, inside a body that runs for seconds |
 | `cleanup_vs_size`     | what one cleanup call costs, and whether the table sets it            |
+| `batch_barrier`       | what a batch claim's barrier costs on uneven task lengths             |
 | `producer_ceiling`    | how fast the enqueue side can go                                      |
 | `latency_under_load`  | end-to-end latency at fractions of a sustainable offer rate           |
 

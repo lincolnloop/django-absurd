@@ -522,6 +522,56 @@ def test_measures_a_cleanup_call_at_two_table_sizes(
         assert cursor.fetchone()[0] is True
 
 
+def test_measures_the_batch_barrier_against_a_uniform_control(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Two arms of equal total service time, differing in variance alone.
+
+    Equal total work is what makes the pair a comparison: a mixed backlog that also
+    carried more seconds of work would take longer for a reason that has nothing to do
+    with the batch barrier. Asserted from the recorded specs rather than trusted to a
+    comment, because it is derived arithmetic.
+
+    `idle_slot_s` is the deliverable, so every arm has to record one; the uniform
+    control is expected to sit near zero and nothing here asserts a level, which is
+    the machine's to decide.
+    """
+    stages.main(
+        [
+            "batch_barrier",
+            "--reps",
+            "2",
+            "--tasks",
+            "40",
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
+
+    recorded = utils.read_stage(tmp_path, "batch_barrier")
+    arms = {entry["spec"]["name"]: entry for entry in recorded["measurements"]}
+    uniform, mixed = arms["uniform"]["spec"], arms["mixed"]["spec"]
+    assert {
+        "names": [entry["spec"]["name"] for entry in recorded["measurements"]],
+        "equal_task_count": uniform["tasks"] == mixed["tasks"],
+        "equal_service_seconds": uniform["service_seconds"]
+        == pytest.approx(mixed["service_seconds"]),
+        "mixed_carries_both_lengths": mixed["slow_tasks"] > 0
+        and mixed["slow_tasks"] < mixed["tasks"],
+        "every_arm_measured_idle_slots": [
+            entry["median"]["idle_slot_s"] >= 0.0 for entry in recorded["measurements"]
+        ],
+        "run_order": recorded["run_order"],
+    } == {
+        "names": ["uniform", "mixed"],
+        "equal_task_count": True,
+        "equal_service_seconds": True,
+        "mixed_carries_both_lengths": True,
+        "every_arm_measured_idle_slots": [True, True],
+        "run_order": ["uniform", "mixed", "mixed", "uniform"],
+    }
+
+
 def build_recorded_rung(
     name: str,
     throughput_per_s: float,

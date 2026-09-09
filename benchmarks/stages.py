@@ -24,7 +24,12 @@ import seed
 from django_absurd import cleanup
 from django_absurd.flush import truncate_queue_tables
 from django_absurd.queues import resolve_absurd_database
-from report import DEFAULT_RESULTS_DIR, describe_marks, format_dispersion
+from report import (
+    DEFAULT_RESULTS_DIR,
+    THROUGHPUT_KEY,
+    describe_marks,
+    format_dispersion,
+)
 
 DURABLE_STEPS = "tasks.run_durable_steps"
 DURABLE_WORK = "tasks.run_durable_work"
@@ -46,6 +51,7 @@ STAGE_NAMES = (
     "checkpoint_cost",
     "durable_checkpoints",
     "cleanup_vs_size",
+    "batch_barrier",
     "producer_ceiling",
     "latency_under_load",
 )
@@ -75,6 +81,10 @@ STAGE_DESCRIPTIONS = {
     "cleanup_vs_size": (
         "what one shipped cleanup call costs, at the default batch size on a table "
         "and on one four times longer"
+    ),
+    "batch_barrier": (
+        "what a batch claim's barrier costs on a backlog of uneven task lengths, "
+        "against a uniform control carrying the same total service time"
     ),
     "producer_ceiling": (
         "the producer's own ceiling: one connection, eight threads, batched commits"
@@ -197,6 +207,18 @@ CLEANUP_TIMED_CALLS = 5
 # How far past the queue's own `cleanup_ttl` the clock moves, which is what makes a
 # freshly seeded row eligible at all.
 CLEANUP_CLOCK_MARGIN = dt.timedelta(days=1)
+# The backlog batch_barrier drains. Mostly fast tasks with a few slow ones, at
+# `loadtest`'s own proportions: one slow task every 21 is rare enough that most batches
+# are clean and frequent enough that the stalls accumulate. The uniform control carries
+# the same task count and the same total service time at the mixed mean, so the two
+# differ in variance alone.
+BARRIER_FAST_TASKS = 400
+BARRIER_SLOW_TASKS = 20
+BARRIER_FAST_SECONDS = 0.01
+BARRIER_SLOW_SECONDS = 1.0
+# One worker at four slots: the barrier is a property of a POOLED worker, whose batch
+# size defaults to its concurrency, so C slots wait on the slowest of C.
+BARRIER_CONCURRENCY = 4
 # The three probe blocks every stage file this invocation writes records beside its
 # options; only the closing one says whether the ceiling still held at the end.
 COMMIT_CEILING_KEYS = (
@@ -334,6 +356,7 @@ def run_stage(name: str, options: StageOptions) -> None:
         "checkpoint_cost": run_checkpoint_cost,
         "durable_checkpoints": run_durable_checkpoints,
         "cleanup_vs_size": run_cleanup_vs_size,
+        "batch_barrier": run_batch_barrier,
         "producer_ceiling": run_producer_ceiling,
         "latency_under_load": run_latency_under_load,
     }
@@ -643,6 +666,160 @@ def summarize_cleanup_arm(entry: dict[str, t.Any]) -> str:
         f"{entry['spec']['name']}: {median.get('ms_per_call_p50', 0.0):.1f} ms/call, "
         f"{median.get('deletes_per_s', 0.0):.0f} deletes/s, "
         f"{entry['spec']['rows']} rows"
+    )
+
+
+def run_batch_barrier(options: StageOptions) -> None:
+    """What a batch claim's barrier costs when a backlog's tasks differ in length.
+
+    The async loop claims `batch_size` tasks — defaulting to concurrency — launches
+    them all and gathers before claiming again, so C slots wait on the slowest of C.
+    A uniform backlog hides that completely: waiting for the slowest of C costs nothing
+    when every task is the same length. So the mixed arm is measured against a uniform
+    control of the same task count and the same total service time.
+
+    Its own rep rather than `measurement.run_saturation_rep`, because the backlog is
+    the experiment: the slow tasks have to be SPREAD through the claim order, which a
+    threaded single-path preload cannot express.
+    """
+    arms = build_barrier_arms(options)
+    rep_count = DEFAULT_REP_COUNT if options.reps is None else options.reps
+    reps: dict[str, list[dict[str, t.Any]]] = {arm["name"]: [] for arm in arms}
+    run_order: list[str] = []
+    extra = {"run_order": run_order}
+    write_stage_file("batch_barrier", [], options, extra)
+    for index in range(rep_count):
+        # Reversed on the odd reps, so neither arm always meets the emptier tables.
+        for arm in arms if index % 2 == 0 else list(reversed(arms)):
+            reps[arm["name"]].append(measure_barrier_rep(arm))
+            run_order.append(arm["name"])
+            write_stage_file(
+                "batch_barrier", summarize_barrier_reps(arms, reps), options, extra
+            )
+    for entry in summarize_barrier_reps(arms, reps):
+        print(summarize_barrier_arm(entry))
+
+
+def build_barrier_arms(options: StageOptions) -> list[dict[str, t.Any]]:
+    """The uniform control and the mixed backlog, at equal total service time.
+
+    Both scale with `--tasks` at the fixed proportion, so a smoke run measures the
+    same experiment as a production one.
+    """
+    total = BARRIER_FAST_TASKS + BARRIER_SLOW_TASKS
+    tasks = total if options.tasks is None else options.tasks
+    slow_tasks = max(1, tasks * BARRIER_SLOW_TASKS // total)
+    fast_tasks = tasks - slow_tasks
+    service_seconds = (
+        fast_tasks * BARRIER_FAST_SECONDS + slow_tasks * BARRIER_SLOW_SECONDS
+    )
+    return [
+        {
+            "name": "uniform",
+            "mode": "barrier",
+            "tasks": tasks,
+            "slow_tasks": 0,
+            "service_seconds": service_seconds,
+            "concurrency": BARRIER_CONCURRENCY,
+            # One length, the mixed backlog's mean, so the arms differ in variance and
+            # in nothing else.
+            "groups": [[SLEEP_SYNC, {"seconds": service_seconds / tasks}, tasks]],
+        },
+        {
+            "name": "mixed",
+            "mode": "barrier",
+            "tasks": tasks,
+            "slow_tasks": slow_tasks,
+            "service_seconds": service_seconds,
+            "concurrency": BARRIER_CONCURRENCY,
+            "groups": [
+                [SLEEP_SYNC, {"seconds": BARRIER_FAST_SECONDS}, fast_tasks],
+                [SLEEP_SYNC, {"seconds": BARRIER_SLOW_SECONDS}, slow_tasks],
+            ],
+        },
+    ]
+
+
+def measure_barrier_rep(arm: dict[str, t.Any]) -> dict[str, t.Any]:
+    """One drain of one backlog, and the idle slot-seconds it left behind."""
+    worker = runner.WorkerSpec(concurrency=arm["concurrency"])
+    truncate_queue_tables(worker.queue)
+    preload_s = producer.preload_spread_tasks(
+        [(path, kwargs, count) for path, kwargs, count in arm["groups"]]
+    )
+    window_start = analysis.capture_database_now()
+    procs = runner.start_workers(worker, 1)
+    try:
+        with host.measure_phase() as phase:
+            measurement.wait_until_drained(
+                procs,
+                name=arm["name"],
+                queue=worker.queue,
+                timeout_s=SATURATION_TIMEOUT_S,
+            )
+    except host.SuspendedPhaseError as exc:
+        return {"valid": False, "error": str(exc)}
+    finally:
+        runner.stop_workers(procs)
+    return {
+        "valid": True,
+        "preload_s": preload_s,
+        "phase_s": phase.elapsed_s,
+        # The finding: slots free while the backlog still held work.
+        "idle_slot_s": analysis.read_idle_slot_seconds(
+            worker.queue, None, arm["concurrency"]
+        ),
+        **analysis.analyze_saturation(worker.queue, None, window_start),
+    }
+
+
+def summarize_barrier_reps(
+    arms: list[dict[str, t.Any]], reps: dict[str, list[dict[str, t.Any]]]
+) -> list[dict[str, t.Any]]:
+    """The arms that have a rep, in their canonical order however they ran.
+
+    Ranked on throughput and not on `idle_slot_s`, which is better LOW: the shared
+    median helper resolves an even rep count towards the worse of the two middles, and
+    it decides which that is by the metric.
+    """
+    return [
+        summarize_one_barrier_arm(arm, reps[arm["name"]])
+        for arm in arms
+        if reps[arm["name"]]
+    ]
+
+
+def summarize_one_barrier_arm(
+    arm: dict[str, t.Any], reps: list[dict[str, t.Any]]
+) -> dict[str, t.Any]:
+    valid = sorted(
+        (rep for rep in reps if rep["valid"]),
+        key=lambda rep: rep[THROUGHPUT_KEY],
+    )
+    cv = measurement.measure_cv(valid, THROUGHPUT_KEY)
+    low, high = measurement.measure_rep_range(valid, THROUGHPUT_KEY)
+    median = measurement.pick_median_rep(valid, THROUGHPUT_KEY)
+    return {
+        "spec": {key: value for key, value in arm.items() if key != "groups"},
+        "reps": reps,
+        "ranking_key": THROUGHPUT_KEY,
+        "median": median,
+        "spread": measurement.measure_spread(valid, median, THROUGHPUT_KEY),
+        "cv": cv,
+        "range_low": low,
+        "range_high": high,
+        "invalid": measurement.is_measurement_invalid(reps, valid),
+        "unstable": cv is not None and cv > measurement.MeasurementSpec.cv_limit,
+        "host": host.collect_host_context(),
+    }
+
+
+def summarize_barrier_arm(entry: dict[str, t.Any]) -> str:
+    median = entry["median"]
+    return (
+        f"{entry['spec']['name']}: {median.get('idle_slot_s', 0.0):.2f} idle slot-s, "
+        f"{median.get(THROUGHPUT_KEY, 0.0):.1f} tasks/s, "
+        f"{entry['spec']['slow_tasks']} slow of {entry['spec']['tasks']}"
     )
 
 
