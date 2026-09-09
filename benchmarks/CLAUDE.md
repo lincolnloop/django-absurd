@@ -829,6 +829,37 @@ was cut on the grounds that `idle_slot_s` already excludes "slow tasks are slow"
 future run reads ambiguous, that arm is the thing to add. Levels are RAM rates as always
 — 1.34 slot-seconds out of ~30 available is the shape of the answer, not a budget.
 
+## Whether a parked run holds a worker slot
+
+`parked_runs` drains 2,000 quick tasks on one worker at concurrency 4, three ways: with
+nothing parked, with 16 `tasks.park_sync` runs suspended beside them, and with 16
+`tasks.park_async`. `context.sleep_for` on a SYNC body hops onto the worker's loop while
+the body holds a thread of a pool sized to concurrency — if that thread stayed parked,
+16 sleepers would hold every slot of a 4-slot worker several times over and the quick
+batch would starve. The async twin is there because only the sync path crosses that
+pool.
+
+**The primary evidence has no clock in it.** The sleepers' own runs are counted by state
+on every pass of the drain poll: a run that is `sleeping` holds neither a claim nor a
+slot, one that is `running` holds both. `results/parked-20260909T190836Z`, three reps an
+arm, 58-59 samples a rep, every arm unmarked, 2,000 of 2,000 drained with no
+redeliveries:
+
+    arm              asleep at worst  running at worst  tasks/s  rep range
+    control                       0                 0    567.4  542.1-584.7
+    sleepers_sync                16                 0    566.8  551.1-612.8
+    sleepers_async               16                 0    543.4  529.3-551.9
+
+**Sixteen of sixteen asleep at the least-asleep moment, and never one running.** A
+durable sleep releases its slot and its claim, which is what the docs promise and what
+`loadtest` measured before this harness could.
+
+**The throughput arms say nothing beyond that, and must not be read as if they did.**
+1.00x and 0.96x, but the rep ranges overlap the control's — the async arm's 4% sits
+inside the dispersion of both, so this run distinguishes no cost at all. That is the
+honest reading of a corroborating metric whose job was to catch a slot released while
+the fleet slowed anyway; it caught nothing, and it is not evidence of a 4% penalty.
+
 ### Idle slot-seconds is the metric a clock cannot give
 
 `analysis.read_idle_slot_seconds` folds run intervals into the slot-seconds that were
@@ -1359,10 +1390,10 @@ Does not carry over: peak tasks/s, the process x concurrency sweep, `--batch-siz
 producer ceiling. Those answer how fast a flood of trivial tasks drains.
 
 Checkpointing repeatedly inside a durable body is now its own stage
-([at depth](#what-a-ctxstep-costs-at-depth-in-a-body-that-runs-for-seconds)). Still not
-measured at all: a task that SUSPENDS — a durable sleep or an `await_event` waiter that
-parks its run and is redelivered later. No stage exercises that shape, so nothing here
-bounds it.
+([at depth](#what-a-ctxstep-costs-at-depth-in-a-body-that-runs-for-seconds)), and so is
+suspending ([parked runs](#whether-a-parked-run-holds-a-worker-slot)). Still unmeasured:
+an `await_event` waiter, which parks on an event rather than a deadline and can wait at
+Postgres's `'infinity'`. Nothing here bounds that shape.
 
 ## Comparing two runs: refactors, version bumps, bisection
 

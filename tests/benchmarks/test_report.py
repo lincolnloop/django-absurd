@@ -1290,6 +1290,65 @@ def test_renders_idle_slots_and_the_barrier_ratio_for_batch_barrier(
     ) in rendered
 
 
+def test_renders_sleeper_states_and_the_control_ratio_for_parked_runs(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The clock-free evidence first — how many sleepers were asleep at the worst
+    moment and how many were ever running — then what the sleepers cost the drain."""
+    entries = [
+        build_parked_measurement("control", 0, 0, 0, 100.0),
+        build_parked_measurement("sleepers_sync", 16, 16, 0, 98.0),
+        build_parked_measurement("sleepers_async", 16, 16, 0, 99.0),
+    ]
+
+    rendered = render(capsys, tmp_path, "parked_runs", entries)
+
+    assert (
+        "| measurement | tasks | parked | asleep at worst | running at worst "
+        "| tasks/s | rep range | spread | cv | notes |\n"
+    ) in rendered
+    assert (
+        "What the parked runs cost the drain beside them:\n"
+        "\n"
+        "- `sleepers_sync`: 16 of 16 asleep throughout, 0 ever running, "
+        "0.98x the control's throughput\n"
+        "- `sleepers_async`: 16 of 16 asleep throughout, 0 ever running, "
+        "0.99x the control's throughput\n"
+    ) in rendered
+
+
+def build_parked_measurement(
+    name: str, parked: int, sleeping_min: int, running_max: int, throughput: float
+) -> dict[str, t.Any]:
+    """One parked_runs arm, the way `stages.summarize_parked_reps` writes it."""
+    return {
+        "spec": {
+            "name": name,
+            "mode": "parked",
+            "tasks": 2000,
+            "parked": parked,
+            "sleeper_path": None
+            if not parked
+            else f"tasks.park_{name.rsplit('_', maxsplit=1)[-1]}",
+            "concurrency": 4,
+        },
+        "ranking_key": "throughput_per_s",
+        "median": {
+            "throughput_per_s": throughput,
+            "sleeping_min": sleeping_min,
+            "running_max": running_max,
+            "samples": 12,
+        },
+        "spread": 0.04,
+        "cv": 0.02,
+        "range_low": throughput,
+        "range_high": throughput,
+        "invalid": False,
+        "unstable": False,
+        "host": HOST,
+    }
+
+
 def build_barrier_measurement(
     name: str, slow_tasks: int, idle_slot_s: float, throughput: float
 ) -> dict[str, t.Any]:

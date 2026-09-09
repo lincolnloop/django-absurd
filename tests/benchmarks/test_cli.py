@@ -572,6 +572,63 @@ def test_measures_the_batch_barrier_against_a_uniform_control(
     }
 
 
+def test_measures_whether_parked_runs_hold_a_worker_slot(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Three arms, and the park itself proven by the sleepers' own run states.
+
+    `sleeping_min` is the count of sleepers observed asleep at the LEAST asleep moment
+    of the drain, so it equalling the parked count says every sleeper was suspended
+    for the whole window — which is what makes the arm a measurement of parked runs
+    rather than of a queue that quietly drained them.
+
+    `running_max` is deliberately not asserted: a sleeper found `running` inside the
+    window would be a finding about the worker, and a test that failed on it would
+    read as a broken harness instead.
+    """
+    stages.main(
+        [
+            "parked_runs",
+            "--reps",
+            "1",
+            "--tasks",
+            "20",
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
+
+    recorded = utils.read_stage(tmp_path, "parked_runs")["measurements"]
+    assert [
+        {
+            "name": entry["spec"]["name"],
+            "parked": entry["spec"]["parked"],
+            "sleeping_min": entry["median"]["sleeping_min"],
+            "sampled_the_drain": entry["median"]["samples"] > 0,
+        }
+        for entry in recorded
+    ] == [
+        {
+            "name": "control",
+            "parked": 0,
+            "sleeping_min": 0,
+            "sampled_the_drain": True,
+        },
+        {
+            "name": "sleepers_sync",
+            "parked": stages.PARKED_SLEEPERS,
+            "sleeping_min": stages.PARKED_SLEEPERS,
+            "sampled_the_drain": True,
+        },
+        {
+            "name": "sleepers_async",
+            "parked": stages.PARKED_SLEEPERS,
+            "sleeping_min": stages.PARKED_SLEEPERS,
+            "sampled_the_drain": True,
+        },
+    ]
+
+
 def build_recorded_rung(
     name: str,
     throughput_per_s: float,

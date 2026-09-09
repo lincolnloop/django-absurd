@@ -5,7 +5,7 @@ import typing as t
 from absurd_sdk import RetryStrategy
 from django.tasks import task
 
-from django_absurd import absurd_params, get_absurd_context
+from django_absurd import absurd_params, aget_absurd_context, get_absurd_context
 from workload import models
 
 # Big enough that the insert and the read back move a real row rather than an empty
@@ -51,6 +51,24 @@ async def sleep_async(seconds: float = 0.05) -> int:
     # hold a slot while leaving the loop free.
     await asyncio.sleep(seconds)
     return 0
+
+
+@task(queue_name="bench")
+def park_sync(seconds: float = 300.0) -> None:
+    """Suspend durably for longer than any measured window.
+
+    The body does not return inside the window: `sleep_for` parks the run and Absurd
+    redelivers it when the sleep is up, which is the whole point — what the harness
+    then asks is whether the slot it was holding came back.
+    """
+    get_absurd_context().sleep_for("park", seconds)
+
+
+@task(queue_name="bench")
+async def park_async(seconds: float = 300.0) -> None:
+    """`park_sync`'s async twin, measured beside it because only the sync path holds a
+    thread of the worker's pool while it waits."""
+    await aget_absurd_context().sleep_for("park", seconds)
 
 
 @task(queue_name="bench")

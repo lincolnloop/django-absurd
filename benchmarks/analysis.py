@@ -286,14 +286,43 @@ def analyze_rate(
     }
 
 
-def count_unfinished_tasks(queue: str = "bench") -> int:
+def count_unfinished_tasks(queue: str = "bench", task_name: str | None = None) -> int:
+    """Tasks still to finish, optionally of one task name only.
+
+    The filter is for a drain that shares its queue with tasks nobody is waiting for:
+    a parked sleeper is unfinished by every definition and would keep an unfiltered
+    poll waiting for its whole sleep.
+    """
+    named = (
+        psycopg.sql.SQL("true")
+        if task_name is None
+        else psycopg.sql.SQL("task_name = {name}").format(
+            name=psycopg.sql.Literal(task_name)
+        )
+    )
     statement = psycopg.sql.SQL(
         "select count(*) from {tasks} "
-        "where state not in ('completed', 'failed', 'cancelled')"
-    ).format(tasks=psycopg.sql.Identifier("absurd", f"t_{queue}"))
+        "where state not in ('completed', 'failed', 'cancelled') and {named}"
+    ).format(tasks=psycopg.sql.Identifier("absurd", f"t_{queue}"), named=named)
     with connections[resolve_absurd_database()].cursor() as cursor:
         cursor.execute(statement)
         return int(cursor.fetchone()[0])
+
+
+def count_run_states(queue: str, task_name: str) -> dict[str, int]:
+    """One task name's runs by state. `sleeping` holds no slot, `running` holds one."""
+    statement = psycopg.sql.SQL(
+        "select r.state, count(*) from {runs} r "
+        "join {tasks} t on t.task_id = r.task_id "
+        "where t.task_name = {name} group by r.state"
+    ).format(
+        runs=psycopg.sql.Identifier("absurd", f"r_{queue}"),
+        tasks=psycopg.sql.Identifier("absurd", f"t_{queue}"),
+        name=psycopg.sql.Literal(task_name),
+    )
+    with connections[resolve_absurd_database()].cursor() as cursor:
+        cursor.execute(statement)
+        return {state: int(count) for state, count in cursor.fetchall()}
 
 
 def count_client_backends() -> int:

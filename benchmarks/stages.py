@@ -32,6 +32,8 @@ from report import (
 )
 
 DURABLE_STEPS = "tasks.run_durable_steps"
+PARK_ASYNC = "tasks.park_async"
+PARK_SYNC = "tasks.park_sync"
 DURABLE_WORK = "tasks.run_durable_work"
 NOOP_ASYNC = "tasks.noop_async"
 NOOP_SYNC = "tasks.noop_sync"
@@ -52,6 +54,7 @@ STAGE_NAMES = (
     "durable_checkpoints",
     "cleanup_vs_size",
     "batch_barrier",
+    "parked_runs",
     "producer_ceiling",
     "latency_under_load",
 )
@@ -85,6 +88,10 @@ STAGE_DESCRIPTIONS = {
     "batch_barrier": (
         "what a batch claim's barrier costs on a backlog of uneven task lengths, "
         "against a uniform control carrying the same total service time"
+    ),
+    "parked_runs": (
+        "whether a durable sleep costs a worker slot: a quick drain alone, then the "
+        "same drain with sleepers parked beside it"
     ),
     "producer_ceiling": (
         "the producer's own ceiling: one connection, eight threads, batched commits"
@@ -219,6 +226,17 @@ BARRIER_SLOW_SECONDS = 1.0
 # One worker at four slots: the barrier is a property of a POOLED worker, whose batch
 # size defaults to its concurrency, so C slots wait on the slowest of C.
 BARRIER_CONCURRENCY = 4
+# What parked_runs parks, and for how long. The sleep only has to outlast the drain
+# beside it; 300 s is that with room to spare, and a parked run is never claimed, so
+# no claim lease is riding on it. Sixteen sleepers is four waves of a four-slot worker,
+# so the arm proves the slots came back rather than that four of them did.
+PARKED_SLEEPERS = 16
+PARKED_SLEEP_SECONDS = 300.0
+PARKED_QUICK_TASKS = 2000
+PARKED_CONCURRENCY = 4
+# How often the drain poll counts the sleepers' run states. The same poll decides when
+# the quick batch is done, so sampling costs one extra query per pass and no thread.
+PARKED_POLL_INTERVAL_S = 0.05
 # The three probe blocks every stage file this invocation writes records beside its
 # options; only the closing one says whether the ceiling still held at the end.
 COMMIT_CEILING_KEYS = (
@@ -357,6 +375,7 @@ def run_stage(name: str, options: StageOptions) -> None:
         "durable_checkpoints": run_durable_checkpoints,
         "cleanup_vs_size": run_cleanup_vs_size,
         "batch_barrier": run_batch_barrier,
+        "parked_runs": run_parked_runs,
         "producer_ceiling": run_producer_ceiling,
         "latency_under_load": run_latency_under_load,
     }
@@ -820,6 +839,169 @@ def summarize_barrier_arm(entry: dict[str, t.Any]) -> str:
         f"{entry['spec']['name']}: {median.get('idle_slot_s', 0.0):.2f} idle slot-s, "
         f"{median.get(THROUGHPUT_KEY, 0.0):.1f} tasks/s, "
         f"{entry['spec']['slow_tasks']} slow of {entry['spec']['tasks']}"
+    )
+
+
+def run_parked_runs(options: StageOptions) -> None:
+    """Does a durable sleep cost a worker slot?
+
+    `context.sleep_for` on a SYNC body hops onto the worker's loop while the body
+    itself holds a thread of a pool sized to concurrency. If that thread stayed parked,
+    N sleepers would hold N of C slots and everything behind them would starve. The
+    async twin is measured beside it because only the sync path crosses the pool.
+
+    The primary evidence has no clock in it: the sleepers' own runs are counted by
+    state while the quick batch drains, and a run that is `sleeping` holds neither a
+    claim nor a slot.
+    """
+    quick_tasks = PARKED_QUICK_TASKS if options.tasks is None else options.tasks
+    rep_count = DEFAULT_REP_COUNT if options.reps is None else options.reps
+    arms: list[dict[str, t.Any]] = [
+        {"name": "control", "sleeper_path": None, "parked": 0},
+        {"name": "sleepers_sync", "sleeper_path": PARK_SYNC, "parked": PARKED_SLEEPERS},
+        {
+            "name": "sleepers_async",
+            "sleeper_path": PARK_ASYNC,
+            "parked": PARKED_SLEEPERS,
+        },
+    ]
+    recorded: list[dict[str, t.Any]] = []
+    for arm in arms:
+        reps = [measure_parked_rep(arm, quick_tasks) for _ in range(rep_count)]
+        recorded.append(summarize_parked_reps(arm, quick_tasks, reps))
+        write_stage_file("parked_runs", recorded, options)
+        print(summarize_parked_arm(recorded[-1]))
+
+
+def measure_parked_rep(arm: dict[str, t.Any], quick_tasks: int) -> dict[str, t.Any]:
+    """One arm's rep: warm up, park if this arm parks, then time the quick drain.
+
+    Every arm pays the same worker start-up and the same warm-up task, so what is left
+    between them is the sleepers. The window mark is taken AFTER parking, which keeps
+    the sleepers' own tasks out of the drain's metrics.
+    """
+    worker = runner.WorkerSpec(concurrency=PARKED_CONCURRENCY)
+    truncate_queue_tables(worker.queue)
+    procs = runner.start_workers(worker, 1)
+    sampled = {"running_max": 0, "sleeping_min": arm["parked"], "samples": 0}
+
+    def sample_sleeper_states() -> None:
+        """One pass of the drain poll's own loop: `sleeping` holds no slot, `running`
+        holds one, and the worst of each over the window is what the arm reports."""
+        sampled["samples"] += 1
+        if arm["sleeper_path"] is None:
+            return
+        states = analysis.count_run_states(worker.queue, arm["sleeper_path"])
+        sampled["running_max"] = max(sampled["running_max"], states.get("running", 0))
+        sampled["sleeping_min"] = min(
+            sampled["sleeping_min"], states.get("sleeping", 0)
+        )
+
+    try:
+        producer.preload_tasks(SLEEP_SYNC, 1, kwargs={"seconds": 0.0})
+        drain_quick_batch(procs, arm["name"], worker.queue)
+        if arm["sleeper_path"] is not None:
+            producer.preload_tasks(
+                arm["sleeper_path"],
+                arm["parked"],
+                kwargs={"seconds": PARKED_SLEEP_SECONDS},
+            )
+            wait_until_parked(procs, arm, worker.queue)
+        window_start = analysis.capture_database_now()
+        preload_s = producer.preload_tasks(
+            SLEEP_SYNC, quick_tasks, kwargs={"seconds": 0.0}
+        )
+        with host.measure_phase() as phase:
+            drain_quick_batch(
+                procs,
+                arm["name"],
+                worker.queue,
+                measurement.PollSampler(sample_sleeper_states, PARKED_POLL_INTERVAL_S),
+            )
+    except host.SuspendedPhaseError as exc:
+        return {"valid": False, "error": str(exc)}
+    finally:
+        runner.stop_workers(procs)
+    return {
+        "valid": True,
+        "preload_s": preload_s,
+        "phase_s": phase.elapsed_s,
+        **sampled,
+        **analysis.analyze_saturation(worker.queue, window_start, window_start),
+    }
+
+
+def drain_quick_batch(
+    procs: list[runner.Worker],
+    name: str,
+    queue: str,
+    sampler: measurement.PollSampler | None = None,
+) -> None:
+    """The quick batch only: a parked sleeper would hold the poll for its whole
+    sleep."""
+    measurement.wait_until_drained(
+        procs,
+        name=name,
+        queue=queue,
+        timeout_s=SATURATION_TIMEOUT_S,
+        task_name=SLEEP_SYNC,
+        sampler=sampler,
+    )
+
+
+def wait_until_parked(
+    procs: list[runner.Worker], arm: dict[str, t.Any], queue: str
+) -> None:
+    """Hold until every sleeper reports `sleeping`, so the drain beside them measures
+    them parked rather than mid-claim."""
+    measurement.wait_until(
+        lambda: (
+            analysis.count_run_states(queue, arm["sleeper_path"]).get("sleeping", 0)
+            >= arm["parked"]
+        ),
+        workers=procs,
+        name=arm["name"],
+        timeout_s=SATURATION_TIMEOUT_S,
+    )
+
+
+def summarize_parked_reps(
+    arm: dict[str, t.Any], quick_tasks: int, reps: list[dict[str, t.Any]]
+) -> dict[str, t.Any]:
+    valid = sorted(
+        (rep for rep in reps if rep["valid"]), key=lambda rep: rep[THROUGHPUT_KEY]
+    )
+    cv = measurement.measure_cv(valid, THROUGHPUT_KEY)
+    low, high = measurement.measure_rep_range(valid, THROUGHPUT_KEY)
+    median = measurement.pick_median_rep(valid, THROUGHPUT_KEY)
+    return {
+        "spec": {
+            "name": arm["name"],
+            "mode": "parked",
+            "tasks": quick_tasks,
+            "parked": arm["parked"],
+            "sleeper_path": arm["sleeper_path"],
+            "concurrency": PARKED_CONCURRENCY,
+        },
+        "reps": reps,
+        "ranking_key": THROUGHPUT_KEY,
+        "median": median,
+        "spread": measurement.measure_spread(valid, median, THROUGHPUT_KEY),
+        "cv": cv,
+        "range_low": low,
+        "range_high": high,
+        "invalid": measurement.is_measurement_invalid(reps, valid),
+        "unstable": cv is not None and cv > measurement.MeasurementSpec.cv_limit,
+        "host": host.collect_host_context(),
+    }
+
+
+def summarize_parked_arm(entry: dict[str, t.Any]) -> str:
+    median = entry["median"]
+    return (
+        f"{entry['spec']['name']}: {median.get(THROUGHPUT_KEY, 0.0):.1f} tasks/s, "
+        f"{median.get('sleeping_min', 0)} asleep at worst, "
+        f"{median.get('running_max', 0)} running at worst"
     )
 
 

@@ -28,6 +28,12 @@ BARRIER_TABLE_HEADER = (
 )
 BARRIER_TABLE_RULE = "| " + " | ".join(["---"] * 9) + " |"
 
+PARKED_TABLE_HEADER = (
+    "| measurement | tasks | parked | asleep at worst | running at worst "
+    "| tasks/s | rep range | spread | cv | notes |"
+)
+PARKED_TABLE_RULE = "| " + " | ".join(["---"] * 10) + " |"
+
 # What a stage measuring one shape on two workloads calls each of them. Any other task
 # path reads back as itself: a label nobody wrote is worse than the import path.
 WORKLOAD_LABELS = {
@@ -329,6 +335,8 @@ def render_stage(stage: dict[str, t.Any]) -> list[str]:
         return render_cleanup_stage(stage)
     if stage["stage"] == "batch_barrier":
         return render_barrier_stage(stage)
+    if stage["stage"] == "parked_runs":
+        return render_parked_stage(stage)
     measurements = stage["measurements"]
     lines = [
         "",
@@ -389,6 +397,66 @@ def describe_calibration_standing(calibration: dict[str, t.Any]) -> str:
 def render_heading(stage: str) -> str:
     """A stage name is already words, so it reads as a heading rather than shouting."""
     return stage.replace("_", " ").capitalize()
+
+
+def render_parked_stage(stage: dict[str, t.Any]) -> list[str]:
+    """Sleeper states in their own columns: whether a parked run held a slot is a
+    count, not a rate, and the rate beside it is the corroboration."""
+    measurements = stage["measurements"]
+    return [
+        "",
+        f"## {render_heading(stage['stage'])}",
+        "",
+        PARKED_TABLE_HEADER,
+        PARKED_TABLE_RULE,
+        *[render_parked_row(entry) for entry in measurements],
+        *build_parked_lines(measurements),
+    ]
+
+
+def render_parked_row(entry: dict[str, t.Any]) -> str:
+    median = entry["median"]
+    return render_row(
+        [
+            entry["spec"]["name"],
+            str(entry["spec"]["tasks"]),
+            str(entry["spec"]["parked"]),
+            str(median.get("sleeping_min", 0)),
+            str(median.get("running_max", 0)),
+            f"{median.get(THROUGHPUT_KEY, 0.0):.1f}",
+            format_rep_range(entry),
+            format_dispersion(entry["spread"]),
+            format_dispersion(entry["cv"]),
+            describe_marks(entry),
+        ]
+    )
+
+
+def build_parked_lines(measurements: list[dict[str, t.Any]]) -> list[str]:
+    """What the sleepers cost the drain beside them, against the arm without any."""
+    control = next(
+        (entry for entry in measurements if not entry["spec"]["parked"]), None
+    )
+    baseline = control["median"].get(THROUGHPUT_KEY, 0.0) if control else 0.0
+    parked = [entry for entry in measurements if entry["spec"]["parked"]]
+    if not baseline or not parked:
+        return []
+    return [
+        "",
+        "What the parked runs cost the drain beside them:",
+        "",
+        *[describe_parked_arm(entry, baseline) for entry in parked],
+    ]
+
+
+def describe_parked_arm(entry: dict[str, t.Any], baseline: float) -> str:
+    median = entry["median"]
+    return (
+        f"- `{entry['spec']['name']}`: {median.get('sleeping_min', 0)} of "
+        f"{entry['spec']['parked']} asleep throughout, "
+        f"{median.get('running_max', 0)} ever running, "
+        f"{median.get(THROUGHPUT_KEY, 0.0) / baseline:.2f}x the control's throughput"
+    )
 
 
 def render_barrier_stage(stage: dict[str, t.Any]) -> list[str]:
