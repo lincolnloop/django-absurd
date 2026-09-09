@@ -1102,14 +1102,18 @@ def build_durable_checkpoint_lines(
         seconds = read_body_seconds(entry)
         if seconds is not None:
             by_body.setdefault(seconds, []).append(entry)
-    lines = [line for arms in by_body.values() for line in describe_step_cost(arms)]
-    if not lines:
+    per_step = [line for arms in by_body.values() for line in describe_step_cost(arms)]
+    if not per_step:
         return build_ratio_lines(measurements, THROUGHPUT_KEY, "Throughput")
     return [
         "",
         "Per-step cost over the 0-step arm of the same body (median rep):",
         "",
-        *lines,
+        *per_step,
+        "",
+        "What the checkpoints cost the body, against that same control:",
+        "",
+        *[line for arms in by_body.values() for line in describe_body_cost(arms)],
     ]
 
 
@@ -1134,6 +1138,31 @@ def describe_step_cost(arms: list[dict[str, t.Any]]) -> list[str]:
             f"{read_step_count(deepest)} costs {deep_server / shallow_server:.2f}x "
             f"what it costs at {read_step_count(shallowest)}"
         ),
+    ]
+
+
+def describe_body_cost(arms: list[dict[str, t.Any]]) -> list[str]:
+    """What a depth cost the body it ran in, as a share of the control's throughput.
+
+    The one honest use of a throughput ratio here: both arms sleep for the same
+    `--durable-seconds`, so what separates them is the checkpoints. It is also the
+    number a reader wants — an absolute per-step cost lands differently on a 2 s body
+    than on a 30 s one, and this says how differently.
+    """
+    control = next((arm for arm in arms if read_step_count(arm) == 0), None)
+    reference = control["median"].get(THROUGHPUT_KEY, 0.0) if control else 0.0
+    if not reference:
+        return []
+    return [
+        (
+            f"- `{arm['spec']['name']}`: {read_step_count(arm)} steps cost "
+            f"{100 * (1 - arm['median'][THROUGHPUT_KEY] / reference):.1f}% of "
+            f"throughput ({arm['median'][THROUGHPUT_KEY]:.3g} against "
+            f"{reference:.3g} tasks/s)"
+        )
+        for arm in sorted(
+            (arm for arm in arms if read_step_count(arm)), key=read_step_count
+        )
     ]
 
 

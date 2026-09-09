@@ -966,6 +966,8 @@ def test_renders_the_per_step_cost_for_durable_checkpoints(
     """
     entries = build_durable_checkpoint_entries()
 
+    rendered = render(capsys, tmp_path, "durable_checkpoints", entries)
+
     assert (
         "Per-step cost over the 0-step arm of the same body (median rep):\n"
         "\n"
@@ -975,7 +977,19 @@ def test_renders_the_per_step_cost_for_durable_checkpoints(
         "- `steps4_long`: 0.70 ms server, 2.00 commits per step\n"
         "- `steps40_long`: 0.70 ms server, 2.00 commits per step\n"
         "- 0.75 s body: a step at 40 costs 1.00x what it costs at 4\n"
-    ) in render(capsys, tmp_path, "durable_checkpoints", entries)
+    ) in rendered
+    assert (
+        "What the checkpoints cost the body, against that same control:\n"
+        "\n"
+        "- `steps4_brief`: 4 steps cost 1.0% of throughput "
+        "(99 against 100 tasks/s)\n"
+        "- `steps40_brief`: 40 steps cost 16.0% of throughput "
+        "(84 against 100 tasks/s)\n"
+        "- `steps4_long`: 4 steps cost 0.1% of throughput "
+        "(9.99 against 10 tasks/s)\n"
+        "- `steps40_long`: 40 steps cost 2.0% of throughput "
+        "(9.8 against 10 tasks/s)\n"
+    ) in rendered
 
 
 def test_says_a_per_step_cost_has_no_server_split_without_statement_stats(
@@ -1033,6 +1047,7 @@ def build_durable_checkpoint_entries() -> list[dict[str, t.Any]]:
                 "task_kwargs": {"seconds": seconds, "step_count": depth},
             },
             {
+                "throughput_per_s": rate,
                 "commits_per_task": commits,
                 "statement_stats": {
                     "statements": [],
@@ -1043,10 +1058,26 @@ def build_durable_checkpoint_entries() -> list[dict[str, t.Any]]:
             },
         )
         for length, seconds, arms in (
-            ("brief", 0.05, ((0, 1.00, 2.00), (4, 3.40, 10.00), (40, 37.00, 82.00))),
-            ("long", 0.75, ((0, 2.00, 2.00), (4, 4.80, 10.00), (40, 30.00, 82.00))),
+            (
+                "brief",
+                0.05,
+                (
+                    (0, 1.00, 2.00, 100.0),
+                    (4, 3.40, 10.00, 99.0),
+                    (40, 37.00, 82.00, 84.0),
+                ),
+            ),
+            (
+                "long",
+                0.75,
+                (
+                    (0, 2.00, 2.00, 10.00),
+                    (4, 4.80, 10.00, 9.99),
+                    (40, 30.00, 82.00, 9.80),
+                ),
+            ),
         )
-        for depth, server, commits in arms
+        for depth, server, commits, rate in arms
     ]
 
 

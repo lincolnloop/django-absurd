@@ -762,6 +762,60 @@ eight: this stage reads per-task counters rather than settling a throughput rank
 its long arms cost fifteen times its brief ones — about ten minutes of a default run,
 nearly all of it those three arms.
 
+### What it measured: the adder is not flat, it is SUBLINEAR
+
+One run, `results/durable-20260909T122137Z` — mains power under `caffeinate -is` with
+the suspension guard armed and refusing nothing, `--reps 3` at the concurrency 16
+`worker_knobs` picked (its `async_dispatch` rung, 1,259 tasks/s, cv 4.2%, valid and
+stable; that rung reuses the winning `WorkerSpec` and only swaps the task path, so
+nothing async reached these sync arms). 32 tasks an arm, every arm unmarked, spreads
+0.1-4.6%.
+
+    arm             tasks/s  server ms/task  per-step server  per-step commits
+    steps0_brief     12.00        1.62             --                --
+    steps4_brief     11.83        5.16           0.88 ms            2.09
+    steps40_brief    10.03       11.63           0.25 ms            2.00
+    steps0_long       0.850       2.35             --                --
+    steps4_long       0.849       5.63           0.82 ms            2.05
+    steps40_long      0.837      13.39           0.28 ms            2.00
+
+**A step gets CHEAPER the more of them a task takes** — 0.28-0.34x from four steps to
+forty, on both body lengths. So the adder
+[What a `ctx.step` costs](#what-a-ctxstep-costs) could not bound past four steps is not
+flat, and not worse than flat: it is a fixed cost plus a marginal one.
+`set_task_checkpoint_state` alone fits `1.79 ms + 0.18 ms x steps` on the 2 s body and
+`1.78 + 0.19` on the 30 s one — two fits agreeing to a percent — so a task that
+checkpoints at all pays about 1.8 ms once, and about 0.19 ms for each step after.
+**Commits are exactly 2 a step at both depths**, which is the nano-task stage's figure
+holding.
+
+**What it costs the body it ran in**, against the 0-step arm of the same length: four
+steps 1.5% of throughput on the 2 s body and 0.1% on the 30 s one, forty steps 16.4% and
+1.6%. The same absolute cost, divided by a body fifteen times longer.
+
+**These shares are an UPPER bound.** `report_step_done` returns an integer; a real step
+does something, and every millisecond of its own work makes the checkpoint's share
+smaller. Read 16.4% as what forty checkpoints cost when there is nothing between them,
+which is a nano-task workflow wearing a durable body — not as what an agent tool call
+pays.
+
+**The wall clock disagrees with the server, and it does not matter here.** Per step at
+depth 40, added wall is 12.55 ms (2 s body) and 12.33 ms (30 s body) against 0.25-0.28
+ms of server time, while at depth 4 it is 0.31 and 1.45 ms — so the client side grows
+steeply with the number of checkpoints in one task while Postgres's share of it falls.
+Two readings fit: per-task bookkeeping in the SDK that is superlinear in step count, or
+contention, these arms being concurrency 16 in ONE process where 640 checkpoints a round
+share an event loop. **Deliberately not separated.** The absolute figure is ~0.5 s added
+to a forty-step task, which is noise against a body that runs for seconds to minutes,
+and a step's own work has to be under ~100 ms before checkpointing is worth counting at
+all. A concurrency-1 depth ladder is the probe if that ever stops being true.
+
+**What it does not support.** Two depths FIT the fixed-plus-marginal model; they do not
+test it — a third depth (12, a multiple of the touches) would predict and check rather
+than interpolate. Nothing here bounds a task that suspends, one that retries, or a
+checkpoint state larger than the small one `report_step_done` writes. And these are RAM
+rates like every other in this file: the shares travel, the milliseconds do not.
+
 ## Incidental, worth raising upstream
 
 - `r_bench` bloats and `t_bench` does not: 10,000 dead tuples against 5,000 live, versus
