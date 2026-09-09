@@ -135,6 +135,39 @@ def test_a_drain_reads_its_rates_and_its_totals_over_different_windows() -> None
     }
 
 
+def test_idle_slots_count_only_while_work_was_still_waiting() -> None:
+    """The batch barrier's signature: a slot free while the backlog still held work.
+
+    Three runs on two slots. A long one spans the window; a short one frees its slot
+    after a second; the third is not claimed until second five. So seconds 1-5 have a
+    slot standing idle with a task waiting for it — that is the finding — while seconds
+    6-10 have the same idle slot and NOTHING left to claim, which is not.
+    """
+    truncate_queue_tables("bench")
+    for started, completed in ((0.0, 10.0), (0.0, 1.0), (5.0, 6.0)):
+        utils.insert_hand_timed_task(
+            "bench",
+            EPOCH,
+            EPOCH + dt.timedelta(seconds=started),
+            EPOCH + dt.timedelta(seconds=completed),
+            "bench-0",
+        )
+
+    assert analysis.read_idle_slot_seconds("bench", None, 2) == pytest.approx(4.0)
+
+
+def test_no_slot_is_idle_while_every_slot_is_working() -> None:
+    """The control the metric would be worthless without: a saturated fleet leaves no
+    idle slot-seconds, however long the drain took."""
+    truncate_queue_tables("bench")
+    for _ in range(2):
+        utils.insert_hand_timed_task(
+            "bench", EPOCH, EPOCH, EPOCH + dt.timedelta(seconds=2), "bench-0"
+        )
+
+    assert analysis.read_idle_slot_seconds("bench", None, 2) == pytest.approx(0.0)
+
+
 def insert_saturation_rows() -> None:
     """Leave the queue holding `SATURATION_ROWS` at exactly the timestamps it names."""
     truncate_queue_tables("bench")

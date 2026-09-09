@@ -1,4 +1,5 @@
 import datetime as dt
+import itertools
 import json
 import math
 import statistics
@@ -95,6 +96,14 @@ select
 from {runs} r
 join {tasks} t on t.task_id = r.task_id
 where r.state = 'completed' and {window}
+"""
+
+RUN_INTERVALS_SQL = """
+select r.started_at, r.completed_at
+from {runs} r
+join {tasks} t on t.task_id = r.task_id
+where r.state = 'completed' and r.started_at is not null and {window}
+order by r.started_at
 """
 
 FAIRNESS_SQL = """
@@ -407,6 +416,53 @@ def summarize_commit_rates(rates: list[float]) -> dict[str, t.Any]:
         "range_low": min(rates),
         "range_high": max(rates),
     }
+
+
+def read_idle_slot_seconds(queue: str, since: dt.datetime | None, slots: int) -> float:
+    """Slot-seconds that were free while the backlog still held work.
+
+    The batch barrier's signature, and the one figure a wall clock cannot produce: a
+    drain of uneven tasks takes longer because the tasks are longer AND because a
+    batch claim makes slots wait on the slowest of the batch, and only idle slots
+    measured against waiting work separate the two.
+    """
+    drained = (
+        psycopg.sql.SQL("true")
+        if since is None
+        else psycopg.sql.SQL("t.enqueue_at > {since}").format(
+            since=psycopg.sql.Literal(since)
+        )
+    )
+    with connections[resolve_absurd_database()].cursor() as cursor:
+        cursor.execute(
+            psycopg.sql.SQL(RUN_INTERVALS_SQL).format(
+                runs=psycopg.sql.Identifier("absurd", f"r_{queue}"),
+                tasks=psycopg.sql.Identifier("absurd", f"t_{queue}"),
+                window=drained,
+            )
+        )
+        return build_idle_slot_seconds(cursor.fetchall(), slots)
+
+
+def build_idle_slot_seconds(rows: list[tuple[t.Any, ...]], slots: int) -> float:
+    """Fold run intervals into idle slot-seconds, oldest event first.
+
+    A run's own `started_at` is what says the work was WAITING: a task claimed at
+    second five was in the backlog at second one, so an idle slot then was a slot the
+    fleet could have used. Nothing is counted past the last claim, where an idle slot
+    has nothing left to take.
+    """
+    if not rows:
+        return 0.0
+    starts = sorted(started for started, _ in rows)
+    moments = sorted({moment for interval in rows for moment in interval})
+    idle_seconds = 0.0
+    for opened, closed in itertools.pairwise(moments):
+        busy = sum(1 for started, completed in rows if started <= opened < completed)
+        waiting = sum(1 for started in starts if started > opened)
+        if waiting and busy < slots:
+            idle_seconds += (slots - busy) * (closed - opened).total_seconds()
+    return idle_seconds
 
 
 def read_completed_run_metrics(
