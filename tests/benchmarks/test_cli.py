@@ -629,6 +629,51 @@ def test_measures_whether_parked_runs_hold_a_worker_slot(
     ]
 
 
+def test_times_the_admin_changelists_and_captures_their_plans(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Four probes on each of the two changelists that hold volume.
+
+    Every arm has to say how many rows it measured and carry the plans behind the two
+    queries that matter: an arm filtered to zero rows answers 200 and looks like the
+    others while measuring nothing, and a timing with no plan beside it cannot say
+    whether the planner walked an index or sorted the table.
+    """
+    stages.main(
+        [
+            "admin_at_volume",
+            "--reps",
+            "1",
+            "--tasks",
+            "200",
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
+
+    recorded = utils.read_stage(tmp_path, "admin_at_volume")["measurements"]
+    assert [
+        {
+            "name": entry["spec"]["name"],
+            "measured_rows": entry["median"]["result_count"] > 0,
+            "ran_queries": entry["median"]["query_count"] > 0,
+            "took_time": entry["median"]["wall_ms"] > 0.0,
+            "captured_plans": sorted(entry["median"]["plans"]),
+        }
+        for entry in recorded
+    ] == [
+        {
+            "name": f"{entity}_{probe}",
+            "measured_rows": True,
+            "ran_queries": True,
+            "took_time": True,
+            "captured_plans": ["count", "page"],
+        }
+        for entity in ("tasks", "runs")
+        for probe in ("unfiltered", "queue", "state", "last_page")
+    ]
+
+
 def build_recorded_rung(
     name: str,
     throughput_per_s: float,

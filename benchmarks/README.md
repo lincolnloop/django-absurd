@@ -29,7 +29,7 @@ RAM, so a restart hands you back an empty server, and a run against one dies par
 through its first measurement with `schema "absurd" does not exist`. It takes a second
 and it is idempotent, so just run it every time.
 
-The thirteen stages take about eighty-five minutes together on the reference machine (14
+The fourteen stages take about ninety minutes together on the reference machine (14
 cores, at `--max-workers 14 --reps 3`). Seven of them were timed at 50 minutes in one
 run, of which `latency_under_load` was 15 and `size_vs_depth` 11 — that one drains four
 tasks for every one it measures. Name stages to run only those; `--tasks`, `--duration`,
@@ -55,6 +55,7 @@ machine that produced them.
 | `cleanup_vs_size`     | what one cleanup call costs, and whether the table sets it            |
 | `batch_barrier`       | what a batch claim's barrier costs on uneven task lengths             |
 | `parked_runs`         | whether a durable sleep costs a worker slot                           |
+| `admin_at_volume`     | what the admin changelists cost on a seeded table, and their plans    |
 | `producer_ceiling`    | how fast the enqueue side can go                                      |
 | `latency_under_load`  | end-to-end latency at fractions of a sustainable offer rate           |
 

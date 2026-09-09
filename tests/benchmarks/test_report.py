@@ -1317,6 +1317,83 @@ def test_renders_sleeper_states_and_the_control_ratio_for_parked_runs(
     ) in rendered
 
 
+def test_renders_page_costs_and_plan_shapes_for_admin_at_volume(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """A page's cost is its wall clock and its query count; what it did to get there
+    is the plan, and the shape of the plan is what survives a change of machine."""
+    entries = [
+        build_admin_measurement("tasks_unfiltered", 285.0, 8, 1_000_000),
+        build_admin_measurement("tasks_last_page", 739.0, 8, 1_000_000),
+    ]
+
+    rendered = render(capsys, tmp_path, "admin_at_volume", entries)
+
+    assert (
+        "| measurement | rows | rendered | queries | ms | rep range "
+        "| spread | cv | notes |\n"
+    ) in rendered
+    assert (
+        "| tasks_unfiltered | 1000000 | 1000000 | 8 | 285.0 | 285-285 "
+        "| 4.0% | 2.0% |  |\n"
+    ) in rendered
+    assert (
+        "Plans behind each page, by the node that decides its cost:\n"
+        "\n"
+        "- `tasks_unfiltered` count: `Aggregate`\n"
+        "- `tasks_unfiltered` page: `Limit`\n"
+    ) in rendered
+
+
+def build_admin_measurement(
+    name: str, wall_ms: float, query_count: int, rows: int
+) -> dict[str, t.Any]:
+    """One admin arm, the way `stages.summarize_one_admin_arm` writes it."""
+    return {
+        "spec": {
+            "name": name,
+            "mode": "admin",
+            "rows": rows,
+            "entity": "task",
+            "probe": name.split("_", 1)[1],
+            "query": {},
+        },
+        "ranking_key": "wall_ms",
+        "median": {
+            "wall_ms": wall_ms,
+            "query_count": query_count,
+            "result_count": rows,
+            "status": 200,
+            "plans": {
+                "count": "Aggregate (actual time=1..2 rows=1 loops=1)\n  -> Seq Scan",
+                "page": "Limit (actual time=1..2 rows=100 loops=1)\n  -> Index Scan",
+            },
+        },
+        "spread": 0.04,
+        "cv": 0.02,
+        "range_low": wall_ms,
+        "range_high": wall_ms,
+        "invalid": False,
+        "unstable": False,
+        "host": HOST,
+    }
+
+
+def test_derives_nothing_for_parked_runs_until_a_sleeper_arm_has_run(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The control runs first and the file is rewritten after every arm, so mid-run
+    there is a control and nothing to compare it with.
+
+    Asserted by where the report ends: a derived block would follow the last row.
+    """
+    entries = [build_parked_measurement("control", 0, 0, 0, 100.0)]
+
+    assert render(capsys, tmp_path, "parked_runs", entries).endswith(
+        "| control | 2000 | 0 | 0 | 0 | 100.0 | 100-100 | 4.0% | 2.0% |  |\n"
+    )
+
+
 def build_parked_measurement(
     name: str, parked: int, sleeping_min: int, running_max: int, throughput: float
 ) -> dict[str, t.Any]:

@@ -34,6 +34,11 @@ PARKED_TABLE_HEADER = (
 )
 PARKED_TABLE_RULE = "| " + " | ".join(["---"] * 10) + " |"
 
+ADMIN_TABLE_HEADER = (
+    "| measurement | rows | rendered | queries | ms | rep range | spread | cv | notes |"
+)
+ADMIN_TABLE_RULE = "| " + " | ".join(["---"] * 9) + " |"
+
 # What a stage measuring one shape on two workloads calls each of them. Any other task
 # path reads back as itself: a label nobody wrote is worse than the import path.
 WORKLOAD_LABELS = {
@@ -337,6 +342,8 @@ def render_stage(stage: dict[str, t.Any]) -> list[str]:
         return render_barrier_stage(stage)
     if stage["stage"] == "parked_runs":
         return render_parked_stage(stage)
+    if stage["stage"] == "admin_at_volume":
+        return render_admin_stage(stage)
     measurements = stage["measurements"]
     lines = [
         "",
@@ -397,6 +404,54 @@ def describe_calibration_standing(calibration: dict[str, t.Any]) -> str:
 def render_heading(stage: str) -> str:
     """A stage name is already words, so it reads as a heading rather than shouting."""
     return stage.replace("_", " ").capitalize()
+
+
+def render_admin_stage(stage: dict[str, t.Any]) -> list[str]:
+    """A page's cost, then the node that decides it.
+
+    Only the top node of each plan: the full dumps are in the results file, and what a
+    reader compares across runs and machines is the SHAPE — whether the paginator
+    aggregated a scan or walked an index, and whether the page stopped at its limit.
+    """
+    measurements = stage["measurements"]
+    return [
+        "",
+        f"## {render_heading(stage['stage'])}",
+        "",
+        ADMIN_TABLE_HEADER,
+        ADMIN_TABLE_RULE,
+        *[render_admin_row(entry) for entry in measurements],
+        "",
+        "Plans behind each page, by the node that decides its cost:",
+        "",
+        *[
+            f"- `{entry['spec']['name']}` {role}: `{read_plan_node(plan)}`"
+            for entry in measurements
+            for role, plan in sorted(entry["median"]["plans"].items())
+        ],
+    ]
+
+
+def render_admin_row(entry: dict[str, t.Any]) -> str:
+    median = entry["median"]
+    return render_row(
+        [
+            entry["spec"]["name"],
+            str(entry["spec"]["rows"]),
+            str(median["result_count"]),
+            str(median["query_count"]),
+            f"{median['wall_ms']:.1f}",
+            format_rep_range(entry),
+            format_dispersion(entry["spread"]),
+            format_dispersion(entry["cv"]),
+            describe_marks(entry),
+        ]
+    )
+
+
+def read_plan_node(plan: str) -> str:
+    """The plan's top node, which is the one its cost is attributed to."""
+    return plan.splitlines()[0].split("(")[0].strip()
 
 
 def render_parked_stage(stage: dict[str, t.Any]) -> list[str]:

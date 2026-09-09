@@ -6,6 +6,12 @@ SECRET_KEY = "nonsense-not-a-secret"  # noqa: S105
 
 DEBUG = os.environ.get("DEBUG", "") == "1"
 
+# Named rather than left empty: `admin_at_volume` drives the admin through Django's
+# test client, whose host is `testserver`, and a measured run has DEBUG off — which
+# without this answers every request with a 400 instead of a page. `serve_admin.sh`
+# reaches it on localhost and only worked because it sets DEBUG.
+ALLOWED_HOSTS = ["testserver", "localhost", "127.0.0.1"]
+
 # `workload` holds the model a durable task body reads and writes; a benchmark
 # database needs its table, which is what makes `migrate` cover it.
 INSTALLED_APPS = [

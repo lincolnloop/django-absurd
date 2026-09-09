@@ -15,6 +15,7 @@ from django.db import connections
 from django.utils import timezone
 from django.utils.module_loading import import_string
 
+import admin_probe
 import analysis
 import host
 import measurement
@@ -55,6 +56,7 @@ STAGE_NAMES = (
     "cleanup_vs_size",
     "batch_barrier",
     "parked_runs",
+    "admin_at_volume",
     "producer_ceiling",
     "latency_under_load",
 )
@@ -92,6 +94,10 @@ STAGE_DESCRIPTIONS = {
     "parked_runs": (
         "whether a durable sleep costs a worker slot: a quick drain alone, then the "
         "same drain with sleepers parked beside it"
+    ),
+    "admin_at_volume": (
+        "what the tasks and runs changelists cost on a seeded table, and the plans "
+        "behind the paginator's count and the paged select"
     ),
     "producer_ceiling": (
         "the producer's own ceiling: one connection, eight threads, batched commits"
@@ -237,6 +243,12 @@ PARKED_CONCURRENCY = 4
 # How often the drain poll counts the sleepers' run states. The same poll decides when
 # the quick batch is done, so sampling costs one extra query per pass and no thread.
 PARKED_POLL_INTERVAL_S = 0.05
+# What admin_at_volume seeds before driving the changelists. A million rows is 1.09 GB
+# of tables against the server's 4 GB tmpfs, which is the whole reason it is not more.
+ADMIN_SEED_ROWS = 1_000_000
+# The filter values the arms use. Both have to match rows the seed really carries: an
+# arm filtered to nothing answers 200 and looks like the others while measuring nothing.
+ADMIN_FILTER_STATE = "completed"
 # The three probe blocks every stage file this invocation writes records beside its
 # options; only the closing one says whether the ceiling still held at the end.
 COMMIT_CEILING_KEYS = (
@@ -376,6 +388,7 @@ def run_stage(name: str, options: StageOptions) -> None:
         "cleanup_vs_size": run_cleanup_vs_size,
         "batch_barrier": run_batch_barrier,
         "parked_runs": run_parked_runs,
+        "admin_at_volume": run_admin_at_volume,
         "producer_ceiling": run_producer_ceiling,
         "latency_under_load": run_latency_under_load,
     }
@@ -1002,6 +1015,81 @@ def summarize_parked_arm(entry: dict[str, t.Any]) -> str:
         f"{entry['spec']['name']}: {median.get(THROUGHPUT_KEY, 0.0):.1f} tasks/s, "
         f"{median.get('sleeping_min', 0)} asleep at worst, "
         f"{median.get('running_max', 0)} running at worst"
+    )
+
+
+def run_admin_at_volume(options: StageOptions) -> None:
+    """What each changelist costs on a seeded table, and the plans behind it.
+
+    Seeded rather than drained: the admin's cost is a property of how many rows it has
+    to page through, and `seed.py` writes millions of them without running any of them.
+    """
+    rows = ADMIN_SEED_ROWS if options.tasks is None else options.tasks
+    rep_count = DEFAULT_REP_COUNT if options.reps is None else options.reps
+    summary = seed.seed_queue_tables(rows, queue=seed.DEFAULT_QUEUE)
+    print(
+        f"seeded {summary.tasks} tasks and {summary.runs} runs "
+        f"in {summary.elapsed_s:.0f}s"
+    )
+    reps = [
+        admin_probe.probe_admin_changelists(seed.DEFAULT_QUEUE, ADMIN_FILTER_STATE)
+        for _ in range(rep_count)
+    ]
+    recorded = summarize_admin_arms(reps, rows)
+    write_stage_file("admin_at_volume", recorded, options)
+    for entry in recorded:
+        print(summarize_admin_arm(entry))
+
+
+def summarize_admin_arms(
+    reps: list[list[dict[str, t.Any]]], rows: int
+) -> list[dict[str, t.Any]]:
+    """One entry per arm, its reps gathered from every pass over the changelists."""
+    return [
+        summarize_one_admin_arm(arm["name"], rows, [rep[index] for rep in reps])
+        for index, arm in enumerate(reps[0])
+    ]
+
+
+def summarize_one_admin_arm(
+    name: str, rows: int, arm_reps: list[dict[str, t.Any]]
+) -> dict[str, t.Any]:
+    """Ranked on wall time, which for a page IS the measurement.
+
+    Recorded as `valid` unconditionally: a changelist that answered has measured
+    something, and the arm records the row count it measured over rather than leaving
+    a reader to infer it.
+    """
+    ranked = sorted(arm_reps, key=lambda rep: rep["wall_ms"])
+    median = ranked[len(ranked) // 2]
+    spread = (ranked[-1]["wall_ms"] - ranked[0]["wall_ms"]) / median["wall_ms"]
+    return {
+        "spec": {
+            "name": name,
+            "mode": "admin",
+            "rows": rows,
+            "entity": median["entity"],
+            "probe": median["probe"],
+            "query": median["query"],
+        },
+        "reps": arm_reps,
+        "ranking_key": "wall_ms",
+        "median": median,
+        "spread": spread,
+        "cv": measurement.measure_cv(arm_reps, "wall_ms"),
+        "range_low": ranked[0]["wall_ms"],
+        "range_high": ranked[-1]["wall_ms"],
+        "invalid": False,
+        "unstable": False,
+        "host": host.collect_host_context(),
+    }
+
+
+def summarize_admin_arm(entry: dict[str, t.Any]) -> str:
+    median = entry["median"]
+    return (
+        f"{entry['spec']['name']}: {median['wall_ms']:.0f} ms, "
+        f"{median['query_count']} queries, {median['result_count']} rows"
     )
 
 

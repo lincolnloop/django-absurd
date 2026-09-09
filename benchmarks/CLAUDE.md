@@ -874,6 +874,55 @@ to take, and that qualifier IS the metric: without it the drain's tail reads as 
 Deriving it from the columns instead means no table, no migration, and no bookkeeping in
 the workload under measurement.
 
+## What the admin changelists cost at volume
+
+`admin_at_volume` seeds a million tasks and drives the real admin over Django's test
+client — same middleware, same `ChangeList`, same filters a browser gets — four ways per
+changelist: unfiltered, the queue filter, the state filter, and the LAST page. The last
+page is resolved from the row count rather than fixed, because `ChangeList.get_results`
+ignores `?p=` unless the table paginates and a fixed deep page on a short table renders
+page 1 while wearing a deep-page label.
+
+**Two passes per arm.** The timed pass is clean; a second request collects the page's
+statements through `connection.execute_wrapper` and explains the two that are the page
+(the paginator's `COUNT(*)` and the paged `SELECT`). One pass would put instrumentation
+inside the number, which is what `refuse_measuring_under_debug` exists to prevent.
+
+`results/admin-20260909T194359Z`, 1,000,000 tasks and 1,166,660 runs, three reps, 8
+queries a page throughout:
+
+    arm                 ms    rows rendered   cv
+    tasks_unfiltered    45     1,000,000     16%
+    tasks_queue         52     1,000,000     14%
+    tasks_state         62       833,340     15%
+    tasks_last_page    382     1,000,000     39%
+    runs_unfiltered     71     1,166,660      2%
+    runs_queue          84     1,166,660      3%
+    runs_state          88       833,340      9%
+    runs_last_page     426     1,166,660      3%
+
+**Page one is tens of milliseconds; the last page is 6-8x that.** The `tasks` arms are
+noisy (14-39% cv) because tens of milliseconds on a shared laptop are, and the `runs`
+arms at 2-3% are the ones to read.
+
+**The plan says the deep page is OFFSET walking, not sorting.** Every arm's page query
+is `Limit -> Incremental Sort -> Index Scan Backward using t_bench_pkey`, and the count
+is a parallel `Finalize Aggregate`. On the last page that index scan reads 999,900 rows
+and 618,816 buffers to hand back 100 — 343 ms of the 382. So ordering by the pk
+(https://github.com/lincolnloop/django-absurd/pull/273) does what it was for: Postgres
+walks the index instead of sorting the table. What is left is inherent to page-number
+pagination rather than to the ordering.
+
+**The `natural_key` expression is still in the `Sort Key`** — Django appends the pk to
+every changelist ordering and the pk here is `'bench:' || task_id` — but it costs almost
+nothing: `task_id` is unique and presorted, so the incremental sort's groups are
+singletons (31,247 of them, 34 kB peak). That was the open question when the ordering
+was chosen; the plan answers it.
+
+**Not comparable to the older figures** in the retired harness (runs deep page ~3.2 s):
+those came off a disk-backed server, and levels do not travel between servers here. The
+shape does, and 8 queries a page is unchanged.
+
 ## What one cleanup call costs
 
 `cleanup_vs_size` runs no fleet: `absurd.cleanup_tasks` selects terminal rows older than
