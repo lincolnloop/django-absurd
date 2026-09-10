@@ -5,6 +5,9 @@ Spec:
 
 Branch `bench__durable-checkpoints`. One commit per task. TDD: RED first, always.
 
+The tasks below are as approved. Where one differs from what was built, the code is
+right and [Departed from this plan](#departed-from-this-plan-and-why) says why.
+
 Gate per task: `uv run pytest tests/benchmarks/<file> -q --no-cov` while iterating,
 `uv run pre-commit run --all-files`, then `tox -e bench_harness` before the commit.
 `benchmarks/` coverage is gated at 100%, so every branch needs a test or must not exist.
@@ -73,6 +76,31 @@ Only once tasks 2-4 have recorded real runs. Write the parity table into
 `benchmarks/CLAUDE.md` as fact, and say in `docs/HISTORY.md` that `loadtest/` is
 superseded, naming the branch its history lives on. Deleting the remote branch is an
 outward action needing explicit sign-off; the doc change is not.
+
+## Departed from this plan, and why
+
+Kept as approved above; what actually happened where it differs.
+
+- **Task 1's tests live in `test_metrics.py`, not `test_analysis.py`** — that is the
+  file that already inserts hand-timed rows and asserts `analysis` over them.
+- **`mean_busy` and `span_s` are not computed at all**, where the plan had them internal
+  to the reducer. One figure is returned; a drain's span is already `phase_s`.
+- **`idle_slot_s` is capped at `min(free, waiting)`.** The first implementation charged
+  every free slot whenever anything waited, which contradicted the spec's own "wanted"
+  and was not comparable with `loadtest`'s occupancy. Both original tests had
+  `free == waiting` and could not tell the two apart; a third pins the difference.
+- **Task 4 calls no `setup_test_environment()`.** It refuses to run twice, so a stage
+  calling it works under `python -m stages` and raises under pytest. The real gap was a
+  missing `ALLOWED_HOSTS`, without which a DEBUG-off admin request answers 400.
+- **Task 4 makes three requests an arm, not two** — a discarded warm-up ahead of the
+  timed one, as `loadtest` did. Without it the deep page's first-ever request read 717
+  ms against 380 for its next two, and the arm's cv was 39% rather than 6%.
+- **Both seeding stages truncate on the way out**, which no task here asked for. The
+  first end-to-end run of all fourteen stages was killed for memory with a million
+  `cleanup_vs_size` rows still resident in a tmpfs data directory.
+- **The end-to-end run is not in this plan either**, and it earned its place: ten stages
+  in 112 minutes, then killed, which is what found the truncate and corrected a README
+  timing claim that had been extrapolated rather than measured.
 
 ## Order and cost
 

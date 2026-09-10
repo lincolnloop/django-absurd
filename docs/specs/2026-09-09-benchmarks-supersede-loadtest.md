@@ -34,7 +34,9 @@ differ in variance alone. Mixed is mostly fast tasks with slow ones spread evenl
 **Deliverable is `idle_slot_s`, not a ratio.** Idle slot-seconds integrated over the
 window where the backlog STILL held work: slots available, wanted, unused. Wall clock
 cannot separate "the barrier stalled claims" from "slow tasks are slow"; that qualifier
-can, which is why it is the metric.
+can, which is why it is the metric. CAPPED by the work waiting — three free slots with
+one task waiting is one wanted slot-second a second, not three — which is how
+`loadtest`'s occupancy figure counted, so the two are comparable.
 
 **Occupancy from Absurd's own columns, no new table.** `loadtest` wrote an
 `OccupancyLog` from task bodies. `r_bench.started_at`/`completed_at` already carry every
@@ -67,25 +69,32 @@ ratio is corroboration, and catches a slot released but the fleet slowed anyway.
 **Question.** What the tasks and runs changelists cost at volume, and what plans they
 get.
 
-**Arms: tasks and runs only**, each `unfiltered`, `queue`, `state`, `deep-page`. Both
-live findings (#142, #241) are about these two; `loadtest`'s own note says checkpoints,
-events and waits are a handful of workflow rows each, so their arms measure nothing at
-volume and the `has_state`/`multi_page` skip machinery they needed is not built.
+**Arms: tasks and runs only**, each `unfiltered`, `queue`, `state`, `last_page` — named
+for what it asks for, since the page it lands on is taken off the changelist's own
+paginator rather than assumed. Both live findings (#142, #241) are about these two;
+`loadtest`'s own note says checkpoints, events and waits are a handful of workflow rows
+each, so their arms measure nothing at volume and the `has_state`/`multi_page` skip
+machinery they needed is not built.
 
-**Two passes, because this harness refuses a debug cursor.** Query capture means a debug
-cursor and `refuse_measuring_under_debug` exists to keep one out of a timed run. So: a
-clean timed pass for wall clock, then a capture pass for query count and the two plans
-that matter (the paginator `COUNT(*)` and the paged `SELECT`). Plans go in the results
-file as text, not into dump files beside it.
+**Three requests an arm, one of them timed.** A warm-up first, discarded, because the
+first arm to touch a page otherwise pays for caches the rest find warm. Then the timed
+pass, clean. Then a capture pass for the query count and the two plans that matter (the
+paginator `COUNT(*)` and the paged `SELECT`), because capture means instrumentation and
+`refuse_measuring_under_debug` exists to keep that out of a timed number. Plans go in
+the results file as text, not into dump files beside it.
 
 **Records per arm:** wall ms, query count, `result_count`, the two plans. Plans matter
 as much as the clock: `natural_key` is a computed expression Django appends to every
 changelist ordering as a pk tiebreaker, so it lands in every `Sort Key`.
 
-**Trap to respect.** `response.context` is populated only under
-`setup_test_environment()`; a stage driving the client outside pytest must read
-`TemplateResponse.context_data`. That mistake passed a whole suite and crashed on the
-first real run.
+**Two traps, and what they actually require.** `response.context` is populated only
+under `setup_test_environment()`, so the stage reads `TemplateResponse.context_data`
+instead — a `TemplateResponse` attribute that needs no test runner. And
+`setup_test_environment()` itself is NOT the answer to the rest: it refuses to run
+twice, so a stage calling it works under `python -m stages` and raises under pytest,
+which has already called it. What it was covering for is a settings gap — no
+`ALLOWED_HOSTS`, so with DEBUG off every admin request answers 400 — and that is fixed
+where it belongs.
 
 ## Cross-cutting
 
@@ -93,7 +102,9 @@ first real run.
   a management command. `record_interleaved_measurements` already exists for arms that
   divide each other.
 - Seeded volume is bounded by the server: the data directory is a 4 GB tmpfs and a
-  million tasks is 1.09 GB of tables.
+  million tasks is 1.09 GB of tables. **A stage that seeds truncates on the way out** —
+  rows left behind are RAM every later stage of a run pays for, which is what killed the
+  first end-to-end attempt.
 - Levels are RAM rates. Ratios travel; milliseconds do not. Every finding names its run.
 - A number is quotable only from a run on mains with the suspension guard armed and no
   marks on the arms it rests on.
@@ -107,7 +118,8 @@ first real run.
   slow", so `uniform` is the only control the detector needs. Add `split` only if a
   measured number comes out ambiguous.
 - **Checkpoint, event and wait admin arms**, and with them the skip conditionals.
-- **`mean_busy` and `span_s` as published metrics.** Intermediates of the reducer.
+- **`mean_busy` and `span_s`.** Not published and not computed: the reducer returns the
+  one figure, and a drain's span is already in `phase_s`.
 
 ## Out of scope
 

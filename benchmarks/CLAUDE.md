@@ -927,8 +927,8 @@ and 40%.
   appends the pk to every changelist ordering, the pk here is `'bench:' || id`, so
   `'bench:' || id DESC` sits in every `Sort Key` and is evaluated for every row walked.
   31,247 full-sort groups is 999,900/32 — Postgres's 32-tuple batches over a presorted
-  key, not the singletons an earlier reading of this claimed. 34 kB of memory, and a
-  third of the page's time.
+  key — 32-tuple batches, not one group per row. 34 kB of memory, and a third of the
+  page's time.
 
 So ordering by the pk (https://github.com/lincolnloop/django-absurd/pull/273) did what
 it was for — `Index Scan Backward`, no full `Sort` of the table — and what it left
@@ -971,7 +971,7 @@ with the table, which is the superlinearity. See [UPSTREAM.md](../docs/UPSTREAM.
 **What the numbers imply, and what they do not.** At a million finished tasks, clearing
 the backlog at the default batch is ~1,000 calls of ~0.6 s, so about ten minutes of
 continuous cleanup — and longer per row the further behind it falls. Levels are RAM
-rates like every other here; the 5.11x is the part that travels. A larger
+rates like every other here; the 4.2-5.2x is the part that travels. A larger
 `cleanup_limit` is deliberately unmeasured: six calls at 100,000 delete 60% of a
 million-row table, so that arm would average a table shrinking underneath it. It needs a
 bigger rig than a 4 GB tmpfs, not a different stage.
