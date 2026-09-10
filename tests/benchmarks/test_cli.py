@@ -9,6 +9,7 @@ from django.db import connections
 from pytest_django import Settings
 
 import analysis
+import seed
 import stages
 from django_absurd.queues import resolve_absurd_database
 from tests.benchmarks import utils
@@ -675,6 +676,37 @@ def test_times_the_admin_changelists_and_captures_their_plans(
         for entity in ("tasks", "runs")
         for probe in ("unfiltered", "queue", "state", "last_page")
     ]
+
+
+def test_a_seeding_stage_releases_its_rows_when_it_finishes(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A stage that seeds has to clear up after itself: the server's data directory is
+    a tmpfs, so rows left behind are RAM held for the rest of the run.
+
+    A million tasks is 1.09 GB, and `cleanup_vs_size` sits ninth of fourteen — a full
+    pipeline run was killed for memory with that seed still resident.
+
+    Sized so the seed OUTLIVES the deletions: six calls at a batch of 1,000 clear
+    6,000 rows, so the 4x arm's 8,000 leave rows behind. At a size the calls empty
+    outright this would pass against a stage that never cleared up at all.
+    """
+    stages.main(
+        [
+            "cleanup_vs_size",
+            "--reps",
+            "1",
+            "--tasks",
+            "2000",
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
+
+    assert {
+        table: seed.count_table_rows(table)
+        for table in (f"t_{seed.DEFAULT_QUEUE}", f"r_{seed.DEFAULT_QUEUE}")
+    } == {f"t_{seed.DEFAULT_QUEUE}": 0, f"r_{seed.DEFAULT_QUEUE}": 0}
 
 
 def build_recorded_rung(

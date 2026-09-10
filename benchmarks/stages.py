@@ -561,6 +561,10 @@ def run_cleanup_vs_size(options: StageOptions) -> None:
         recorded.append(summarize_cleanup_reps(name, rows, limit, reps))
         write_stage_file("cleanup_vs_size", recorded, options)
         print(summarize_cleanup_arm(recorded[-1]))
+    # Released on the way out: the server's data directory is a tmpfs, so a million
+    # rows left behind is a gigabyte of RAM every later stage of the run pays for. A
+    # full pipeline run was killed for memory two stages after this one.
+    truncate_queue_tables(seed.DEFAULT_QUEUE)
 
 
 def measure_cleanup_rep(queue: str) -> dict[str, t.Any]:
@@ -1038,6 +1042,9 @@ def run_admin_at_volume(options: StageOptions) -> None:
     write_stage_file("admin_at_volume", recorded, options)
     for entry in recorded:
         print(summarize_admin_arm(entry))
+    # As in `cleanup_vs_size`: a seeded million is a gigabyte of tmpfs, and every
+    # stage after this one would run against it.
+    truncate_queue_tables(seed.DEFAULT_QUEUE)
 
 
 def summarize_admin_arms(

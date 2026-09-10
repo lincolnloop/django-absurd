@@ -29,18 +29,25 @@ RAM, so a restart hands you back an empty server, and a run against one dies par
 through its first measurement with `schema "absurd" does not exist`. It takes a second
 and it is idempotent, so just run it every time.
 
-The fourteen stages take about ninety minutes together on the reference machine (14
-cores, at `--max-workers 14 --reps 3`). Seven of them were timed at 50 minutes in one
-run, of which `latency_under_load` was 15 and `size_vs_depth` 11 — that one drains four
-tasks for every one it measures. Name stages to run only those; `--tasks`, `--duration`,
-`--reps` and `--max-workers` size them down to a dry run, `--io-seconds` sets how long
-`sync_vs_async` pretends to do IO for, and `--durable-seconds` sets how long a durable
-body holds a worker thread — in `pooled_vs_split`'s durable arms and in
-`durable_checkpoints`, whose long-body arms run at 15x it (default 2 s; 30 s is an agent
-tool call's duration and ~15x `pooled_vs_split`'s cost). `durable_checkpoints` is about
-ten minutes of the run at that default, nearly all of it its three long-body arms.
-Results land in `benchmarks/results/`, which is git-ignored — the numbers belong to the
-machine that produced them.
+**Budget two hours for all fourteen, and give the machine room.** On the reference
+laptop (14 cores, `--max-workers 14 --reps 3`) seven stages were once timed at 50
+minutes together, of which `latency_under_load` was 15 and `size_vs_depth` 11 — that one
+drains four tasks for every one it measures. A later attempt at the whole sequence with
+three other container stacks resident went far slower and did not finish: ten stages in
+112 minutes, `worker_knobs` alone taking 64 of them, then killed for memory partway
+through the eleventh. The data directory is a tmpfs, so seeded rows are RAM — run the
+sequence with nothing else of size on the box, or name the stages you want across a few
+smaller invocations.
+
+Name stages to run only those; `--tasks`, `--duration`, `--reps` and `--max-workers`
+size them down to a dry run, `--io-seconds` sets how long `sync_vs_async` pretends to do
+IO for, and `--durable-seconds` sets how long a durable body holds a worker thread — in
+`pooled_vs_split`'s durable arms and in `durable_checkpoints`, whose long-body arms run
+at 15x it (default 2 s; 30 s is an agent tool call's duration and ~15x
+`pooled_vs_split`'s cost). `durable_checkpoints` is about ten minutes of the run at that
+default, nearly all of it its three long-body arms. Results land in
+`benchmarks/results/`, which is git-ignored — the numbers belong to the machine that
+produced them.
 
 | stage                 | what it answers                                                       |
 | --------------------- | --------------------------------------------------------------------- |
