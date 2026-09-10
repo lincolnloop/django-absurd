@@ -967,7 +967,8 @@ runs table which SPILLS (~107 MB of temp read and written), and a top-N heapsort
 the computed terminal timestamps — 117,000 buffer hits and ~490 ms to choose 1,000 task
 ids. Nothing indexes the terminal timestamp, and `order by terminal_at limit 1000`
 cannot walk an index that does not exist. The hash build and its spill are what grow
-with the table, which is the superlinearity. See [UPSTREAM.md](../docs/UPSTREAM.md).
+with the table, which is the superlinearity. Neither filed upstream nor documented for
+users: one call is sub-second, on a maintenance operation that fires on a schedule.
 
 **What the numbers imply, and what they do not.** At a million finished tasks, clearing
 the backlog at the default batch is ~1,000 calls of ~0.6 s, so about ten minutes of
