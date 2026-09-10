@@ -16,6 +16,29 @@ PRODUCER_TABLE_HEADER = (
 )
 PRODUCER_TABLE_RULE = "| " + " | ".join(["---"] * 9) + " |"
 
+CLEANUP_TABLE_HEADER = (
+    "| measurement | rows | limit | ms/call | deletes/s | deleted "
+    "| rep range | spread | cv | notes |"
+)
+CLEANUP_TABLE_RULE = "| " + " | ".join(["---"] * 10) + " |"
+
+BARRIER_TABLE_HEADER = (
+    "| measurement | tasks | slow | idle slot s | tasks/s "
+    "| rep range | spread | cv | notes |"
+)
+BARRIER_TABLE_RULE = "| " + " | ".join(["---"] * 9) + " |"
+
+PARKED_TABLE_HEADER = (
+    "| measurement | tasks | parked | asleep at worst | running at worst "
+    "| tasks/s | rep range | spread | cv | notes |"
+)
+PARKED_TABLE_RULE = "| " + " | ".join(["---"] * 10) + " |"
+
+ADMIN_TABLE_HEADER = (
+    "| measurement | rows | rendered | queries | ms | rep range | spread | cv | notes |"
+)
+ADMIN_TABLE_RULE = "| " + " | ".join(["---"] * 9) + " |"
+
 # What a stage measuring one shape on two workloads calls each of them. Any other task
 # path reads back as itself: a label nobody wrote is worse than the import path.
 WORKLOAD_LABELS = {
@@ -313,6 +336,14 @@ def describe_capture_window(stamps: list[str]) -> str:
 def render_stage(stage: dict[str, t.Any]) -> list[str]:
     if stage["stage"] == "producer_ceiling":
         return render_producer_stage(stage)
+    if stage["stage"] == "cleanup_vs_size":
+        return render_cleanup_stage(stage)
+    if stage["stage"] == "batch_barrier":
+        return render_barrier_stage(stage)
+    if stage["stage"] == "parked_runs":
+        return render_parked_stage(stage)
+    if stage["stage"] == "admin_at_volume":
+        return render_admin_stage(stage)
     measurements = stage["measurements"]
     lines = [
         "",
@@ -373,6 +404,255 @@ def describe_calibration_standing(calibration: dict[str, t.Any]) -> str:
 def render_heading(stage: str) -> str:
     """A stage name is already words, so it reads as a heading rather than shouting."""
     return stage.replace("_", " ").capitalize()
+
+
+def render_admin_stage(stage: dict[str, t.Any]) -> list[str]:
+    """A page's cost, then the node that decides it.
+
+    Only the top node of each plan: the full dumps are in the results file, and what a
+    reader compares across runs and machines is the SHAPE — whether the paginator
+    aggregated a scan or walked an index, and whether the page stopped at its limit.
+    """
+    measurements = stage["measurements"]
+    return [
+        "",
+        f"## {render_heading(stage['stage'])}",
+        "",
+        ADMIN_TABLE_HEADER,
+        ADMIN_TABLE_RULE,
+        *[render_admin_row(entry) for entry in measurements],
+        "",
+        "Plans behind each page, by the node that decides its cost:",
+        "",
+        *[
+            f"- `{entry['spec']['name']}` {role}: `{read_plan_node(plan)}`"
+            for entry in measurements
+            for role, plan in sorted(entry["median"]["plans"].items())
+        ],
+    ]
+
+
+def render_admin_row(entry: dict[str, t.Any]) -> str:
+    median = entry["median"]
+    return render_row(
+        [
+            entry["spec"]["name"],
+            str(entry["spec"]["rows"]),
+            str(median["result_count"]),
+            str(median["query_count"]),
+            f"{median['wall_ms']:.1f}",
+            format_rep_range(entry),
+            format_dispersion(entry["spread"]),
+            format_dispersion(entry["cv"]),
+            describe_marks(entry),
+        ]
+    )
+
+
+def read_plan_node(plan: str) -> str:
+    """The plan's top node, which is the one its cost is attributed to."""
+    return plan.splitlines()[0].split("(")[0].strip()
+
+
+def render_parked_stage(stage: dict[str, t.Any]) -> list[str]:
+    """Sleeper states in their own columns: whether a parked run held a slot is a
+    count, not a rate, and the rate beside it is the corroboration."""
+    measurements = stage["measurements"]
+    return [
+        "",
+        f"## {render_heading(stage['stage'])}",
+        "",
+        PARKED_TABLE_HEADER,
+        PARKED_TABLE_RULE,
+        *[render_parked_row(entry) for entry in measurements],
+        *build_parked_lines(measurements),
+    ]
+
+
+def render_parked_row(entry: dict[str, t.Any]) -> str:
+    median = entry["median"]
+    return render_row(
+        [
+            entry["spec"]["name"],
+            str(entry["spec"]["tasks"]),
+            str(entry["spec"]["parked"]),
+            str(median.get("sleeping_min", 0)),
+            str(median.get("running_max", 0)),
+            f"{median.get(THROUGHPUT_KEY, 0.0):.1f}",
+            format_rep_range(entry),
+            format_dispersion(entry["spread"]),
+            format_dispersion(entry["cv"]),
+            describe_marks(entry),
+        ]
+    )
+
+
+def build_parked_lines(measurements: list[dict[str, t.Any]]) -> list[str]:
+    """What the sleepers cost the drain beside them, against the arm without any."""
+    control = next(
+        (entry for entry in measurements if not entry["spec"]["parked"]), None
+    )
+    baseline = control["median"].get(THROUGHPUT_KEY, 0.0) if control else 0.0
+    parked = [entry for entry in measurements if entry["spec"]["parked"]]
+    if not baseline or not parked:
+        return []
+    return [
+        "",
+        "What the parked runs cost the drain beside them:",
+        "",
+        *[describe_parked_arm(entry, baseline) for entry in parked],
+    ]
+
+
+def describe_parked_arm(entry: dict[str, t.Any], baseline: float) -> str:
+    median = entry["median"]
+    return (
+        f"- `{entry['spec']['name']}`: {median.get('sleeping_min', 0)} of "
+        f"{entry['spec']['parked']} asleep throughout, "
+        f"{median.get('running_max', 0)} ever running, "
+        f"{median.get(THROUGHPUT_KEY, 0.0) / baseline:.2f}x the control's throughput"
+    )
+
+
+def render_barrier_stage(stage: dict[str, t.Any]) -> list[str]:
+    """Idle slot-seconds in their own column, because the barrier is not a rate.
+
+    A mixed backlog drains slower than a uniform one for two reasons at once — its
+    tasks are longer AND its batches wait on their slowest member — so a throughput
+    column alone cannot carry the finding.
+    """
+    measurements = stage["measurements"]
+    return [
+        "",
+        f"## {render_heading(stage['stage'])}",
+        "",
+        BARRIER_TABLE_HEADER,
+        BARRIER_TABLE_RULE,
+        *[render_barrier_row(entry) for entry in measurements],
+        *build_barrier_lines(measurements),
+        *render_run_order(stage),
+    ]
+
+
+def render_barrier_row(entry: dict[str, t.Any]) -> str:
+    median = entry["median"]
+    return render_row(
+        [
+            entry["spec"]["name"],
+            str(entry["spec"]["tasks"]),
+            str(entry["spec"]["slow_tasks"]),
+            f"{median.get('idle_slot_s', 0.0):.2f}",
+            f"{median.get(THROUGHPUT_KEY, 0.0):.1f}",
+            format_rep_range(entry),
+            format_dispersion(entry["spread"]),
+            format_dispersion(entry["cv"]),
+            describe_marks(entry),
+        ]
+    )
+
+
+def build_barrier_lines(measurements: list[dict[str, t.Any]]) -> list[str]:
+    """Every arm's idle slot-seconds, and the mixed backlog over its control."""
+    control = next(
+        (entry for entry in measurements if not entry["spec"]["slow_tasks"]), None
+    )
+    baseline = control["median"].get("idle_slot_s", 0.0) if control else 0.0
+    return [
+        "",
+        "Idle slot-seconds against a backlog that still held work:",
+        "",
+        *[describe_barrier_arm(entry, control, baseline) for entry in measurements],
+    ]
+
+
+def describe_barrier_arm(
+    entry: dict[str, t.Any], control: dict[str, t.Any] | None, baseline: float
+) -> str:
+    median = entry["median"]
+    line = (
+        f"- `{entry['spec']['name']}`: {median.get('idle_slot_s', 0.0):.2f} idle "
+        f"slot-s at {median.get(THROUGHPUT_KEY, 0.0):.1f} tasks/s"
+    )
+    if entry is control or not baseline:
+        return line
+    return (
+        f"{line} — {median.get('idle_slot_s', 0.0) / baseline:.2f}x "
+        f"the {control['spec']['name'] if control else 'control'} control"
+    )
+
+
+def render_cleanup_stage(stage: dict[str, t.Any]) -> list[str]:
+    """Cleanup deletes in batches, so it gets columns in its own units rather than an
+    execution-throughput table it would have to fake."""
+    measurements = stage["measurements"]
+    return [
+        "",
+        f"## {render_heading(stage['stage'])}",
+        "",
+        CLEANUP_TABLE_HEADER,
+        CLEANUP_TABLE_RULE,
+        *[render_cleanup_row(entry) for entry in measurements],
+        *build_cleanup_size_lines(measurements),
+    ]
+
+
+def render_cleanup_row(entry: dict[str, t.Any]) -> str:
+    median = entry["median"]
+    return render_row(
+        [
+            entry["spec"]["name"],
+            str(entry["spec"]["rows"]),
+            str(entry["spec"]["cleanup_limit"]),
+            f"{median.get('ms_per_call_p50', 0.0):.1f}",
+            f"{median.get('deletes_per_s', 0.0):.0f}",
+            str(median.get("tasks_deleted", 0)),
+            format_rep_range(entry),
+            format_dispersion(entry["spread"]),
+            format_dispersion(entry["cv"]),
+            describe_marks(entry),
+        ]
+    )
+
+
+def build_cleanup_size_lines(measurements: list[dict[str, t.Any]]) -> list[str]:
+    """What a call costs on a longer table, at one batch size.
+
+    Grouped by `cleanup_limit` because a batch size and a table size are two different
+    experiments: comparing a 1,000-row call against a 100,000-row one would report the
+    batch, and `eligible_tasks` scans the whole table whichever it is.
+    """
+    by_limit: dict[int, list[dict[str, t.Any]]] = {}
+    for entry in measurements:
+        by_limit.setdefault(entry["spec"]["cleanup_limit"], []).append(entry)
+    lines = [
+        line for arms in by_limit.values() for line in describe_cleanup_size_cost(arms)
+    ]
+    if not lines:
+        return []
+    return [
+        "",
+        "Cost of one call against the table it scans, at one batch size:",
+        "",
+        *lines,
+    ]
+
+
+def describe_cleanup_size_cost(arms: list[dict[str, t.Any]]) -> list[str]:
+    """One batch size's arms against the shortest table it was measured on."""
+    ladder = sorted(arms, key=lambda entry: entry["spec"]["rows"])
+    reference = ladder[0]
+    baseline_ms = reference["median"].get("ms_per_call_p50", 0.0)
+    if not baseline_ms:
+        return []
+    return [
+        (
+            f"- `{entry['spec']['name']}`: "
+            f"{entry['median'].get('ms_per_call_p50', 0.0) / baseline_ms:.2f}x "
+            f"`{reference['spec']['name']}`'s ms/call for "
+            f"{entry['spec']['rows'] / reference['spec']['rows']:.1f}x the rows"
+        )
+        for entry in ladder[1:]
+    ]
 
 
 def render_producer_stage(stage: dict[str, t.Any]) -> list[str]:
@@ -893,16 +1173,16 @@ def build_derived_lines(stage: str, measurements: list[dict[str, t.Any]]) -> lis
     deleted. A mark changes the SHAPE of what derives instead — see `describe_quotient`,
     which carries the reps' endpoints through the division.
     """
-    if stage == "process_scaling":
-        return build_scaling_efficiency_lines(measurements)
-    if stage == "pooled_vs_split":
-        return build_pooled_vs_split_lines(measurements)
-    if stage == "size_vs_depth":
-        return build_size_vs_depth_lines(measurements)
-    if stage == "sync_vs_async":
-        return build_async_ratio_lines(measurements)
-    if stage == "checkpoint_cost":
-        return build_checkpoint_multiplier_lines(measurements)
+    builders = {
+        "process_scaling": build_scaling_efficiency_lines,
+        "pooled_vs_split": build_pooled_vs_split_lines,
+        "size_vs_depth": build_size_vs_depth_lines,
+        "sync_vs_async": build_async_ratio_lines,
+        "checkpoint_cost": build_checkpoint_multiplier_lines,
+        "durable_checkpoints": build_durable_checkpoint_lines,
+    }
+    if stage in builders:
+        return builders[stage](measurements)
     # In rate mode throughput is set by the OFFER, so a throughput ratio there only
     # restates the configured rate; latency is what those vary.
     metric, label = (
@@ -1086,6 +1366,159 @@ def build_checkpoint_multiplier_lines(
             f"a flat no-op task"
         ),
     ]
+
+
+def build_durable_checkpoint_lines(
+    measurements: list[dict[str, t.Any]],
+) -> list[str]:
+    """What one `ctx.step` costs inside a durable body, and whether it stays flat.
+
+    Subtracted from the 0-step arm of the same body, never divided by it: every depth
+    runs the identical body, so what a step costs is what it ADDS — and a ratio
+    between two arms that spend nearly all their time sleeping would report the sleep.
+    """
+    by_body: dict[float, list[dict[str, t.Any]]] = {}
+    for entry in measurements:
+        by_body.setdefault(read_body_seconds(entry), []).append(entry)
+    # The pairs both blocks derive from, resolved once: a body with no 0-step arm has
+    # nothing to subtract from, and neither block has anything to say about it.
+    ladders = [
+        (read_control_arm(arms), read_depth_ladder(arms)) for arms in by_body.values()
+    ]
+    derivable = [(control, ladder) for control, ladder in ladders if control and ladder]
+    if not derivable:
+        return build_ratio_lines(measurements, THROUGHPUT_KEY, "Throughput")
+    return [
+        "",
+        "Per-step cost over the 0-step arm of the same body (median rep):",
+        "",
+        *[line for pair in derivable for line in describe_step_cost(*pair)],
+        "",
+        "What the checkpoints cost the body, against that same control:",
+        "",
+        *[line for pair in derivable for line in describe_body_cost(*pair)],
+    ]
+
+
+def read_control_arm(arms: list[dict[str, t.Any]]) -> dict[str, t.Any] | None:
+    return next((arm for arm in arms if read_step_count(arm) == 0), None)
+
+
+def read_depth_ladder(arms: list[dict[str, t.Any]]) -> list[dict[str, t.Any]]:
+    return sorted((arm for arm in arms if read_step_count(arm)), key=read_step_count)
+
+
+def describe_step_cost(
+    control: dict[str, t.Any], ladder: list[dict[str, t.Any]]
+) -> list[str]:
+    """One body length's depths, then whether the adder held across them."""
+    if not control["median"]:
+        return [describe_refused_control(control)]
+    costs = [
+        (arm, measure_one_step(control, arm) if arm["median"] else None)
+        for arm in ladder
+    ]
+    lines = [
+        f"- `{arm['spec']['name']}`: "
+        + ("measured nothing" if cost is None else format_step_cost(*cost))
+        for arm, cost in costs
+    ]
+    measured = [(arm, cost) for arm, cost in costs if cost is not None]
+    if len(measured) < 2:
+        return lines
+    (shallowest, shallow), (deepest, deep) = measured[0], measured[-1]
+    if not shallow[0] or deep[0] is None:
+        return lines
+    return [
+        *lines,
+        (
+            f"- {read_body_seconds(control):g} s body: a step at "
+            f"{read_step_count(deepest)} costs {deep[0] / shallow[0]:.2f}x "
+            f"what it costs at {read_step_count(shallowest)}"
+        ),
+    ]
+
+
+def describe_body_cost(
+    control: dict[str, t.Any], ladder: list[dict[str, t.Any]]
+) -> list[str]:
+    """What a depth cost the body it ran in, as a share of the control's throughput.
+
+    The one honest use of a throughput ratio here: both arms sleep for the same
+    `--durable-seconds`, so what separates them is the checkpoints. It is also the
+    number a reader wants — an absolute per-step cost lands differently on a 2 s body
+    than on a 30 s one, and this says how differently.
+    """
+    reference = control["median"].get(THROUGHPUT_KEY, 0.0)
+    if not reference:
+        return [describe_refused_control(control)]
+    return [describe_one_body_cost(arm, reference) for arm in ladder]
+
+
+def describe_one_body_cost(arm: dict[str, t.Any], reference: float) -> str:
+    name = arm["spec"]["name"]
+    rate = arm["median"].get(THROUGHPUT_KEY)
+    if not rate:
+        return f"- `{name}`: measured nothing"
+    return (
+        f"- `{name}`: {read_step_count(arm)} steps cost "
+        f"{100 * (1 - rate / reference):.1f}% of throughput "
+        f"({rate:.3g} against {reference:.3g} tasks/s)"
+    )
+
+
+def describe_refused_control(control: dict[str, t.Any]) -> str:
+    """Both blocks are taken against the 0-step arm, so neither derives without it."""
+    return (
+        f"- {read_body_seconds(control):g} s body: its 0-step control measured "
+        "nothing, so no cost derives"
+    )
+
+
+def measure_one_step(
+    control: dict[str, t.Any], arm: dict[str, t.Any]
+) -> tuple[float | None, float]:
+    """What one step of ``arm``'s depth added to the control, in server ms and commits.
+
+    Server time is `None` rather than zero where either arm has no statement stats:
+    `pg_stat_statements` is an extension, and a step that cost something reading as
+    0.00 ms would be the counters' absence printed as a measurement.
+    """
+    depth = read_step_count(arm)
+    arm_ms, control_ms = (
+        read_server_ms_per_task(arm),
+        read_server_ms_per_task(control),
+    )
+    return (
+        None if arm_ms is None or control_ms is None else (arm_ms - control_ms) / depth,
+        (
+            arm["median"].get("commits_per_task", 0.0)
+            - control["median"].get("commits_per_task", 0.0)
+        )
+        / depth,
+    )
+
+
+def format_step_cost(server: float | None, commits: float) -> str:
+    if server is None:
+        return f"{commits:.2f} commits per step, server time not itemised"
+    return f"{server:.2f} ms server, {commits:.2f} commits per step"
+
+
+def read_body_seconds(entry: dict[str, t.Any]) -> float:
+    """How long the arm's body held its thread. Every arm of this stage carries one,
+    and this block is reached by stage name, so a file without it is a broken file
+    rather than an arm to skip quietly."""
+    return float(entry["spec"]["task_kwargs"]["seconds"])
+
+
+def read_step_count(entry: dict[str, t.Any]) -> int:
+    return int((entry["spec"].get("task_kwargs") or {}).get("step_count", 0))
+
+
+def read_server_ms_per_task(entry: dict[str, t.Any]) -> float | None:
+    stats = entry["median"].get("statement_stats")
+    return None if stats is None else float(stats["server_exec_ms_per_task"])
 
 
 def build_ratio_lines(

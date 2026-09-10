@@ -106,6 +106,9 @@ services:
       # `worker_knobs` runs used 355 MB, in an 11.7 GB VM. `synchronous_commit=on`
       # and `fsync=on` above are unchanged — the durability request is the same one,
       # only the medium moved, which is why fsync here costs a memcpy.
+      #
+      # Not headroom for the two stages that seed rather than drain: a million tasks
+      # is 1.09 GB of tables, so four million fills this (`benchmarks/README.md`).
       - /var/lib/postgresql:size=${BENCH_TMPFS_SIZE:-4g}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d absurd_bench"]

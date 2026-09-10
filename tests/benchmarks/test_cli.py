@@ -9,6 +9,7 @@ from django.db import connections
 from pytest_django import Settings
 
 import analysis
+import seed
 import stages
 from django_absurd.queues import resolve_absurd_database
 from tests.benchmarks import utils
@@ -33,6 +34,9 @@ BRIEF_DURABLE_SECONDS = "0.05"
 # Long enough that the connection probe's sampler, which reads `pg_stat_activity`
 # every 50 ms, cannot miss the window in which every slot is working.
 SAMPLEABLE_DURABLE_SECONDS = "0.5"
+# Rows enough that a cleanup call scans for milliseconds rather than microseconds, so
+# a phase of six of them spans the 20 ms at which `nap_the_wall_clock` jumps.
+NAPPABLE_CLEANUP_ROWS = "20000"
 
 
 def test_runs_the_producer_stage_at_the_size_it_was_asked_for(
@@ -367,6 +371,411 @@ def test_calibrates_from_the_fastest_rung_no_mark_disqualified(
         },
         "concurrency_each_measurement_ran_at": [2, 2],
     }
+
+
+def test_runs_the_checkpoint_depth_ladder_at_both_body_durations(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Three depths on two body lengths, and the long one derived from the flag.
+
+    The stage exists to divide one arm by another, so the six arms have to arrive in
+    one file: a depth compared against a depth measured in another run is compared
+    against another machine. The long body is `--durable-seconds` times
+    `LONG_DURABLE_MULTIPLE` rather than a second flag, so a run cannot record two
+    durations that relate to nothing.
+    """
+    (tmp_path / "stage_worker_knobs.json").write_text(
+        json.dumps({"measurements": [build_recorded_rung("clean_c2", 500.0, 2)]})
+    )
+
+    stages.main(
+        [
+            "durable_checkpoints",
+            "--reps",
+            "1",
+            "--tasks",
+            "8",
+            "--durable-seconds",
+            BRIEF_DURABLE_SECONDS,
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
+
+    brief = float(BRIEF_DURABLE_SECONDS)
+    assert [
+        {
+            "name": entry["spec"]["name"],
+            "task_path": entry["spec"]["task_path"],
+            "task_kwargs": entry["spec"]["task_kwargs"],
+        }
+        for entry in utils.read_stage(tmp_path, "durable_checkpoints")["measurements"]
+    ] == [
+        {
+            "name": f"steps{depth}_{length}",
+            "task_path": "tasks.run_durable_steps",
+            "task_kwargs": {
+                "seconds": pytest.approx(seconds),
+                "step_count": depth,
+            },
+        }
+        for length, seconds in (
+            ("brief", brief),
+            ("long", brief * stages.LONG_DURABLE_MULTIPLE),
+        )
+        for depth in stages.DURABLE_STEP_DEPTHS
+    ]
+
+
+def test_interleaves_the_durable_checkpoint_arms_rep_by_rep(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A per-step cost is a subtraction between arms, so no arm may always go first.
+
+    Cumulative database state only grows across a stage, and this one's whole finding
+    is one arm's per-task cost minus another's — so the reps interleave and reverse,
+    the way pooled_vs_split's do, rather than running each arm's reps back to back.
+    """
+    (tmp_path / "stage_worker_knobs.json").write_text(
+        json.dumps({"measurements": [build_recorded_rung("clean_c2", 500.0, 2)]})
+    )
+
+    stages.main(
+        [
+            "durable_checkpoints",
+            "--reps",
+            "2",
+            "--tasks",
+            "2",
+            "--durable-seconds",
+            BRIEF_DURABLE_SECONDS,
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
+
+    result = utils.read_stage(tmp_path, "durable_checkpoints")
+    arms = [
+        f"steps{depth}_{length}"
+        for length in ("brief", "long")
+        for depth in stages.DURABLE_STEP_DEPTHS
+    ]
+    assert {
+        "measurements": [entry["spec"]["name"] for entry in result["measurements"]],
+        "reps": [len(entry["reps"]) for entry in result["measurements"]],
+        "run_order": result["run_order"],
+    } == {
+        "measurements": arms,
+        "reps": [2] * len(arms),
+        "run_order": [*arms, *reversed(arms)],
+    }
+
+
+def test_measures_a_cleanup_call_at_two_table_sizes(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Three arms that each DELETED something, and a clock left where it was found.
+
+    Deleting is the whole mechanism under test: a seeded row is seconds old against a
+    `cleanup_ttl` of thirty days, so nothing is eligible until the stage moves its own
+    session's `absurd.current_time()` past the TTL. Zero rows deleted is what a broken
+    shift looks like, and a shift left behind would make every later stage's claims
+    unreachable — so the clock is asserted back to real time afterwards.
+    """
+    stages.main(
+        [
+            "cleanup_vs_size",
+            "--reps",
+            "1",
+            "--tasks",
+            "8",
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
+
+    recorded = utils.read_stage(tmp_path, "cleanup_vs_size")["measurements"]
+    assert [
+        {
+            "name": entry["spec"]["name"],
+            "cleanup_limit": entry["spec"]["cleanup_limit"],
+            "rows": entry["spec"]["rows"],
+            "deleted_something": (
+                entry["median"]["warm_up"]["tasks_deleted"]
+                + entry["median"]["tasks_deleted"]
+                > 0
+            ),
+            "timed_calls": len(entry["median"]["calls"]),
+        }
+        for entry in recorded
+    ] == [
+        {
+            "name": name,
+            "cleanup_limit": cleanup_limit,
+            "rows": 8 * multiple,
+            "deleted_something": True,
+            "timed_calls": stages.CLEANUP_TIMED_CALLS,
+        }
+        for name, multiple, cleanup_limit in stages.CLEANUP_ARMS
+    ]
+    with connections[resolve_absurd_database()].cursor() as cursor:
+        cursor.execute("select absurd.current_time() - now() < interval '1 minute'")
+        assert cursor.fetchone()[0] is True
+
+
+def test_measures_the_batch_barrier_against_a_uniform_control(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Two arms of equal total service time, differing in variance alone.
+
+    Equal total work is what makes the pair a comparison: a mixed backlog that also
+    carried more seconds of work would take longer for a reason that has nothing to do
+    with the batch barrier. Asserted from the recorded specs rather than trusted to a
+    comment, because it is derived arithmetic.
+
+    Nothing here asserts an idle-slot LEVEL: whether a four-slot worker leaves a slot
+    idle over forty tasks is the machine's to decide, and `>= 0` would pass on a metric
+    that always returned zero. The arithmetic is pinned in `test_metrics.py` against
+    hand-timed intervals; what this asserts is that both arms drained everything they
+    were given, which is what makes their two figures comparable at all.
+    """
+    stages.main(
+        [
+            "batch_barrier",
+            "--reps",
+            "2",
+            "--tasks",
+            "40",
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
+
+    recorded = utils.read_stage(tmp_path, "batch_barrier")
+    arms = {entry["spec"]["name"]: entry for entry in recorded["measurements"]}
+    uniform, mixed = arms["uniform"]["spec"], arms["mixed"]["spec"]
+    assert {
+        "names": [entry["spec"]["name"] for entry in recorded["measurements"]],
+        "equal_task_count": uniform["tasks"] == mixed["tasks"],
+        "equal_service_seconds": uniform["service_seconds"]
+        == pytest.approx(mixed["service_seconds"]),
+        "mixed_carries_both_lengths": mixed["slow_tasks"] > 0
+        and mixed["slow_tasks"] < mixed["tasks"],
+        "every_arm_drained_its_backlog": [
+            entry["median"]["n_tasks"] == entry["spec"]["tasks"]
+            for entry in recorded["measurements"]
+        ],
+        # The stage's declared deliverable, asserted as RECORDED and finite rather
+        # than at a level: drop the key from the rep and the report renders 0.00
+        # idle slot-s without complaint, so nothing else here would notice.
+        "every_arm_recorded_idle_slots": [
+            isinstance(entry["median"].get("idle_slot_s"), float)
+            for entry in recorded["measurements"]
+        ],
+        "run_order": recorded["run_order"],
+    } == {
+        "names": ["uniform", "mixed"],
+        "equal_task_count": True,
+        "equal_service_seconds": True,
+        "mixed_carries_both_lengths": True,
+        "every_arm_drained_its_backlog": [True, True],
+        "every_arm_recorded_idle_slots": [True, True],
+        "run_order": ["uniform", "mixed", "mixed", "uniform"],
+    }
+
+
+def test_measures_whether_parked_runs_hold_a_worker_slot(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Three arms, and the park itself proven by the sleepers' own run states.
+
+    `sleeping_min` is the count of sleepers observed asleep at the LEAST asleep moment
+    of the drain, so it equalling the parked count says every sleeper was suspended
+    for the whole window — which is what makes the arm a measurement of parked runs
+    rather than of a queue that quietly drained them.
+
+    `running_max` is deliberately not asserted: a sleeper found `running` inside the
+    window would be a finding about the worker, and a test that failed on it would
+    read as a broken harness instead.
+    """
+    stages.main(
+        [
+            "parked_runs",
+            "--reps",
+            "1",
+            "--tasks",
+            "20",
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
+
+    recorded = utils.read_stage(tmp_path, "parked_runs")["measurements"]
+    assert [
+        {
+            "name": entry["spec"]["name"],
+            "parked": entry["spec"]["parked"],
+            "sleeping_min": entry["median"]["sleeping_min"],
+            "sampled_the_drain": entry["median"]["samples"] > 0,
+        }
+        for entry in recorded
+    ] == [
+        {
+            "name": "control",
+            "parked": 0,
+            "sleeping_min": 0,
+            "sampled_the_drain": True,
+        },
+        {
+            "name": "sleepers_sync",
+            "parked": stages.PARKED_SLEEPERS,
+            "sleeping_min": stages.PARKED_SLEEPERS,
+            "sampled_the_drain": True,
+        },
+        {
+            "name": "sleepers_async",
+            "parked": stages.PARKED_SLEEPERS,
+            "sleeping_min": stages.PARKED_SLEEPERS,
+            "sampled_the_drain": True,
+        },
+    ]
+
+
+def test_times_the_admin_changelists_and_captures_their_plans(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Four probes on each of the two changelists that hold volume.
+
+    Every arm has to say how many rows it measured and carry the plans behind the two
+    queries that matter: an arm filtered to zero rows answers 200 and looks like the
+    others while measuring nothing, and a timing with no plan beside it cannot say
+    whether the planner walked an index or sorted the table.
+    """
+    stages.main(
+        [
+            "admin_at_volume",
+            "--reps",
+            "1",
+            "--tasks",
+            "200",
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
+
+    recorded = utils.read_stage(tmp_path, "admin_at_volume")["measurements"]
+    assert [
+        {
+            "name": entry["spec"]["name"],
+            "measured_rows": entry["median"]["result_count"] > 0,
+            "ran_queries": entry["median"]["query_count"] > 0,
+            "took_time": entry["median"]["wall_ms"] > 0.0,
+            "captured_plans": sorted(entry["median"]["plans"]),
+        }
+        for entry in recorded
+    ] == [
+        {
+            "name": f"{entity}_{probe}",
+            "measured_rows": True,
+            "ran_queries": True,
+            "took_time": True,
+            "captured_plans": ["count", "page"],
+        }
+        for entity in ("tasks", "runs")
+        for probe in ("unfiltered", "queue", "state", "last_page")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("stage", "tasks"),
+    [("admin_at_volume", "200"), ("cleanup_vs_size", "2000")],
+)
+def test_a_seeding_stage_releases_its_rows_when_it_finishes(
+    stage: str, tasks: str, tmp_path: pathlib.Path
+) -> None:
+    """A stage that seeds has to clear up after itself: the server's data directory is
+    a tmpfs, so rows left behind are RAM held for the rest of the run.
+
+    A million tasks is 1.09 GB, and `cleanup_vs_size` sits ninth of fourteen — a full
+    pipeline run was killed for memory with that seed still resident.
+
+    `cleanup_vs_size` is sized so its seed OUTLIVES its deletions: six calls at a batch
+    of 1,000 clear 6,000 rows, so the 4x arm's 8,000 leave rows behind. At a size the
+    calls empty outright this would pass against a stage that never cleared up at all.
+    `admin_at_volume` deletes nothing, so any size shows it.
+    """
+    stages.main(
+        [
+            stage,
+            "--reps",
+            "1",
+            "--tasks",
+            tasks,
+            "--results-dir",
+            str(tmp_path),
+        ]
+    )
+
+    assert {
+        table: seed.count_table_rows(table)
+        for table in (f"t_{seed.DEFAULT_QUEUE}", f"r_{seed.DEFAULT_QUEUE}")
+    } == {f"t_{seed.DEFAULT_QUEUE}": 0, f"r_{seed.DEFAULT_QUEUE}": 0}
+
+
+@pytest.mark.parametrize(
+    ("stage", "tasks"),
+    [("batch_barrier", "40"), ("parked_runs", "200")],
+)
+def test_refuses_a_stage_rep_the_host_slept_through(
+    stage: str, tasks: str, tmp_path: pathlib.Path
+) -> None:
+    """Both stages time a phase, so both have to throw a slept-through one away.
+
+    `perf_counter` stops with the host: idle slot-seconds integrated across a
+    suspension, or a quick drain that looks instant because the machine was asleep for
+    most of it, read as ordinary numbers with nothing to mark them.
+    """
+    with utils.nap_the_wall_clock():
+        stages.main(
+            [
+                stage,
+                "--reps",
+                "1",
+                "--tasks",
+                tasks,
+                "--results-dir",
+                str(tmp_path),
+            ]
+        )
+
+    recorded = utils.read_stage(tmp_path, stage)["measurements"]
+    assert [
+        {
+            "reps": [utils.normalize_measured_durations(rep) for rep in entry["reps"]],
+            "median": entry["median"],
+            "invalid": entry["invalid"],
+        }
+        for entry in recorded
+    ] == [
+        {
+            "reps": [
+                {
+                    "valid": False,
+                    "error": (
+                        "Wall clock advanced Ns over a phase the monotonic clock "
+                        "measured at Ns: the host suspended or stalled mid-phase, so "
+                        "every number this phase produced is fiction. Re-run the "
+                        "measurement on a machine that stays awake."
+                    ),
+                    "load_before": True,
+                    "load_after": True,
+                }
+            ],
+            "median": {},
+            "invalid": True,
+        }
+        for _ in recorded
+    ]
 
 
 def build_recorded_rung(
@@ -1017,6 +1426,63 @@ def test_refuses_every_producer_rep_the_host_slept_through(
             "unstable": False,
         }
         for name in ("single", "threaded", "atomic")
+    ]
+
+
+def test_refuses_a_cleanup_rep_the_host_slept_through(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A cleanup call timed across a suspension reports a duration it never took.
+
+    `perf_counter` stops with the host, so a napped rep's ms/call looks ordinary and
+    fast — and this stage's whole finding is what one call costs.
+
+    Sized so a phase is long enough to CONTAIN a jump: the nap thread shifts the wall
+    clock every 20 ms, and six calls over a few thousand rows take longer than that
+    where six over eight rows do not.
+    """
+    with utils.nap_the_wall_clock():
+        stages.main(
+            [
+                "cleanup_vs_size",
+                "--reps",
+                "1",
+                "--tasks",
+                NAPPABLE_CLEANUP_ROWS,
+                "--results-dir",
+                str(tmp_path),
+            ]
+        )
+
+    recorded = utils.read_stage(tmp_path, "cleanup_vs_size")["measurements"]
+    assert [
+        {
+            "name": entry["spec"]["name"],
+            "reps": [utils.normalize_measured_durations(rep) for rep in entry["reps"]],
+            "median": entry["median"],
+            "invalid": entry["invalid"],
+        }
+        for entry in recorded
+    ] == [
+        {
+            "name": name,
+            "reps": [
+                {
+                    "valid": False,
+                    "error": (
+                        "Wall clock advanced Ns over a phase the monotonic clock "
+                        "measured at Ns: the host suspended or stalled mid-phase, so "
+                        "every number this phase produced is fiction. Re-run the "
+                        "measurement on a machine that stays awake."
+                    ),
+                    "load_before": True,
+                    "load_after": True,
+                }
+            ],
+            "median": {},
+            "invalid": True,
+        }
+        for name, _, _ in stages.CLEANUP_ARMS
     ]
 
 

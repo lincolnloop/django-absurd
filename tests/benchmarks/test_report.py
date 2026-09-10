@@ -954,6 +954,185 @@ def test_falls_back_to_ratios_when_checkpoint_cost_lost_half_its_pair(
     )
 
 
+def test_renders_the_per_step_cost_for_durable_checkpoints(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The stage's whole finding: what one step costs, and whether it stays flat.
+
+    A step's cost is what a depth costs OVER the 0-step arm of the same body, so the
+    control is subtracted rather than divided — and the ratio between the deepest and
+    the shallowest depth is what says the adder is flat, which is the claim
+    `benchmarks/CLAUDE.md` records as unproven past four steps.
+    """
+    entries = build_durable_checkpoint_entries()
+
+    rendered = render(capsys, tmp_path, "durable_checkpoints", entries)
+
+    assert (
+        "Per-step cost over the 0-step arm of the same body (median rep):\n"
+        "\n"
+        "- `steps4_brief`: 0.60 ms server, 2.00 commits per step\n"
+        "- `steps40_brief`: 0.90 ms server, 2.00 commits per step\n"
+        "- 0.05 s body: a step at 40 costs 1.50x what it costs at 4\n"
+        "- `steps4_long`: 0.70 ms server, 2.00 commits per step\n"
+        "- `steps40_long`: 0.70 ms server, 2.00 commits per step\n"
+        "- 0.75 s body: a step at 40 costs 1.00x what it costs at 4\n"
+    ) in rendered
+    assert (
+        "What the checkpoints cost the body, against that same control:\n"
+        "\n"
+        "- `steps4_brief`: 4 steps cost 1.0% of throughput "
+        "(99 against 100 tasks/s)\n"
+        "- `steps40_brief`: 40 steps cost 16.0% of throughput "
+        "(84 against 100 tasks/s)\n"
+        "- `steps4_long`: 4 steps cost 0.1% of throughput "
+        "(9.99 against 10 tasks/s)\n"
+        "- `steps40_long`: 40 steps cost 2.0% of throughput "
+        "(9.8 against 10 tasks/s)\n"
+    ) in rendered
+
+
+def test_says_a_per_step_cost_has_no_server_split_without_statement_stats(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """`pg_stat_statements` is not on a stock server, and the commits still are.
+
+    Printing 0.00 ms server for a step that cost something is the one outcome worth
+    refusing: the counters the split comes from are an extension the harness creates
+    where it can and does without where it cannot.
+    """
+    entries = [
+        {**entry, "median": {**entry["median"], "statement_stats": None}}
+        for entry in build_durable_checkpoint_entries()
+    ]
+
+    assert (
+        "Per-step cost over the 0-step arm of the same body (median rep):\n"
+        "\n"
+        "- `steps4_brief`: 2.00 commits per step, server time not itemised\n"
+        "- `steps40_brief`: 2.00 commits per step, server time not itemised\n"
+        "- `steps4_long`: 2.00 commits per step, server time not itemised\n"
+        "- `steps40_long`: 2.00 commits per step, server time not itemised\n"
+    ) in render(capsys, tmp_path, "durable_checkpoints", entries)
+
+
+def test_says_a_durable_checkpoint_arm_measured_nothing_rather_than_dividing_by_it(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """A refused arm summarizes to an EMPTY median, which every other block reads
+    through `.get` — dividing one here would report the depth's cost as the whole
+    control's, and one host nap during a 30 s arm is enough to produce it."""
+    entries = [
+        {**entry, "median": {}} if entry["spec"]["name"] == "steps40_brief" else entry
+        for entry in build_durable_checkpoint_entries()
+    ]
+
+    rendered = render(capsys, tmp_path, "durable_checkpoints", entries)
+
+    assert (
+        "- `steps4_brief`: 0.60 ms server, 2.00 commits per step\n"
+        "- `steps40_brief`: measured nothing\n"
+    ) in rendered
+    assert (
+        "- `steps4_brief`: 4 steps cost 1.0% of throughput "
+        "(99 against 100 tasks/s)\n"
+        "- `steps40_brief`: measured nothing\n"
+    ) in rendered
+
+
+def test_says_a_durable_checkpoint_control_measured_nothing(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Every figure in both blocks is taken against the 0-step arm, so a refused
+    control leaves the depths with nothing to subtract from. Reading a missing commit
+    count as zero would print the arm's whole per-task total as its per-step cost."""
+    entries = [
+        {**entry, "median": {}} if entry["spec"]["name"] == "steps0_brief" else entry
+        for entry in build_durable_checkpoint_entries()
+    ]
+
+    rendered = render(capsys, tmp_path, "durable_checkpoints", entries)
+
+    assert (
+        "- 0.05 s body: its 0-step control measured nothing, so no cost derives\n"
+        "- `steps4_long`: 0.70 ms server, 2.00 commits per step\n"
+    ) in rendered
+    assert (
+        "- 0.05 s body: its 0-step control measured nothing, so no cost derives\n"
+        "- `steps4_long`: 4 steps cost 0.1% of throughput "
+        "(9.99 against 10 tasks/s)\n"
+    ) in rendered
+
+
+def test_falls_back_to_ratios_when_durable_checkpoints_lost_its_control_arm(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """A file with no 0-step arm at all leaves both blocks nothing to subtract from.
+
+    No harness run writes one — the 0-step arm is first in each body's schedule, so it
+    always has a rep before any depth does. This is the shape a hand-trimmed or
+    foreign results file has, and a stage with rows in it still deserves a number.
+    A refused control is the reachable case and reads differently; see the test above.
+    """
+    entries = [
+        entry
+        for entry in build_durable_checkpoint_entries()
+        if entry["spec"]["task_kwargs"]["step_count"]
+    ]
+
+    assert ("Throughput relative to `steps4_brief`:\n\n- `steps4_brief`: 1.00x\n") in (
+        render(capsys, tmp_path, "durable_checkpoints", entries)
+    )
+
+
+def build_durable_checkpoint_entries() -> list[dict[str, t.Any]]:
+    """One durable_checkpoints run: three depths on a brief body, then on a long one.
+
+    Server time and commits are chosen so the brief body's adder GROWS with depth and
+    the long body's holds — the two answers the stage exists to tell apart.
+    """
+    return [
+        build_measurement(
+            f"steps{depth}_{length}",
+            {
+                "task_path": "tasks.run_durable_steps",
+                "task_kwargs": {"seconds": seconds, "step_count": depth},
+            },
+            {
+                "throughput_per_s": rate,
+                "commits_per_task": commits,
+                "statement_stats": {
+                    "statements": [],
+                    "wall_ms_per_task": server * 2,
+                    "server_exec_ms_per_task": server,
+                    "client_ms_per_task": server,
+                },
+            },
+        )
+        for length, seconds, arms in (
+            (
+                "brief",
+                0.05,
+                (
+                    (0, 1.00, 2.00, 100.0),
+                    (4, 3.40, 10.00, 99.0),
+                    (40, 37.00, 82.00, 84.0),
+                ),
+            ),
+            (
+                "long",
+                0.75,
+                (
+                    (0, 2.00, 2.00, 10.00),
+                    (4, 4.80, 10.00, 9.99),
+                    (40, 30.00, 82.00, 9.80),
+                ),
+            ),
+        )
+        for depth, server, commits, rate in arms
+    ]
+
+
 def test_renders_what_a_bigger_table_cost_for_size_vs_depth(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
@@ -1039,6 +1218,284 @@ def test_renders_producer_columns_for_producer_ceiling(
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
         "| single | 5000 | 250.0 | 0.00400 | 0.00900 | 246-254 | 3.0% | 2.0% |  |\n"
     )
+
+
+def test_renders_cleanup_columns_and_the_size_ratio_for_cleanup_vs_size(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Cleanup measures deletions per call, so it gets its own columns rather than an
+    execution-throughput table it would have to fake — and the finding is one ratio:
+    what a call costs on a table four times longer, at the same batch size."""
+    entries = [
+        build_cleanup_measurement("limit1k_1x", 1_000_000, 1000, 12.0, 81_300.0),
+        build_cleanup_measurement("limit1k_4x", 4_000_000, 1000, 48.0, 20_800.0),
+        build_cleanup_measurement("limit100k_4x", 4_000_000, 100_000, 900.0, 111_000.0),
+    ]
+
+    rendered = render(capsys, tmp_path, "cleanup_vs_size", entries)
+
+    assert (
+        "| measurement | rows | limit | ms/call | deletes/s | deleted "
+        "| rep range | spread | cv | notes |\n"
+    ) in rendered
+    assert (
+        "| limit1k_1x | 1000000 | 1000 | 12.0 | 81300 | 5000 | "
+        "8.13e+04-8.13e+04 | 4.0% | 2.0% |  |\n"
+    ) in rendered
+    assert (
+        "Cost of one call against the table it scans, at one batch size:\n"
+        "\n"
+        "- `limit1k_4x`: 4.00x `limit1k_1x`'s ms/call for 4.0x the rows\n"
+    ) in rendered
+
+
+def test_derives_no_cleanup_size_ratio_until_a_second_table_size_has_run(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The ratio needs two sizes at one batch size, and the results file is rewritten
+    after every arm — so mid-run there is one arm on disk and a table is all it earns.
+
+    Asserted by where the report ENDS: a derived block would be appended after the
+    row, so the row being the last line is what says none was.
+    """
+    entries = [build_cleanup_measurement("limit1k_1x", 1_000_000, 1000, 12.0, 81_300.0)]
+
+    assert render(capsys, tmp_path, "cleanup_vs_size", entries).endswith(
+        "| limit1k_1x | 1000000 | 1000 | 12.0 | 81300 | 5000 | "
+        "8.13e+04-8.13e+04 | 4.0% | 2.0% |  |\n"
+    )
+
+
+def test_renders_idle_slots_and_the_barrier_ratio_for_batch_barrier(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The finding is idle slot-seconds, and what the mixed backlog cost over the
+    uniform control carrying the same total service time."""
+    entries = [
+        build_barrier_measurement("uniform", 0, 0.4, 17.5),
+        build_barrier_measurement("mixed", 20, 12.0, 14.0),
+    ]
+
+    rendered = render(capsys, tmp_path, "batch_barrier", entries)
+
+    assert (
+        "| measurement | tasks | slow | idle slot s | tasks/s "
+        "| rep range | spread | cv | notes |\n"
+    ) in rendered
+    assert (
+        "Idle slot-seconds against a backlog that still held work:\n"
+        "\n"
+        "- `uniform`: 0.40 idle slot-s at 17.5 tasks/s\n"
+        "- `mixed`: 12.00 idle slot-s at 14.0 tasks/s — 30.00x the uniform control\n"
+    ) in rendered
+
+
+def test_renders_sleeper_states_and_the_control_ratio_for_parked_runs(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The clock-free evidence first — how many sleepers were asleep at the worst
+    moment and how many were ever running — then what the sleepers cost the drain."""
+    entries = [
+        build_parked_measurement("control", 0, 0, 0, 100.0),
+        build_parked_measurement("sleepers_sync", 16, 16, 0, 98.0),
+        build_parked_measurement("sleepers_async", 16, 16, 0, 99.0),
+    ]
+
+    rendered = render(capsys, tmp_path, "parked_runs", entries)
+
+    assert (
+        "| measurement | tasks | parked | asleep at worst | running at worst "
+        "| tasks/s | rep range | spread | cv | notes |\n"
+    ) in rendered
+    assert (
+        "What the parked runs cost the drain beside them:\n"
+        "\n"
+        "- `sleepers_sync`: 16 of 16 asleep throughout, 0 ever running, "
+        "0.98x the control's throughput\n"
+        "- `sleepers_async`: 16 of 16 asleep throughout, 0 ever running, "
+        "0.99x the control's throughput\n"
+    ) in rendered
+
+
+def test_renders_page_costs_and_plan_shapes_for_admin_at_volume(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """A page's cost is its wall clock and its query count; what it did to get there
+    is the plan, and the shape of the plan is what survives a change of machine."""
+    entries = [
+        build_admin_measurement("tasks_unfiltered", 285.0, 8, 1_000_000),
+        build_admin_measurement("tasks_last_page", 739.0, 8, 1_000_000),
+    ]
+
+    rendered = render(capsys, tmp_path, "admin_at_volume", entries)
+
+    assert (
+        "| measurement | rows | rendered | queries | ms | rep range "
+        "| spread | cv | notes |\n"
+    ) in rendered
+    assert (
+        "| tasks_unfiltered | 1000000 | 1000000 | 8 | 285.0 | 285-285 "
+        "| 4.0% | 2.0% |  |\n"
+    ) in rendered
+    assert (
+        "Plans behind each page, by the node that decides its cost:\n"
+        "\n"
+        "- `tasks_unfiltered` count: `Aggregate`\n"
+        "- `tasks_unfiltered` page: `Limit`\n"
+    ) in rendered
+
+
+def build_admin_measurement(
+    name: str, wall_ms: float, query_count: int, rows: int
+) -> dict[str, t.Any]:
+    """One admin arm, the way `stages.summarize_one_admin_arm` writes it."""
+    return {
+        "spec": {
+            "name": name,
+            "mode": "admin",
+            "rows": rows,
+            "entity": "task",
+            "probe": name.split("_", 1)[1],
+            "query": {},
+        },
+        "ranking_key": "wall_ms",
+        "median": {
+            "wall_ms": wall_ms,
+            "query_count": query_count,
+            "result_count": rows,
+            "status": 200,
+            "plans": {
+                "count": "Aggregate (actual time=1..2 rows=1 loops=1)\n  -> Seq Scan",
+                "page": "Limit (actual time=1..2 rows=100 loops=1)\n  -> Index Scan",
+            },
+        },
+        "spread": 0.04,
+        "cv": 0.02,
+        "range_low": wall_ms,
+        "range_high": wall_ms,
+        "invalid": False,
+        "unstable": False,
+        "host": HOST,
+    }
+
+
+def test_derives_nothing_for_parked_runs_until_a_sleeper_arm_has_run(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The control runs first and the file is rewritten after every arm, so mid-run
+    there is a control and nothing to compare it with.
+
+    Asserted by where the report ends: a derived block would follow the last row.
+    """
+    entries = [build_parked_measurement("control", 0, 0, 0, 100.0)]
+
+    assert render(capsys, tmp_path, "parked_runs", entries).endswith(
+        "| control | 2000 | 0 | 0 | 0 | 100.0 | 100-100 | 4.0% | 2.0% |  |\n"
+    )
+
+
+def build_parked_measurement(
+    name: str, parked: int, sleeping_min: int, running_max: int, throughput: float
+) -> dict[str, t.Any]:
+    """One parked_runs arm, the way `stages.summarize_parked_reps` writes it."""
+    return {
+        "spec": {
+            "name": name,
+            "mode": "parked",
+            "tasks": 2000,
+            "parked": parked,
+            "sleeper_path": None
+            if not parked
+            else f"tasks.park_{name.rsplit('_', maxsplit=1)[-1]}",
+            "concurrency": 4,
+        },
+        "ranking_key": "throughput_per_s",
+        "median": {
+            "throughput_per_s": throughput,
+            "sleeping_min": sleeping_min,
+            "running_max": running_max,
+            "samples": 12,
+        },
+        "spread": 0.04,
+        "cv": 0.02,
+        "range_low": throughput,
+        "range_high": throughput,
+        "invalid": False,
+        "unstable": False,
+        "host": HOST,
+    }
+
+
+def build_barrier_measurement(
+    name: str, slow_tasks: int, idle_slot_s: float, throughput: float
+) -> dict[str, t.Any]:
+    """One barrier arm, the way `stages.summarize_one_barrier_arm` writes it."""
+    return {
+        "spec": {
+            "name": name,
+            "mode": "barrier",
+            "tasks": 420,
+            "slow_tasks": slow_tasks,
+            "service_seconds": 24.0,
+            "concurrency": 4,
+        },
+        "ranking_key": "throughput_per_s",
+        "median": {"idle_slot_s": idle_slot_s, "throughput_per_s": throughput},
+        "spread": 0.04,
+        "cv": 0.02,
+        "range_low": throughput,
+        "range_high": throughput,
+        "invalid": False,
+        "unstable": False,
+        "host": HOST,
+    }
+
+
+def test_derives_no_cleanup_size_ratio_from_a_refused_smaller_arm(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The ratio divides by the shorter table's ms/call, and a refused arm summarizes
+    to an empty median — so there is no baseline to divide by, and a run that napped
+    through the 250,000-row arm must not report the million-row one as its own ratio.
+
+    Asserted by where the report ends: a derived block would follow the last row.
+    """
+    entries = [
+        {
+            **build_cleanup_measurement("limit1k_1x", 250_000, 1000, 119.0, 8335.0),
+            "median": {},
+        },
+        build_cleanup_measurement("limit1k_4x", 1_000_000, 1000, 608.0, 1655.0),
+    ]
+
+    assert render(capsys, tmp_path, "cleanup_vs_size", entries).endswith(
+        "| limit1k_4x | 1000000 | 1000 | 608.0 | 1655 | 5000 | "
+        "1655-1655 | 4.0% | 2.0% |  |\n"
+    )
+
+
+def build_cleanup_measurement(
+    name: str, rows: int, limit: int, ms_per_call: float, deletes_per_s: float
+) -> dict[str, t.Any]:
+    """One cleanup arm, the way `stages.summarize_cleanup_reps` writes it."""
+    return {
+        "spec": {"name": name, "mode": "cleanup", "rows": rows, "cleanup_limit": limit},
+        "ranking_key": "deletes_per_s",
+        "median": {
+            "ms_per_call_p50": ms_per_call,
+            "ms_per_call_p99": ms_per_call * 2,
+            "deletes_per_s": deletes_per_s,
+            "tasks_deleted": 5000,
+            "events_deleted": 0,
+        },
+        "spread": 0.04,
+        "cv": 0.02,
+        "range_low": deletes_per_s,
+        "range_high": deletes_per_s,
+        "invalid": False,
+        "unstable": False,
+        "host": HOST,
+    }
 
 
 def test_renders_idle_polling_tax_and_latency_ratios_for_poll_interval(

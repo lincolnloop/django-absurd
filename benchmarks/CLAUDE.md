@@ -23,7 +23,8 @@ Two runs are windowed
 0.5.0: `windowed` is `results/run-20260903T233428Z` — `worker_knobs`, `process_scaling`,
 `pooled_vs_split` and `checkpoint_cost` over three invocations — and `windowed2` is
 `results/verify-20260904T013935Z`, the other seven stages, `worker_knobs` and
-`process_scaling` again among them. Between them they cover every stage; where a figure
+`process_scaling` again among them. Between them they cover the nine stages that existed
+then, and the five added since name their own runs in their own sections. Where a figure
 below still comes from an earlier run, it says so. **Read a rep's own load, not the
 report header's.** That header's 6.46 is one sample — the host block of whichever
 measurement sorts first, `checkpoint_cost`'s `flat` — where `process_scaling`'s reps
@@ -668,11 +669,11 @@ answer is the idle count repeated: the threaded preloader read `1x4 2 -> 3` and
 `4x1 8 -> 9` on the first probe of each shape and the honest `2 -> 2` and `8 -> 8` on
 the second.
 
-**`pooled_vs_split` is the only stage with a durable arm.** Both totals are measured on
-both workloads — `pooled_4`/`split_4` against `pooled_durable_4`/`split_durable_4` — and
-the report ranks the shapes once per workload, because a body that holds a thread and
-one that does not are two different experiments on the same topology — though only one
-of them has an outcome to discover.
+**`pooled_vs_split` and `durable_checkpoints` are the durable stages.** In
+`pooled_vs_split`, both totals are measured on both workloads — `pooled_4`/`split_4`
+against `pooled_durable_4`/`split_durable_4` — and the report ranks the shapes once per
+workload, because a body that holds a thread and one that does not are two different
+experiments on the same topology — though only one of them has an outcome to discover.
 
 **The durable ranking is foregone, and `windowed` returned exactly the 1.00x that says
 so.** Both durable pairs read 1.00x (reps 1.00-1.01x; 1.8 against 1.8 tasks/s at total
@@ -726,9 +727,256 @@ the one django-absurd is mostly used for.
 
 **What it does not support.** Nothing here bounds a task that suspends and resumes, one
 that retries, or one whose checkpoint state is large: `run_steps` checkpoints four small
-states inside one attempt of a body that does nothing else. The per-step cost is a flat
-adder measured at four steps and nothing here says it stays flat at forty. And these are
-RAM rates like every other in this file — the ratio travels, the levels do not.
+states inside one attempt of a body that does nothing else. Whether the per-step cost
+stays flat at forty steps is what `durable_checkpoints` measures, below; this stage's
+4.25x says nothing about it. And these are RAM rates like every other in this file — the
+ratio travels, the levels do not.
+
+## What a `ctx.step` costs at depth, in a body that runs for seconds
+
+`durable_checkpoints` is the same question as the stage above asked where the answer
+matters: `tasks.run_durable_steps` is `run_durable_work` — a row inserted, touched four
+times over `--durable-seconds`, cleared — with `step_count` checkpoints spread over
+those touches and nothing else changed. Three depths (0, 4, 40) on a body held for
+`--durable-seconds`, then the same three on one held `LONG_DURABLE_MULTIPLE` times as
+long, so the default pair is the documented 2 s floor against an agent tool call's 30 s
+and one flag moves both.
+
+**The 0-step arm is a control to SUBTRACT, not a denominator.** Every depth runs the
+identical body, so what a step costs is what it adds: per-step server ms and per-step
+commits are `(arm - control) / depth`. A throughput ratio ACROSS body lengths would
+report the sleep, so the per-step figures come off `statement_stats`'
+`server_exec_ms_per_task` and `commits_per_task`, which count per task rather than per
+second. The one throughput ratio printed is a depth arm against the 0-step arm of the
+SAME body, where the sleep cancels. Server time is left unreported rather than printed
+as 0.00 where `pg_stat_statements` counted nothing.
+
+**What the depths are for.** 40 against 4 is the flatness test: a flat adder makes the
+per-step figures equal and their ratio 1.00x, and anything else is the number that claim
+was missing. The report prints the ratio per body length, so a long body changing it is
+visible in the same block.
+
+**Sized per slot, and the long arms are the bill.** `DURABLE_CHECKPOINT_ROUNDS_PER_SLOT`
+rounds per slot rather than a fixed task count, which would run for minutes at one
+winning concurrency and seconds at another. Two rounds where `pooled_vs_split` runs
+eight: this stage reads per-task counters rather than settling a throughput ranking, and
+its long arms cost fifteen times its brief ones — about ten minutes of a default run,
+nearly all of it those three arms.
+
+### What it measured
+
+`results/durable-20260909T122137Z`, concurrency 16, every arm unmarked. **A step costs
+about 0.2 ms of server time and two commits, on top of about 2.5 ms a task pays for
+checkpointing at all** — so the adder [the stage above](#what-a-ctxstep-costs) could not
+bound past four steps is not flat but sublinear. Two caveats on that sentence, both
+load-bearing: the fixed part is a two-point fit, and with four touch-bursts at BOTH
+depths nothing here can tell a cost paid once per task from one paid once per burst
+(`set_task_checkpoint_state` alone fits 1.8 ms + 0.19 ms a step, the rest being
+`get_task_checkpoint_state`'s own fixed share). And the falling ratio — 0.28x and 0.34x
+off the median reps — is 0.23-0.49x across every rep pairing, so read the direction and
+not the value.
+
+Against the 0-step arm of the same body, forty checkpoints cost 1.6% of throughput on
+the 30 s body and 16.4% on the 2 s one. **Almost none of that is Postgres**: the server
+delta at depth 40 is ~10 ms a task, 0.5% of a 2 s body. The rest is the wall gap below.
+
+**The wall gap is ours, and it is a property of the fleet SHAPE.** Added
+`wall_ms_per_task` per step at depth 40 is 0.78 ms, which is a per-SLOT figure: times
+the sixteen slots sharing the process it is 12.5 ms (brief) and 12.3 ms (long), against
+0.26 ms of server time, and nothing measurable at depth 4. A sync body's `context.step`
+runs `run_on_loop` (`django_absurd/context.py`) onto the worker's single event loop, and
+that worker holds ONE dedicated async connection (`aworker_client` in
+`django_absurd/worker.py`), so sixteen slots' checkpoint bursts serialize through both.
+So the 16.4% is not what a checkpoint costs — it is what sixteen slots checkpointing
+through one connection costs, and a split fleet at the same total concurrency would
+report a different share for the identical step.
+
+Which is why it is recorded rather than chased: ~0.5 s on a task that runs for seconds
+to minutes. Two things set that share — slots per process, and how much work a step's
+own body does (`report_step_done` returns an integer, so every share here is an upper
+bound). A concurrency-1 or split-fleet depth ladder is the probe if either ever matters.
+
+## What the batch claim's barrier costs
+
+`batch_barrier` drains 420 tasks of uneven length on ONE worker at concurrency 4, and
+the same 420 carrying the same 24 s of total service time at one uniform length. The
+async loop claims `batch_size` tasks — defaulting to concurrency — and if it gathered
+the batch before claiming again, C slots would wait on the slowest of C. A uniform
+backlog hides that completely, which is why the control exists.
+
+The deliverable is `idle_slot_s` from
+[idle slot-seconds](#idle-slot-seconds-is-the-metric-a-clock-cannot-give), never a
+throughput ratio: a mixed backlog drains slower both because its tasks are longer and
+because its batches might stall, and only idle slots measured against WAITING work
+separate the two. The 20 slow tasks are spread every 21st by
+`producer.preload_spread_tasks` — clustered at either end they stall nothing, or stall
+with nothing left behind them.
+
+**There is no barrier, and the control is the worse arm.**
+`results/barrier-20260910T112702Z`, three reps interleaved, cv 0.7% and 0.9%, unmarked,
+420 of 420 tasks in both, zero redeliveries: `mixed` left **0.97** idle slot-seconds
+against `uniform`'s **1.37** — 0.71x, on ranges that do not overlap (0.81-1.00 against
+1.37-1.52) — and drained faster (58.6 against 55.8 tasks/s). A live barrier would show
+20 slow tasks x ~1 s x 3 stalled slots, tens of slot-seconds; 0.97 is not that. PR
+#156's refill-by-free-capacity fix holds.
+
+**Why uniform wastes more.** Same-length tasks finish in lockstep, so the pool empties
+all at once and claim latency idles every slot together; staggered completions let a
+refill overlap with work still running. Which is the far end of the same observation
+`loadtest`'s uniform-duration control was built on: that control exists because a
+uniform backlog HIDES a barrier, and here it is the worse arm outright.
+
+**What it does not support.** One shape (pooled, 4 slots) and one mixture. A `split` arm
+was cut on the grounds that `idle_slot_s` already excludes "slow tasks are slow"; if a
+future run reads ambiguous, that arm is the thing to add. Levels are RAM rates as always
+— 1.37 slot-seconds out of ~30 available is the shape of the answer, not a budget.
+
+## Whether a parked run holds a worker slot
+
+`parked_runs` drains 2,000 quick tasks on one worker at concurrency 4, three ways: with
+nothing parked, with 16 `tasks.park_sync` runs suspended beside them, and with 16
+`tasks.park_async`. `context.sleep_for` on a SYNC body hops onto the worker's loop while
+the body holds a thread of a pool sized to concurrency — if that thread stayed parked,
+16 sleepers would hold every slot of a 4-slot worker several times over and the quick
+batch would starve. The async twin is there because only the sync path crosses that
+pool.
+
+**The primary evidence has no clock in it.** The sleepers' own runs are counted by state
+on every pass of the drain poll: a run that is `sleeping` holds neither a claim nor a
+slot, one that is `running` holds both. `results/parked-20260909T190836Z`, three reps an
+arm, 53-61 samples a rep, every arm unmarked, 2,000 of 2,000 drained with no
+redeliveries:
+
+    arm              asleep at worst  running at worst  tasks/s  rep range
+    control                       0                 0    567.4  542.1-584.7
+    sleepers_sync                16                 0    566.8  551.1-612.8
+    sleepers_async               16                 0    543.4  529.3-551.9
+
+**Sixteen of sixteen asleep at the least-asleep moment, and never one running.** That is
+the CLAIM side proven: `sleeping` is Absurd's own column, so a body that had persisted
+its sleep and then blocked its pool thread would read exactly the same. What proves the
+SLOT side is the quick batch draining at all — sixteen sleepers against four slots would
+starve it into the timeout, and it finished at the control's rate. Together they are
+what the docs promise and what `loadtest` measured before this harness could.
+
+**The throughput arms say nothing beyond that, and must not be read as if they did.**
+1.00x and 0.96x, but the rep ranges overlap the control's — the async arm's 4% sits
+inside the dispersion of both, so this run distinguishes no cost at all. That is the
+honest reading of a corroborating metric whose job was to catch a slot released while
+the fleet slowed anyway; it caught nothing, and it is not evidence of a 4% penalty.
+
+### Idle slot-seconds is the metric a clock cannot give
+
+`analysis.read_idle_slot_seconds` folds run intervals into the slot-seconds that were
+free WHILE the backlog still held work. Both halves come off Absurd's own columns and
+nothing is written by a task body: `started_at`/`completed_at` bound each interval, and
+a run's own `started_at` is what says its task was waiting earlier — a task claimed at
+second five was in the backlog at second one, so an idle slot then was a slot the fleet
+could have used. Nothing counts past the last claim, where an idle slot has nothing left
+to take, and that qualifier IS the metric: without it the drain's tail reads as waste.
+
+`loadtest` wrote an `OccupancyLog` from inside its task bodies for the same figure.
+Deriving it from the columns instead means no table, no migration, and no bookkeeping in
+the workload under measurement.
+
+## What the admin changelists cost at volume
+
+`admin_at_volume` seeds a million tasks and drives the real admin over Django's test
+client — same middleware, same `ChangeList`, same filters a browser gets — four ways per
+changelist: unfiltered, the queue filter, the state filter, and the LAST page. Which
+page that is comes off the changelist's own paginator rather than a row count divided by
+an assumed page size, because `ChangeList.get_results` ignores `?p=` unless the table
+paginates — a fixed deep page on a short table renders page 1 while wearing a deep-page
+label, and a hardcoded `list_per_page` goes wrong the day the admin registers another.
+
+**Three requests an arm, of which one is timed.** A warm-up is discarded first — without
+it the first arm to touch a page pays for caches the later ones find warm, and the deep
+page read 717 ms on its first-ever request against 380 on its next two, which a median
+over three reps buries in the dispersion rather than removing. Then the timed pass,
+clean. Then a capture pass, whose statements come through `connection.execute_wrapper` —
+no debug cursor, but a separate request all the same, because instrumentation inside a
+timed number is what `refuse_measuring_under_debug` exists to prevent.
+
+`results/admin-20260910T151957Z`, 1,000,000 tasks and 1,166,660 runs, three reps, 8
+queries a page throughout:
+
+    arm                 ms    rows rendered   cv
+    tasks_unfiltered    39     1,000,000      8%
+    tasks_queue         40     1,000,000      9%
+    tasks_state         50       833,340      7%
+    tasks_last_page    334     1,000,000      5%
+    runs_unfiltered     55     1,166,660     13%  ~
+    runs_queue          55     1,166,660      5%
+    runs_state          65       833,340      7%
+    runs_last_page     360     1,166,660      1%
+
+**Page one is tens of milliseconds; the last page is 6.6x that on runs and 8.5x on
+tasks.** The dispersion is the machine's rather than the harness's now that a warm-up
+request is discarded: the deep-page arms read 5% and 1% cv where an earlier run without
+that discard read 39% off one cold rep. `runs_unfiltered` carries a `~` at 13%, which is
+what tens of milliseconds on a laptop look like.
+
+**The plan splits the deep page in two, and only one half is inherent.** Every arm's
+page query is `Limit -> Incremental Sort -> Index Scan Backward using <pkey>`, and the
+count is a parallel `Finalize Aggregate`. Read the actual times as INCLUSIVE of
+children: on `tasks_last_page` the index scan ends at 166 ms and the sort at 287 of a
+303 ms query, so the scan is 55% and the sort's own work 40%; on `runs_last_page`, 53%
+and 42%.
+
+- The scan half is OFFSET walking. The last page walks the WHOLE table — 1,000,017 rows
+  sorted to hand back 100 — which is inherent to page-number pagination.
+- **The sort half is the `natural_key` tiebreaker**, and it is not inherent. Django
+  appends the pk to every changelist ordering, the pk here is `'bench:' || id`, so
+  `'bench:' || id DESC` sits in every `Sort Key` and is evaluated for every row walked.
+  The full-sort groups are Postgres's 32-tuple batches over the presorted key, not one
+  group per row, at 34 kB of memory — and two fifths of the page's time.
+
+So ordering by the pk (https://github.com/lincolnloop/django-absurd/pull/273) did what
+it was for — `Index Scan Backward`, no full `Sort` of the table — and what it left
+behind is two fifths of the deep page spent on an expression nobody sorts by on purpose.
+
+**Not comparable to the retired harness's own admin figures**: those came off a
+disk-backed server, and levels do not travel between servers here. The shape does, and 8
+queries a page is unchanged.
+
+## What one cleanup call costs
+
+`cleanup_vs_size` runs no fleet: `absurd.cleanup_tasks` selects terminal rows older than
+a cutoff, so what a call costs is a property of the TABLE rather than of anything a
+worker is doing. Whether it also costs a live fleet is a different experiment and not
+this one — and on the evidence below the interesting cost is not contention anyway.
+
+Two arms, `cleanup_limit` 1000 (the shipped default) on 250,000 tasks and on a million.
+The arms are seeded by `seed.py` and reseeded per REP, because a cleanup rep deletes
+what it measures; eligibility comes from moving the harness session's
+`absurd.current_time()` past the queue's `cleanup_ttl`, which costs nothing where
+backdating a million rows would rewrite the table the arm is sized on.
+
+**A call gets dearer FASTER than the table grows.** `results/cleanup-20260909T144726Z`,
+three reps an arm, cv 7%, unmarked: 117-132 ms a call at 250,000 tasks and 551-608 ms at
+a million — **4.2-5.2x for 4x the rows** across the rep pairings — so deletions per
+second FALL from ~8,300 to ~1,700. The range and not the medians, because the reps are
+ranked on `deletes_per_s` and its middle rep is not the middle one by ms-per-call.
+Cleanup is slowest exactly when there is most to clean.
+
+**The plan says why, and it is not the delete.** Taken by hand at a psql prompt on the
+same seeded million and NOT recorded by the stage, which is a gap: every other figure
+here names a results file. `explain (analyze, buffers)` on the selection query: a
+parallel seq scan of every terminal row, a parallel hash left join against the whole
+runs table which SPILLS (~107 MB of temp read and written), and a top-N heapsort over
+the computed terminal timestamps — 117,000 buffer hits and ~490 ms to choose 1,000 task
+ids. Nothing indexes the terminal timestamp, and `order by terminal_at limit 1000`
+cannot walk an index that does not exist. The hash build and its spill are what grow
+with the table, which is the superlinearity. Neither filed upstream nor documented for
+users: one call is sub-second, on a maintenance operation that fires on a schedule.
+
+**What the numbers imply, and what they do not.** At a million finished tasks, clearing
+the backlog at the default batch is ~1,000 calls of ~0.6 s, so about ten minutes of
+continuous cleanup — and longer per row the further behind it falls. Levels are RAM
+rates like every other here; the 4.2-5.2x is the part that travels. A larger
+`cleanup_limit` is deliberately unmeasured: six calls at 100,000 delete 60% of a
+million-row table, so that arm would average a table shrinking underneath it. It needs a
+bigger rig than a 4 GB tmpfs, not a different stage.
 
 ## Incidental, worth raising upstream
 
@@ -955,6 +1203,26 @@ be marked invalid for under-offering. It calibrates from the fastest result at o
 rate: the drain rate of the rung it picks is only where the ramp starts climbing —
 [a drain rate is not an arrival rate](#a-drain-rate-is-not-an-arrival-rate).
 
+## The full sequence has not finished on this machine
+
+`results/full-20260910T120944Z` is the one attempt: ten stages in 112 minutes, then
+killed for memory partway through `parked_runs`' second arm, with three other container
+stacks resident on an 11.7 GB laptop. `worker_knobs` alone took 64 of those minutes —
+against the 50 that seven stages once took together, so the whole box was slower rather
+than one stage being expensive.
+
+Two things worth taking from it rather than from the wall clock. The stage files it did
+write render as one report, so the dependency ordering and every renderer hold across a
+mixed results directory. And `parked_runs`' control earned a `~` at 10.5% cv where it
+reads 3.8% alone, which is the marking doing its job on a machine under load rather than
+a finding about parked runs.
+
+It also found the seed-release gap: a stage that seeds leaves its rows in a RAM data
+directory for whatever runs next, until some later stage happens to truncate the queue.
+`cleanup_vs_size` and `admin_at_volume` now release theirs on the way out, including
+when they raise partway. That is hygiene the run made visible — not the cause of the
+kill, which was the box.
+
 ## Stage mechanics worth knowing
 
 **Worker counts scale with the host.** `build_worker_ladder` derives the
@@ -1002,6 +1270,8 @@ mechanics matter:
   database state only grows across a stage; a fixed order would hand one arm of every
   pair the emptier tables, which is exactly how an earlier control in this repo came to
   be invalidated. The order they ran in is recorded and printed.
+  `record_interleaved_measurements` is that schedule, and `durable_checkpoints` runs on
+  it for the same reason: a per-step cost is a subtraction between arms.
 - **Connection count is measured, because it is a confound.** Idle, `1x4` reaches
   four-way concurrency on two backends and `4x1` reaches it on eight, so the shapes
   differ in connection count as well as in claim path, and the report says so above the
@@ -1159,9 +1429,10 @@ rows before measuring, which is what makes the recorded `dead_tuples` readable.
 `{shape, processes, concurrency, connections_idle, connections_busy}`, the last two
 being the delta across starting that fleet and the peak while a durable body holds every
 slot — plus `run_order` (the arms as they actually ran, which is what says no arm always
-went first) and `skipped_pairs` (the pairs the worker bound refused, and the bound).
-Empty `measurements` with non-empty `skipped_pairs` is a stage asked for more processes
-than it was allowed to spawn, not a crashed run.
+went first, and which `stage_durable_checkpoints.json` carries too) and `skipped_pairs`
+(the pairs the worker bound refused, and the bound). Empty `measurements` with non-empty
+`skipped_pairs` is a stage asked for more processes than it was allowed to spawn, not a
+crashed run.
 
 **A stage that measured its own working point records the measurement, not just the
 number.** `stage_latency_under_load.json` carries `sustainable_rate`: the drain ceiling
@@ -1179,7 +1450,8 @@ stage's heading.
 
 ## Which findings survive the durable regime
 
-Every figure here but `pooled_vs_split`'s durable arms measures nano-tasks
+Every figure here outside `pooled_vs_split`'s durable arms, `durable_checkpoints`,
+`batch_barrier` and `parked_runs` measures nano-tasks
 ([the durable workload](#the-durable-workload-and-the-backends-it-holds)). django-absurd
 is mostly used for durable agent tool calls — seconds to minutes per task, checkpointed,
 often suspended — so most of the above answers a question that workload does not ask. A
@@ -1207,8 +1479,42 @@ Carries over:
 Does not carry over: peak tasks/s, the process x concurrency sweep, `--batch-size`, the
 producer ceiling. Those answer how fast a flood of trivial tasks drains.
 
-Not measured at all: a task that sleeps for minutes, checkpoints repeatedly, and
-suspends. No stage exercises that shape, so nothing here bounds it.
+Checkpointing repeatedly inside a durable body is now its own stage
+([at depth](#what-a-ctxstep-costs-at-depth-in-a-body-that-runs-for-seconds)), and so is
+suspending ([parked runs](#whether-a-parked-run-holds-a-worker-slot)). Still unmeasured:
+an `await_event` waiter, which parks on an event rather than a deadline and can wait at
+Postgres's `'infinity'`. Nothing here bounds that shape.
+
+## What `loadtest/` measured, and where it lives now
+
+`loadtest/` was the first load harness, archived on `worktree-load-test-harness` (see
+[`docs/HISTORY.md`](../docs/HISTORY.md)). Every detector it had is here, written
+differently:
+
+| `loadtest/`     | here                                                                                                                             |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `load_seed`     | `seed.py` — templates, server-side clone, `information_schema` drift check                                                       |
+| `load_drain`    | `worker_knobs`, `process_scaling`, `pooled_vs_split`, `poll_interval`, `sync_vs_async`, `producer_ceiling`, `latency_under_load` |
+| `load_barrier`  | `batch_barrier` — uniform against mixed at equal service time, `idle_slot_s` off the run columns rather than an `OccupancyLog`   |
+| `load_sleepers` | `parked_runs` — `running_max`/`sleeping_min` sampled on the drain's own poll                                                     |
+| `load_admin`    | `admin_at_volume` — timings, query counts and both plans, for tasks and runs                                                     |
+
+**Two things did NOT come over, and both are deliberate.**
+
+- **No event/wait workload.** `loadtest`'s `burn_workflow` emitted an event and then
+  awaited one nothing ever emits, which left its seed a checkpoint, an event and a wait
+  per queue — enough for its small-entity admin arms. Nothing here does that, so
+  `await_event` is unmeasured
+  ([which findings survive](#which-findings-survive-the-durable-regime)) and THIS corpus
+  carries no workflow rows, which is why `admin_at_volume` covers tasks and runs and not
+  the three small entities. It was a seeding device rather than a detector, so no
+  detector was lost with it.
+- **One queue, not four.** `loadtest` declared `bulk`, `alpha`, `beta` and `gamma` and
+  used them — `load_seed` enqueued templates into each with `.using(queue_name=...)`,
+  and the sleepers and barrier probes ran on their own `--queue`, refusing `bulk`. What
+  it never did was COMPARE one queue with another: every probe ran on one at a time, and
+  multi-queue throughput was never built there either. So the topology is gone and no
+  measurement is, and a per-queue comparison stays unbuilt on both sides.
 
 ## Comparing two runs: refactors, version bumps, bisection
 

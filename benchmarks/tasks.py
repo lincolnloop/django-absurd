@@ -5,7 +5,7 @@ import typing as t
 from absurd_sdk import RetryStrategy
 from django.tasks import task
 
-from django_absurd import absurd_params, get_absurd_context
+from django_absurd import absurd_params, aget_absurd_context, get_absurd_context
 from workload import models
 
 # Big enough that the insert and the read back move a real row rather than an empty
@@ -54,6 +54,24 @@ async def sleep_async(seconds: float = 0.05) -> int:
 
 
 @task(queue_name="bench")
+def park_sync(seconds: float = 300.0) -> None:
+    """Suspend durably for longer than any measured window.
+
+    The body does not return inside the window: `sleep_for` parks the run and Absurd
+    redelivers it when the sleep is up, which is the whole point — what the harness
+    then asks is whether the slot it was holding came back.
+    """
+    get_absurd_context().sleep_for("park", seconds)
+
+
+@task(queue_name="bench")
+async def park_async(seconds: float = 300.0) -> None:
+    """`park_sync`'s async twin, measured beside it because only the sync path holds a
+    thread of the worker's pool while it waits."""
+    await aget_absurd_context().sleep_for("park", seconds)
+
+
+@task(queue_name="bench")
 def run_steps(step_count: int = 4) -> int:
     context = get_absurd_context()
     for index in range(step_count):
@@ -61,8 +79,33 @@ def run_steps(step_count: int = 4) -> int:
     return step_count
 
 
-def report_step_done() -> int:
-    return 1
+@task(queue_name="bench")
+def run_durable_steps(
+    seconds: float = 2.0, touches: int = 4, step_count: int = 4
+) -> int:
+    """``run_durable_work`` with ``step_count`` checkpoints and nothing else changed.
+
+    The sleep, the row and the touches are identical whatever the depth, so what
+    separates two arms of the stage is the checkpoints alone — which is what makes a
+    per-step cost subtractable. Spread over the touches rather than taken up front,
+    the way a tool call checkpoints as it goes.
+    """
+    context = get_absurd_context()
+    item = models.WorkItem.objects.create(payload=DURABLE_PAYLOAD)
+    for touch in range(1, touches + 1):
+        time.sleep(seconds / touches)
+        item.touches = touch
+        item.payload = f"{item}: {DURABLE_PAYLOAD}"
+        item.save(update_fields=["payload", "touches", "updated_at"])
+        item.refresh_from_db()
+        # By integer share of the touches so far, so every depth lands exactly: a
+        # floor division per touch would silently drop the remainder, and a per-step
+        # cost divided by a step count nobody took is not a cost.
+        taken = step_count * (touch - 1) // touches
+        for index in range(taken, step_count * touch // touches):
+            context.step(f"s{index}", report_step_done)
+    item.delete()
+    return step_count
 
 
 @task(queue_name="bench")
@@ -88,3 +131,7 @@ def run_durable_work(seconds: float = 2.0, touches: int = 4) -> int:
         item.refresh_from_db()
     item.delete()
     return item.touches
+
+
+def report_step_done() -> int:
+    return 1

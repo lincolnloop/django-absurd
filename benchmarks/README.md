@@ -29,35 +29,58 @@ RAM, so a restart hands you back an empty server, and a run against one dies par
 through its first measurement with `schema "absurd" does not exist`. It takes a second
 and it is idempotent, so just run it every time.
 
-The nine stages take about an hour together on the reference machine (14 cores, at
-`--max-workers 14 --reps 3`). Seven of them were timed at 50 minutes in one run, of
-which `latency_under_load` was 15 and `size_vs_depth` 11 — that one drains four tasks
-for every one it measures. Name stages to run only those; `--tasks`, `--duration`,
-`--reps` and `--max-workers` size them down to a dry run, `--io-seconds` sets how long
-`sync_vs_async` pretends to do IO for, and `--durable-seconds` sets how long
-`pooled_vs_split`'s durable arms hold a worker thread (default 2 s; 30 s is an agent
-tool call's duration and ~15x that stage's cost). Results land in `benchmarks/results/`,
-which is git-ignored — the numbers belong to the machine that produced them.
+**Budget two hours for all fourteen, and give the machine room** — an estimate, because
+no full-sequence run has finished yet. Seven stages were once timed at 50 minutes
+together on the reference laptop (14 cores, `--max-workers 14 --reps 3`), of which
+`latency_under_load` was 15 and `size_vs_depth` 11 — that one drains four tasks for
+every one it measures. A later attempt at the whole sequence went far slower and was
+killed for memory partway through; [`CLAUDE.md`](CLAUDE.md) names the run and what it
+cost. The data directory is a tmpfs, so the server holds about 2 GB before any data of
+its own — `shared_buffers` plus up to 1 GB of WAL — and seeded rows are RAM on top. Run
+the sequence with nothing else of size on the box, or name the stages you want across a
+few smaller invocations.
 
-| stage                | what it answers                                                  |
-| -------------------- | ---------------------------------------------------------------- |
-| `worker_knobs`       | what `--concurrency`, `--batch-size` and async dispatch buy      |
-| `process_scaling`    | how throughput scales with worker processes                      |
-| `pooled_vs_split`    | one total concurrency, reached two ways, on short and long tasks |
-| `size_vs_depth`      | whether a big table or a deep queue is what costs throughput     |
-| `poll_interval`      | what `--poll-interval` costs and buys                            |
-| `sync_vs_async`      | whether async task bodies beat sync ones                         |
-| `checkpoint_cost`    | what a `ctx.step` checkpoint costs                               |
-| `producer_ceiling`   | how fast the enqueue side can go                                 |
-| `latency_under_load` | end-to-end latency at fractions of a sustainable offer rate      |
+Name stages to run only those; `--tasks`, `--duration`, `--reps` and `--max-workers`
+size them down to a dry run, `--io-seconds` sets how long `sync_vs_async` pretends to do
+IO for, and `--durable-seconds` sets how long a durable body holds a worker thread — in
+`pooled_vs_split`'s durable arms and in `durable_checkpoints`, whose long-body arms run
+at 15x it (default 2 s; 30 s is an agent tool call's duration and ~15x
+`pooled_vs_split`'s cost). `durable_checkpoints` is about ten minutes of the run at that
+default, nearly all of it its three long-body arms. Results land in
+`benchmarks/results/`, which is git-ignored — the numbers belong to the machine that
+produced them.
+
+| stage                 | what it answers                                                       |
+| --------------------- | --------------------------------------------------------------------- |
+| `worker_knobs`        | what `--concurrency`, `--batch-size` and async dispatch buy           |
+| `process_scaling`     | how throughput scales with worker processes                           |
+| `pooled_vs_split`     | one total concurrency, reached two ways, on short and long tasks      |
+| `size_vs_depth`       | whether a big table or a deep queue is what costs throughput          |
+| `poll_interval`       | what `--poll-interval` costs and buys                                 |
+| `sync_vs_async`       | whether async task bodies beat sync ones                              |
+| `checkpoint_cost`     | what a `ctx.step` checkpoint costs                                    |
+| `durable_checkpoints` | what a checkpoint costs at depth, inside a body that runs for seconds |
+| `cleanup_vs_size`     | what one cleanup call costs, and whether the table sets it            |
+| `batch_barrier`       | what a batch claim's barrier costs on uneven task lengths             |
+| `parked_runs`         | whether a durable sleep costs a worker slot                           |
+| `admin_at_volume`     | what the admin changelists cost on a seeded table, and their plans    |
+| `producer_ceiling`    | how fast the enqueue side can go                                      |
+| `latency_under_load`  | end-to-end latency at fractions of a sustainable offer rate           |
 
 Stages run in dependency order whatever order you type them in, but nothing runs a
-prerequisite you did not name: `process_scaling`, `poll_interval` and `checkpoint_cost`
-read back `stage_worker_knobs.json`, and `latency_under_load` reads
-`stage_process_scaling.json`. Missing one is an error that says so.
+prerequisite you did not name: `process_scaling`, `poll_interval`, `checkpoint_cost` and
+`durable_checkpoints` read back `stage_worker_knobs.json`, and `latency_under_load`
+reads `stage_process_scaling.json`. Missing one is an error that says so.
 
 Starting over is `docker compose restart db_bench` and then `migrate` again. Nothing
 about the database survives, so nothing about it can go stale.
+
+**Two stages seed rather than drain, and either can fill the server.** `cleanup_vs_size`
+and `admin_at_volume` both write real rows, and a million tasks is 1.09 GB of tables
+against a 4 GB tmpfs — which is why the cleanup arms are sized at 250,000 and a million.
+Seeding more needs `BENCH_TMPFS_SIZE` raised, and the RAM to back it; without that the
+seed dies mid-clone with `could not extend file ... No space left on device`, and the
+server stays full until you restart it. Both release their rows when they finish.
 
 ## The server
 
@@ -109,14 +132,14 @@ something was wrong with it, marked in place:
   about the system, not a broken measurement.
 - `?` — fewer than two valid reps, so the spread was never measured at all.
 
-Four stages run at a configuration an earlier stage picked — `process_scaling`,
-`poll_interval` and `checkpoint_cost` inherit `worker_knobs`' winning row, and
-`latency_under_load` inherits `process_scaling`'s. Each prints a `Calibrated from` line
-naming the row it took and ending in that row's standing. **Read it before the numbers
-under it, and discard the whole run unless it says `valid and stable`.** Anything else —
-`unstable`, `invalid`, `dispersion unmeasured` — means those stages measured a
-configuration that did not repeat, and nothing else in the report says so: the run still
-exits cleanly and its tables still agree with each other.
+Five stages run at a configuration an earlier stage picked — `process_scaling`,
+`poll_interval`, `checkpoint_cost` and `durable_checkpoints` inherit `worker_knobs`'
+winning row, and `latency_under_load` inherits `process_scaling`'s. Each prints a
+`Calibrated from` line naming the row it took and ending in that row's standing. **Read
+it before the numbers under it, and discard the whole run unless it says
+`valid and stable`.** Anything else — `unstable`, `invalid`, `dispersion unmeasured` —
+means those stages measured a configuration that did not repeat, and nothing else in the
+report says so: the run still exits cleanly and its tables still agree with each other.
 
 Under each saturation table is a commit-budget line saying what limited that row:
 `client-bound` is our Python, `connection-bound` is Postgres, `unresolved` means the
@@ -188,11 +211,12 @@ the same commit, 25 shared measurements: median CV 4.7%, mean 5.1%, worst 12.5%,
 systematically below the other two. Under about 12% is not evidence of anything, and a
 whole run reading low is usually the working point it inherited, not the machine.
 
-**Most of what is above was measured on tasks that finish in microseconds.** Only
-`pooled_vs_split` also runs the long, database-touching workload django-absurd is
-primarily for; every other stage uses an empty task body, and its advice is advice about
-that regime. `--durable-seconds` is how you take the long arms to a realistic duration,
-and [`CLAUDE.md`](CLAUDE.md) says which findings carry over.
+**Most of what is above was measured on tasks that finish in microseconds.**
+`pooled_vs_split` and `durable_checkpoints` run the long, database-touching workload
+django-absurd is primarily for, and `batch_barrier` and `parked_runs` run sleeps; the
+rest use an empty task body, and their advice is advice about that regime.
+`--durable-seconds` is how you take the long arms to a realistic duration, and
+[`CLAUDE.md`](CLAUDE.md) says which findings carry over.
 
 **Measure on a quiet machine on AC power.** The macOS indexer alone was worth 1-1.4
 cores sustained. It spoils the saturation stages, which drive the box to its limit, and
@@ -247,12 +271,13 @@ are the pipeline above, `seed.py` fills the tables for the admin and `serve_admi
 serves it on them. Beside them, `settings.py` (Django settings: `DATABASE_URL`, else
 `PGPORT_BENCH` against `absurd_bench`, plus `DEBUG` and the admin stack), `urls.py`
 (which mounts the admin), `manage.py` (for `migrate` and the worker children),
-`tasks.py` (the seven workloads: two no-ops, two sleeps, one 4-step workflow, one long
-body that reads and writes rows, and one that always fails), `workload/` (the one-model
-Django app that long body works on), `host.py` (host context capture and the suspension
-guard), and `pyproject.toml` plus `uv.lock` (the harness's own pinned uv project,
-django-absurd by path). [`CLAUDE.md`](CLAUDE.md) holds the reasoning: the measurement
-model, the results-file schema, and every number's evidence.
+`tasks.py` (the ten workloads: two no-ops, two sleeps, two durable sleeps that park, one
+4-step workflow, one long body that reads and writes rows, that body again with a chosen
+number of checkpoints, and one that always fails), `workload/` (the one-model Django app
+that long body works on), `host.py` (host context capture and the suspension guard), and
+`pyproject.toml` plus `uv.lock` (the harness's own pinned uv project, django-absurd by
+path). [`CLAUDE.md`](CLAUDE.md) holds the reasoning: the measurement model, the
+results-file schema, and every number's evidence.
 
 ## Running the tests
 
