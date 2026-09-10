@@ -156,6 +156,14 @@ def test_idle_slots_count_only_while_work_was_still_waiting() -> None:
     assert analysis.read_idle_slot_seconds("bench", None, 2) == pytest.approx(4.0)
 
 
+def test_no_idle_slots_are_charged_when_nothing_ran() -> None:
+    """An arm whose queue holds no completed run has no interval to integrate, and
+    zero is the honest answer rather than a division by an empty window."""
+    truncate_queue_tables("bench")
+
+    assert analysis.read_idle_slot_seconds("bench", None, 4) == pytest.approx(0.0)
+
+
 def test_idle_slots_are_capped_by_the_work_actually_waiting() -> None:
     """Three free slots with one task waiting is one wanted slot-second a second.
 

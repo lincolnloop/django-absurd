@@ -37,18 +37,6 @@ class MeasurementTimeoutError(Exception):
 
 
 @dataclasses.dataclass(frozen=True)
-class PollSampler:
-    """Something to read on every pass of a drain's poll, and how often to poll.
-
-    The two travel together: a sampler is only as good as the cadence it rides, and a
-    drain with nothing to sample has no reason to poll at a sampler's rate.
-    """
-
-    sample: t.Callable[[], None]
-    interval_s: float
-
-
-@dataclasses.dataclass(frozen=True)
 class MeasurementSpec:
     name: str
     mode: t.Literal["saturation", "rate"]
@@ -234,19 +222,18 @@ def wait_until_drained(
     queue: str,
     timeout_s: float,
     task_name: str | None = None,
-    sampler: "PollSampler | None" = None,
 ) -> None:
     """Poll until the queue is empty.
 
     `task_name` narrows the predicate for a drain sharing its queue with tasks nobody
-    is waiting for — a parked sleeper is unfinished by every definition.
+    is waiting for — a parked sleeper is unfinished by every definition. A caller that
+    also wants to read state on each pass calls `wait_until` with its own predicate.
     """
     wait_until(
         lambda: analysis.count_unfinished_tasks(queue, task_name) == 0,
         workers=workers,
         name=name,
         timeout_s=timeout_s,
-        sampler=sampler,
     )
 
 
@@ -256,7 +243,8 @@ def wait_until(
     workers: list[runner.Worker],
     name: str,
     timeout_s: float,
-    sampler: "PollSampler | None" = None,
+    on_poll: t.Callable[[], None] | None = None,
+    interval_s: float = DRAIN_POLL_INTERVAL_S,
 ) -> None:
     """Poll until ``reached``, and fail on a dead fleet or a deadline.
 
@@ -266,14 +254,13 @@ def wait_until(
     timeout as the failure. The children's own exit is what `stop_workers` raises over
     this on the way out, so the crash stays the cause.
 
-    A `sampler` rides this loop rather than a thread, and is called before the first
-    check so a wait that ends on its first pass is still sampled once.
+    `on_poll` rides this loop rather than a thread, and is called before the first
+    check so a wait that ends on its first pass is still read once.
     """
     deadline = time.monotonic() + timeout_s
-    interval = DRAIN_POLL_INTERVAL_S if sampler is None else sampler.interval_s
     while True:
-        if sampler is not None:
-            sampler.sample()
+        if on_poll is not None:
+            on_poll()
         if reached():
             return
         exited = runner.count_exited_workers(workers)
@@ -281,7 +268,7 @@ def wait_until(
             raise WorkerExitedError(name, exited, len(workers))
         if time.monotonic() > deadline:
             raise MeasurementTimeoutError(name, timeout_s)
-        time.sleep(interval)
+        time.sleep(interval_s)
 
 
 def summarize_reps(

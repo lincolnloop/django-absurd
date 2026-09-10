@@ -728,7 +728,15 @@ def run_batch_barrier(options: StageOptions) -> None:
     for index in range(rep_count):
         # Reversed on the odd reps, so neither arm always meets the emptier tables.
         for arm in arms if index % 2 == 0 else list(reversed(arms)):
-            reps[arm["name"]].append(measure_barrier_rep(arm))
+            # Bracketed either side, for the reason in `host.read_load_average`.
+            load_before = host.read_load_average()
+            reps[arm["name"]].append(
+                {
+                    **measure_barrier_rep(arm),
+                    "load_before": load_before,
+                    "load_after": host.read_load_average(),
+                }
+            )
             run_order.append(arm["name"])
             write_stage_file(
                 "batch_barrier", summarize_barrier_reps(arms, reps), options, extra
@@ -884,10 +892,24 @@ def run_parked_runs(options: StageOptions) -> None:
     ]
     recorded: list[dict[str, t.Any]] = []
     for arm in arms:
-        reps = [measure_parked_rep(arm, quick_tasks) for _ in range(rep_count)]
+        reps = [
+            measure_parked_rep_with_load(arm, quick_tasks) for _ in range(rep_count)
+        ]
         recorded.append(summarize_parked_reps(arm, quick_tasks, reps))
         write_stage_file("parked_runs", recorded, options)
         print(summarize_parked_arm(recorded[-1]))
+
+
+def measure_parked_rep_with_load(
+    arm: dict[str, t.Any], quick_tasks: int
+) -> dict[str, t.Any]:
+    """One rep, bracketed either side, for the reason in `host.read_load_average`."""
+    load_before = host.read_load_average()
+    return {
+        **measure_parked_rep(arm, quick_tasks),
+        "load_before": load_before,
+        "load_after": host.read_load_average(),
+    }
 
 
 def measure_parked_rep(arm: dict[str, t.Any], quick_tasks: int) -> dict[str, t.Any]:
@@ -929,12 +951,7 @@ def measure_parked_rep(arm: dict[str, t.Any], quick_tasks: int) -> dict[str, t.A
             SLEEP_SYNC, quick_tasks, kwargs={"seconds": 0.0}
         )
         with host.measure_phase() as phase:
-            drain_quick_batch(
-                procs,
-                arm["name"],
-                worker.queue,
-                measurement.PollSampler(sample_sleeper_states, PARKED_POLL_INTERVAL_S),
-            )
+            drain_quick_batch(procs, arm["name"], worker.queue, sample_sleeper_states)
     except host.SuspendedPhaseError as exc:
         return {"valid": False, "error": str(exc)}
     finally:
@@ -952,17 +969,17 @@ def drain_quick_batch(
     procs: list[runner.Worker],
     name: str,
     queue: str,
-    sampler: measurement.PollSampler | None = None,
+    on_poll: t.Callable[[], None] | None = None,
 ) -> None:
     """The quick batch only: a parked sleeper would hold the poll for its whole
     sleep."""
-    measurement.wait_until_drained(
-        procs,
+    measurement.wait_until(
+        lambda: analysis.count_unfinished_tasks(queue, task_name=SLEEP_SYNC) == 0,
+        workers=procs,
         name=name,
-        queue=queue,
         timeout_s=SATURATION_TIMEOUT_S,
-        task_name=SLEEP_SYNC,
-        sampler=sampler,
+        on_poll=on_poll,
+        interval_s=PARKED_POLL_INTERVAL_S,
     )
 
 

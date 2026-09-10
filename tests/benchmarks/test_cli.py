@@ -722,6 +722,62 @@ def test_a_seeding_stage_releases_its_rows_when_it_finishes(
     } == {f"t_{seed.DEFAULT_QUEUE}": 0, f"r_{seed.DEFAULT_QUEUE}": 0}
 
 
+@pytest.mark.parametrize(
+    ("stage", "tasks"),
+    [("batch_barrier", "40"), ("parked_runs", "200")],
+)
+def test_refuses_a_stage_rep_the_host_slept_through(
+    stage: str, tasks: str, tmp_path: pathlib.Path
+) -> None:
+    """Both stages time a phase, so both have to throw a slept-through one away.
+
+    `perf_counter` stops with the host: idle slot-seconds integrated across a
+    suspension, or a quick drain that looks instant because the machine was asleep for
+    most of it, read as ordinary numbers with nothing to mark them.
+    """
+    with utils.nap_the_wall_clock():
+        stages.main(
+            [
+                stage,
+                "--reps",
+                "1",
+                "--tasks",
+                tasks,
+                "--results-dir",
+                str(tmp_path),
+            ]
+        )
+
+    recorded = utils.read_stage(tmp_path, stage)["measurements"]
+    assert [
+        {
+            "reps": [utils.normalize_measured_durations(rep) for rep in entry["reps"]],
+            "median": entry["median"],
+            "invalid": entry["invalid"],
+        }
+        for entry in recorded
+    ] == [
+        {
+            "reps": [
+                {
+                    "valid": False,
+                    "error": (
+                        "Wall clock advanced Ns over a phase the monotonic clock "
+                        "measured at Ns: the host suspended or stalled mid-phase, so "
+                        "every number this phase produced is fiction. Re-run the "
+                        "measurement on a machine that stays awake."
+                    ),
+                    "load_before": True,
+                    "load_after": True,
+                }
+            ],
+            "median": {},
+            "invalid": True,
+        }
+        for _ in recorded
+    ]
+
+
 def build_recorded_rung(
     name: str,
     throughput_per_s: float,
