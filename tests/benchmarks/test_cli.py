@@ -678,8 +678,12 @@ def test_times_the_admin_changelists_and_captures_their_plans(
     ]
 
 
+@pytest.mark.parametrize(
+    ("stage", "tasks"),
+    [("admin_at_volume", "200"), ("cleanup_vs_size", "2000")],
+)
 def test_a_seeding_stage_releases_its_rows_when_it_finishes(
-    tmp_path: pathlib.Path,
+    stage: str, tasks: str, tmp_path: pathlib.Path
 ) -> None:
     """A stage that seeds has to clear up after itself: the server's data directory is
     a tmpfs, so rows left behind are RAM held for the rest of the run.
@@ -687,17 +691,18 @@ def test_a_seeding_stage_releases_its_rows_when_it_finishes(
     A million tasks is 1.09 GB, and `cleanup_vs_size` sits ninth of fourteen — a full
     pipeline run was killed for memory with that seed still resident.
 
-    Sized so the seed OUTLIVES the deletions: six calls at a batch of 1,000 clear
-    6,000 rows, so the 4x arm's 8,000 leave rows behind. At a size the calls empty
-    outright this would pass against a stage that never cleared up at all.
+    `cleanup_vs_size` is sized so its seed OUTLIVES its deletions: six calls at a batch
+    of 1,000 clear 6,000 rows, so the 4x arm's 8,000 leave rows behind. At a size the
+    calls empty outright this would pass against a stage that never cleared up at all.
+    `admin_at_volume` deletes nothing, so any size shows it.
     """
     stages.main(
         [
-            "cleanup_vs_size",
+            stage,
             "--reps",
             "1",
             "--tasks",
-            "2000",
+            tasks,
             "--results-dir",
             str(tmp_path),
         ]

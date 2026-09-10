@@ -35,9 +35,11 @@ minutes together, of which `latency_under_load` was 15 and `size_vs_depth` 11 �
 drains four tasks for every one it measures. A later attempt at the whole sequence with
 three other container stacks resident went far slower and did not finish: ten stages in
 112 minutes, `worker_knobs` alone taking 64 of them, then killed for memory partway
-through the eleventh. The data directory is a tmpfs, so seeded rows are RAM — run the
-sequence with nothing else of size on the box, or name the stages you want across a few
-smaller invocations.
+through the eleventh. The data directory is a tmpfs, so seeded rows are RAM — and the
+server sits at about 2 GB before any data of its own (1 GB of `shared_buffers` plus 1 GB
+of recycled WAL, which Postgres never shrinks below `max_wal_size`). Run the sequence
+with nothing else of size on the box, or name the stages you want across a few smaller
+invocations.
 
 Name stages to run only those; `--tasks`, `--duration`, `--reps` and `--max-workers`
 size them down to a dry run, `--io-seconds` sets how long `sync_vs_async` pretends to do
