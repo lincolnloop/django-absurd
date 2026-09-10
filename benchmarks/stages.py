@@ -797,7 +797,6 @@ def measure_barrier_rep(arm: dict[str, t.Any]) -> dict[str, t.Any]:
         "valid": True,
         "preload_s": preload_s,
         "phase_s": phase.elapsed_s,
-        # The finding: slots free while the backlog still held work.
         "idle_slot_s": analysis.read_idle_slot_seconds(
             worker.queue, None, arm["concurrency"]
         ),
@@ -1056,13 +1055,14 @@ def summarize_one_admin_arm(
 ) -> dict[str, t.Any]:
     """Ranked on wall time, which for a page IS the measurement.
 
-    Recorded as `valid` unconditionally: a changelist that answered has measured
-    something, and the arm records the row count it measured over rather than leaving
-    a reader to infer it.
+    `invalid` stays False because a changelist that answered 200 over rows it names
+    has measured what it was asked to; `unstable` is thresholded like every other
+    stage's, so a page whose reps disagreed carries the mark that says so.
     """
     ranked = sorted(arm_reps, key=lambda rep: rep["wall_ms"])
     median = ranked[len(ranked) // 2]
     spread = (ranked[-1]["wall_ms"] - ranked[0]["wall_ms"]) / median["wall_ms"]
+    cv = measurement.measure_cv(arm_reps, "wall_ms")
     return {
         "spec": {
             "name": name,
@@ -1076,11 +1076,11 @@ def summarize_one_admin_arm(
         "ranking_key": "wall_ms",
         "median": median,
         "spread": spread,
-        "cv": measurement.measure_cv(arm_reps, "wall_ms"),
+        "cv": cv,
         "range_low": ranked[0]["wall_ms"],
         "range_high": ranked[-1]["wall_ms"],
         "invalid": False,
-        "unstable": False,
+        "unstable": cv is not None and cv > measurement.MeasurementSpec.cv_limit,
         "host": host.collect_host_context(),
     }
 

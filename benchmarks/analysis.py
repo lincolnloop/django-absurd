@@ -480,6 +480,15 @@ def build_idle_slot_seconds(rows: list[tuple[t.Any, ...]], slots: int) -> float:
     second five was in the backlog at second one, so an idle slot then was a slot the
     fleet could have used. Nothing is counted past the last claim, where an idle slot
     has nothing left to take.
+
+    CAPPED by the work waiting, which is what makes it slot-seconds that were WANTED:
+    three free slots with one task waiting is one slot-second a second, not three,
+    because two of those slots had nothing to take either. `loadtest`'s occupancy
+    figure capped the same way, so the two are comparable.
+
+    Reads a fully preloaded backlog: `waiting` counts by claim time and not by
+    `enqueue_at`, so a task enqueued mid-drain reads as waiting from the window's
+    start. Every stage that uses this preloads before its fleet exists.
     """
     if not rows:
         return 0.0
@@ -490,7 +499,8 @@ def build_idle_slot_seconds(rows: list[tuple[t.Any, ...]], slots: int) -> float:
         busy = sum(1 for started, completed in rows if started <= opened < completed)
         waiting = sum(1 for started in starts if started > opened)
         if waiting and busy < slots:
-            idle_seconds += (slots - busy) * (closed - opened).total_seconds()
+            wanted = min(slots - busy, waiting)
+            idle_seconds += wanted * (closed - opened).total_seconds()
     return idle_seconds
 
 

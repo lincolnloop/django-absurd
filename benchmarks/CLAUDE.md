@@ -812,11 +812,12 @@ separate the two. The 20 slow tasks are spread every 21st by
 with nothing left behind them.
 
 **There is no barrier, and the control is the worse arm.**
-`results/barrier-20260909T183402Z`, three reps interleaved, cv 0.4% and 0.7%, unmarked,
-420 of 420 tasks in both, zero redeliveries: `mixed` left **0.72** idle slot-seconds
-against `uniform`'s **1.34** — 0.54x — and drained faster (60.4 against 56.8 tasks/s). A
-live barrier would show 20 slow tasks x ~1 s x 3 stalled slots, tens of slot-seconds;
-0.72 is not that. PR #156's refill-by-free-capacity fix holds.
+`results/barrier-20260910T112702Z`, three reps interleaved, cv 0.7% and 0.9%, unmarked,
+420 of 420 tasks in both, zero redeliveries: `mixed` left **0.97** idle slot-seconds
+against `uniform`'s **1.37** — 0.71x, on ranges that do not overlap (0.81-1.00 against
+1.37-1.52) — and drained faster (58.6 against 55.8 tasks/s). A live barrier would show
+20 slow tasks x ~1 s x 3 stalled slots, tens of slot-seconds; 0.97 is not that. PR
+#156's refill-by-free-capacity fix holds.
 
 **Why uniform wastes more.** Same-length tasks finish in lockstep, so the pool empties
 all at once and claim latency idles every slot together; staggered completions let a
@@ -842,7 +843,7 @@ pool.
 **The primary evidence has no clock in it.** The sleepers' own runs are counted by state
 on every pass of the drain poll: a run that is `sleeping` holds neither a claim nor a
 slot, one that is `running` holds both. `results/parked-20260909T190836Z`, three reps an
-arm, 58-59 samples a rep, every arm unmarked, 2,000 of 2,000 drained with no
+arm, 53-61 samples a rep, every arm unmarked, 2,000 of 2,000 drained with no
 redeliveries:
 
     arm              asleep at worst  running at worst  tasks/s  rep range
@@ -850,9 +851,12 @@ redeliveries:
     sleepers_sync                16                 0    566.8  551.1-612.8
     sleepers_async               16                 0    543.4  529.3-551.9
 
-**Sixteen of sixteen asleep at the least-asleep moment, and never one running.** A
-durable sleep releases its slot and its claim, which is what the docs promise and what
-`loadtest` measured before this harness could.
+**Sixteen of sixteen asleep at the least-asleep moment, and never one running.** That is
+the CLAIM side proven: `sleeping` is Absurd's own column, so a body that had persisted
+its sleep and then blocked its pool thread would read exactly the same. What proves the
+SLOT side is the quick batch draining at all — sixteen sleepers against four slots would
+starve it into the timeout, and it finished at the control's rate. Together they are
+what the docs promise and what `loadtest` measured before this harness could.
 
 **The throughput arms say nothing beyond that, and must not be read as if they did.**
 1.00x and 0.96x, but the rep ranges overlap the control's — the async arm's 4% sits
@@ -878,46 +882,57 @@ the workload under measurement.
 
 `admin_at_volume` seeds a million tasks and drives the real admin over Django's test
 client — same middleware, same `ChangeList`, same filters a browser gets — four ways per
-changelist: unfiltered, the queue filter, the state filter, and the LAST page. The last
-page is resolved from the row count rather than fixed, because `ChangeList.get_results`
-ignores `?p=` unless the table paginates and a fixed deep page on a short table renders
-page 1 while wearing a deep-page label.
+changelist: unfiltered, the queue filter, the state filter, and the LAST page. Which
+page that is comes off the changelist's own paginator rather than a row count divided by
+an assumed page size, because `ChangeList.get_results` ignores `?p=` unless the table
+paginates — a fixed deep page on a short table renders page 1 while wearing a deep-page
+label, and a hardcoded `list_per_page` goes wrong the day the admin registers another.
 
-**Two passes per arm.** The timed pass is clean; a second request collects the page's
-statements through `connection.execute_wrapper` and explains the two that are the page
-(the paginator's `COUNT(*)` and the paged `SELECT`). One pass would put instrumentation
-inside the number, which is what `refuse_measuring_under_debug` exists to prevent.
+**Three requests an arm, of which one is timed.** A warm-up is discarded first — without
+it the first arm to touch a page pays for caches the later ones find warm, and the deep
+page read 717 ms on its first-ever request against 380 on its next two, which a median
+over three reps buries in the dispersion rather than removing. Then the timed pass,
+clean. Then a capture pass, whose statements come through `connection.execute_wrapper` —
+no debug cursor, but a separate request all the same, because instrumentation inside a
+timed number is what `refuse_measuring_under_debug` exists to prevent.
 
-`results/admin-20260909T194359Z`, 1,000,000 tasks and 1,166,660 runs, three reps, 8
+`results/admin-20260910T112702Z`, 1,000,000 tasks and 1,166,660 runs, three reps, 8
 queries a page throughout:
 
     arm                 ms    rows rendered   cv
-    tasks_unfiltered    45     1,000,000     16%
-    tasks_queue         52     1,000,000     14%
-    tasks_state         62       833,340     15%
-    tasks_last_page    382     1,000,000     39%
+    tasks_unfiltered    39     1,000,000     10%  ~
+    tasks_queue         40     1,000,000      8%
+    tasks_state         50       833,340      8%
+    tasks_last_page    373     1,000,000      6%
     runs_unfiltered     71     1,166,660      2%
-    runs_queue          84     1,166,660      3%
-    runs_state          88       833,340      9%
-    runs_last_page     426     1,166,660      3%
+    runs_queue          75     1,166,660      0%
+    runs_state          67       833,340      5%
+    runs_last_page     426     1,166,660      8%
 
-**Page one is tens of milliseconds; the last page is 6-8x that.** The `tasks` arms are
-noisy (14-39% cv) because tens of milliseconds on a shared laptop are, and the `runs`
-arms at 2-3% are the ones to read.
+**Page one is tens of milliseconds; the last page is 6-9x that.** The dispersion is now
+the machine's rather than the harness's: before the warm-up was discarded
+`tasks_last_page` read 39% cv on one cold rep, and it now reads 6%. `tasks_unfiltered`
+carries a `~` at 10%, which is what tens of milliseconds on a laptop look like.
 
-**The plan says the deep page is OFFSET walking, not sorting.** Every arm's page query
-is `Limit -> Incremental Sort -> Index Scan Backward using t_bench_pkey`, and the count
-is a parallel `Finalize Aggregate`. On the last page that index scan reads 999,900 rows
-and 618,816 buffers to hand back 100 — 343 ms of the 382. So ordering by the pk
-(https://github.com/lincolnloop/django-absurd/pull/273) does what it was for: Postgres
-walks the index instead of sorting the table. What is left is inherent to page-number
-pagination rather than to the ordering.
+**The plan splits the deep page in two, and only one half is inherent.** Every arm's
+page query is `Limit -> Incremental Sort -> Index Scan Backward using <pkey>`, and the
+count is a parallel `Finalize Aggregate`. Read the actual times as INCLUSIVE of
+children: on `tasks_last_page` the index scan ends at 184 ms and the sort at 298 of a
+315 ms query, so the scan is 59% and the sort's own work 36%; on `runs_last_page`, 55%
+and 40%.
 
-**The `natural_key` expression is still in the `Sort Key`** — Django appends the pk to
-every changelist ordering and the pk here is `'bench:' || task_id` — but it costs almost
-nothing: `task_id` is unique and presorted, so the incremental sort's groups are
-singletons (31,247 of them, 34 kB peak). That was the open question when the ordering
-was chosen; the plan answers it.
+- The scan half is OFFSET walking — 999,900 rows read to hand back 100 — inherent to
+  page-number pagination.
+- **The sort half is the `natural_key` tiebreaker**, and it is not inherent. Django
+  appends the pk to every changelist ordering, the pk here is `'bench:' || id`, so
+  `'bench:' || id DESC` sits in every `Sort Key` and is evaluated for every row walked.
+  31,247 full-sort groups is 999,900/32 — Postgres's 32-tuple batches over a presorted
+  key, not the singletons an earlier reading of this claimed. 34 kB of memory, and a
+  third of the page's time.
+
+So ordering by the pk (https://github.com/lincolnloop/django-absurd/pull/273) did what
+it was for — `Index Scan Backward`, no full `Sort` of the table — and what it left
+behind is a third of the deep page spent on an expression nobody sorts by on purpose.
 
 **Not comparable to the older figures** in the retired harness (runs deep page ~3.2 s):
 those came off a disk-backed server, and levels do not travel between servers here. The
@@ -937,18 +952,21 @@ what it measures; eligibility comes from moving the harness session's
 backdating a million rows would rewrite the table the arm is sized on.
 
 **A call gets dearer FASTER than the table grows.** `results/cleanup-20260909T144726Z`,
-three reps an arm, cv 7%, unmarked: 119.0 ms a call at 250,000 tasks and 608.2 ms at a
-million — **5.11x for 4x the rows** — so deletions per second FALL from 8,335 to 1,655.
+three reps an arm, cv 7%, unmarked: 117-132 ms a call at 250,000 tasks and 551-608 ms at
+a million — **4.2-5.2x for 4x the rows** across the rep pairings — so deletions per
+second FALL from ~8,300 to ~1,700. The range and not the medians, because the reps are
+ranked on `deletes_per_s` and its middle rep is not the middle one by ms-per-call.
 Cleanup is slowest exactly when there is most to clean.
 
-**The plan says why, and it is not the delete.** `explain (analyze, buffers)` on the
-selection query at a million tasks: a parallel seq scan of every terminal row, a
-parallel hash left join against the whole runs table which SPILLS (~107 MB of temp read
-and written), and a top-N heapsort over the computed terminal timestamps — 117,000
-buffer hits and ~490 ms to choose 1,000 task ids. Nothing indexes the terminal
-timestamp, and `order by terminal_at limit 1000` cannot walk an index that does not
-exist. The hash build and its spill are what grow with the table, which is the
-superlinearity. See [UPSTREAM.md](../docs/UPSTREAM.md).
+**The plan says why, and it is not the delete.** Taken by hand at a psql prompt on the
+same seeded million and NOT recorded by the stage, which is a gap: every other figure
+here names a results file. `explain (analyze, buffers)` on the selection query: a
+parallel seq scan of every terminal row, a parallel hash left join against the whole
+runs table which SPILLS (~107 MB of temp read and written), and a top-N heapsort over
+the computed terminal timestamps — 117,000 buffer hits and ~490 ms to choose 1,000 task
+ids. Nothing indexes the terminal timestamp, and `order by terminal_at limit 1000`
+cannot walk an index that does not exist. The hash build and its spill are what grow
+with the table, which is the superlinearity. See [UPSTREAM.md](../docs/UPSTREAM.md).
 
 **What the numbers imply, and what they do not.** At a million finished tasks, clearing
 the backlog at the default batch is ~1,000 calls of ~0.6 s, so about ten minutes of
@@ -1461,15 +1479,19 @@ differently:
 **Two things did NOT come over, and both are deliberate.**
 
 - **No event/wait workload.** `loadtest`'s `burn_workflow` emitted an event and then
-  awaited one nothing ever emits. Nothing here does, so `await_event` is unmeasured
-  ([which findings survive](#which-findings-survive-the-durable-regime)) and the seeded
-  corpus carries no checkpoint, event or wait rows — which is why `admin_at_volume`
-  covers tasks and runs and not the three small entities, rather than merely
-  deprioritising them.
-- **One queue, not four.** `loadtest` declared `bulk`, `alpha`, `beta` and `gamma` but
-  ran every task on `bulk`, so no measurement of its own ever compared queues.
-  Multi-queue throughput was its named next cut and was never built there either;
-  nothing measurable is lost by declaring one queue here.
+  awaited one nothing ever emits, which left its seed a checkpoint, an event and a wait
+  per queue — enough for its small-entity admin arms. Nothing here does that, so
+  `await_event` is unmeasured
+  ([which findings survive](#which-findings-survive-the-durable-regime)) and THIS corpus
+  carries no workflow rows, which is why `admin_at_volume` covers tasks and runs and not
+  the three small entities. It was a seeding device rather than a detector, so no
+  detector was lost with it.
+- **One queue, not four.** `loadtest` declared `bulk`, `alpha`, `beta` and `gamma` and
+  used them — `load_seed` enqueued templates into each with `.using(queue_name=...)`,
+  and the sleepers and barrier probes ran on their own `--queue`, refusing `bulk`. What
+  it never did was COMPARE one queue with another: every probe ran on one at a time, and
+  multi-queue throughput was its named next cut, never built. So the topology is gone
+  and no measurement is, and a per-queue comparison stays unbuilt on both sides.
 
 ## Comparing two runs: refactors, version bumps, bisection
 

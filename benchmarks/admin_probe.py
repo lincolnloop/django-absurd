@@ -23,9 +23,6 @@ from django_absurd.queues import resolve_absurd_database
 # The changelists that hold volume. Checkpoints, events and waits carry a handful of
 # workflow rows each, so an arm on them measures nothing that a million tasks does.
 ADMIN_ENTITIES = ("task", "run")
-# Rows a changelist renders per page, which is `ModelAdmin.list_per_page`'s default and
-# what turns a row count into a page count.
-ADMIN_PAGE_SIZE = 100
 PROBE_USERNAME = "benchmark-admin"
 
 
@@ -52,15 +49,14 @@ def probe_admin_changelists(queue: str, state: str) -> list[dict[str, t.Any]]:
 def build_admin_probes(
     client: Client, entity: str, queue: str, state: str
 ) -> list[tuple[str, dict[str, str]]]:
-    """The four probes of one changelist, the last page resolved from its row count.
+    """The four probes of one changelist, the last page taken off its own paginator.
 
-    Resolved rather than assumed: `ChangeList.get_results` ignores `?p=` unless the
-    table paginates, so a fixed deep page on a short table renders page 1 and answers
-    200 while wearing a deep-page label. Asking for the LAST page is true at every
-    size, and each arm records which page that was.
+    Asked rather than assumed: `ChangeList.get_results` ignores `?p=` unless the table
+    paginates, so a fixed deep page on a short table renders page 1 and answers 200
+    while wearing a deep-page label. The paginator's own `num_pages` is true at every
+    size and at any `list_per_page` the admin is registered with.
     """
-    rows = read_result_count(client, entity, {})
-    last_page = max(0, (rows - 1) // ADMIN_PAGE_SIZE)
+    last_page = max(0, read_page_count(client, entity) - 1)
     return [
         ("unfiltered", {}),
         ("queue", {"queue": queue}),
@@ -72,8 +68,15 @@ def build_admin_probes(
 def measure_admin_arm(
     client: Client, entity: str, probe: str, query: dict[str, str]
 ) -> dict[str, t.Any]:
-    """One arm: a clean timed request, then a second one that captures its queries."""
+    """One arm: a discarded warm-up, a clean timed request, then a capture pass.
+
+    The warm-up is not optional. Without it the first arm to touch a page pays for
+    caches the later ones find warm — the deep page read 717 ms on its first request
+    against 380 on its next two, and a median over three reps buries that in the
+    dispersion rather than removing it. The retired harness discarded one too.
+    """
     url = reverse(f"admin:django_absurd_{entity}_changelist")
+    client.get(url, query)
     started = time.perf_counter()
     response = client.get(url, query)
     wall_ms = 1000.0 * (time.perf_counter() - started)
@@ -152,9 +155,11 @@ def pick_changelist_queries(
     return picked
 
 
-def read_result_count(client: Client, entity: str, query: dict[str, str]) -> int:
-    response = client.get(reverse(f"admin:django_absurd_{entity}_changelist"), query)
-    return read_response_result_count(response)
+def read_page_count(client: Client, entity: str) -> int:
+    """How many pages the unfiltered changelist has, per its own paginator."""
+    response = client.get(reverse(f"admin:django_absurd_{entity}_changelist"))
+    changelist = (response.context_data or {}).get("cl")
+    return 0 if changelist is None else int(changelist.paginator.num_pages)
 
 
 def read_response_result_count(response: t.Any) -> int:

@@ -255,7 +255,11 @@ is what keeps it: delete the branch without it and the commits become unreachabl
   `cleanup_vs_size`), **mixed-duration backlogs with slot occupancy** (`batch_barrier`,
   whose uniform-duration control is what identified the batch boundary recorded in
   [`UPSTREAM.md`](UPSTREAM.md)), and **parked durable sleeps** (`parked_runs`) — so the
-  tag now keeps history rather than capability. Two things did not come over: no
-  **event/wait workload** (its `burn_workflow` awaited an event nothing emits, so
-  `await_event` is unmeasured and the seeded corpus carries no workflow rows), and the
-  **four declared queues**, which it never actually ran a task on beyond `bulk`.
+  tag keeps history and a few deliberately dropped arms rather than a detector. What did
+  not come over: no **event/wait workload** (its `burn_workflow` awaited an event
+  nothing emits, leaving its seed a checkpoint, an event and a wait per queue —
+  `benchmarks/` seeds none of those, and `await_event` is unmeasured on both sides); the
+  **four-queue topology** (every probe there ran on one queue at a time and none
+  compared them, and a per-queue comparison was never built either side); and the arms
+  cut on purpose — the barrier's `split` shape and its sync/async workloads, and the
+  checkpoint, event and wait changelists.

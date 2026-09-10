@@ -10,9 +10,6 @@ import producer
 import runner
 from django_absurd.flush import truncate_queue_tables
 
-if t.TYPE_CHECKING:
-    from collections.abc import Callable
-
 DRAIN_POLL_INTERVAL_S = 0.5
 # Ranking keys a SMALLER value is the better measurement of. Everything else here is
 # a rate, where bigger is better; only an end-to-end latency runs the other way, and
@@ -47,7 +44,7 @@ class PollSampler:
     drain with nothing to sample has no reason to poll at a sampler's rate.
     """
 
-    sample: "Callable[[], None]"
+    sample: t.Callable[[], None]
     interval_s: float
 
 
@@ -254,7 +251,7 @@ def wait_until_drained(
 
 
 def wait_until(
-    reached: "Callable[[], bool]",
+    reached: t.Callable[[], bool],
     *,
     workers: list[runner.Worker],
     name: str,

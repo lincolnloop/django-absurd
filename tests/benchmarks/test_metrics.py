@@ -156,6 +156,26 @@ def test_idle_slots_count_only_while_work_was_still_waiting() -> None:
     assert analysis.read_idle_slot_seconds("bench", None, 2) == pytest.approx(4.0)
 
 
+def test_idle_slots_are_capped_by_the_work_actually_waiting() -> None:
+    """Three free slots with one task waiting is one wanted slot-second a second.
+
+    The two other slots had nothing to take either, so charging them would report
+    capacity the backlog never asked for — and would make this figure incomparable
+    with the occupancy the retired harness measured, which capped the same way.
+    """
+    truncate_queue_tables("bench")
+    for started, completed in ((0.0, 10.0), (2.0, 3.0)):
+        utils.insert_hand_timed_task(
+            "bench",
+            EPOCH,
+            EPOCH + dt.timedelta(seconds=started),
+            EPOCH + dt.timedelta(seconds=completed),
+            "bench-0",
+        )
+
+    assert analysis.read_idle_slot_seconds("bench", None, 3) == pytest.approx(2.0)
+
+
 def test_no_slot_is_idle_while_every_slot_is_working() -> None:
     """The control the metric would be worthless without: a saturated fleet leaves no
     idle slot-seconds, however long the drain took."""

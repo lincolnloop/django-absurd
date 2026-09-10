@@ -73,12 +73,12 @@ Per-queue policy, set where you [declare the queue](configuration.md#declaring-q
 [Absurd: storage](https://earendil-works.github.io/absurd/storage/).
 
 **Cleanup gets slower as the backlog grows, so run it before you need it.** Each run
-scans every terminal row to pick its batch, so the cost is set by how much history the
-queue is holding rather than by `cleanup_limit`. Measured on a RAM-backed Postgres: one
-default-batch run took 119 ms against 250,000 terminal tasks and 608 ms against a
-million — 5.1x for 4x the rows — so a backlog that has been left to build takes
-proportionally longer per row to clear. A daily schedule on a queue that stays pruned
-costs milliseconds; the same schedule meeting a year of history does not.
+scans every terminal row to pick its batch, so most of the cost follows how much history
+the queue is holding rather than how much it deletes. Measured on a RAM-backed Postgres:
+one default-batch run took ~120 ms against 250,000 terminal tasks and ~580 ms against a
+million — 4-5x for 4x the rows — so a backlog left to build takes proportionally longer
+per row to clear. A daily schedule on a queue that stays pruned costs milliseconds; the
+same schedule meeting a year of history does not.
 
 ## Reset — drop all queues
 

@@ -532,9 +532,11 @@ def test_measures_the_batch_barrier_against_a_uniform_control(
     with the batch barrier. Asserted from the recorded specs rather than trusted to a
     comment, because it is derived arithmetic.
 
-    `idle_slot_s` is the deliverable, so every arm has to record one; the uniform
-    control is expected to sit near zero and nothing here asserts a level, which is
-    the machine's to decide.
+    Nothing here asserts an idle-slot LEVEL: whether a four-slot worker leaves a slot
+    idle over forty tasks is the machine's to decide, and `>= 0` would pass on a metric
+    that always returned zero. The arithmetic is pinned in `test_metrics.py` against
+    hand-timed intervals; what this asserts is that both arms drained everything they
+    were given, which is what makes their two figures comparable at all.
     """
     stages.main(
         [
@@ -558,8 +560,9 @@ def test_measures_the_batch_barrier_against_a_uniform_control(
         == pytest.approx(mixed["service_seconds"]),
         "mixed_carries_both_lengths": mixed["slow_tasks"] > 0
         and mixed["slow_tasks"] < mixed["tasks"],
-        "every_arm_measured_idle_slots": [
-            entry["median"]["idle_slot_s"] >= 0.0 for entry in recorded["measurements"]
+        "every_arm_drained_its_backlog": [
+            entry["median"]["n_tasks"] == entry["spec"]["tasks"]
+            for entry in recorded["measurements"]
         ],
         "run_order": recorded["run_order"],
     } == {
@@ -567,7 +570,7 @@ def test_measures_the_batch_barrier_against_a_uniform_control(
         "equal_task_count": True,
         "equal_service_seconds": True,
         "mixed_carries_both_lengths": True,
-        "every_arm_measured_idle_slots": [True, True],
+        "every_arm_drained_its_backlog": [True, True],
         "run_order": ["uniform", "mixed", "mixed", "uniform"],
     }
 
