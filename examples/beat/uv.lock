@@ -188,7 +188,7 @@ dev = [
     { name = "ruff", specifier = "==0.16.5" },
     { name = "time-machine", specifier = "==3.5.0" },
     { name = "types-croniter", specifier = "==6.2.4.20260711" },
-    { name = "zensical", specifier = "==0.0.57" },
+    { name = "zensical", specifier = "==0.0.58" },
 ]
 
 [[package]]
