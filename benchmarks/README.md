@@ -29,17 +29,16 @@ RAM, so a restart hands you back an empty server, and a run against one dies par
 through its first measurement with `schema "absurd" does not exist`. It takes a second
 and it is idempotent, so just run it every time.
 
-**Budget two hours for all fourteen, and give the machine room.** On the reference
-laptop (14 cores, `--max-workers 14 --reps 3`) seven stages were once timed at 50
-minutes together, of which `latency_under_load` was 15 and `size_vs_depth` 11 — that one
-drains four tasks for every one it measures. A later attempt at the whole sequence with
-three other container stacks resident went far slower and did not finish: ten stages in
-112 minutes, `worker_knobs` alone taking 64 of them, then killed for memory partway
-through the eleventh. The data directory is a tmpfs, so seeded rows are RAM — and the
-server sits at about 2 GB before any data of its own (1 GB of `shared_buffers` plus 1 GB
-of recycled WAL, which Postgres never shrinks below `max_wal_size`). Run the sequence
-with nothing else of size on the box, or name the stages you want across a few smaller
-invocations.
+**Budget two hours for all fourteen, and give the machine room** — an estimate, because
+no full-sequence run has finished yet. Seven stages were once timed at 50 minutes
+together on the reference laptop (14 cores, `--max-workers 14 --reps 3`), of which
+`latency_under_load` was 15 and `size_vs_depth` 11 — that one drains four tasks for
+every one it measures. A later attempt at the whole sequence went far slower and was
+killed for memory partway through; [`CLAUDE.md`](CLAUDE.md) names the run and what it
+cost. The data directory is a tmpfs, so the server holds about 2 GB before any data of
+its own — `shared_buffers` plus up to 1 GB of WAL — and seeded rows are RAM on top. Run
+the sequence with nothing else of size on the box, or name the stages you want across a
+few smaller invocations.
 
 Name stages to run only those; `--tasks`, `--duration`, `--reps` and `--max-workers`
 size them down to a dry run, `--io-seconds` sets how long `sync_vs_async` pretends to do
@@ -76,12 +75,12 @@ reads `stage_process_scaling.json`. Missing one is an error that says so.
 Starting over is `docker compose restart db_bench` and then `migrate` again. Nothing
 about the database survives, so nothing about it can go stale.
 
-**`cleanup_vs_size` is the one stage that can fill the server.** It seeds real rows
-rather than draining them, and a million tasks is 1.09 GB of tables against a 4 GB tmpfs
-— which is why its arms are sized at 250,000 and a million. Seeding more needs
-`BENCH_TMPFS_SIZE` raised, and the RAM to back it; without that the seed dies mid-clone
-with `could not extend file ... No space left on device`, and the server stays full
-until you restart it.
+**Two stages seed rather than drain, and either can fill the server.** `cleanup_vs_size`
+and `admin_at_volume` both write real rows, and a million tasks is 1.09 GB of tables
+against a 4 GB tmpfs — which is why the cleanup arms are sized at 250,000 and a million.
+Seeding more needs `BENCH_TMPFS_SIZE` raised, and the RAM to back it; without that the
+seed dies mid-clone with `could not extend file ... No space left on device`, and the
+server stays full until you restart it. Both release their rows when they finish.
 
 ## The server
 
@@ -212,11 +211,12 @@ the same commit, 25 shared measurements: median CV 4.7%, mean 5.1%, worst 12.5%,
 systematically below the other two. Under about 12% is not evidence of anything, and a
 whole run reading low is usually the working point it inherited, not the machine.
 
-**Most of what is above was measured on tasks that finish in microseconds.** Only
-`pooled_vs_split` also runs the long, database-touching workload django-absurd is
-primarily for; every other stage uses an empty task body, and its advice is advice about
-that regime. `--durable-seconds` is how you take the long arms to a realistic duration,
-and [`CLAUDE.md`](CLAUDE.md) says which findings carry over.
+**Most of what is above was measured on tasks that finish in microseconds.**
+`pooled_vs_split` and `durable_checkpoints` run the long, database-touching workload
+django-absurd is primarily for, and `batch_barrier` and `parked_runs` run sleeps; the
+rest use an empty task body, and their advice is advice about that regime.
+`--durable-seconds` is how you take the long arms to a realistic duration, and
+[`CLAUDE.md`](CLAUDE.md) says which findings carry over.
 
 **Measure on a quiet machine on AC power.** The macOS indexer alone was worth 1-1.4
 cores sustained. It spoils the saturation stages, which drive the box to its limit, and
@@ -271,12 +271,13 @@ are the pipeline above, `seed.py` fills the tables for the admin and `serve_admi
 serves it on them. Beside them, `settings.py` (Django settings: `DATABASE_URL`, else
 `PGPORT_BENCH` against `absurd_bench`, plus `DEBUG` and the admin stack), `urls.py`
 (which mounts the admin), `manage.py` (for `migrate` and the worker children),
-`tasks.py` (the seven workloads: two no-ops, two sleeps, one 4-step workflow, one long
-body that reads and writes rows, and one that always fails), `workload/` (the one-model
-Django app that long body works on), `host.py` (host context capture and the suspension
-guard), and `pyproject.toml` plus `uv.lock` (the harness's own pinned uv project,
-django-absurd by path). [`CLAUDE.md`](CLAUDE.md) holds the reasoning: the measurement
-model, the results-file schema, and every number's evidence.
+`tasks.py` (the ten workloads: two no-ops, two sleeps, two durable sleeps that park, one
+4-step workflow, one long body that reads and writes rows, that body again with a chosen
+number of checkpoints, and one that always fails), `workload/` (the one-model Django app
+that long body works on), `host.py` (host context capture and the suspension guard), and
+`pyproject.toml` plus `uv.lock` (the harness's own pinned uv project, django-absurd by
+path). [`CLAUDE.md`](CLAUDE.md) holds the reasoning: the measurement model, the
+results-file schema, and every number's evidence.
 
 ## Running the tests
 

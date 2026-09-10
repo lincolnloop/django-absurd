@@ -248,12 +248,13 @@ is what keeps it: delete the branch without it and the commits become unreachabl
 - 2026-08-02 — `loadtest/`, the first load harness, now superseded by
   [`benchmarks/`](../benchmarks/README.md). Archived at
   [`3b4ac82`](https://github.com/lincolnloop/django-absurd/tree/3b4ac82bad087a3a24d40be81aebfd350f65646f/loadtest)
-  on branch `worktree-load-test-harness`. Every detector it had is now a stage — the
-  **admin changelist at volume** with plans and query counts (`admin_at_volume`, the
-  instrument behind [#142](https://github.com/lincolnloop/django-absurd/issues/142)), a
-  **million-row seeded corpus** (`seed.py`, driven by `admin_at_volume` and
-  `cleanup_vs_size`), **mixed-duration backlogs with slot occupancy** (`batch_barrier`,
-  whose uniform-duration control is what identified the batch boundary recorded in
+  on branch `worktree-load-test-harness` and kept by the tag `archive/loadtest-harness`.
+  Every detector it had is now a stage — the **admin changelist at volume** with plans
+  and query counts (`admin_at_volume`, the instrument behind
+  [#142](https://github.com/lincolnloop/django-absurd/issues/142)), a **million-row
+  seeded corpus** (`seed.py`, driven by `admin_at_volume` and `cleanup_vs_size`),
+  **mixed-duration backlogs with slot occupancy** (`batch_barrier`, whose
+  uniform-duration control is what identified the batch boundary recorded in
   [`UPSTREAM.md`](UPSTREAM.md)), and **parked durable sleeps** (`parked_runs`) — so the
   tag keeps history and a few deliberately dropped arms rather than a detector. What did
   not come over: no **event/wait workload** (its `burn_workflow` awaited an event

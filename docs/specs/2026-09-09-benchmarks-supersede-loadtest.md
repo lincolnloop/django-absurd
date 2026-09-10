@@ -7,7 +7,7 @@ Close every coverage gap between `benchmarks/` and the retired `loadtest/` harne
 can re-run. Written differently is fine; same coverage is the requirement. Coverage
 means the DETECTOR survives, not that the arm matrix is copied.
 
-## Verified gap table
+## Gap table, before this work
 
 | `loadtest/`     | `benchmarks/` today                                                                                                              | verdict       |
 | --------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------- |
@@ -42,14 +42,14 @@ one task waiting is one wanted slot-second a second, not three — which is how
 `OccupancyLog` from task bodies. `r_bench.started_at`/`completed_at` already carry every
 interval and `analysis.py` exists to turn those columns into metrics.
 
-**Invalidates a rep:** an arm that never drains; the existing suspension guard.
+**Invalidates a rep:** the suspension guard. A drain that times out aborts the stage.
 
 ## Stage 2: `parked_runs`
 
 **Question.** Does a durable sleep cost a worker slot? `context.sleep_for` on a SYNC
 body hops to the worker loop while the body holds a pool thread; if that thread stayed
 parked, N sleepers would hold N of C slots and work behind them would starve. Closes
-#112's fourth axis.
+#112's FIRST axis, concurrent parked runs.
 
 **Arms: 3.** One `control` (drain quick tasks, no sleepers) plus `sleepers_sync` and
 `sleepers_async` — the same quick drain with N tasks already parked in a sleep longer
@@ -62,7 +62,9 @@ drain: `running` holds a claim and a slot, `sleeping` holds neither. `sleeping_m
 with `running_max == 0` answers the question outright. The `sleepers/control` elapsed
 ratio is corroboration, and catches a slot released but the fleet slowed anyway.
 
-**Invalidates a rep:** an arm that never drains; a sleeper that woke inside the window.
+**Invalidates a rep:** the suspension guard, and nothing else. A sleeper seen `running`
+is REPORTED (`running_max`), never invalidated — that would be a finding about the
+worker. A drain that times out aborts the stage rather than marking a rep.
 
 ## Stage 3: `admin_at_volume`
 
@@ -102,9 +104,9 @@ where it belongs.
   a management command. `record_interleaved_measurements` already exists for arms that
   divide each other.
 - Seeded volume is bounded by the server: the data directory is a 4 GB tmpfs and a
-  million tasks is 1.09 GB of tables. **A stage that seeds truncates on the way out** —
-  rows left behind are RAM every later stage of a run pays for, which is what killed the
-  first end-to-end attempt.
+  million tasks is 1.09 GB of tables. **A stage that seeds truncates on the way out**,
+  including when it raises: rows left behind are RAM for whatever runs next, until some
+  later stage happens to truncate the queue.
 - Levels are RAM rates. Ratios travel; milliseconds do not. Every finding names its run.
 - A number is quotable only from a run on mains with the suspension guard armed and no
   marks on the arms it rests on.

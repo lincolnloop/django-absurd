@@ -542,29 +542,30 @@ def run_cleanup_vs_size(options: StageOptions) -> None:
     recorded: list[dict[str, t.Any]] = []
     base_rows = CLEANUP_SEED_ROWS if options.tasks is None else options.tasks
     rep_count = DEFAULT_REP_COUNT if options.reps is None else options.reps
-    for name, multiple, limit in CLEANUP_ARMS:
-        rows = base_rows * multiple
-        reps = []
-        for _ in range(rep_count):
-            # Reseeded per REP, not per arm: a cleanup rep deletes what it measures,
-            # so the second rep of an arm would read a table the first one shrank.
-            seed.seed_queue_tables(rows, queue=seed.DEFAULT_QUEUE)
-            set_cleanup_limit(seed.DEFAULT_QUEUE, limit)
-            load_before = host.read_load_average()
-            reps.append(
-                {
-                    **measure_cleanup_rep(seed.DEFAULT_QUEUE),
-                    "load_before": load_before,
-                    "load_after": host.read_load_average(),
-                }
-            )
-        recorded.append(summarize_cleanup_reps(name, rows, limit, reps))
-        write_stage_file("cleanup_vs_size", recorded, options)
-        print(summarize_cleanup_arm(recorded[-1]))
-    # Released on the way out: the server's data directory is a tmpfs, so a million
-    # rows left behind is a gigabyte of RAM every later stage of the run pays for. A
-    # full pipeline run was killed for memory two stages after this one.
-    truncate_queue_tables(seed.DEFAULT_QUEUE)
+    try:
+        for name, multiple, limit in CLEANUP_ARMS:
+            rows = base_rows * multiple
+            reps = []
+            for _ in range(rep_count):
+                # Reseeded per REP, not per arm: a cleanup rep deletes what it
+                # measures, so the second rep would read a table the first shrank.
+                seed.seed_queue_tables(rows, queue=seed.DEFAULT_QUEUE)
+                set_cleanup_limit(seed.DEFAULT_QUEUE, limit)
+                load_before = host.read_load_average()
+                reps.append(
+                    {
+                        **measure_cleanup_rep(seed.DEFAULT_QUEUE),
+                        "load_before": load_before,
+                        "load_after": host.read_load_average(),
+                    }
+                )
+            recorded.append(summarize_cleanup_reps(name, rows, limit, reps))
+            write_stage_file("cleanup_vs_size", recorded, options)
+            print(summarize_cleanup_arm(recorded[-1]))
+    finally:
+        # The data directory is a tmpfs, so rows left behind are RAM every later stage
+        # pays for — including when this one raises partway through.
+        truncate_queue_tables(seed.DEFAULT_QUEUE)
 
 
 def measure_cleanup_rep(queue: str) -> dict[str, t.Any]:
@@ -1034,17 +1035,18 @@ def run_admin_at_volume(options: StageOptions) -> None:
         f"seeded {summary.tasks} tasks and {summary.runs} runs "
         f"in {summary.elapsed_s:.0f}s"
     )
-    reps = [
-        admin_probe.probe_admin_changelists(seed.DEFAULT_QUEUE, ADMIN_FILTER_STATE)
-        for _ in range(rep_count)
-    ]
-    recorded = summarize_admin_arms(reps, rows)
-    write_stage_file("admin_at_volume", recorded, options)
-    for entry in recorded:
-        print(summarize_admin_arm(entry))
-    # As in `cleanup_vs_size`: a seeded million is a gigabyte of tmpfs, and every
-    # stage after this one would run against it.
-    truncate_queue_tables(seed.DEFAULT_QUEUE)
+    try:
+        reps = [
+            admin_probe.probe_admin_changelists(seed.DEFAULT_QUEUE, ADMIN_FILTER_STATE)
+            for _ in range(rep_count)
+        ]
+        recorded = summarize_admin_arms(reps, rows)
+        write_stage_file("admin_at_volume", recorded, options)
+        for entry in recorded:
+            print(summarize_admin_arm(entry))
+    finally:
+        # As in `cleanup_vs_size`, and for the same reason.
+        truncate_queue_tables(seed.DEFAULT_QUEUE)
 
 
 def summarize_admin_arms(
@@ -1068,7 +1070,9 @@ def summarize_one_admin_arm(
     """
     ranked = sorted(arm_reps, key=lambda rep: rep["wall_ms"])
     median = ranked[len(ranked) // 2]
-    spread = (ranked[-1]["wall_ms"] - ranked[0]["wall_ms"]) / median["wall_ms"]
+    # The shared helper rather than the same arithmetic inline: it returns None for a
+    # single rep, where a hand-rolled ratio reads 0.0 and calls it the stablest arm.
+    spread = measurement.measure_spread(arm_reps, median, "wall_ms")
     cv = measurement.measure_cv(arm_reps, "wall_ms")
     return {
         "spec": {

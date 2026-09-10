@@ -16,11 +16,11 @@ Gate per task: `uv run pytest tests/benchmarks/<file> -q --no-cov` while iterati
 
 Shared by task 2. No new table, no task-side bookkeeping.
 
-**RED.** `tests/benchmarks/test_analysis.py`: hand-written run intervals with a known
-slot count and a known backlog window; assert `idle_slot_s`. Cases that must
-discriminate: every slot busy the whole window (0); one long task with C-1 slots free
-while work remained (the free slot-seconds); slots idle only AFTER the backlog emptied
-(still 0 — that qualifier is the metric).
+**RED.** Hand-written run intervals in `test_metrics.py` with a known slot count and a
+known backlog window; assert `idle_slot_s`. Cases that must discriminate: every slot
+busy the whole window (0); one long task with C-1 slots free while work remained (the
+free slot-seconds); slots idle only AFTER the backlog emptied (still 0 — that qualifier
+is the metric).
 
 **Prose.** SQL reading run intervals for a queue since a window start, plus a reducer
 folding intervals + slot count into one figure. `mean_busy` and `span_s` stay internal.
@@ -94,13 +94,16 @@ Kept as approved above; what actually happened where it differs.
   missing `ALLOWED_HOSTS`, without which a DEBUG-off admin request answers 400.
 - **Task 4 makes three requests an arm, not two** — a discarded warm-up ahead of the
   timed one, as `loadtest` did. Without it the deep page's first-ever request read 717
-  ms against 380 for its next two, and the arm's cv was 39% rather than 6%.
-- **Both seeding stages truncate on the way out**, which no task here asked for. The
-  first end-to-end run of all fourteen stages was killed for memory with a million
-  `cleanup_vs_size` rows still resident in a tmpfs data directory.
+  ms against 380 for its next two (`results/admin-20260909T194359Z`), and the arm's cv
+  was 39% rather than 6%.
+- **Both seeding stages truncate on the way out**, which no task here asked for. A
+  seeded million left in a tmpfs is a gigabyte for whatever runs next, until some later
+  stage happens to truncate the queue — not a job a draining stage should carry. It was
+  NOT what killed the end-to-end run: `batch_barrier` truncates every rep and ran in
+  between. That was the box running out of RAM.
 - **The end-to-end run is not in this plan either**, and it earned its place: ten stages
-  in 112 minutes, then killed, which is what found the truncate and corrected a README
-  timing claim that had been extrapolated rather than measured.
+  in 112 minutes, then killed for memory, which surfaced the seed-release gap and put a
+  measured figure behind the README's runtime estimate.
 
 ## Order and cost
 

@@ -23,7 +23,8 @@ Two runs are windowed
 0.5.0: `windowed` is `results/run-20260903T233428Z` — `worker_knobs`, `process_scaling`,
 `pooled_vs_split` and `checkpoint_cost` over three invocations — and `windowed2` is
 `results/verify-20260904T013935Z`, the other seven stages, `worker_knobs` and
-`process_scaling` again among them. Between them they cover every stage; where a figure
+`process_scaling` again among them. Between them they cover the nine stages that existed
+then, and the five added since name their own runs in their own sections. Where a figure
 below still comes from an earlier run, it says so. **Read a rep's own load, not the
 report header's.** That header's 6.46 is one sample — the host block of whichever
 measurement sorts first, `checkpoint_cost`'s `flat` — where `process_scaling`'s reps
@@ -821,14 +822,14 @@ against `uniform`'s **1.37** — 0.71x, on ranges that do not overlap (0.81-1.00
 
 **Why uniform wastes more.** Same-length tasks finish in lockstep, so the pool empties
 all at once and claim latency idles every slot together; staggered completions let a
-refill overlap with work still running. Which reproduces, by a different route and a
-different metric, the last clean `loadtest` run's finding that uniform is consistently
-worse than mixed and the ceiling is claim throughput rather than batching.
+refill overlap with work still running. Which is the far end of the same observation
+`loadtest`'s uniform-duration control was built on: that control exists because a
+uniform backlog HIDES a barrier, and here it is the worse arm outright.
 
 **What it does not support.** One shape (pooled, 4 slots) and one mixture. A `split` arm
 was cut on the grounds that `idle_slot_s` already excludes "slow tasks are slow"; if a
 future run reads ambiguous, that arm is the thing to add. Levels are RAM rates as always
-— 1.34 slot-seconds out of ~30 available is the shape of the answer, not a budget.
+— 1.37 slot-seconds out of ~30 available is the shape of the answer, not a budget.
 
 ## Whether a parked run holds a worker slot
 
@@ -896,47 +897,47 @@ clean. Then a capture pass, whose statements come through `connection.execute_wr
 no debug cursor, but a separate request all the same, because instrumentation inside a
 timed number is what `refuse_measuring_under_debug` exists to prevent.
 
-`results/admin-20260910T112702Z`, 1,000,000 tasks and 1,166,660 runs, three reps, 8
+`results/admin-20260910T151957Z`, 1,000,000 tasks and 1,166,660 runs, three reps, 8
 queries a page throughout:
 
     arm                 ms    rows rendered   cv
-    tasks_unfiltered    39     1,000,000     10%  ~
-    tasks_queue         40     1,000,000      8%
-    tasks_state         50       833,340      8%
-    tasks_last_page    373     1,000,000      6%
-    runs_unfiltered     71     1,166,660      2%
-    runs_queue          75     1,166,660      0%
-    runs_state          67       833,340      5%
-    runs_last_page     426     1,166,660      8%
+    tasks_unfiltered    39     1,000,000      8%
+    tasks_queue         40     1,000,000      9%
+    tasks_state         50       833,340      7%
+    tasks_last_page    334     1,000,000      5%
+    runs_unfiltered     55     1,166,660     13%  ~
+    runs_queue          55     1,166,660      5%
+    runs_state          65       833,340      7%
+    runs_last_page     360     1,166,660      1%
 
-**Page one is tens of milliseconds; the last page is 6-9x that.** The dispersion is now
-the machine's rather than the harness's: before the warm-up was discarded
-`tasks_last_page` read 39% cv on one cold rep, and it now reads 6%. `tasks_unfiltered`
-carries a `~` at 10%, which is what tens of milliseconds on a laptop look like.
+**Page one is tens of milliseconds; the last page is 6.6x that on runs and 8.5x on
+tasks.** The dispersion is the machine's rather than the harness's now that a warm-up
+request is discarded: the deep-page arms read 5% and 1% cv where an earlier run without
+that discard read 39% off one cold rep. `runs_unfiltered` carries a `~` at 13%, which is
+what tens of milliseconds on a laptop look like.
 
 **The plan splits the deep page in two, and only one half is inherent.** Every arm's
 page query is `Limit -> Incremental Sort -> Index Scan Backward using <pkey>`, and the
 count is a parallel `Finalize Aggregate`. Read the actual times as INCLUSIVE of
-children: on `tasks_last_page` the index scan ends at 184 ms and the sort at 298 of a
-315 ms query, so the scan is 59% and the sort's own work 36%; on `runs_last_page`, 55%
-and 40%.
+children: on `tasks_last_page` the index scan ends at 166 ms and the sort at 287 of a
+303 ms query, so the scan is 55% and the sort's own work 40%; on `runs_last_page`, 53%
+and 42%.
 
-- The scan half is OFFSET walking — 999,900 rows read to hand back 100 — inherent to
-  page-number pagination.
+- The scan half is OFFSET walking. The last page walks the WHOLE table — 1,000,017 rows
+  sorted to hand back 100 — which is inherent to page-number pagination.
 - **The sort half is the `natural_key` tiebreaker**, and it is not inherent. Django
   appends the pk to every changelist ordering, the pk here is `'bench:' || id`, so
   `'bench:' || id DESC` sits in every `Sort Key` and is evaluated for every row walked.
-  31,247 full-sort groups is 999,900/32 — Postgres's 32-tuple batches over a presorted
-  key — 32-tuple batches, not one group per row. 34 kB of memory, and a third of the
-  page's time.
+  The full-sort groups are Postgres's 32-tuple batches over the presorted key, not one
+  group per row, at 34 kB of memory — and two fifths of the page's time.
 
 So ordering by the pk (https://github.com/lincolnloop/django-absurd/pull/273) did what
 it was for — `Index Scan Backward`, no full `Sort` of the table — and what it left
-behind is a third of the deep page spent on an expression nobody sorts by on purpose.
+behind is two fifths of the deep page spent on an expression nobody sorts by on purpose.
 
-**Not comparable to the older figures** in the retired harness (runs deep page ~3.2 s):
-those came off a disk-backed server, and levels do not travel between servers here. The
-shape does, and 8 queries a page is unchanged.
+**Not comparable to the retired harness's own admin figures**: those came off a
+disk-backed server, and levels do not travel between servers here. The shape does, and 8
+queries a page is unchanged.
 
 ## What one cleanup call costs
 
@@ -1201,6 +1202,26 @@ be marked invalid for under-offering. It calibrates from the fastest result at o
 rate: the drain rate of the rung it picks is only where the ramp starts climbing —
 [a drain rate is not an arrival rate](#a-drain-rate-is-not-an-arrival-rate).
 
+## The full sequence has not finished on this machine
+
+`results/full-20260910T120944Z` is the one attempt: ten stages in 112 minutes, then
+killed for memory partway through `parked_runs`' second arm, with three other container
+stacks resident on an 11.7 GB laptop. `worker_knobs` alone took 64 of those minutes —
+against the 50 that seven stages once took together, so the whole box was slower rather
+than one stage being expensive.
+
+Two things worth taking from it rather than from the wall clock. The stage files it did
+write render as one report, so the dependency ordering and every renderer hold across a
+mixed results directory. And `parked_runs`' control earned a `~` at 10.5% cv where it
+reads 3.8% alone, which is the marking doing its job on a machine under load rather than
+a finding about parked runs.
+
+It also found the seed-release gap: a stage that seeds leaves its rows in a RAM data
+directory for whatever runs next, until some later stage happens to truncate the queue.
+`cleanup_vs_size` and `admin_at_volume` now release theirs on the way out, including
+when they raise partway. That is hygiene the run made visible — not the cause of the
+kill, which was the box.
+
 ## Stage mechanics worth knowing
 
 **Worker counts scale with the host.** `build_worker_ladder` derives the
@@ -1428,7 +1449,8 @@ stage's heading.
 
 ## Which findings survive the durable regime
 
-Every figure here but `pooled_vs_split`'s durable arms measures nano-tasks
+Every figure here outside `pooled_vs_split`'s durable arms, `durable_checkpoints`,
+`batch_barrier` and `parked_runs` measures nano-tasks
 ([the durable workload](#the-durable-workload-and-the-backends-it-holds)). django-absurd
 is mostly used for durable agent tool calls — seconds to minutes per task, checkpointed,
 often suspended — so most of the above answers a question that workload does not ask. A
@@ -1470,7 +1492,7 @@ differently:
 
 | `loadtest/`     | here                                                                                                                             |
 | --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `load_seed`     | `seed.py` — templates, server-side clone, `information_schema` drift check; a million tasks in 15 s                              |
+| `load_seed`     | `seed.py` — templates, server-side clone, `information_schema` drift check                                                       |
 | `load_drain`    | `worker_knobs`, `process_scaling`, `pooled_vs_split`, `poll_interval`, `sync_vs_async`, `producer_ceiling`, `latency_under_load` |
 | `load_barrier`  | `batch_barrier` — uniform against mixed at equal service time, `idle_slot_s` off the run columns rather than an `OccupancyLog`   |
 | `load_sleepers` | `parked_runs` — `running_max`/`sleeping_min` sampled on the drain's own poll                                                     |
@@ -1490,8 +1512,8 @@ differently:
   used them — `load_seed` enqueued templates into each with `.using(queue_name=...)`,
   and the sleepers and barrier probes ran on their own `--queue`, refusing `bulk`. What
   it never did was COMPARE one queue with another: every probe ran on one at a time, and
-  multi-queue throughput was its named next cut, never built. So the topology is gone
-  and no measurement is, and a per-queue comparison stays unbuilt on both sides.
+  multi-queue throughput was never built there either. So the topology is gone and no
+  measurement is, and a per-queue comparison stays unbuilt on both sides.
 
 ## Comparing two runs: refactors, version bumps, bisection
 

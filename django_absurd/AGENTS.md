@@ -871,11 +871,12 @@ Per-queue policy, set where you [declare the queue](#declaring-queues):
 
 **Cleanup gets slower as the backlog grows, so run it before you need it.** Each run
 scans every terminal row to pick its batch, so most of the cost follows how much history
-the queue is holding rather than how much it deletes. Measured on a RAM-backed Postgres:
-one default-batch run took ~120 ms against 250,000 terminal tasks and ~580 ms against a
-million — 4-5x for 4x the rows — so a backlog left to build takes proportionally longer
-per row to clear. A daily schedule on a queue that stays pruned costs milliseconds; the
-same schedule meeting a year of history does not.
+the queue is holding rather than how much it deletes. **Four times the terminal rows
+cost four to five times the time per run** — measured on a RAM-backed test server, where
+the absolute milliseconds mean nothing for your disk but the multiple travels. A backlog
+left to build takes proportionally longer per row to clear. A daily schedule on a queue
+that stays pruned costs milliseconds; the same schedule meeting a year of history does
+not.
 
 ### Reset — drop every queue
 

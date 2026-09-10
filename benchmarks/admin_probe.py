@@ -53,10 +53,14 @@ def build_admin_probes(
 
     Asked rather than assumed: `ChangeList.get_results` ignores `?p=` unless the table
     paginates, so a fixed deep page on a short table renders page 1 and answers 200
-    while wearing a deep-page label. The paginator's own `num_pages` is true at every
-    size and at any `list_per_page` the admin is registered with.
+    while wearing a deep-page label. `num_pages` is true at any size and at any
+    `list_per_page` the admin is registered with.
+
+    `?p=` is ONE-based — `ChangeList` reads it defaulting to 1 and hands it to
+    `Paginator.page` — so the last page is `num_pages`, not `num_pages - 1`, which
+    asks for the one before it.
     """
-    last_page = max(0, read_page_count(client, entity) - 1)
+    last_page = max(1, read_page_count(client, entity))
     return [
         ("unfiltered", {}),
         ("queue", {"queue": queue}),
@@ -70,10 +74,9 @@ def measure_admin_arm(
 ) -> dict[str, t.Any]:
     """One arm: a discarded warm-up, a clean timed request, then a capture pass.
 
-    The warm-up is not optional. Without it the first arm to touch a page pays for
-    caches the later ones find warm — the deep page read 717 ms on its first request
-    against 380 on its next two, and a median over three reps buries that in the
-    dispersion rather than removing it. The retired harness discarded one too.
+    The warm-up is not optional: without it the first arm to touch a page pays for
+    caches the later ones find warm, which a median over three reps buries in the
+    dispersion rather than removing. `benchmarks/CLAUDE.md` has the figures.
     """
     url = reverse(f"admin:django_absurd_{entity}_changelist")
     client.get(url, query)

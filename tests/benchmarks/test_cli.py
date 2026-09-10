@@ -565,6 +565,13 @@ def test_measures_the_batch_barrier_against_a_uniform_control(
             entry["median"]["n_tasks"] == entry["spec"]["tasks"]
             for entry in recorded["measurements"]
         ],
+        # The stage's declared deliverable, asserted as RECORDED and finite rather
+        # than at a level: drop the key from the rep and the report renders 0.00
+        # idle slot-s without complaint, so nothing else here would notice.
+        "every_arm_recorded_idle_slots": [
+            isinstance(entry["median"].get("idle_slot_s"), float)
+            for entry in recorded["measurements"]
+        ],
         "run_order": recorded["run_order"],
     } == {
         "names": ["uniform", "mixed"],
@@ -572,6 +579,7 @@ def test_measures_the_batch_barrier_against_a_uniform_control(
         "equal_service_seconds": True,
         "mixed_carries_both_lengths": True,
         "every_arm_drained_its_backlog": [True, True],
+        "every_arm_recorded_idle_slots": [True, True],
         "run_order": ["uniform", "mixed", "mixed", "uniform"],
     }
 
