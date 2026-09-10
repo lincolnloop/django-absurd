@@ -9,7 +9,7 @@ dev = [
 dependencies = [
   "dj-database-url==3.1.2",
   "django-absurd",
-  "django==6.1",
+  "django==6.1.1",
   "nanodjango==0.16.3",
   "psycopg[binary]==3.3.5",
 ]
