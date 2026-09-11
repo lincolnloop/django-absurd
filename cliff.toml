@@ -73,6 +73,9 @@ commit_parsers = [
   # as the ci type skip further down. Checking scope only after `^fix`/`^feat` had
   # already claimed the commit first.
   {field = "scope", pattern = "^ci$", skip = true},
+  # Same shape for bench: benchmarks/ is a dev harness, absent from the wheel, so a
+  # fix there is invisible to users no matter which type carries it.
+  {field = "scope", pattern = "^bench$", skip = true},
   {message = "^feat", group = "0 -- Features"},
   {message = "^fix", group = "1 -- Bug fixes"},
   # Its own section: folding a revert into Bug fixes would misreport what happened.

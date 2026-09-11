@@ -81,6 +81,27 @@ That's the whole loop. The task runs on the [worker](workers.md) and its result 
 stored in Postgres — [fetch it later](tasks.md#read-the-result) with
 `add.get_result(result.id)`.
 
+Wrap work in [steps](workflows.md#steps) and a [retry](tasks.md#retries-spawn-options)
+resumes instead of redoing:
+
+```python
+from django_absurd import get_absurd_context
+
+
+@task
+def pay_for_order(order_id: int, amount: int) -> None:
+    # Absurd's workflow context — steps, sleep, events.
+    context = get_absurd_context()
+
+    def process_payment():
+        return stripe.charges.create(amount=amount)
+
+    # Checkpointed under "process-payment": Absurd stores the result.
+    charge = context.step("process-payment", process_payment)
+    # If this raises, the retry replays the task but reuses the charge above.
+    context.step("send-receipt", lambda: send_receipt(order_id, charge))
+```
+
 ## Next
 
 - **[Tasks](tasks.md)** — enqueue with retries and other options, and read results.
