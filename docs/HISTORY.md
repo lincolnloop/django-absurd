@@ -112,6 +112,18 @@ commit where it last lived — recoverable from git any time.
 - 2026-08-10 — git-cliff-changelog: generate `CHANGELOG.md` from commit subjects —
   section set, dropping every Renovate commit, the one-time backfill, prepend-only →
   [view @b33abe6](https://github.com/lincolnloop/django-absurd/blob/b33abe6ee44454adaa27225cad2310a5fc72a988/docs/specs/2026-08-10-git-cliff-changelog-design.md)
+- 2026-09-01 — benchmarks-harness-rework: rebuild the load harness as a standalone
+  project with dependency-ordered stages, deleting every claim it could not support
+  rather than softening it →
+  [view @1a5a2b8](https://github.com/lincolnloop/django-absurd/blob/1a5a2b83216ec87de9c3be3c59b07fdd07cdacc8/docs/specs/2026-09-01-benchmarks-harness-rework.md)
+- 2026-09-03 — truthful-harness-and-admin-at-volume: make every published figure
+  traceable to one run, and measure the admin changelists against a seeded million rows
+  →
+  [view @1a5a2b8](https://github.com/lincolnloop/django-absurd/blob/1a5a2b83216ec87de9c3be3c59b07fdd07cdacc8/docs/specs/2026-09-03-truthful-harness-and-admin-at-volume.md)
+- 2026-09-09 — benchmarks-supersede-loadtest: close the last coverage gaps against the
+  retired `loadtest/` harness — the batch barrier, parked runs, and the admin at volume
+  →
+  [view @1a5a2b8](https://github.com/lincolnloop/django-absurd/blob/1a5a2b83216ec87de9c3be3c59b07fdd07cdacc8/docs/specs/2026-09-09-benchmarks-supersede-loadtest.md)
 
 ## Plans
 
@@ -238,6 +250,13 @@ commit where it last lived — recoverable from git any time.
   declaration door and delete the handling rather than carry it, and the reasoning that
   no cheap correct fix existed for the lapsed-window wedge) →
   [view @6c1b4f2](https://github.com/lincolnloop/django-absurd/blob/6c1b4f29233f5ab40e023d6cd279dd3b2586cde8/docs/plans/2026-08-18-refuse-partitioned-queues.md)
+- 2026-09-01 — benchmarks-harness-rework implementation plan →
+  [view @1a5a2b8](https://github.com/lincolnloop/django-absurd/blob/1a5a2b83216ec87de9c3be3c59b07fdd07cdacc8/docs/plans/2026-09-01-benchmarks-harness-rework.md)
+- 2026-09-03 — truthful-harness-and-admin-at-volume implementation plan →
+  [view @1a5a2b8](https://github.com/lincolnloop/django-absurd/blob/1a5a2b83216ec87de9c3be3c59b07fdd07cdacc8/docs/plans/2026-09-03-truthful-harness-and-admin-at-volume.md)
+- 2026-09-09 — benchmarks-supersede-loadtest implementation plan (its Departures section
+  records the seven places the built code won over the approved tasks, and why) →
+  [view @1a5a2b8](https://github.com/lincolnloop/django-absurd/blob/1a5a2b83216ec87de9c3be3c59b07fdd07cdacc8/docs/plans/2026-09-09-benchmarks-supersede-loadtest.md)
 
 ## Archived branches
 
