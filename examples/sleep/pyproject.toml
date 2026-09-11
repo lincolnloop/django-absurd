@@ -1,0 +1,31 @@
+[dependency-groups]
+dev = [
+  "pytest-cov==7.1.0",
+  "pytest-django==4.14.0",
+  "pytest==9.1.1",
+  # Freezing durable time is opt-in: django-absurd never bundles it.
+  "time-machine==3.4.0",
+]
+
+[project]
+dependencies = [
+  "dj-database-url==3.1.2",
+  "django-absurd",
+  "django==6.1",
+  "nanodjango==0.16.3",
+  "psycopg[binary]==3.3.4",
+]
+name = "django-absurd-example-sleep"
+requires-python = "==3.14.*"
+version = "0"
+
+[tool.coverage]
+
+[tool.coverage.run]
+branch = true
+source = ["app", "tests"]
+
+# django-absurd from the local checkout (repo root), so the demo exercises THIS
+# branch's code — not a released version.
+[tool.uv.sources]
+django-absurd = {path = "../..", editable = true}

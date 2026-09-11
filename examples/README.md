@@ -1,6 +1,6 @@
 # django-absurd examples
 
-Three small, self-contained [nanodjango](https://github.com/radiac/nanodjango) demos —
+Four small, self-contained [nanodjango](https://github.com/radiac/nanodjango) demos —
 each in its own directory with its own `docker compose`. Run **one at a time** (they all
 serve on http://localhost:8000; admin login `admin` / `admin`).
 
@@ -10,12 +10,15 @@ serve on http://localhost:8000; admin login `admin` / `admin`).
   checkpoints each step and suspends on `await_event` until a "mark packed" button
   (calling the top-level `emit_event`) wakes it, with a link into the task's admin page
   to watch its checkpoints and suspended wait.
+- **[`sleep/`](sleep/)** — **durable sleep** (`context.sleep_for`): a checkpointed
+  onboarding-email sequence that suspends for real between messages, resuming on
+  schedule even if the worker restarts mid-sleep.
 - **[`beat/`](beat/)** — the in-process **beat** scheduler firing a task every minute.
 - **[`pg_cron/`](pg_cron/)** — the **pg_cron** scheduler firing a task directly from
   Postgres (no beat process).
 
 ```bash
-cd web        # or: cd beat / cd pg_cron
+cd web        # or: cd sleep / cd beat / cd pg_cron
 docker compose up
 # open http://localhost:8000/  (admin at /admin/, login admin / admin)
 ```
