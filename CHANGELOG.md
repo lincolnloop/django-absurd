@@ -3,6 +3,25 @@ Never `git cliff -o`: it discards every hand edit, and no regeneration can repro
 
 # Changelog
 
+## [1.0.1](https://github.com/lincolnloop/django-absurd/compare/v1.0.0...v1.0.1) - 2026-09-11
+
+A performance fix for the admin at volume. No API changes; upgrading from `1.0.0` needs
+nothing on your side.
+
+### Bug fixes
+
+- Order admin changelists by id
+  ([#273](https://github.com/lincolnloop/django-absurd/pull/273)) — the task and run
+  changelists sorted on `first_started_at` / `started_at`, which no index covers: at a
+  million tasks that plans a sequential scan plus an external merge sort. They now sort
+  on `task_id` / `run_id`, which are uuidv7, so newest-first is unchanged. Measured at
+  1M tasks / 1.17M runs: first page 0.252s → 0.034s, last page 1.591s → 0.461s.
+
+### Documentation
+
+- Show a durable step in both quickstarts
+  ([#294](https://github.com/lincolnloop/django-absurd/pull/294))
+
 ## [1.0.0](https://github.com/lincolnloop/django-absurd/compare/v1.0.0b1...v1.0.0) - 2026-08-24
 
 **First stable release**, timed to coincide with DjangoConUS 2026.
