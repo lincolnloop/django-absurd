@@ -379,6 +379,14 @@ would require two workers (one sync, one async) with the tasks routed between th
 deliberate operational cost we declined. One async worker plus a contained bridge keeps
 deployment to a single process; the bridge is an internal detail users never see.
 
+A durable sleep gives up both the claim and the worker slot, which is measured rather
+than assumed: parked tasks show as sleeping and never as running, and a batch draining
+beside sixteen of them on a four-slot worker finishes at the rate it reaches with none
+parked. That is what makes parking a large number of tasks viable instead of a way to
+starve a fleet — and it is why a sync body's sleep is worth bridging back to the loop at
+all, since a thread held for the duration would cost exactly the slot the design gives
+back.
+
 Steps are **effectively-once, not exactly-once**: a step's checkpoint is persisted
 _after_ its function returns, on a connection that can never be atomic with the task's
 own writes, so a crash between the side effect and the checkpoint re-runs that step.
@@ -669,6 +677,16 @@ object, because that return value becomes a task result and task results are sto
 JSON — a dataclass or named tuple would serialise as an unlabelled array or not at all,
 losing the field names that make the stored result worth keeping.
 
+Cleanup picks its batch by scanning every terminal row and taking the oldest few, and
+nothing indexes the timestamp it orders on — that timestamp is a `case` over three
+columns reached through a join, not a stored value. So a run's cost tracks how much
+history the queue holds rather than how much it deletes, and it grows faster than the
+table does. That is measured and deliberately acted on in neither direction: not
+documented for users, not asked of upstream. A run is sub-second even against a million
+terminal rows, and a schedule fires one run at a time, so the curve never reaches a
+magnitude anyone would decide differently about. Someone re-deriving it later should
+stop at the same place.
+
 Cleanup deliberately does not turn a missing schema into a friendly "run migrate" error
 the way the configuration paths do: it is a maintenance operation, so the raw database
 error is allowed to surface rather than adding a guard that implies the call was safe.
@@ -731,7 +749,12 @@ admin page view and gets worse as history accumulates. What it costs the reader 
 stated in the admin docs: a deferred task is created well before it runs, so
 newest-created is not newest-started. Indexing the timestamps instead would be the other
 trade — an index per queue per column, written on every state change, to order pages
-nobody has asked to sort that way.
+nobody has asked to sort that way. The appended tiebreaker is not free, though: on a
+million-row table the last page splits roughly half into walking the index to the offset
+and two fifths into evaluating that synthesized expression for every row walked. Both
+halves only bite on deep pages, and the first half is inherent to page-number pagination
+— so if deep pages ever matter, getting the expression out of the sort is the lever, not
+the index.
 
 ## Routing & multiple databases
 
@@ -887,6 +910,23 @@ tempting exception is a maintenance command whose no-op is harmless — but a mi
 backend is a misconfiguration rather than an intended no-op, and the quiet version means
 a settings regression passes a release gate and stops recurring maintenance without ever
 failing.
+
+## What our own measurements are worth
+
+The repository carries a benchmark harness, and its numbers are evidence for maintainer
+decisions, not properties of the package. It runs on one laptop against a RAM-backed
+database, so an absolute rate is a fact about that machine: quoting milliseconds in
+user-facing documentation states as a promise something no user's disk will reproduce.
+Ratios survive the move between machines and absolutes do not, which is the whole of the
+publication rule — a multiple may reach users, a duration may not.
+
+The harness earns its keep as a regression detector rather than as a source of figures.
+A claim-loop defect that once delivered roughly one task per worker whatever the
+configured concurrency was found by a control arm, fixed, and is now re-checkable on
+demand; the value is that the same control can say whether it ever comes back. Which is
+also why an unsupported claim gets deleted rather than softened: a number nobody can
+re-derive is worse than a gap, because a gap invites the measurement and a hedge does
+not.
 
 ## Release notes are generated from commit titles
 
