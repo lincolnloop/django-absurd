@@ -30,8 +30,8 @@ dev = [
 
 [project]
 authors = [
-  {name = "Marc Gibbons", email = "marc@lincolnloop.com"},
-  {name = "Lincoln Loop", email = "info@lincolnloop.com"},
+  { name = "Marc Gibbons", email = "marc@lincolnloop.com" },
+  { name = "Lincoln Loop", email = "info@lincolnloop.com" },
 ]
 classifiers = [
   "Development Status :: 4 - Beta",
