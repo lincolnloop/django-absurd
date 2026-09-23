@@ -37,8 +37,14 @@ repos:
     rev: v2.16.0
     hooks:
       - id: pretty-format-toml
+        # The hook repo floors toml-sort at >=0.22.0, so an unpinned env resolves to
+        # whatever is newest when it is built — 0.25.0 changed inline-table spacing.
+        additional_dependencies: [toml-sort==0.25.0]
         args: [--autofix, --trailing-commas]
         files: \.toml
+        # Renovate only reads additional_dependencies when the hook declares its
+        # language explicitly; this restates the value the hook repo already sets.
+        language: python
         types: [toml]
 
   - repo: https://github.com/ninoseki/uv-sort

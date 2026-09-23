@@ -72,33 +72,33 @@ commit_parsers = [
   # (fix(ci): ..., feat(ci): ...) and must be skipped regardless of that type, same
   # as the ci type skip further down. Checking scope only after `^fix`/`^feat` had
   # already claimed the commit first.
-  {field = "scope", pattern = "^ci$", skip = true},
+  { field = "scope", pattern = "^ci$", skip = true },
   # Same shape for bench: benchmarks/ is a dev harness, absent from the wheel, so a
   # fix there is invisible to users no matter which type carries it.
-  {field = "scope", pattern = "^bench$", skip = true},
-  {message = "^feat", group = "0 -- Features"},
-  {message = "^fix", group = "1 -- Bug fixes"},
+  { field = "scope", pattern = "^bench$", skip = true },
+  { message = "^feat", group = "0 -- Features" },
+  { message = "^fix", group = "1 -- Bug fixes" },
   # Its own section: folding a revert into Bug fixes would misreport what happened.
   # `revert` is in the pr-title workflow's default allowed types, so without this it
   # would be dropped silently — a release that takes a shipped feature back away
   # would say nothing about it.
-  {message = "^revert", group = "2 -- Reverts"},
-  {message = "^perf", group = "3 -- Performance"},
-  {message = "^docs", group = "4 -- Documentation"},
-  {message = "^build", group = "5 -- Requirements"},
+  { message = "^revert", group = "2 -- Reverts" },
+  { message = "^perf", group = "3 -- Performance" },
+  { message = "^docs", group = "4 -- Documentation" },
+  { message = "^build", group = "5 -- Requirements" },
   # chore covers every Renovate commit: renovate.json pins semanticCommitType to
   # chore, and rangeStrategy=update-lockfile means it never moves a runtime floor.
   # A user-visible dependency change is authored by hand as build:.
-  {message = "^chore", skip = true},
-  {message = "^ci", skip = true},
-  {message = "^test", skip = true},
-  {message = "^style", skip = true},
-  {message = "^refactor", skip = true},
+  { message = "^chore", skip = true },
+  { message = "^ci", skip = true },
+  { message = "^test", skip = true },
+  { message = "^style", skip = true },
+  { message = "^refactor", skip = true },
 ]
 # Squash-merge subjects already end in "(#N)". Turn that number into the PR link
 # instead of rendering it a second time.
 commit_preprocessors = [
-  {pattern = '\(#(\d+)\)', replace = "([#${1}](https://github.com/lincolnloop/django-absurd/pull/${1}))"},
+  { pattern = '\(#(\d+)\)', replace = "([#${1}](https://github.com/lincolnloop/django-absurd/pull/${1}))" },
 ]
 conventional_commits = true
 filter_commits = true
