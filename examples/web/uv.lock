@@ -172,7 +172,7 @@ dev = [
     { name = "build", specifier = "==1.6.0" },
     { name = "dj-database-url", specifier = "==3.1.2" },
     { name = "django-coverage-plugin", specifier = "==3.2.2" },
-    { name = "django-stubs", specifier = "==6.1.0" },
+    { name = "django-stubs", specifier = "==6.1.1" },
     { name = "git-cliff", specifier = "==2.13.1" },
     { name = "hatch-vcs", specifier = "==0.5.0" },
     { name = "hatchling", specifier = "==1.32.0" },
