@@ -55,14 +55,14 @@ jobs:
         run: uvx --with tox-uv tox -e "${{ matrix.env }}"
       - name: Upload coverage to Codecov
         if: ${{ (success() || failure()) && !contains(matrix.env, 'mypy') }}
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           flags: ${{ matrix.env }}
           fail_ci_if_error: true
       - name: Upload test results to Codecov
         if: ${{ (success() || failure()) && !contains(matrix.env, 'mypy') }}
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           report_type: test_results
@@ -100,7 +100,7 @@ jobs:
             coverage.xml
       - name: Upload coverage to Codecov
         if: ${{ success() || failure() }}
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           flags: examples-${{ matrix.example }}
@@ -108,7 +108,7 @@ jobs:
           files: examples/${{ matrix.example }}/coverage.xml
       - name: Upload test results to Codecov
         if: ${{ success() || failure() }}
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           report_type: test_results
