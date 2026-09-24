@@ -1,25 +1,57 @@
 ---
+# Hook repos pin their rev but only floor their dependencies, so each env resolves
+# to whatever is newest when it is built — CI and a stale local cache then differ.
+# Renovate only reads additional_dependencies when the hook declares its language.
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
       - id: check-yaml
+        additional_dependencies: [ruamel.yaml==0.19.1]
+        language: python
       - id: end-of-file-fixer
+        additional_dependencies: [ruamel.yaml==0.19.1]
+        language: python
       - id: mixed-line-ending
+        additional_dependencies: [ruamel.yaml==0.19.1]
+        language: python
       - id: trailing-whitespace
+        additional_dependencies: [ruamel.yaml==0.19.1]
+        language: python
       - id: file-contents-sorter
+        additional_dependencies: [ruamel.yaml==0.19.1]
+        language: python
         files: (.dockerignore|.gitignore)
 
   - repo: https://github.com/adrienverge/yamllint.git
     rev: v1.38.0
     hooks:
       - id: yamllint
+        additional_dependencies:
+          - pathspec==1.1.1
+          - PyYAML==6.0.3
         args: [--strict]
+        language: python
 
   - repo: https://github.com/python-jsonschema/check-jsonschema
     rev: 0.38.0
     hooks:
       - id: check-github-workflows
+        additional_dependencies:
+          - attrs==26.1.0
+          - certifi==2026.7.22
+          - charset-normalizer==3.5.1
+          - click==8.4.2
+          - idna==3.18
+          - jsonschema-specifications==2025.9.1
+          - jsonschema==4.26.0
+          - referencing==0.37.0
+          - regress==2025.10.1
+          - requests==2.34.2
+          - rpds-py==2026.6.3
+          - ruamel.yaml==0.19.1
+          - urllib3==2.7.0
+        language: python
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.16.8
@@ -37,13 +69,20 @@ repos:
     rev: v2.16.0
     hooks:
       - id: pretty-format-toml
-        # The hook repo floors toml-sort at >=0.22.0, so an unpinned env resolves to
-        # whatever is newest when it is built — 0.25.0 changed inline-table spacing.
-        additional_dependencies: [toml-sort==0.25.0]
+        additional_dependencies:
+          - certifi==2026.7.22
+          - charset-normalizer==3.5.1
+          - config-formatter==1.2.0
+          - ConfigUpdater==3.2
+          - idna==3.20
+          - packaging==26.3
+          - requests==2.34.2
+          - ruamel.yaml==0.19.1
+          - toml-sort==0.25.0
+          - tomlrt==2.2.13
+          - urllib3==2.8.0
         args: [--autofix, --trailing-commas]
         files: \.toml
-        # Renovate only reads additional_dependencies when the hook declares its
-        # language explicitly; this restates the value the hook repo already sets.
         language: python
         types: [toml]
 
@@ -51,6 +90,16 @@ repos:
     rev: v0.8.0
     hooks:
       - id: uv-sort
+        additional_dependencies:
+          - annotated-doc==0.0.5
+          - markdown-it-py==4.2.0
+          - mdurl==0.1.2
+          - Pygments==2.21.0
+          - rich==15.0.0
+          - shellingham==1.5.4
+          - tomlrt==2.2.7
+          - typer==0.27.2
+        language: python
 
   - repo: https://github.com/rbubley/mirrors-prettier
     rev: v3.9.7
