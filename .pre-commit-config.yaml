@@ -46,7 +46,7 @@ repos:
           - jsonschema-specifications==2025.9.1
           - jsonschema==4.26.0
           - referencing==0.37.0
-          - regress==2025.10.1
+          - regress==2026.9.1
           - requests==2.34.2
           - rpds-py==2026.6.3
           - ruamel.yaml==0.19.1
