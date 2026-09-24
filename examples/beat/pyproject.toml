@@ -26,4 +26,4 @@ source = ["app", "tests"]
 # django-absurd from the local checkout (repo root), so the demo exercises THIS
 # branch's code — not a released version.
 [tool.uv.sources]
-django-absurd = {path = "../..", editable = true}
+django-absurd = { path = "../..", editable = true }
