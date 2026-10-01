@@ -173,11 +173,11 @@ dev = [
     { name = "dj-database-url", specifier = "==3.1.2" },
     { name = "django-coverage-plugin", specifier = "==3.2.2" },
     { name = "django-stubs", specifier = "==6.1.1" },
-    { name = "git-cliff", specifier = "==2.13.1" },
+    { name = "git-cliff", specifier = "==2.14.2" },
     { name = "hatch-vcs", specifier = "==0.5.0" },
     { name = "hatchling", specifier = "==1.32.4" },
     { name = "mypy", specifier = "==2.3.1" },
-    { name = "psycopg", extras = ["binary"], specifier = "==3.3.5" },
+    { name = "psycopg", extras = ["binary"], specifier = "==3.3.6" },
     { name = "pytest", specifier = "==9.1.1" },
     { name = "pytest-asyncio", specifier = "==1.4.0" },
     { name = "pytest-cov", specifier = "==7.1.0" },
@@ -188,7 +188,7 @@ dev = [
     { name = "ruff", specifier = "==0.16.8" },
     { name = "time-machine", specifier = "==3.5.1" },
     { name = "types-croniter", specifier = "==6.2.4.20260711" },
-    { name = "zensical", specifier = "==0.0.62" },
+    { name = "zensical", specifier = "==0.0.64" },
 ]
 
 [[package]]
