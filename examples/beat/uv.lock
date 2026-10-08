@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = "==3.14.*"
 
 [[package]]
@@ -215,7 +215,7 @@ requires-dist = [
     { name = "dj-database-url", specifier = "==3.1.2" },
     { name = "django", specifier = "==6.1.1" },
     { name = "django-absurd", editable = "../../" },
-    { name = "nanodjango", specifier = "==0.16.3" },
+    { name = "nanodjango", specifier = "==0.16.4" },
     { name = "psycopg", extras = ["binary"], specifier = "==3.3.6" },
 ]
 
@@ -298,7 +298,7 @@ wheels = [
 
 [[package]]
 name = "nanodjango"
-version = "0.16.3"
+version = "0.16.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "black" },
@@ -311,9 +311,9 @@ dependencies = [
     { name = "uvicorn" },
     { name = "whitenoise" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/aa/8b/24c00294a58c0f90c766984d12402bab227fcb784904acfbca9e0fbbd1dd/nanodjango-0.16.3.tar.gz", hash = "sha256:f129d8d3c87aecb35218b82bf073796f0b50a8d824b3b814e48f7ff4c8797303", size = 62528, upload-time = "2026-05-03T00:16:58.599Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/eb/b4/6d66ad4c96d7ff7bda8a4e57da811fef679c1c10dc1f7673654535d61848/nanodjango-0.16.4.tar.gz", hash = "sha256:1ce5365c090799bbec6723b4efe91efd0ef1033a6c654b6af67d0e044ece2adb", size = 62678, upload-time = "2026-09-24T07:41:10.207Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ff/3d/7537b4dd842898e6d345036a063a582b91251dcbe6b89b725da81033abf6/nanodjango-0.16.3-py3-none-any.whl", hash = "sha256:dae5070a96b7acb20c7c1226e25dcfc1b0bb881dbd8922d60a07b8533c947fff", size = 56464, upload-time = "2026-05-03T00:16:57.089Z" },
+    { url = "https://files.pythonhosted.org/packages/51/b1/0cb4f124eee581f49e55b6f779aab097c4852ba408fc9607f6190289c129/nanodjango-0.16.4-py3-none-any.whl", hash = "sha256:a66eea211bb33986dc2b5b23741898c2875eccdef1831173dabc52219d79e104", size = 56577, upload-time = "2026-09-24T07:41:08.517Z" },
 ]
 
 [[package]]
