@@ -40,7 +40,7 @@ repos:
         additional_dependencies:
           - attrs==26.1.0
           - certifi==2026.7.22
-          - charset-normalizer==3.5.1
+          - charset-normalizer==3.5.2
           - click==8.5.0
           - idna==3.20
           - jsonschema-specifications==2025.9.1
@@ -54,7 +54,7 @@ repos:
         language: python
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.8
+    rev: v0.16.9
     hooks:
       - id: ruff-check
         args: [--fix]
@@ -71,7 +71,7 @@ repos:
       - id: pretty-format-toml
         additional_dependencies:
           - certifi==2026.7.22
-          - charset-normalizer==3.5.1
+          - charset-normalizer==3.5.2
           - config-formatter==1.2.0
           - ConfigUpdater==3.2
           - idna==3.20
@@ -79,7 +79,7 @@ repos:
           - requests==2.34.2
           - ruamel.yaml==0.19.1
           - toml-sort==0.25.0
-          - tomlrt==2.2.13
+          - tomlrt==2.2.14
           - urllib3==2.8.0
         args: [--autofix, --trailing-commas]
         files: \.toml
@@ -97,7 +97,7 @@ repos:
           - Pygments==2.21.0
           - rich==15.0.0
           - shellingham==1.5.4
-          - tomlrt==2.2.13
+          - tomlrt==2.2.14
           - typer==0.27.2
         language: python
 
@@ -120,7 +120,7 @@ repos:
         types: [python]
 
   - repo: https://github.com/renovatebot/pre-commit-hooks
-    rev: 44.111.4
+    rev: 44.126.0
     hooks:
       - id: renovate-config-validator
         args: [--strict]
