@@ -8,9 +8,10 @@ database connection and shipping Absurd's schema as Django migrations.
 Ships inside the installed package (`site-packages/django_absurd/AGENTS.md`), complete
 on its own. Same material with navigation:
 <https://lincolnloop.github.io/django-absurd/>. Runnable demos:
-[`examples/`](https://github.com/lincolnloop/django-absurd/tree/main/examples) — three
+[`examples/`](https://github.com/lincolnloop/django-absurd/tree/main/examples) — four
 single-file [nanodjango](https://github.com/radiac/nanodjango) projects, each
-`docker compose up`: `web` (enqueue + result), `beat`, `pg_cron`.
+`docker compose up`: `web` (enqueue + result), `sleep` (durable sleep), `beat`,
+`pg_cron`.
 
 ## What's here
 
