@@ -39,7 +39,7 @@ repos:
       - id: check-github-workflows
         additional_dependencies:
           - attrs==26.1.0
-          - certifi==2026.7.22
+          - certifi==2026.10.19
           - charset-normalizer==3.5.2
           - click==8.5.0
           - idna==3.20
@@ -70,7 +70,7 @@ repos:
     hooks:
       - id: pretty-format-toml
         additional_dependencies:
-          - certifi==2026.7.22
+          - certifi==2026.10.19
           - charset-normalizer==3.5.2
           - config-formatter==1.2.0
           - ConfigUpdater==3.2
