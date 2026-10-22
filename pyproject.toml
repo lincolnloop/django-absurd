@@ -4,7 +4,7 @@ requires = ["hatch-vcs==0.5.0", "hatchling==1.32.4"]
 
 [dependency-groups]
 dev = [
-  "absurdctl==0.5.0",
+  "absurdctl==0.5.1",
   "beautifulsoup4==4.15.0",
   "build==1.6.1",
   "dj-database-url==3.1.2",
@@ -22,10 +22,10 @@ dev = [
   "pytest-timeout==2.4.0",
   "pytest-xdist==3.8.0",
   "pytest==9.1.1",
-  "ruff==0.16.10",
+  "ruff==0.17.0",
   "time-machine==3.5.1",
   "types-croniter==6.2.4.20261006",
-  "zensical==0.0.68",
+  "zensical==0.0.70",
 ]
 
 [project]
