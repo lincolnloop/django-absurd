@@ -16,14 +16,14 @@ absurdctl = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
 
 [[package]]
 name = "absurd-sdk"
-version = "0.5.0"
+version = "0.5.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "psycopg", extra = ["binary"] },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/18/6a/2d4199ddc3d846ba13c51aa9c8614b9ee42a5af5144ef456ef11f4f6aa20/absurd_sdk-0.5.0.tar.gz", hash = "sha256:b22fbe8d10f649d0ed427ba16d885a4a452e4240f412591e7f087fe8584a6f00", size = 14973, upload-time = "2026-08-04T13:06:40.682Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c0/4e/80cf58d062ecdf75cd3db5a4834dd570655152be75ce2ba8cd42e8ca5669/absurd_sdk-0.5.1.tar.gz", hash = "sha256:11d11024f1873fd8151bdd2e0332c7c223f348d89afcb4268fdf0bb8556509a3", size = 15356, upload-time = "2026-10-20T11:06:41.88Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3b/12/0d1c4e23dc00069a4666fc25c165514657fc62eb723a7bee3ce22ef416ae/absurd_sdk-0.5.0-py3-none-any.whl", hash = "sha256:a21465deaf159ba29ab4d15d87f429ae5dcf6f0e3098bce11ae9bc3e267fd03a", size = 15407, upload-time = "2026-08-04T13:06:39.406Z" },
+    { url = "https://files.pythonhosted.org/packages/e9/73/7b4606f5a2a91592c3d8625d7125179c4254281660ade4c1aa3cd515af14/absurd_sdk-0.5.1-py3-none-any.whl", hash = "sha256:1a267be101e834b7c801439ed1aa23d1c17065b99c683951672cf10a1e96764d", size = 15399, upload-time = "2026-10-20T11:06:40.523Z" },
 ]
 
 [[package]]
