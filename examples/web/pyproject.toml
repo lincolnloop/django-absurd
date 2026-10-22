@@ -16,7 +16,7 @@ dependencies = [
   "psycopg[binary]==3.3.6",
 ]
 name = "django-absurd-example-web"
-requires-python = "==3.14.*"
+requires-python = "==3.15.*"
 version = "0"
 
 [tool.coverage]
