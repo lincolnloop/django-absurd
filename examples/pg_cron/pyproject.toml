@@ -14,7 +14,7 @@ dependencies = [
   "psycopg[binary]==3.3.6",
 ]
 name = "django-absurd-example-pg-cron"
-requires-python = "==3.15.*"
+requires-python = "==3.14.*"
 version = "0"
 
 [tool.coverage]
