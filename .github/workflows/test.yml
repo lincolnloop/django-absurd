@@ -26,6 +26,7 @@ jobs:
           - py312-django60
           - py312-django61
           - py314-django61
+          - py315-django61
           - dev
           - bench_harness
           - py312-django61-mypy
