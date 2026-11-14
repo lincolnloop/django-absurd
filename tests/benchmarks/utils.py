@@ -20,6 +20,7 @@ from django.tasks import task
 import analysis
 from django_absurd import absurd_params
 from django_absurd.queues import resolve_absurd_database
+from django_absurd.test import open_test_connection
 
 NAP_SECONDS = 30.0
 NAP_INTERVAL_S = 0.02
@@ -64,6 +65,25 @@ def hold_the_commit_probe_table() -> t.Iterator[None]:
     finally:
         with connections[resolve_absurd_database()].cursor() as cursor:
             cursor.execute(f"drop table {analysis.COMMIT_PROBE_TABLE}")
+
+
+@contextlib.contextmanager
+def stall_the_commit_probe() -> t.Iterator[None]:
+    """Make the commit-ceiling probe wait on the server until something interrupts it.
+
+    A `create table` of the same name, left uncommitted on a session of its own, parks
+    the probe's own `create table` on that transaction. Without it the probe races the
+    alarm, and on a disk that commits fast enough it finishes first. Committed, never
+    rolled back, on the way out: a rollback would let the parked statement go on and
+    create the table after the test's cleanup already ran.
+    """
+    with open_test_connection(resolve_absurd_database()) as cursor:
+        cursor.execute("begin")
+        cursor.execute(f"create table {analysis.COMMIT_PROBE_TABLE} (n int)")
+        try:
+            yield
+        finally:
+            cursor.execute("commit")
 
 
 @contextlib.contextmanager
