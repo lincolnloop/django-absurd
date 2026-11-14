@@ -73,7 +73,7 @@ repos:
           - certifi==2026.10.23
           - charset-normalizer==3.5.2
           - config-formatter==1.2.0
-          - ConfigUpdater==3.2
+          - ConfigUpdater==4.1.1
           - idna==3.20
           - packaging==26.3
           - requests==2.34.2
