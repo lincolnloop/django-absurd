@@ -273,18 +273,16 @@ def fetch_task_and_run(
     # Only the task read above translates a missing relation: past it the queue's
     # schema demonstrably exists, so a ProgrammingError here is a broken database, not
     # an absent task, and must not be relabelled as one.
-    run: RunModel | None = None
-    if task.last_attempt_run is not None:
-        with transaction.atomic(using=database, savepoint=True):
-            run = (
-                run_model.objects.using(database)
-                .filter(pk=task.last_attempt_run)
-                # An indefinite await_event can leave available_at as Postgres's
-                # 'infinity' sentinel, which psycopg can't decode — defer it since
-                # build_task_result() below never reads it.
-                .defer("available_at")
-                .first()
-            )
+    with transaction.atomic(using=database, savepoint=True):
+        run: RunModel | None = (
+            run_model.objects.using(database)
+            .filter(pk=task.last_attempt_run)
+            # An indefinite await_event can leave available_at as Postgres's
+            # 'infinity' sentinel, which psycopg can't decode — defer it since
+            # build_task_result() below never reads it.
+            .defer("available_at")
+            .first()
+        )
     with transaction.atomic(using=database, savepoint=True):
         worker_ids = list(
             run_model.objects.using(database)

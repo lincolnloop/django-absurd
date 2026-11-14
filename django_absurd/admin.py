@@ -14,6 +14,8 @@ if t.TYPE_CHECKING:
     from django.db.models import Model, QuerySet
     from django.http import HttpRequest, HttpResponse
 
+    from django_absurd.backends import AbsurdBackend
+
 from django_absurd.admin_views import (
     ADMIN_ENTITY_SPECS,
     EntitySpec,
@@ -157,8 +159,6 @@ def view_exists(view_name: str, using: str) -> bool:
 
 def find_unindexed_queues(using: str) -> list[str]:
     catalog = set(fetch_catalog_queues(using))
-    if not catalog:
-        return []
     with connections[using].cursor() as cur:
         cur.execute(
             "SELECT cl.relname "
@@ -173,13 +173,8 @@ def find_unindexed_queues(using: str) -> list[str]:
     return sorted(catalog - arms)
 
 
-def resolve_admin_sites() -> list[AdminSite]:
-    backend = get_absurd_backend()
-    if backend is not None:
-        paths = backend.options.get("ADMIN_SITE", ("django.contrib.admin.site",))
-    else:
-        paths = ("django.contrib.admin.site",)
-
+def resolve_admin_sites(backend: "AbsurdBackend") -> list[AdminSite]:
+    paths = backend.options.get("ADMIN_SITE", ("django.contrib.admin.site",))
     sites: list[AdminSite] = []
     for path in paths:
         try:
@@ -453,7 +448,7 @@ def autoregister_admin() -> None:
         return
     if not backend.options.get("ENABLE_ADMIN", True):
         return
-    register_absurd_admin(resolve_admin_sites())
+    register_absurd_admin(resolve_admin_sites(backend))
 
 
 with contextlib.suppress(Exception):
