@@ -50,6 +50,10 @@ jobs:
       - name: Self-hosted Renovate
         # yamllint disable-line rule:line-length
         uses: renovatebot/github-action@230ce922b08968d0a4f6f70f295601daff09ef1d # v46.3.7
+        with:
+          # Exact, not the action's floating major: Renovate only bumps an explicit
+          # version, in step with the renovate-config-validator pre-commit hook.
+          renovate-version: 44.239.1
         env:
           LOG_LEVEL: debug
           RENOVATE_TOKEN: ${{ steps.get_token.outputs.token }}
