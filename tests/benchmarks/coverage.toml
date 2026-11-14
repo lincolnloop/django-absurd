@@ -14,7 +14,4 @@ skip_covered = true
 [tool.coverage.run]
 branch = true
 patch = ["subprocess", "_exit"]
-plugins = [
-  "django_coverage_plugin",
-]
 source_dirs = ["benchmarks", "django_absurd", "tests"]

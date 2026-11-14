@@ -58,7 +58,7 @@
       "groupName": "hatch"
     },
     {
-      "matchPackageNames": ["pytest", "pytest-*", "django-coverage-plugin"],
+      "matchPackageNames": ["pytest", "pytest-*"],
       "groupName": "pytest"
     },
     {
