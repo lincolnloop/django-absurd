@@ -92,12 +92,13 @@ jobs:
         run: |
           docker compose up -d --build --wait db
           docker compose run --rm --build app sh -c "cd /app && pytest"
-      - name: Rewrite container coverage paths to repo-relative
+      - name: Rewrite container coverage paths to the checkout
         if: ${{ success() || failure() }}
-        run: |
-          sudo sed -i \
-            "s#<source>/app#<source>examples/${{ matrix.example }}#g" \
-            coverage.xml
+        # Absolute, not repo-relative: Codecov ignores a relative <source>, and the bare
+        # names left (`conftest.py`) then match files in several directories.
+        env:
+          EXAMPLE_DIR: ${{ github.workspace }}/examples/${{ matrix.example }}
+        run: sudo sed -i "s#<source>/app#<source>$EXAMPLE_DIR#g" coverage.xml
       - name: Upload coverage to Codecov
         if: ${{ success() || failure() }}
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
