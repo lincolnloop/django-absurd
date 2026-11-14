@@ -25,7 +25,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
   uv sync --locked --no-install-project --project /src/examples/pg_cron
 
 # The single-file app; the bind mount in compose.yaml overlays it live at run time.
-WORKDIR /app
+WORKDIR /src/examples/pg_cron
 COPY examples/pg_cron/app.py ./
 
 EXPOSE 8000

@@ -34,7 +34,7 @@ its own compose database:
 ```bash
 cd examples/web        # or: cd examples/beat, cd examples/pg_cron
 docker compose up -d --build --wait db
-docker compose run --rm --build app sh -c "cd /app && pytest"
+docker compose run --rm --build app pytest
 ```
 
 **pg_cron** runs the same way — no special setup. The extension lives on the central
