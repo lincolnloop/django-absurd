@@ -143,6 +143,11 @@ writing or editing any test file. Running the suites:
   `tox -e dev,bench_harness`, in that order — `dev` runs `tests/core` first, so it is
   the run that truncates. A single-suite percentage means nothing on its own, and
   `benchmarks` alone leaves `.coverage` holding that suite only.
+- **Coverage config lives in two files; keep them in step.** `pyproject.toml` measures
+  `django_absurd/` and `tests/`; `tests/benchmarks/coverage.toml` adds `benchmarks/`,
+  which only that suite runs (an unrun module reports different lines per Python
+  version). Both use `source_dirs`, never `source` or `--cov=<dir>`: those strip the
+  directory from XML filenames, and Codecov then merges same-named files.
 - **Every tox test env runs the suites under `pytest-xdist`** (`-n auto` on each
   `pytest` command line, mypy envs excluded), so parallel safety is exercised on every
   push instead of only when someone remembers to pass `-n`. Worker count is xdist's own

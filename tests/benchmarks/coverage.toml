@@ -1,0 +1,20 @@
+# This suite's coverage config: pyproject.toml's, plus `benchmarks/`. Only this suite
+# runs it; measured elsewhere, it reports Python-version-dependent lines as missed.
+[tool.coverage.report]
+exclude_also = [
+  "if t.TYPE_CHECKING:",
+  'msg = [rf]?".*"\n\s*raise NotImplementedError\(msg\)',
+  'if __name__ == "__main__":',
+]
+# The harness is a uv project of its own, so running it leaves a `.venv` inside a
+# measured directory, which the unexecuted-file scan would otherwise report.
+omit = ["benchmarks/.venv/*"]
+skip_covered = true
+
+[tool.coverage.run]
+branch = true
+patch = ["subprocess", "_exit"]
+plugins = [
+  "django_coverage_plugin",
+]
+source_dirs = ["benchmarks", "django_absurd", "tests"]
