@@ -2,7 +2,11 @@
 DJANGO_SETTINGS_MODULE = "tests.benchmarks.settings"
 addopts = [
   "--confcutdir=..",
-  "--cov",
+  # Only this suite runs `benchmarks/`, so only it measures it; the others would report
+  # it unexecuted, with lines that differ between Python versions.
+  "--cov=benchmarks",
+  "--cov=django_absurd",
+  "--cov=tests",
   "--cov-append",
   "--cov-report=term",
   "--cov-report=xml",

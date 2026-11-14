@@ -111,7 +111,7 @@ patch = ["subprocess", "_exit"]
 plugins = [
   "django_coverage_plugin",
 ]
-source = ["benchmarks", "django_absurd", "tests"]
+source = ["django_absurd", "tests"]
 
 [tool.django-stubs]
 django_settings_module = "tests.pg_cron.settings"
