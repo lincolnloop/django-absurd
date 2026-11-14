@@ -179,7 +179,7 @@ dev = [
     { name = "git-cliff", specifier = "==2.14.2" },
     { name = "hatch-vcs", specifier = "==0.5.0" },
     { name = "hatchling", specifier = "==1.32.4" },
-    { name = "mypy", specifier = "==2.4.0" },
+    { name = "mypy", specifier = "==2.4.1" },
     { name = "psycopg", extras = ["binary"], specifier = "==3.3.6" },
     { name = "pytest", specifier = "==9.1.1" },
     { name = "pytest-asyncio", specifier = "==1.4.0" },
