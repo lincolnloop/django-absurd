@@ -437,10 +437,17 @@ property, `run_step` sync-only.
 
 ### Gotchas
 
-- **Never catch-all inside a task.** Absurd suspends and cancels runs through
-  control-flow exceptions raised inside `step` / `sleep_for` / `sleep_until` /
-  `await_event`. A bare `except:` or `except Exception:` around a durable call swallows
-  them and silently breaks suspension.
+- **Never catch-all inside a task.** Absurd suspends, cancels and fails runs by raising
+  `SuspendTask` / `CancelledTask` / `FailedTask`, all `Exception` subclasses. A
+  swallowed suspension fails every attempt with `Run "…" is not currently running`; the
+  others still end the run, but your `except` body runs first. If you must catch-all,
+  re-raise them first:
+
+  ```python
+  except (absurd_sdk.SuspendTask, absurd_sdk.CancelledTask, absurd_sdk.FailedTask):
+      raise
+  ```
+
 - **Effectively-once, not exactly-once.** A step's result is persisted after `fn`
   returns, on a separate connection. A crash in that window re-runs the step, so keep
   side effects idempotent — use [`idempotency_key`](#idempotency-keys) on downstream
