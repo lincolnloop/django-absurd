@@ -76,11 +76,6 @@
       "minimumReleaseAge": "0"
     },
     {
-      "description": "The hosted Renovate bot always runs the latest release and proposes config migrations against its schema, so a validator held back by cooloff rejects them.",
-      "matchPackageNames": ["renovatebot/pre-commit-hooks"],
-      "minimumReleaseAge": "0"
-    },
-    {
       "description": "Bump uv with Python.",
       "matchPackageNames": ["python", "ghcr.io/astral-sh/uv"],
       "groupName": "python runtime"
