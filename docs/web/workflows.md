@@ -275,15 +275,18 @@ inline under a task's detail page alongside its Runs.
 
 ## Gotchas
 
-- **Never catch-all inside a task.** Absurd suspends, cancels and fails runs by raising
-  `SuspendTask` / `CancelledTask` / `FailedTask`, all `Exception` subclasses. A
-  swallowed suspension fails every attempt with `Run "…" is not currently running`; the
-  others still end the run, but your `except` body runs first. If you must catch-all,
-  re-raise them first:
+- **Never catch-all around a durable call.** `sleep_for` / `sleep_until` / `await_event`
+  suspend by raising an `Exception` subclass; swallowed, the run fails instead of
+  suspending. To act when a task fails, receive Django's
+  [`task_finished`](https://docs.djangoproject.com/en/6.0/ref/signals/#task-finished)
+  instead. It reports `FAILED` once, after the last attempt, never for one that will be
+  retried:
 
   ```python
-  except (absurd_sdk.SuspendTask, absurd_sdk.CancelledTask, absurd_sdk.FailedTask):
-      raise
+  @receiver(task_finished)
+  def notify_admins_on_failure(sender, task_result, **kwargs):
+      if task_result.status == TaskResultStatus.FAILED:
+          notify_admins(task_result)
   ```
 
 - **Effectively-once, not exactly-once.** A step's result is persisted after `fn`
