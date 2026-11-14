@@ -3,6 +3,8 @@ import typing as t
 import pytest
 from django.core.management import call_command
 from django.db import connection
+from django.db.migrations.exceptions import IrreversibleError
+from django.db.migrations.loader import MigrationLoader
 
 from django_absurd import ABSURD_SCHEMA_VERSION
 
@@ -31,9 +33,13 @@ def test_migrate_installs_no_extension() -> None:
     assert installed == ["plpgsql"]
 
 
-@pytest.mark.django_db(transaction=True)
-def test_reverse_drops_absurd_schema() -> None:
-    call_command("migrate", "django_absurd", "zero", verbosity=0)
-    assert fetch_scalar("SELECT to_regnamespace('absurd') IS NULL") is True
-    call_command("migrate", verbosity=0)  # restore absurd schema
+def test_unapplying_is_refused() -> None:
+    delta = MigrationLoader(connection).get_migration(
+        "django_absurd", "0002_absurd_0_5_1"
+    )
+    with pytest.raises(IrreversibleError) as excinfo:
+        call_command("migrate", "django_absurd", "zero", verbosity=0)
+    assert str(excinfo.value) == (
+        f"Operation {delta.operations[0]} in {delta} is not reversible"
+    )
     assert fetch_scalar("SELECT absurd.get_schema_version()") == ABSURD_SCHEMA_VERSION
