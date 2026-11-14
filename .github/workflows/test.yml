@@ -91,13 +91,17 @@ jobs:
       - name: Run the suite in its Docker stack
         run: |
           docker compose up -d --build --wait db
-          docker compose run --rm --build app sh -c "cd /app && pytest"
-      - name: Rewrite container coverage paths to repo-relative
+          docker compose run --rm --build app pytest
+      - name: Write the coverage XML from the repo root
         if: ${{ success() || failure() }}
-        run: |
-          sudo sed -i \
-            "s#<source>/app#<source>examples/${{ matrix.example }}#g" \
-            coverage.xml
+        # coverage names files relative to where it runs, and /src mirrors the repo:
+        # examples/<name>/tests/conftest.py, not a bare tests/conftest.py.
+        env:
+          EXAMPLE: examples/${{ matrix.example }}
+        run: >-
+          docker compose run --rm -w /src app coverage xml
+          --rcfile=$EXAMPLE/pyproject.toml --data-file=$EXAMPLE/.coverage
+          -o $EXAMPLE/coverage.xml
       - name: Upload coverage to Codecov
         if: ${{ success() || failure() }}
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1

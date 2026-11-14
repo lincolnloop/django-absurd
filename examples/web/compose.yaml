@@ -26,7 +26,7 @@ services:
     environment: &env
       - DATABASE_URL=postgres://postgres:postgres@db:5432/postgres
     volumes: &mounts
-      - ./:/app
+      - ./:/src/examples/web
       - ../../django_absurd:/src/django_absurd
 
   app:

@@ -40,7 +40,7 @@ services:
     environment: &env
       - DATABASE_URL=postgres://postgres:postgres@db:5432/demo
     volumes: &mounts
-      - ./:/app
+      - ./:/src/examples/pg_cron
       - ../../django_absurd:/src/django_absurd
 
   app:

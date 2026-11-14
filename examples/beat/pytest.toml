@@ -2,7 +2,6 @@
 addopts = [
   "--cov",
   "--cov-report=term",
-  "--cov-report=xml",
   "--junitxml=junit-examples-beat.xml",
   "--reuse-db",
   "--strict-markers",
