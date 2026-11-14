@@ -6,7 +6,6 @@ from django.test import Client
 from django.urls import reverse_lazy
 from pytest_django import Settings
 
-from django_absurd.admin import resolve_admin_sites
 from django_absurd.pg_cron.admin import (
     autoregister_scheduled_task_admin,
     register_scheduled_task_admin,
@@ -50,7 +49,7 @@ def test_custom_admin_site_registration(
             "OPTIONS": {"ADMIN_SITE": ("tests.admin.custom_site",)},
         }
     }
-    register_scheduled_task_admin(resolve_admin_sites())
+    autoregister_scheduled_task_admin()
     assert custom_site.is_registered(ScheduledTask)
 
 

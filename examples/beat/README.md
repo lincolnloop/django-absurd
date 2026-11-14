@@ -29,5 +29,5 @@ Runs in the demo's own Docker stack, the way CI runs it:
 
 ```
 docker compose up -d --build --wait db
-docker compose run --rm --build app sh -c "cd /app && pytest"
+docker compose run --rm --build app pytest
 ```

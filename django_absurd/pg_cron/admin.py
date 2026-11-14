@@ -247,7 +247,7 @@ def autoregister_scheduled_task_admin() -> None:
         return
     if not backend.options.get("ENABLE_ADMIN", True):
         return
-    register_scheduled_task_admin(resolve_admin_sites())
+    register_scheduled_task_admin(resolve_admin_sites(backend))
 
 
 with contextlib.suppress(Exception):
