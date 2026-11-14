@@ -30,7 +30,7 @@ jobs:
           - dev
           - bench_harness
           - py312-django61-mypy
-          - py314-django61-mypy
+          - py315-django61-mypy
     env:
       PGHOST: localhost
       PGUSER: postgres
