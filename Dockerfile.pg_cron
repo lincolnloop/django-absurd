@@ -6,7 +6,7 @@ FROM postgres:18
 # renovate: datasource=deb depName=postgresql-18-cron versioning=deb
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends postgresql-18-cron=1.6.7-3.pgdg13+1; \
+    apt-get install -y --no-install-recommends postgresql-18-cron=1.6.8-1.pgdg13+3; \
     rm -rf /var/lib/apt/lists/*
 
 # Runs once on a fresh volume. initdb scripts run against POSTGRES_DB (`postgres` for the

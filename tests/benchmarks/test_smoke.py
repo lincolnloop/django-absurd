@@ -862,10 +862,14 @@ def test_an_interrupted_commit_probe_leaves_the_session_usable() -> None:
     raises from a SIGALRM handler exactly like this, and a BaseException that is not a
     KeyboardInterrupt is what psycopg declines to cancel the query for.
 
-    What the interruption DOES leave behind is the probe's own table, which
+    What the interruption DOES leave behind is the probe's table name, which
     `tests/benchmarks/conftest.py` takes away after every test.
     """
-    with pytest.raises(utils.ProbeInterrupted), utils.interrupt_after(0.2):
+    with (
+        utils.stall_the_commit_probe(),
+        pytest.raises(utils.ProbeInterrupted),
+        utils.interrupt_after(0.2),
+    ):
         analysis.measure_commit_ceiling(durable=True)
 
     with connections[resolve_absurd_database()].cursor() as cursor:
