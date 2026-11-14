@@ -4,16 +4,16 @@ dev = [
   "pytest-django==4.14.0",
   "pytest==9.1.1",
   # Freezing durable time is opt-in: django-absurd never bundles it.
-  "time-machine==3.5.1",
+  "time-machine==3.6.0",
 ]
 
 [project]
 dependencies = [
   "dj-database-url==3.1.2",
   "django-absurd",
-  "django==6.1.2",
+  "django==6.1.3",
   "nanodjango==0.16.4",
-  "psycopg[binary]==3.3.6",
+  "psycopg[binary]==3.3.8",
 ]
 name = "django-absurd-example-web"
 requires-python = "==3.14.*"
