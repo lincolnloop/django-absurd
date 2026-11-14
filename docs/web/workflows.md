@@ -275,10 +275,20 @@ inline under a task's detail page alongside its Runs.
 
 ## Gotchas
 
-- **Never catch-all inside a task.** Absurd suspends and cancels runs via control-flow
-  exceptions raised inside `step` / `sleep_for` / `sleep_until` / `await_event`. A bare
-  `except:` or `except Exception:` around a durable call swallows them and silently
-  breaks suspension.
+- **Never catch-all around a durable call.** `sleep_for` / `sleep_until` / `await_event`
+  suspend by raising an `Exception` subclass; swallowed, the run fails instead of
+  suspending. To act when a task fails, receive Django's
+  [`task_finished`](https://docs.djangoproject.com/en/6.0/ref/signals/#task-finished)
+  instead. It reports `FAILED` once, after the last attempt, never for one that will be
+  retried:
+
+  ```python
+  @receiver(task_finished)
+  def notify_admins_on_failure(sender, task_result, **kwargs):
+      if task_result.status == TaskResultStatus.FAILED:
+          notify_admins(task_result)
+  ```
+
 - **Effectively-once, not exactly-once.** A step's result is persisted after `fn`
   returns. A crash in that window re-runs the step, so keep side effects idempotent —
   use [`idempotency_key`](tasks.md#idempotency-keys) on downstream enqueues, or make
