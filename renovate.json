@@ -85,14 +85,6 @@
       "groupName": "pre-commit hooks"
     },
     {
-      "description": "The self-hosted bot and its config validator hook share a version, so a config migration the bot proposes always passes pre-commit.",
-      "matchPackageNames": [
-        "ghcr.io/renovatebot/renovate",
-        "renovatebot/pre-commit-hooks"
-      ],
-      "groupName": "renovate"
-    },
-    {
       "matchUpdateTypes": ["lockFileMaintenance"],
       "prPriority": -1
     }
