@@ -5,7 +5,6 @@ addopts = [
   "--confcutdir=..",
   "--cov",
   "--cov-append",
-  "--cov-report=term",
   "--cov-report=xml",
   "--disable-socket",
   "--junitxml=junit-multidb.xml",

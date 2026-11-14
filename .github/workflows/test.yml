@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   tox:
-    name: ${{ matrix.env }}
+    name: ${{ matrix.name || matrix.env }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -26,10 +26,16 @@ jobs:
           - py312-django60
           - py312-django61
           - py314-django61
+          - py315-django61
           - dev
           - bench_harness
-          - py312-django61-mypy
-          - py314-django61-mypy
+        # Named for the resolution, not the Python, so a required check survives a
+        # Python bump.
+        include:
+          - env: py312-django61-mypy
+            name: mypy-lowest
+          - env: py315-django61-mypy
+            name: mypy-highest
     env:
       PGHOST: localhost
       PGUSER: postgres

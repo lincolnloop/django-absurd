@@ -8,7 +8,6 @@ dev = [
   "beautifulsoup4==4.15.0",
   "build==1.6.1",
   "dj-database-url==3.1.2",
-  "django-coverage-plugin==3.2.2",
   "django-stubs==6.1.2",
   "git-cliff==2.14.2",
   "hatch-vcs==0.5.0",
@@ -46,6 +45,7 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
   "Topic :: Software Development :: Libraries",
   "Topic :: System :: Distributed Computing",
   "Typing :: Typed",
@@ -103,9 +103,6 @@ branch = true
 # `os._exit`, which skips the hook the child's own coverage data is written from, and
 # the line that killed it would read as never executed.
 patch = ["subprocess", "_exit"]
-plugins = [
-  "django_coverage_plugin",
-]
 # `source_dirs`, not `source`: the XML report strips a `source` prefix from each
 # filename, so same-named files in different dirs (`tasks.py`) would merge into one.
 source_dirs = ["django_absurd", "tests"]
