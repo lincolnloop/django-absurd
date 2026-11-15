@@ -66,9 +66,12 @@
       "groupName": "type checking"
     },
     {
-      "description": "Absurd releases are adopted deliberately; skip cooloff.",
+      "description": "Absurd releases move together and deliberately: absurdctl's pin decides the shipped schema. After approving, add the migration per .claude/skills/generating-absurd-migrations/SKILL.md before merging.",
       "matchPackageNames": ["absurd-sdk", "absurdctl"],
-      "minimumReleaseAge": "0"
+      "groupName": "absurd",
+      "minimumReleaseAge": "0",
+      "dependencyDashboardApproval": true,
+      "automerge": false
     },
     {
       "description": "uv has no release timestamps; skip cooloff.",
