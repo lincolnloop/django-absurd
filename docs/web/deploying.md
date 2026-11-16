@@ -34,10 +34,13 @@ from the pinned Absurd version and is never fetched at migrate time.
 - **Already running Absurd?** `python manage.py migrate --fake django_absurd` records
   the migration as applied without re-running the DDL. Only do this when the existing
   schema matches `django_absurd.ABSURD_SCHEMA_VERSION` exactly — faking doesn't check,
-  and a mismatch fails at runtime in ways Django can't detect. Faking skips the DDL but
-  still fires `post_migrate`, so the declared queues are provisioned either way — which
-  needs `CREATE` on the schema the other role created. Without it `migrate` fails, where
-  earlier releases provisioned nothing and left the first worker or enqueue to heal it.
+  and a mismatch fails at runtime in ways Django can't detect. Each migration is named
+  for the Absurd version it installs, so an older schema fakes only up to its own
+  (`migrate --fake django_absurd 0001_initial_0_5_0`) and a plain `migrate` applies the
+  rest. Faking skips the DDL but still fires `post_migrate`, so the declared queues are
+  provisioned either way — which needs `CREATE` on the schema the other role created.
+  Without it `migrate` fails, where earlier releases provisioned nothing and left the
+  first worker or enqueue to heal it.
 
 → [Absurd: database setup](https://earendil-works.github.io/absurd/database/).
 
