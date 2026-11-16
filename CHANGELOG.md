@@ -11,7 +11,8 @@ migration — read the upgrade note below before deploying.
 ### Upgrade notes
 
 - **Absurd schema 0.5.1**
-  ([upstream release](https://github.com/earendil-works/absurd/releases/tag/0.5.1)).
+  ([upstream release](https://github.com/earendil-works/absurd/releases/tag/0.5.1),
+  [earendil-works/absurd#140](https://github.com/earendil-works/absurd/pull/140)).
   Claiming a task now checks cancellation limits only on tasks that set a cancellation
   policy, so claims stay cheap as a queue's table grows. `migrate` adds an index to
   every existing queue's task table and holds a lock on each while it builds — mind that
@@ -27,8 +28,6 @@ migration — read the upgrade note below before deploying.
 
 ### Documentation
 
-- Clarify the catch-all gotcha and point failure handling at `task_finished`
-  ([#356](https://github.com/lincolnloop/django-absurd/pull/356))
 - Ask users to check their Absurd schema version before migrating, and how to fake an
   older schema up to its own migration
 
