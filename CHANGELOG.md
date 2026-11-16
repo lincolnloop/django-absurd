@@ -28,6 +28,7 @@ migration — read the upgrade note below before deploying.
 
 ### Documentation
 
+- Clarify the catch-all gotcha and point failure handling at `task_finished`
 - Ask users to check their Absurd schema version before migrating, and how to fake an
   older schema up to its own migration
 
