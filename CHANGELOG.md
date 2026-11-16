@@ -17,8 +17,6 @@ migration — read the upgrade note below before deploying.
   policy, so claims stay cheap as a queue's table grows. `migrate` adds an index to
   every existing queue's task table and holds a lock on each while it builds — mind that
   on large queues. The migration cannot be unapplied: Absurd publishes no downgrade SQL.
-  Check which schema version your database runs (`select absurd.get_schema_version()`)
-  against the one this release ships (`django_absurd.ABSURD_SCHEMA_VERSION`).
 
 ### Features
 
@@ -29,8 +27,8 @@ migration — read the upgrade note below before deploying.
 ### Documentation
 
 - Clarify the catch-all gotcha and point failure handling at `task_finished`
-- Ask users to check their Absurd schema version before migrating, and how to fake an
-  older schema up to its own migration
+- Adopting an existing Absurd database: fake the migrations only up to the one matching
+  its schema version
 
 ## [1.0.1](https://github.com/lincolnloop/django-absurd/compare/v1.0.0...v1.0.1) - 2026-09-11
 

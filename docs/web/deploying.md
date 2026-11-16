@@ -31,10 +31,6 @@ from the pinned Absurd version and is never fetched at migrate time.
   yourself doesn't avoid the grant. The schema name is fixed. Provisioning then creates
   tables _inside_ `absurd`, so the role needs `CREATE` on the schema as well — implicit
   when `migrate` created it, and not when someone else did.
-- **Schema version:** each release targets one Absurd schema version,
-  `django_absurd.ABSURD_SCHEMA_VERSION`, and its migrations are named for the versions
-  they install. Be mindful of which version your database runs
-  (`select absurd.get_schema_version()`) and which this release ships before migrating.
 - **Already running Absurd?** `python manage.py migrate --fake django_absurd` records
   the migration as applied without re-running the DDL. Only do this when the existing
   schema matches `django_absurd.ABSURD_SCHEMA_VERSION` exactly — faking doesn't check,
