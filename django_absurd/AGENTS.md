@@ -1339,6 +1339,10 @@ yourself does not avoid the grant. The schema name is fixed.
   [operator setup](#operator-setup).
 - What the migration installs and provisions:
   [What `migrate` installs](#what-migrate-installs).
+- Each release targets one Absurd schema version, `django_absurd.ABSURD_SCHEMA_VERSION`,
+  and its migrations are named for the versions they install. Be mindful of which
+  version your database runs (`select absurd.get_schema_version()`) and which this
+  release ships before migrating.
 
 ### Adopting an existing Absurd database
 
