@@ -1339,6 +1339,10 @@ yourself does not avoid the grant. The schema name is fixed.
   [operator setup](#operator-setup).
 - What the migration installs and provisions:
   [What `migrate` installs](#what-migrate-installs).
+- Each release targets one Absurd schema version, `django_absurd.ABSURD_SCHEMA_VERSION`,
+  and its migrations are named for the versions they install. Be mindful of which
+  version your database runs (`select absurd.get_schema_version()`) and which this
+  release ships before migrating.
 
 ### Adopting an existing Absurd database
 
@@ -1352,4 +1356,7 @@ faking the migration records it as applied without re-running the DDL.
 **Use extreme caution:** faking tells Django the schema is present without checking it.
 Only do this when the existing `absurd` schema exactly matches the version this package
 targets (`django_absurd.ABSURD_SCHEMA_VERSION`) — a mismatch causes runtime failures
-Django cannot detect. Verify the versions line up first.
+Django cannot detect. Verify the versions line up first. Each migration is named for the
+Absurd version it installs, so an older schema fakes only up to its own
+(`migrate --fake django_absurd 0001_initial_0_5_0`) and a plain `migrate` applies the
+rest.

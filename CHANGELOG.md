@@ -3,6 +3,35 @@ Never `git cliff -o`: it discards every hand edit, and no regeneration can repro
 
 # Changelog
 
+## [1.1.0](https://github.com/lincolnloop/django-absurd/compare/v1.0.1...v1.1.0) - 2026-11-16
+
+Absurd's schema moves to 0.5.1, and Python 3.15 is supported. Upgrading runs one new
+migration — read the upgrade note below before deploying.
+
+### Upgrade notes
+
+- **Absurd schema 0.5.1**
+  ([upstream release](https://github.com/earendil-works/absurd/releases/tag/0.5.1),
+  [earendil-works/absurd#140](https://github.com/earendil-works/absurd/pull/140)).
+  Claiming a task now checks cancellation limits only on tasks that set a cancellation
+  policy, so claims stay cheap as a queue's table grows. `migrate` adds an index to
+  every existing queue's task table and holds a lock on each while it builds — mind that
+  on large queues. The migration cannot be unapplied: Absurd publishes no downgrade SQL.
+  Check which schema version your database runs (`select absurd.get_schema_version()`)
+  against the one this release ships (`django_absurd.ABSURD_SCHEMA_VERSION`).
+
+### Features
+
+- Migrate the Absurd schema to 0.5.1
+  ([#366](https://github.com/lincolnloop/django-absurd/pull/366))
+- Support Python 3.15 ([#340](https://github.com/lincolnloop/django-absurd/pull/340))
+
+### Documentation
+
+- Clarify the catch-all gotcha and point failure handling at `task_finished`
+- Ask users to check their Absurd schema version before migrating, and how to fake an
+  older schema up to its own migration
+
 ## [1.0.1](https://github.com/lincolnloop/django-absurd/compare/v1.0.0...v1.0.1) - 2026-09-11
 
 A performance fix for the admin at volume. No API changes; upgrading from `1.0.0` needs
