@@ -229,10 +229,10 @@ def build_producer_jobname(target: str) -> str:
 
 
 def read_absurd_schema_sql() -> str:
-    return (
-        importlib.resources.files("django_absurd.migrations")
-        .joinpath("0001_initial_0_5_0.sql")
-        .read_text(encoding="utf-8")
+    migrations = importlib.resources.files("django_absurd.migrations")
+    return "\n".join(
+        migrations.joinpath(name).read_text(encoding="utf-8")
+        for name in ("0001_initial_0_5_0.sql", "0002_absurd_0_5_1.sql")
     )
 
 

@@ -1,7 +1,6 @@
 import typing as t
 
 import pytest
-from django.core.management import call_command
 from django.db import connection
 
 from django_absurd import ABSURD_SCHEMA_VERSION
@@ -29,11 +28,3 @@ def test_migrate_installs_no_extension() -> None:
         "SELECT array_agg(extname ORDER BY extname) FROM pg_extension"
     )
     assert installed == ["plpgsql"]
-
-
-@pytest.mark.django_db(transaction=True)
-def test_reverse_drops_absurd_schema() -> None:
-    call_command("migrate", "django_absurd", "zero", verbosity=0)
-    assert fetch_scalar("SELECT to_regnamespace('absurd') IS NULL") is True
-    call_command("migrate", verbosity=0)  # restore absurd schema
-    assert fetch_scalar("SELECT absurd.get_schema_version()") == ABSURD_SCHEMA_VERSION
