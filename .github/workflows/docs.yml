@@ -24,7 +24,6 @@ jobs:
         if: >-
           ${{ github.event_name == 'workflow_dispatch'
           || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
-        # yamllint disable-line rule:line-length
         uses: actions/upload-pages-artifact@v5.0.0
         with:
           path: site
