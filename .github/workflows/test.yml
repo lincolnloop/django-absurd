@@ -47,9 +47,9 @@ jobs:
       # profitably use, and 2 is enough to keep the parallel path exercised.
       PYTEST_XDIST_AUTO_NUM_WORKERS: "2"
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@v7.0.1
       - name: Install uv
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        uses: astral-sh/setup-uv@v10.3.3
       - name: Start Postgres services
         # A mypy env reads the tree and never connects, and `bench_harness` installs no
         # `django_absurd.pg_cron`, so neither pays for the extension image.
@@ -61,14 +61,14 @@ jobs:
         run: uvx --with tox-uv tox -e "${{ matrix.env }}"
       - name: Upload coverage to Codecov
         if: ${{ (success() || failure()) && !contains(matrix.env, 'mypy') }}
-        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        uses: codecov/codecov-action@v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           flags: ${{ matrix.env }}
           fail_ci_if_error: true
       - name: Upload test results to Codecov
         if: ${{ (success() || failure()) && !contains(matrix.env, 'mypy') }}
-        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        uses: codecov/codecov-action@v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           report_type: test_results
@@ -93,7 +93,7 @@ jobs:
       run:
         working-directory: examples/${{ matrix.example }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@v7.0.1
       - name: Run the suite in its Docker stack
         run: |
           docker compose up -d --build --wait db
@@ -110,7 +110,7 @@ jobs:
           -o $EXAMPLE/coverage.xml
       - name: Upload coverage to Codecov
         if: ${{ success() || failure() }}
-        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        uses: codecov/codecov-action@v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           flags: examples-${{ matrix.example }}
@@ -118,7 +118,7 @@ jobs:
           files: examples/${{ matrix.example }}/coverage.xml
       - name: Upload test results to Codecov
         if: ${{ success() || failure() }}
-        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        uses: codecov/codecov-action@v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           report_type: test_results
@@ -130,11 +130,11 @@ jobs:
     name: build distribution
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0 # full history + tags so setuptools-scm can derive the version
       - name: Install uv
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        uses: astral-sh/setup-uv@v10.3.3
       - name: Build sdist + wheel
         run: uv build
       - name: Check distribution metadata
