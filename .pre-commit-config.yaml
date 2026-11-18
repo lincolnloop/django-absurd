@@ -91,14 +91,14 @@ repos:
     hooks:
       - id: uv-sort
         additional_dependencies:
-          - annotated-doc==0.0.5
-          - markdown-it-py==4.2.0
+          - annotated-doc==0.0.6
+          - markdown-it-py==4.3.0
           - mdurl==0.1.2
           - Pygments==2.21.0
           - rich==15.0.0
           - shellingham==1.5.4
           - tomlrt==2.3.3
-          - typer==0.28.0
+          - typer==0.29.1
         language: python
 
   - repo: https://github.com/rbubley/mirrors-prettier
