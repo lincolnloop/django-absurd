@@ -22,6 +22,6 @@ jobs:
       # Squash-merge puts the PR title on main, so a Conventional Commits title is
       # what makes the release notes readable.
       # yamllint disable-line rule:line-length
-      - uses: amannn/action-semantic-pull-request@2252a14e810aa9b85c2d560bd7070c802206ecf6 # v6.1.2
+      - uses: amannn/action-semantic-pull-request@v6.1.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
