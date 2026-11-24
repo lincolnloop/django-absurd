@@ -114,10 +114,10 @@ def report_run_event(
         # attempt and max_attempts together, because "attempt 2 of 5 failed" and "the
         # final attempt failed" read differently and Django's own log cannot tell them
         # apart.
-        claimed = read_sdk_claimed_task(ctx)
+        max_attempts = read_sdk_claimed_task(ctx)["max_attempts"]
         detail = (
-            f'name="{claimed["task_name"]}" task_id="{ctx.task_id}"'
-            f" attempt={claimed['attempt']} max_attempts={claimed['max_attempts']}"
+            f'name="{ctx.task_name}" task_id="{ctx.task_id}"'
+            f" attempt={ctx.attempt} max_attempts={max_attempts}"
         )
         if started is not None:
             detail += f" duration={time.monotonic() - started:.3f}"

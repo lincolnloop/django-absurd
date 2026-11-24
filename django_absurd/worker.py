@@ -419,7 +419,7 @@ def build_running_task_result(
     # reports this worker's alias anyway.
     if (task.queue_name, task.backend) != (queue, backend.alias):
         task = task.using(queue_name=queue, backend=backend.alias)
-    attempt = read_sdk_claimed_task(ctx)["attempt"]
+    attempt = ctx.attempt
     # One instant for both fields, as Django's own backend does: this handler entry IS
     # the attempt, so "when it started" and "when it was last attempted" cannot differ.
     started_at = timezone.now()
@@ -450,7 +450,7 @@ def build_handler(
         WORKER_LOOP.set(asyncio.get_running_loop())
         args = params.get("args", [])
         kwargs = params.get("kwargs", {})
-        attempt = read_sdk_claimed_task(ctx)["attempt"]
+        attempt = ctx.attempt
         task_result = build_running_task_result(
             task, ctx, args, kwargs, backend=backend, queue=queue
         )

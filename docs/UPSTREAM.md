@@ -112,17 +112,17 @@ executes. Cheap workaround, bad failure mode.
 
 Retires: `LazyTaskRegistry`.
 
-## Expose `attempt`, `run_id` and `enqueue_at` on the task context
+## Expose `max_attempts` and `enqueue_at` on the task context
 
-`ClaimedTask` carries `attempt` and `run_id`; `TaskContext` exposes neither, so
-`read_sdk_claimed_task` pulls the claimed row out of `ctx._task`, and every caller
-indexes it from there. Every attempt-aware behaviour depends on that reach —
-retry-terminal predicates, `TaskResult.worker_ids`, `TaskContext.attempt`.
+`TaskContext` exposes `attempt` but not `max_attempts`, so `read_sdk_claimed_task` pulls
+the claimed row out of `ctx._task` for it. The retry-terminal predicate and the
+lifecycle log line both need it: "attempt 2 of 5 failed" and "the final attempt failed"
+read differently.
 
 Nothing exposes the task's enqueue time either, so a `TaskResult` a worker builds
 carries `enqueued_at=None` — correct at enqueue, unknown at execution.
 
-Ask: public properties for all three.
+Ask: public properties for both.
 
 Retires: `read_sdk_claimed_task`, and the `enqueued_at=None` compromise.
 
