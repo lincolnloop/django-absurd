@@ -171,39 +171,32 @@ time. Peers do ship a real drain-and-exit worker, so this forecloses a scale-to-
 deployment story; that is a live option to revisit, on purpose, rather than an
 oversight.
 
-The worker does not use the engine client's own worker loop, and that is a deliberate,
-temporary divergence with a written expiry. That loop rebuilds its in-flight set per
-claimed batch and waits for the whole batch before claiming again, so one slow task
-idles every other slot: an N-slot worker delivered roughly one slot's throughput on
-mixed-duration work, wasting about three quarters of the capacity it was configured for.
-The client's synchronous worker never had this — it keeps one in-flight set across
-iterations and caps each claim by free capacity — so the fix is that shape, pushed
-upstream and carried here until a released version has it. The condition for deleting
-the local loop is recorded next to the code and in the upstream-asks document; nobody
-should have to re-derive whether it is still needed.
-
-Capping claims by free capacity has one consequence worth knowing before someone
-"simplifies" it away: at a single slot, free capacity is one, so a configured batch size
-would silently collapse from one round trip into one per task. A single-slot worker
-therefore keeps claiming whole batches and running them in order.
+The worker runs the engine client's own worker loop. It carried a local one for a while,
+because the client's async loop waited for each whole claimed batch before claiming
+again, so one slow task idled every other slot: an N-slot worker delivered roughly one
+slot's throughput on mixed-duration work. That fix went upstream
+(https://github.com/earendil-works/absurd/pull/137) and the local loop went with it.
 
 Shutdown is two distinct things, and conflating them loses work. A stop request means
 stop claiming and let in-flight runs finish; only an actual cancellation of the worker
 cancels them, and it must also wait for them to unwind, because the connection every one
 of those runs writes through is about to close. Abandoning them instead strands each run
-marked as claimed until its lease expires, after which it silently runs again. The stop
-signal is the worker's own rather than the client's flag, because that flag is read only
-by the loop we no longer use.
+marked as claimed until its lease expires, after which it silently runs again. The
+client's loop does both: a stop drains the in-flight runs, a cancellation cancels and
+awaits them.
+
+The client's stop is a flag read between polls, so an idle worker notices a stop only
+after sitting out the rest of its poll interval. That lag was accepted in exchange for
+owning no worker loop; waking on stop is an open upstream ask.
 
 A stop is acknowledged the moment it is heard, on both the log and the terminal, because
 the wait that follows is unbounded and silence reads as a hung process — the operator's
 next move is a second interrupt, and then a kill. Two things are deliberately absent.
-The message names no count of remaining work: the number lives inside the loop, so
-reporting it would tie this project to owning that loop permanently, which is precisely
-what the upstream fix is meant to end. And there is no force-quit on a second interrupt,
-because there is nothing honest to do with the runs it would abandon — the engine
-exposes no way to hand a claimed run back, so they would sit unavailable until their
-lease expired anyway.
+The message names no count of remaining work: the number lives inside the client's loop,
+and reporting it would mean owning that loop again. And there is no force-quit on a
+second interrupt, because there is nothing honest to do with the runs it would abandon —
+the engine exposes no way to hand a claimed run back, so they would sit unavailable
+until their lease expired anyway.
 
 ### Spawn params: one factory, two sites
 
