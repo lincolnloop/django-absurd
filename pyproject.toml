@@ -213,3 +213,8 @@ exclude-newer = "7 days"
 [tool.uv.exclude-newer-package]
 absurd-sdk = "0 days"
 absurdctl = "0 days"
+
+# Unreleased upstream fix (async worker refills free slots,
+# https://github.com/earendil-works/absurd/pull/137). Drop once it reaches PyPI.
+[tool.uv.sources]
+absurd-sdk = { url = "https://github.com/earendil-works/absurd/archive/eb362734b02e51a167a3cb0b5b306424f74406b2.tar.gz", subdirectory = "sdks/python" }
