@@ -13,7 +13,7 @@ dev = [
   "hatch-vcs==0.5.0",
   "hatchling==1.33.0",
   "mypy==2.4.1",
-  "psycopg[binary]==3.3.8",
+  "psycopg[binary]==3.3.9",
   "pytest-asyncio==1.4.1.post1",
   "pytest-cov==7.1.0",
   "pytest-django==4.14.0",
@@ -21,10 +21,10 @@ dev = [
   "pytest-timeout==2.4.0",
   "pytest-xdist==3.8.0",
   "pytest==9.2.0",
-  "ruff==0.17.4",
+  "ruff==0.17.5",
   "time-machine==3.6.0",
-  "types-croniter==6.2.4.20261006",
-  "zensical==0.1.1",
+  "types-croniter==6.2.4.20261118",
+  "zensical==0.1.2",
 ]
 
 [project]
